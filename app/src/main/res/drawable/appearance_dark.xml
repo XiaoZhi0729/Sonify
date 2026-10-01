@@ -1,0 +1,84 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="128dp"
+    android:viewportWidth="64"
+    android:viewportHeight="128">
+    <!-- 深色模式预览：几何与浅色版一致（本应用主页迷你样机），仅配色切换为深色调色板 -->
+    <!-- 机身 -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M13.2,0 H50.8 A13.2,13.2 0 0 1 64,13.2 V114.8 A13.2,13.2 0 0 1 50.8,128 H13.2 A13.2,13.2 0 0 1 0,114.8 V13.2 A13.2,13.2 0 0 1 13.2,0 Z"
+        android:strokeColor="#26FFFFFF"
+        android:strokeWidth="1" />
+    <!-- 大标题 -->
+    <path
+        android:fillColor="#F2FFFFFF"
+        android:pathData="M8,7 H22 A3,3 0 0 1 25,10 V11 A3,3 0 0 1 22,14 H8 A3,3 0 0 1 5,11 V10 A3,3 0 0 1 8,7 Z" />
+    <!-- 栏目标题 1 + 红色箭头 -->
+    <path
+        android:fillColor="#F2FFFFFF"
+        android:pathData="M7,21 H14 A2,2 0 0 1 16,23 V23 A2,2 0 0 1 14,25 H7 A2,2 0 0 1 5,23 V23 A2,2 0 0 1 7,21 Z" />
+    <path
+        android:fillColor="#E64366"
+        android:pathData="M18,21.4 L20.8,23 L18,24.6 Z" />
+    <!-- 继续收听大卡 1 -->
+    <path
+        android:fillColor="#7A7168"
+        android:pathData="M8,29 H28 A3,3 0 0 1 31,32 V59 A3,3 0 0 1 28,62 H8 A3,3 0 0 1 5,59 V32 A3,3 0 0 1 8,29 Z" />
+    <path
+        android:fillColor="#3B3631"
+        android:pathData="M6.5,55 H29.5 A1.5,1.5 0 0 1 31,56.5 V59 A3,3 0 0 1 28,62 H8 A3,3 0 0 1 5,59 V56.5 A1.5,1.5 0 0 1 6.5,55 Z" />
+    <!-- 继续收听大卡 2 -->
+    <path
+        android:fillColor="#6E2731"
+        android:pathData="M36,29 H56 A3,3 0 0 1 59,32 V59 A3,3 0 0 1 56,62 H36 A3,3 0 0 1 33,59 V32 A3,3 0 0 1 36,29 Z" />
+    <path
+        android:fillColor="#3A0F16"
+        android:pathData="M34.5,55 H57.5 A1.5,1.5 0 0 1 59,56.5 V59 A3,3 0 0 1 56,62 H36 A3,3 0 0 1 33,59 V56.5 A1.5,1.5 0 0 1 34.5,55 Z" />
+    <!-- 栏目标题 2 + 红色箭头 -->
+    <path
+        android:fillColor="#F2FFFFFF"
+        android:pathData="M7,68 H14 A2,2 0 0 1 16,70 V70 A2,2 0 0 1 14,72 H7 A2,2 0 0 1 5,70 V70 A2,2 0 0 1 7,68 Z" />
+    <path
+        android:fillColor="#E64366"
+        android:pathData="M18,68.4 L20.8,70 L18,71.6 Z" />
+    <!-- 精选歌单封面 ×3 -->
+    <path
+        android:fillColor="#3A3A3C"
+        android:pathData="M7,76 H19 A2,2 0 0 1 21,78 V90 A2,2 0 0 1 19,92 H7 A2,2 0 0 1 5,90 V78 A2,2 0 0 1 7,76 Z" />
+    <path
+        android:fillColor="#5A3A40"
+        android:pathData="M26,76 H38 A2,2 0 0 1 40,78 V90 A2,2 0 0 1 38,92 H26 A2,2 0 0 1 24,90 V78 A2,2 0 0 1 26,76 Z" />
+    <path
+        android:fillColor="#2C2C2E"
+        android:pathData="M45,76 H57 A2,2 0 0 1 59,78 V90 A2,2 0 0 1 57,92 H45 A2,2 0 0 1 43,90 V78 A2,2 0 0 1 45,76 Z" />
+    <!-- 迷你播放器胶囊 -->
+    <path
+        android:fillColor="#1C1C1E"
+        android:pathData="M9,97 H55 A5,5 0 0 1 60,102 V102 A5,5 0 0 1 55,107 H9 A5,5 0 0 1 4,102 V102 A5,5 0 0 1 9,97 Z" />
+    <path
+        android:fillColor="#E64366"
+        android:pathData="M8,98.5 H12 A1.5,1.5 0 0 1 13.5,100 V104 A1.5,1.5 0 0 1 12,105.5 H8 A1.5,1.5 0 0 1 6.5,104 V100 A1.5,1.5 0 0 1 8,98.5 Z" />
+    <path
+        android:fillColor="#40FFFFFF"
+        android:pathData="M16,100 H40 A1.15,1.15 0 0 1 41,102.15 V102.15 A1.15,1.15 0 0 1 40,103.3 H16 A1.15,1.15 0 0 1 15,102.15 V102.15 A1.15,1.15 0 0 1 16,100 Z" />
+    <path
+        android:fillColor="#26FFFFFF"
+        android:pathData="M16,104 H31 A0.95,0.95 0 0 1 32,104.95 V104.95 A0.95,0.95 0 0 1 31,105.9 H16 A0.95,0.95 0 0 1 15,104.95 V104.95 A0.95,0.95 0 0 1 16,104 Z" />
+    <!-- 底部胶囊导航：选中主页（红）+ 另两个灰点 -->
+    <path
+        android:fillColor="#1C1C1E"
+        android:pathData="M10,111 H54 A6,6 0 0 1 60,117 V117 A6,6 0 0 1 54,123 H10 A6,6 0 0 1 4,117 V117 A6,6 0 0 1 10,111 Z" />
+    <path
+        android:fillColor="#2C2C2E"
+        android:pathData="M10,113 H21 A4,4 0 0 1 25,117 V117 A4,4 0 0 1 21,121 H10 A4,4 0 0 1 6,117 V117 A4,4 0 0 1 10,113 Z" />
+    <path
+        android:fillColor="#E64366"
+        android:pathData="M13.5,115 H16.5 A1,1 0 0 1 17.5,116 V118 A1,1 0 0 1 16.5,119 H13.5 A1,1 0 0 1 12.5,118 V116 A1,1 0 0 1 13.5,115 Z" />
+    <path
+        android:fillColor="#8E8D93"
+        android:pathData="M35,115 H39 A2,2 0 0 1 41,117 V117 A2,2 0 0 1 39,119 H35 A2,2 0 0 1 33,117 V117 A2,2 0 0 1 35,115 Z" />
+    <path
+        android:fillColor="#8E8D93"
+        android:pathData="M47,115 H51 A2,2 0 0 1 53,117 V117 A2,2 0 0 1 51,119 H47 A2,2 0 0 1 45,117 V117 A2,2 0 0 1 47,115 Z" />
+</vector>

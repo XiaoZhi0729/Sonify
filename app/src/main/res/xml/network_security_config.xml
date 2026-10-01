@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Checkpoint 7：酷狗在线音源走明文 HTTP（http://fs.youthandroid.kugou.com/...），
+  Android 9+ 默认禁止 cleartext。这里仅对酷狗域名放行明文，
+  其余域名仍走系统默认（禁止 cleartext），保持最小暴露面。
+  临时配置，验证后与 Checkpoint 一并移除。
+  另：在线请求经本机 Rust 服务转发（http://127.0.0.1:port），
+  回环地址同样属明文，需一并放行。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="true">kugou.com</domain>
+        <domain includeSubdomains="true">kugou.wangtin.com</domain>
+        <domain includeSubdomains="true">kugouktv.com</domain>
+        <domain includeSubdomains="true">kumi.cn</domain>
+        <domain includeSubdomains="true">kux.com</domain>
+    </domain-config>
+</network-security-config>

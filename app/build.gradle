@@ -1,0 +1,148 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-parcelize'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'yos.music.player'
+    compileSdk 37
+
+    defaultConfig {
+        // 对照安装专用：加 .oss 后缀避免覆盖手机上已安装的正式版 Flamingo
+        applicationId "yos.music.player.oss"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a"
+        }
+
+        renderscriptTargetApi 19
+        renderscriptSupportModeEnabled true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            zipAlignEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        compose true
+    }
+
+    testOptions {
+        // 音质解析链在 JVM 单测里会走 android.util.Log（QualityTrace）：
+        // 返回默认值而不是抛"not mocked"，使 A1/A6 这类数据层断言能纯 JVM 验证
+        unitTests.returnDefaultValues = true
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["libs"]
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+        }
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    composeCompiler {
+        enableStrongSkippingMode = true
+        stabilityConfigurationFile = file "${project.rootDir}/stability_config.conf"
+    }
+
+}
+
+dependencies {
+    implementation fileTree(include: ["*.*"], dir: "libs")
+    implementation project(':overscroll_core')
+
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
+    implementation 'androidx.activity:activity-compose:1.9.1'
+
+    implementation "androidx.compose.foundation:foundation:1.10.2"
+    implementation "androidx.compose.animation:animation:1.10.2"
+    implementation "androidx.compose.ui:ui:1.10.2"
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.compose.runtime:runtime-livedata:1.10.2'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+    androidTestImplementation "androidx.compose.foundation:foundation:1.10.2"
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    implementation "io.github.kyant0:backdrop:1.0.5"
+    implementation "io.github.kyant0:shapes:1.0.0"
+
+    implementation 'androidx.compose.material3:material3:1.4.0'
+    implementation 'androidx.compose.material:material-icons-core:1.6.8'
+    implementation 'androidx.compose.material:material-icons-extended:1.6.8'
+
+    implementation "io.coil-kt:coil-compose:2.5.0"
+
+    implementation 'com.google.accompanist:accompanist-insets:0.16.1'
+    implementation 'com.google.accompanist:accompanist-insets-ui:0.16.1'
+    implementation 'androidx.navigation:navigation-compose:2.7.7'
+    implementation "com.google.accompanist:accompanist-systemuicontroller:0.23.1"
+
+    implementation('com.blankj:utilcodex:1.31.1') {
+        exclude group: 'androidx.appcompat'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-android-extensions-runtime'
+    }
+
+    def media3_version = "1.4.0"
+    implementation "androidx.media3:media3-session:$media3_version"
+    implementation "androidx.media3:media3-exoplayer:$media3_version"
+    implementation "androidx.media3:media3-exoplayer-dash:$media3_version"
+
+    implementation 'com.tencent:mmkv-static:1.3.5'
+
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // POC Native online music playback - OkHttp for Rust server client
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    implementation 'com.github.xiaowine:Lyric-Getter-Api:6.0.0'
+
+    implementation "com.github.Kyant0:taglib:1.0.0-alpha22"
+
+    implementation "com.google.accompanist:accompanist-pager:0.20.2"
+
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+
+    implementation('io.github.alexzhirkevich:cupertino:0.1.0-alpha04')
+    implementation('io.github.alexzhirkevich:cupertino-icons-extended:0.1.0-alpha04')
+
+    implementation "androidx.core:core-splashscreen:1.0.1"
+
+    implementation "com.github.FunnySaltyFish.ComposeDataSaver:data-saver:1.1.9"
+
+    implementation "com.github.promeg:tinypinyin:2.0.2"
+
+    implementation("dev.chrisbanes.haze:haze:2.0.1")
+    implementation("dev.chrisbanes.haze:haze-blur:2.0.1")
+    implementation("dev.chrisbanes.haze:haze-blur-materials:2.0.1")
+}

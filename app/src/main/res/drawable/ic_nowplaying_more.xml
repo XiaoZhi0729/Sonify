@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:height="28dp"
+    android:width="28dp"
+    android:viewportWidth="28.0"
+    android:viewportHeight="28.0">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M14,14m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"
+        android:strokeColor="#00000000"
+        android:strokeWidth="1.0"
+        android:fillAlpha="0.1"
+        android:fillType="evenOdd" />
+    <!-- 三个点原本是竖排（⋮），旋转写进 drawable 本身：以前靠 Compose 侧的
+     graphicsLayer { rotationZ = 90f } 转，而那会连同按钮的命中区域一起转，
+     真机逐点探测实测下来整个图标覆盖区都是死区。背板是圆，转不转看不出。 -->
+    <group
+        android:name="dots"
+        android:rotation="90"
+        android:pivotX="14"
+        android:pivotY="14">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M12,8C12,6.8954 12.8954,6 14,6C15.1046,6 16,6.8954 16,8C16,9.1046 15.1046,10 14,10C12.8954,10 12,9.1046 12,8ZM12,14C12,12.8954 12.8954,12 14,12C15.1046,12 16,12.8954 16,14C16,15.1046 15.1046,16 14,16C12.8954,16 12,15.1046 12,14ZM12,20C12,18.8954 12.8954,18 14,18C15.1046,18 16,18.8954 16,20C16,21.1046 15.1046,22 14,22C12.8954,22 12,21.1046 12,20Z"
+            android:strokeColor="#00000000"
+            android:strokeWidth="1.0"
+            android:fillAlpha="1.0"
+            android:fillType="evenOdd" />
+    </group>
+</vector>

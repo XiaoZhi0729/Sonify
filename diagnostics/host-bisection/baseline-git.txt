@@ -1,0 +1,12 @@
+ M app/build.gradle
+ M app/src/main/java/yos/music/player/MainActivity.kt
+ M app/src/main/java/yos/music/player/ui/pages/settings/performance/userinterface/ScreenCornerSetDialog.kt
+ M app/src/main/java/yos/music/player/ui/widgets/basic/BottomNavgator.kt
+ M app/src/main/java/yos/music/player/ui/widgets/basic/Title.kt
+ M app/src/main/java/yos/music/player/ui/widgets/basic/YosBottomSheetDialog.kt
+ M build.gradle
+ M gradle/wrapper/gradle-wrapper.properties
+ M overscroll_core/build.gradle
+?? app/src/debug/
+?? app/src/main/java/yos/music/player/ui/widgets/liquid/
+?? diagnostics/

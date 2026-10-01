@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   诊断日志导出的共享白名单：只暴露 <getExternalFilesDir>/logs（含 reports 子目录）。
+   设置页"导出诊断日志"用 FileProvider 把报告交给系统分享面板，因此不申请任何存储权限。
+-->
+<paths>
+    <external-files-path
+        name="diag_logs"
+        path="logs" />
+    <files-path
+        name="diag_logs_internal"
+        path="logs" />
+</paths>

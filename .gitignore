@@ -1,0 +1,99 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/debug/
+/app/release/
+
+# Build logs
+*.log
+*_log*.txt
+
+# 调试残留 & 临时诊断
+diagnostics/
+_diag/
+_audit_tmp/
+_gfx_tab.txt
+_nav.xml
+_dump.xml
+NUL
+
+# 本地恢复备份 & 一次性实验稿（远端不需要）
+_recovery_*/
+_handoff_backup_*/
+_handoff/
+HANDOFF_*.md
+worktree.diff
+
+# 系统/macOS 跨平台噪音
+__MACOSX/
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# 一次性诊断产物（2026-09-25 扩展，只追加不改动上方已有模式）
+# 全部以 / 锚定仓库根目录：app/、overscroll_core/、tools/、gradle/
+# 等规范源码目录内的同名文件不受影响。
+# 根目录不作为产物存放处，因此按扩展族整体屏蔽，而不是逐个枚举前缀
+# （_mc_* / ab*_ / abl_* / hl_* / onyx_* / liquid_* / opd_* / flamingo_* ...
+#  这些前缀每轮排查都会新增，逐个列举必然失效）。
+# 确需入库的根目录文件，在末尾用 !/文件名 单独放行。
+# ============================================================
+
+# 根目录截图 / 抓帧图像（_*.png、home*.png、s1m_*.png、*_crop_*.png 等）
+/*.png
+/*.jpg
+/*.jpeg
+
+# A/B 采样日志、trace 提取 SQL、状态 dump、度量表、 Perfetto 配置
+# （ab*_*.txt、_cmsgE.txt、_journal_full.txt、q_*.sql、_diag_*.xml 等）
+/*.txt
+/*.sql
+/*.csv
+/*.xml
+/*.pbtxt
+
+# 诊断辅助脚本与补丁快照（_*.patch、*_sign_install.sh、onyx_*.sh）
+/*.sh
+/*.patch
+
+# Perfetto 追踪与已签名 / 待签名安装包
+/*.pftrace
+/*.ApK
+/*.apk
+/*.idsig
+
+# 备份 / 临时 / 工具产物目录（整个目录不进入改动视野）
+/_backup_*/
+/_coil_src/
+/_plcap*/
+/_tmp_*/
+# 本次液态玻璃性能排查的取证暂存：反编译产物、竞品 APK、视觉 A/B 截图
+/_glass_probe/
+/_ref_apks/
+/_vis_ab/
+
+# Agent / IDE 工具输出（分析报告、临时 worktree）
+/.qoder/
+/.claude/
+
+# 临时诊断与脚本残留
+_artifacts/
+_diag_interrupt/
+/_lc_*.py
+/_tmp_*.py
+/_v_scan.py
+/_zone_parse.py
+classes.dex
+bfts_logo/
