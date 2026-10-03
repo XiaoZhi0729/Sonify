@@ -984,8 +984,8 @@ class MainActivity : BaseActivity() {
                                     val shellAnimating = dragActive.value ||
                                         playerMotionJob.value != null
                                     val shellAnimFill = Color.White withNight Color.Black
-                                    // 盖层不透明度：动画期 0.95，结束时 0（露出原材质）。
-                                    // 两个方向都用 0.2s 过渡，避免瞬间切换。
+                                    // 盖层不透明度：动画期 0.8（见下方覆盖层 0.8f 系数），结束时 0
+                                    // （露出原材质）。两个方向都用 0.2s 过渡，避免瞬间切换。
                                     val animFillAlpha by animateFloatAsState(
                                         targetValue = if (shellAnimating) 1f else 0f,
                                         animationSpec = tween(durationMillis = 200),
@@ -1209,15 +1209,32 @@ class MainActivity : BaseActivity() {
                                                     // 关闭工具栏液态玻璃时，与底栏使用同一个 Kyant
                                                     // drawBackdrop backend，避免 Haze 与底栏的 surface
                                                     // 合成顺序不同而产生颜色偏差。
+                                                    // 动画期门禁与上方液态玻璃分支完全对齐：
+                                                    //  - backdrop 内容（blur 12dp 全屏合成）运动期停画，
+                                                    //    颜色由下方统一的纯色过渡层接管；
+                                                    //  - 投影环每帧 record 一个比壳大 radius*4 的离屏层，
+                                                    //    沿用玻璃分支同一条 0.5 门禁与 alpha 渐隐。
+                                                    // 缺了这两条门禁时，动画期节点尺寸逐帧变化会让
+                                                    // blur 蒙版与投影离屏层反复重录——这就是
+                                                    // "关闭液态玻璃时展开卡顿"的主因。
                                                     Modifier.drawBackdrop(
                                                         backdrop = navBackdrop,
                                                         shape = { shellShape },
                                                         effects = { blur(12.dp.toPx()) },
                                                         highlight = { null },
                                                         shadow = {
-                                                            com.kyant.backdrop.shadow.Shadow.Default
+                                                            if (shellInMotion(glassProbe, dragActive.value,
+                                                                    playerMotionJob.value != null) ||
+                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                            ) null
+                                                            else com.kyant.backdrop.shadow.Shadow.Default.copy(
+                                                                alpha = 1f - smoothStep(0f, 0.50f, yosBottomSheetConfig.progress)
+                                                            )
                                                         },
                                                         innerShadow = { null },
+                                                        onDrawBackdrop = { drawBackdrop ->
+                                                            if (!shellAnimating) drawBackdrop()
+                                                        },
                                                         onDrawSurface = {
                                                             if (!shellAnimating) {
                                                                 drawRect(color.copy(alpha = hazeSurfaceAlpha))
@@ -1230,10 +1247,14 @@ class MainActivity : BaseActivity() {
                                             )
                                             // 动画期 80% 纯色覆盖层（0.2s 过渡淡入淡出）：动画开始淡入到
                                             // 80%，结束淡出露出原材质；两方向均 0.2s，不瞬间切换。
-                                            // 仅在**液态玻璃**模式下启用；HAZE 模式（关闭工具栏液态玻璃）
-                                            // 下不加此覆盖层——动画期直接由 Haze 磨砂渲染。
+                                            // 液态玻璃与关闭液态玻璃（Kyant drawBackdrop）两种材质都启用：
+                                            // 关闭玻璃的分支表面层在动画期停画，若没有这层接管颜色，
+                                            // 迷你条会从"85% 表面色"跳到"模糊内容透底"再跳回——
+                                            // 这就是静止态与动画态色差的来源。
+                                            // SmoothnessTest 走纯色 background，再叠 80% 层反而改变
+                                            // 它的颜色，故排除。
                                             .then(
-                                                if (SettingsLibrary.BarBlurEffect && animFillAlpha > 0.001f) {
+                                                if (!SettingsLibrary.SmoothnessTest && animFillAlpha > 0.001f) {
                                                     Modifier.background(
                                                         shellAnimFill.copy(alpha = 0.8f * animFillAlpha),
                                                         shellShape
