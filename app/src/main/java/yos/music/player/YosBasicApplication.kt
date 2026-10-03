@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import yos.music.player.code.MediaController.mediaControl
 import yos.music.player.code.MediaController.playingMusicList
 import yos.music.player.code.YosPlaybackService
@@ -204,7 +205,11 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                             }
 
                             if (playListData.playingMusicList != null) {
-                                playingMusicList.value = playListData.playingMusicList
+                                // 该协程在 IO 线程;state 写入须回到 Main,避免主线程
+                                // 组合/measure 中途读到换帧数据(见 PlayingList 越界崩溃)
+                                withContext(Dispatchers.Main) {
+                                    playingMusicList.value = playListData.playingMusicList
+                                }
                             }
                         }
 

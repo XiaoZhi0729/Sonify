@@ -552,7 +552,9 @@ object MediaController {
 
             println("prepare 调用切列表")
             if (!play && playingMusicList.value == null) {
-                playingMusicList.value = thisMusicList
+                // 必须在 Main 线程写入:IO 线程写 snapshot state 会让主线程
+                // measure 中的 LazyColumn 当帧读到新列表,而 key 快照还是旧的(越界崩溃)
+                withContext(Dispatchers.Main) { playingMusicList.value = thisMusicList }
                 //refresh(music)
                 withContext(Dispatchers.Main) {
                     mediaControl?.shuffleModeEnabled = shuffleModeEnabled
@@ -560,7 +562,7 @@ object MediaController {
                     mediaControl?.let { YosPlaybackService().setCustomButtons(it) }
                 }
             } else {
-                playingMusicList.value = thisMusicList
+                withContext(Dispatchers.Main) { playingMusicList.value = thisMusicList }
             }
 
             if (play) {

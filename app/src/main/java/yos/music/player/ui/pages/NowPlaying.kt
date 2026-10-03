@@ -1467,8 +1467,8 @@ internal fun PlayingList(
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                             itemsIndexed(
-                                musicList.value ?: emptyList(),
-                                key = { index, _ -> queueKeys[index] }
+                                queueItems,
+                                key = { index, _ -> queueKeys.getOrNull(index) ?: "index:$index" }
                             ) { index, music ->
                                 val currentDragGeometry = displayGeometry?.takeIf { dragLatched }
                                 val currentDragIndex = currentDragGeometry?.fromIndex
