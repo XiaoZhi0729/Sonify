@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -38,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
@@ -73,7 +78,7 @@ import yos.music.player.ui.widgets.basic.preloadRawCover
  * - 多类型结果 Tab：歌曲 / 专辑 / 歌单 / 歌词，按类型缓存（切 Tab 不重搜）
  *   - 专辑 → OnlineAlbumObject + OnlineAlbumDetail；歌单 → PlaylistSelection(gcid) → OnlinePlaylistDetail
  *   - 歌词结果副标题展示命中片段，点击同歌曲整列表播放
- * - 歌曲 Tab 滚动分页（每页 20，末尾"加载更多"）
+ * - 歌曲 Tab 滚动分页（每页 20，滚动到底前自动加载，空页/去重后无新增即到底）
  * 状态保持：全部关键状态存 [SearchObject]（进程级 holder），切 Tab 原样恢复不重搜。
  */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
@@ -90,6 +95,11 @@ fun SearchPage(
     val queue = SearchObject.queue
     val status = SearchObject.status
     val busy = remember("SearchPage_busy") { mutableStateOf(false) }
+    // 歌曲 Tab 滚动分页：服务端翻页边界有重叠(实测 p1∩p2 有重复)，按 hash 去重后
+    // 全部重复/空页才算到底；页码独立计数，不能用 size/PAGE_SIZE 推算
+    val songEndReached = remember("SearchPage_songEndReached") { mutableStateOf(false) }
+    val songNextPage = remember("SearchPage_songNextPage") { mutableStateOf(2) }
+    val listState = rememberLazyListState()
 
     val scope = rememberCoroutineScope()
 
@@ -127,6 +137,8 @@ fun SearchPage(
         if (keyword.isEmpty() || busy.value) return
         busy.value = true
         status.value = "loading"
+        songEndReached.value = false
+        songNextPage.value = 2
         SearchObject.resetForNewSearch()
         SearchObject.lastSearched.value = keyword
         scope.launch {
@@ -188,6 +200,48 @@ fun SearchPage(
         }
     }
 
+    /**
+     * 歌曲 Tab 滚动分页：拉取 [songNextPage] 页并按 hash 去重追加。
+     * 去重后无新增（空页或与服务端翻页重叠全弹）置 [songEndReached]，之后不再请求；
+     * 请求失败保持页码不变，下次滚动触发重试。
+     */
+    fun loadMoreSongs() {
+        if (busy.value || songEndReached.value) return
+        if (SearchObject.currentType.value != SearchObject.TYPE_SONG) return
+        if (results.value.isEmpty()) return
+        val keyword = SearchObject.lastSearched.value ?: return
+        busy.value = true
+        val page = songNextPage.value
+        scope.launch {
+            KugouRepository.searchSongs(keyword, page, PAGE_SIZE)
+                .onSuccess { more ->
+                    val existing = results.value.map { it.hash }.toHashSet()
+                    val fresh = more.filter { it.hash !in existing }
+                    if (fresh.isEmpty()) {
+                        songEndReached.value = true
+                    } else {
+                        results.value = results.value + fresh
+                        queue.value = queue.value + fresh.map {
+                            KugouRepository.toQueueMediaItem(it)
+                        }
+                        songNextPage.value = page + 1
+                    }
+                }
+            busy.value = false
+        }
+    }
+
+    // 滚动到底自动加载（距底部 ≤6 项触发），同 NewAlbumsDetail/RecommendPlaylistsDetail 模式
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 6
+        }.distinctUntilChanged().collect { nearBottom ->
+            if (nearBottom) loadMoreSongs()
+        }
+    }
+
     /** 歌词结果点击：以歌词结果列表为播放上下文，从点击处整列表播放。 */
     fun playLyricSong(item: KugouLyricSearchResult) {
         val list = SearchObject.lyricResults.value.map { KugouRepository.toQueueMediaItem(it.song) }
@@ -214,7 +268,8 @@ fun SearchPage(
         onTopRightIcon = {
             openSettings()
         },
-        extraTopPadding = 57.dp
+        extraTopPadding = 57.dp,
+        listState = listState
     ) {
         item("SearchField") {
             SearchTextField(
@@ -408,32 +463,20 @@ fun SearchPage(
                                 OnlineListItemDivider()
                             }
                         }
-                        // 滚动分页：整页(20条)已满才给入口，拉到空页自动隐藏
-                        if (results.value.isNotEmpty() && results.value.size % PAGE_SIZE == 0) {
-                            item("load_more") {
-                                Text(
-                                    text = stringResource(id = R.string.search_load_more),
-                                    fontSize = 14.sp,
-                                    modifier = Modifier
+                        // 滚动分页：距底自动加载，加载中在尾部显示小指示器
+                        if (busy.value && results.value.isNotEmpty()) {
+                            item("load_more_footer") {
+                                Box(
+                                    Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            if (busy.value) return@clickable
-                                            busy.value = true
-                                            val nextPage = results.value.size / PAGE_SIZE + 1
-                                            scope.launch {
-                                                KugouRepository.searchSongs(keyword, nextPage, PAGE_SIZE)
-                                                    .onSuccess { more ->
-                                                        results.value = results.value + more
-                                                        queue.value = queue.value + more.map {
-                                                            KugouRepository.toQueueMediaItem(it)
-                                                        }
-                                                    }
-                                                busy.value = false
-                                            }
-                                        }
                                         .padding(vertical = 14.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                }
                             }
                         }
                     }

@@ -199,6 +199,8 @@ fun Title(
     // 大标题水平 padding：默认 20dp（主页/详情页内容体系）；
     // 设置系页面/资料库用 ListHeader(32dp) 分组标题，传 32.dp 与之对齐。
     titleHorizontalPadding: Dp = 20.dp,
+    // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
+    listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit
 ) =
     BaseTitle(
@@ -209,6 +211,7 @@ fun Title(
         onRightIcon = onRightIcon,
         rightBarIcon = rightBarIcon,
         grid = false,
+        listState = listState,
         bottomPadding = bottomPadding,
         extraTopPadding = extraTopPadding,
         topRightIcon = topRightIcon,
@@ -264,6 +267,8 @@ private fun BaseTitle(
     topRightIcon: ImageVector? = null,
     onTopRightIcon: (() -> Unit)? = null,
     gridState: LazyGridState = rememberLazyGridState(),
+    // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
+    listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
     content: Any
 ) {
@@ -295,6 +300,7 @@ private fun BaseTitle(
             topRightIcon = topRightIcon,
             onTopRightIcon = onTopRightIcon,
             titleHorizontalPadding = titleHorizontalPadding,
+            listState = listState,
             content = content as LazyListScope.() -> Unit
         )
     }
@@ -439,10 +445,12 @@ private fun BaseTitleList(
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
     onTopRightIcon: (() -> Unit)? = null,
+    // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
+    listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
     content: LazyListScope.() -> Unit
 ) {
-    val state = rememberLazyListState()
+    val state = listState
     // Nexio 式二态折叠：大标题触及栏缘前不透明、没入后小标题才出现、松手吸附到两端
     val collapse = rememberTitleCollapse(state, extraTopPadding)
 
