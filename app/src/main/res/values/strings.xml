@@ -271,6 +271,11 @@
     <string name="settings_performance_lyric_line_balance_desc">Balance the number of characters per line in the lyrics to make the layout more neat. There may be side effects for lyrics in certain languages.</string>
     <string name="settings_others_about_contact_us">Contact Us</string>
     <string name="settings_others_about_contact_us_desc">Visit our Telegram channel.</string>
+    <string name="settings_others_about_developer_coolapk">Visit the developer\'s CoolApk profile.</string>
+    <string name="settings_others_about_contact_developer">Contact Developer</string>
+    <string name="settings_others_about_acknowledgements">Acknowledgements</string>
+    <string name="settings_others_about_ack_projects">Projects</string>
+    <string name="settings_others_about_ack_libraries">Open-Source Libraries</string>
     <string name="settings_others_diag_title">Diagnostics Log</string>
     <string name="settings_others_diag_desc">Writes playback events to app storage. Screen-off silence, auto-skip storms and buffering stalls can only be located afterwards with it.</string>
     <string name="settings_others_diag_export">Export Diagnostics</string>

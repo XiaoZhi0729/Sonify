@@ -181,6 +181,11 @@
     <string name="settings_performance_lyric_line_balance_desc">將歌詞的每行字數進行平衡，使版式更整齊。對於某些語言的歌詞，可能存在副作用。</string>
     <string name="settings_others_about_contact_us">聯繫我們</string>
     <string name="settings_others_about_contact_us_desc">前往我們的 Telegram 頻道。</string>
+    <string name="settings_others_about_developer_coolapk">前往開發者的酷安主頁。</string>
+    <string name="settings_others_about_contact_developer">聯繫開發者</string>
+    <string name="settings_others_about_acknowledgements">致謝</string>
+    <string name="settings_others_about_ack_projects">項目</string>
+    <string name="settings_others_about_ack_libraries">開源庫</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">顯示音量條</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">在播放界面的下部顯示音量調節條。</string>
     <string name="settings_performance_ui_theme">主題</string>

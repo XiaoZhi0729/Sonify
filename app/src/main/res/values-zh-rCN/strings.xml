@@ -271,6 +271,11 @@
     <string name="settings_performance_lyric_line_balance_desc">将歌词的每行字数进行平衡，使版式更整齐。对于某些语言的歌词，可能存在副作用。</string>
     <string name="settings_others_about_contact_us">联系我们</string>
     <string name="settings_others_about_contact_us_desc">前往我们的 Telegram 频道。</string>
+    <string name="settings_others_about_developer_coolapk">前往开发者的酷安主页。</string>
+    <string name="settings_others_about_contact_developer">联系开发者</string>
+    <string name="settings_others_about_acknowledgements">致谢</string>
+    <string name="settings_others_about_ack_projects">项目</string>
+    <string name="settings_others_about_ack_libraries">开源库</string>
     <string name="settings_others_diag_title">诊断日志</string>
     <string name="settings_others_diag_desc">把播放相关事件写进应用存储。熄屏无声、自动跳歌、卡缓冲这类问题，只有靠它才能事后定位。</string>
     <string name="settings_others_diag_export">导出诊断日志</string>

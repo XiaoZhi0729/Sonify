@@ -181,6 +181,11 @@
     <string name="settings_performance_lyric_line_balance_desc">歌詞の各行の文字数をバランスさせ、レイアウトを整えます。特定の言語の歌詞には副作用がある可能性があります。</string>
     <string name="settings_others_about_contact_us">お問い合わせ</string>
     <string name="settings_others_about_contact_us_desc">Telegram チャンネルにアクセスしてください。</string>
+    <string name="settings_others_about_developer_coolapk">開発者のCoolApkページへ。</string>
+    <string name="settings_others_about_contact_developer">開発者に連絡</string>
+    <string name="settings_others_about_acknowledgements">謝辞</string>
+    <string name="settings_others_about_ack_projects">プロジェクト</string>
+    <string name="settings_others_about_ack_libraries">オープンソースライブラリ</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">音量バーを表示</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">再生画面の下部に音量調節バーを表示します。</string>
     <string name="settings_performance_ui_theme">テーマ</string>

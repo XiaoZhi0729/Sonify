@@ -9,8 +9,7 @@ android {
     compileSdk 37
 
     defaultConfig {
-        // 对照安装专用：加 .oss 后缀避免覆盖手机上已安装的正式版 Flamingo
-        applicationId "yos.music.player.oss"
+        applicationId "com.sonify.music"
         minSdk 23
         targetSdk 34
         versionCode 1

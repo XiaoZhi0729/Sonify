@@ -99,6 +99,7 @@ interface UI {
             const val ExoplayerSetting = "ExoplayerSetting"
             const val OnlineQualitySetting = "OnlineQualitySetting"
             const val About = "About"
+            const val Acknowledgements = "Acknowledgements"
             const val MediaCodec = "MediaCodec"
 
             const val LyricSetting = "LyricSetting"
