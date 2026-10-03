@@ -11,17 +11,17 @@
 ![Platform](https://img.shields.io/badge/Platform-Android%206.0%2B-green)
 ![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-red)
 
-## ✨ 特性
+## 特性
 
-- **🌊 液态玻璃 UI** — 基于自研 backdrop 采样/模糊管线，迷你播放条、全屏播放页与底部导航都是实时磨砂玻璃质感，封面色彩随歌曲流动。
-- **🎧 在线曲库** — 酷狗音源搜索、精选歌单与每日推荐；支持手机号验证码登录。
-- **🎚 多音质切换** — 标准到超高音质自由切换，切换过程带探测与失败自动回退，不中断播放。
-- **📝 歌词** — 逐行高亮歌词与翻译，支持状态栏歌词（Hook 方案）。
-- **🎛 完整播放功能** — 倍速播放、睡眠定时器、播放队列拖拽编辑、最近播放。
-- **📱 手机 / 平板双形态** — 平板横屏分栏布局，一台设备两种体验。
-- **🔮 后台播放** — 基于 Media3 / MediaSession，后台稳定播放，通知栏与蓝牙耳机线控齐全。
+- **液态玻璃 UI** — 基于自研 backdrop 采样/模糊管线，迷你播放条、全屏播放页与底部导航都是实时磨砂玻璃质感，封面色彩随歌曲流动。
+- **在线曲库** — 酷狗音源搜索、精选歌单与每日推荐；支持手机号验证码登录。
+- **多音质切换** — 标准到超高音质自由切换，切换过程带探测与失败自动回退，不中断播放。
+- **歌词** — 逐行高亮歌词与翻译，支持状态栏歌词（Hook 方案）。
+- **完整播放功能** — 倍速播放、睡眠定时器、播放队列拖拽编辑、最近播放。
+- **手机 / 平板双形态** — 平板横屏分栏布局，一台设备两种体验。
+- **后台播放** — 基于 Media3 / MediaSession，后台稳定播放，通知栏与蓝牙耳机线控齐全。
 
-## 📷 截图
+## 截图
 
 | 主页 | 播放页 | 歌词 |
 |---|---|---|
@@ -36,7 +36,7 @@
   </tr>
 </table>
 
-## ⬇️ 下载
+## 下载
 
 前往 [**Releases**](https://github.com/XiaoZhi0729/Sonify/releases) 页面下载最新 APK 安装包。
 
@@ -44,7 +44,7 @@
 
 > 需要 Android 6.0（API 23）及以上。小米/Redmi（HyperOS）设备建议在「省电策略」中设为无限制并允许自启动，否则息屏后播放可能被冻结。
 
-## 🙏 致谢
+## 致谢
 
 本项目是以下两个开源项目的「缝合」产物，在此向两位上游作者致谢：
 
@@ -71,7 +71,7 @@
 [TagLib](https://github.com/Kyant0/taglib) ·
 [Lyric Getter API](https://github.com/xiaowine/Lyric-Getter-Api)
 
-## 🛠 构建与测试
+## 构建与测试
 
 仓库自带 Gradle wrapper（Gradle 9.3.1），需要 **JDK 17+** 与
 Android Studio（SDK 37）。Windows PowerShell 下把 `./gradlew` 换成 `.\gradlew.bat`，
@@ -94,7 +94,7 @@ Android Studio（SDK 37）。Windows PowerShell 下把 `./gradlew` 换成 `.\gra
 说明：`release` 构建类型已启用混淆与资源收缩（`minifyEnabled`/`shrinkResources`），
 但仓库不包含签名配置；签名与发布流程属于本地发布环节。
 
-## 🧩 架构速览
+## 架构速览
 
 单 Activity 架构，UI 全部使用 Jetpack Compose，播放内核基于 AndroidX Media3。
 
@@ -110,7 +110,7 @@ Android Studio（SDK 37）。Windows PowerShell 下把 `./gradlew` 换成 `.\gra
 
 欢迎 Issue 与 PR。提交前请先运行 `./gradlew test` 确认单测通过。
 
-## ⚖️ License 与免责声明
+## License 与免责声明
 
 本项目基于 [GPL-3.0](LICENSE) 协议开源。
 
