@@ -300,4 +300,24 @@
         <item>六</item>
         <item>日</item>
     </string-array>
+
+    <!-- 每日推荐 / 私人FM / 歌手详情（Discovery 快捷入口 + 激活 /artist 死代码） -->
+    <string name="home_everyday_recommend_title">每日推荐</string>
+    <string name="home_everyday_recommend_subtitle">根据你的口味生成</string>
+    <string name="home_everyday_recommend_date">%1$d月%2$d日</string>
+    <string name="everyday_recommend_empty">今日推荐暂时为空</string>
+    <string name="everyday_recommend_login_hint">登录后可获取个性化每日推荐</string>
+    <string name="home_personal_fm_title">私人电台</string>
+    <string name="home_personal_fm_subtitle">随心聆听</string>
+    <string name="personal_fm_login_hint">登录后可收听私人电台</string>
+    <string name="personal_fm_empty">暂时没有推荐歌曲</string>
+    <string name="personal_fm_refresh">换一批</string>
+    <string name="artist_detail_follow">关注</string>
+    <string name="artist_detail_unfollow">已关注</string>
+    <string name="artist_detail_songs">%1$d 首歌曲</string>
+    <string name="artist_detail_albums">%1$d 张专辑</string>
+    <string name="artist_detail_search_hint">在该歌手内搜索</string>
+    <string name="artist_detail_search_empty">没有匹配的歌曲</string>
+    <string name="artist_detail_empty">未找到该歌手的歌曲</string>
+    <string name="artist_detail_not_found">未找到该歌手</string>
 </resources>

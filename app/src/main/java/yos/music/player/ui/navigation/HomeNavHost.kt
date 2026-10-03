@@ -12,13 +12,16 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.discovery.Discovery
+import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
 import yos.music.player.ui.pages.discovery.NewAlbumsDetail
 import yos.music.player.ui.pages.discovery.NewSongsDetail
 import yos.music.player.ui.pages.discovery.OnlineAlbumDetail
+import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.discovery.RankDetail
 import yos.music.player.ui.pages.discovery.RankListDetail
 import yos.music.player.ui.pages.discovery.RecentPlayedDetail
 import yos.music.player.ui.pages.discovery.RecommendPlaylistsDetail
+import yos.music.player.ui.pages.library.artists.ArtistDetail
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
@@ -48,6 +51,18 @@ fun HomeNavHost(
                 )
             }
             composable(UI.RecentPlayedDetail) { RecentPlayedDetail(navController) }
+            composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
+            composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
+            composable(
+                route = UI.ArtistDetailPattern,
+                arguments = artistDetailArguments()
+            ) { entry ->
+                ArtistDetail(
+                    navController = navController,
+                    artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
+                )
+            }
             composable(UI.RecommendPlaylistsDetail) {
                 RecommendPlaylistsDetail(
                     navController = navController,

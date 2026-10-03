@@ -192,4 +192,23 @@
     <string name="settings_performance_ui_theme_light">ライト</string>
     <string name="settings_performance_ui_theme_dark">ダーク</string>
     <string name="settings_performance_ui_theme_auto">システムに従う</string>
+
+    <string name="home_everyday_recommend_title">デイリーリコメンド</string>
+    <string name="home_everyday_recommend_subtitle">あなたのために</string>
+    <string name="home_everyday_recommend_date">%1$d月%2$d日</string>
+    <string name="everyday_recommend_empty">今日のおすすめはまだありません</string>
+    <string name="everyday_recommend_login_hint">ログインするとパーソナライズされたおすすめをお届けします</string>
+    <string name="home_personal_fm_title">パーソナルFM</string>
+    <string name="home_personal_fm_subtitle">いつでも聴く</string>
+    <string name="personal_fm_login_hint">ログインするとパーソナルFMを聴けます</string>
+    <string name="personal_fm_empty">おすすめの楽曲はまだありません</string>
+    <string name="personal_fm_refresh">更新</string>
+    <string name="artist_detail_follow">フォロー</string>
+    <string name="artist_detail_unfollow">フォロー中</string>
+    <string name="artist_detail_songs">楽曲 %1$d</string>
+    <string name="artist_detail_albums">アルバム %1$d</string>
+    <string name="artist_detail_search_hint">アーティスト内を検索</string>
+    <string name="artist_detail_search_empty">一致する楽曲がありません</string>
+    <string name="artist_detail_empty">このアーティストの楽曲が見つかりません</string>
+    <string name="artist_detail_not_found">アーティストが見つかりません</string>
 </resources>

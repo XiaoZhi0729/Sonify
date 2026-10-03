@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +53,7 @@ import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouAlbumDetail
+import yos.music.player.ui.UI
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.pages.library.DetailPageHeader
@@ -205,7 +207,7 @@ fun OnlineAlbumDetail(
                             stringResource(id = R.string.online_playlists_song_unit),
                         intro = detail.value?.intro,
                         extraLines = {
-                            // 歌手名（详情优先，失败用选中专辑字段兜底）
+                            // 歌手名（详情优先，失败用选中专辑字段兜底）；点击进入歌手详情页
                             val artistName = detail.value?.artistName?.takeIf { it.isNotEmpty() }
                                 ?: album.singerName
                             if (artistName.isNotEmpty()) {
@@ -218,6 +220,14 @@ fun OnlineAlbumDetail(
                                     modifier = Modifier
                                         .alpha(0.6f)
                                         .padding(top = 2.dp)
+                                        .clickable {
+                                            navController.navigate(
+                                                UI.artistDetailRoute(
+                                                    artistId = detail.value?.artistId,
+                                                    artistName = artistName
+                                                )
+                                            )
+                                        }
                                 )
                             }
 
@@ -293,7 +303,7 @@ fun OnlineAlbumDetail(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    // 歌手名（详情优先，失败用选中专辑字段兜底）
+                    // 歌手名（详情优先，失败用选中专辑字段兜底）；点击进入歌手详情页
                     val artistName = detail.value?.artistName?.takeIf { it.isNotEmpty() } ?: album.singerName
                     if (artistName.isNotEmpty()) {
                         Text(
@@ -306,6 +316,14 @@ fun OnlineAlbumDetail(
                             modifier = Modifier
                                 .alpha(0.6f)
                                 .padding(top = 2.dp)
+                                .clickable {
+                                    navController.navigate(
+                                        UI.artistDetailRoute(
+                                            artistId = detail.value?.artistId,
+                                            artistName = artistName
+                                        )
+                                    )
+                                }
                         )
                     }
 

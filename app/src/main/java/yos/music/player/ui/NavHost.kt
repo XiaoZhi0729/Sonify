@@ -86,6 +86,29 @@ interface UI {
         // 最近播放完整列表（主页「最近播放」查看全部；入口在主页 Tab）
         const val RecentPlayedDetail = "RecentPlayedDetail"
 
+        // 每日推荐（主页顶部入口卡；登录可见，未登录走通用推荐）
+        const val EverydayRecommendDetail = "EverydayRecommendDetail"
+
+        // 私人FM（主页顶部入口卡；需登录）
+        const val PersonalFmDetail = "PersonalFmDetail"
+
+        // 歌手详情（本地歌手列表点击 / 在线场景入口；artistId 可空，为空时按 artistName 搜索解析）
+        const val ArtistDetail = "ArtistDetail"
+        const val ArtistDetailIdArg = "artistId"
+        const val ArtistDetailNameArg = "artistName"
+        const val ArtistDetailPattern =
+            "$ArtistDetail?$ArtistDetailIdArg={$ArtistDetailIdArg}" +
+                    "&$ArtistDetailNameArg={$ArtistDetailNameArg}"
+
+        fun artistDetailRoute(artistId: String?, artistName: String): String = buildString {
+            append(ArtistDetail)
+            append("?")
+            append(ArtistDetailIdArg).append("=")
+                .append(java.net.URLEncoder.encode(artistId ?: "", "UTF-8"))
+            append("&").append(ArtistDetailNameArg).append("=")
+                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+        }
+
         const val AlbumInfo = "AlbumInfo"
     }
 

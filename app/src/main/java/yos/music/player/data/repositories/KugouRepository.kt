@@ -255,6 +255,26 @@ data class KugouAlbumDetail(
     val artistId: String?
 )
 
+/** 歌手搜索条目（/search/artist 实测 data 直接为数组：singerid/singername/sizable_avatar|imgurl|avatar）。 */
+data class KugouArtistBrief(
+    val singerId: String,
+    val name: String,
+    val avatarUrl: String?
+)
+
+/** 歌手详情（/artist/detail 实测 data 数组取第一个；字段族 singername|author_name /
+ * intro|description|desc / sizable_avatar|imgurl|img|pic|avatar_url / songcount|song_count /
+ * albumcount|album_count / 关注态 is_follow|isfollow|followed）。对齐 Dart KugouArtistDetail。 */
+data class KugouArtistDetailData(
+    val artistId: String,
+    val name: String,
+    val avatarUrl: String?,
+    val intro: String?,
+    val songCount: Int,
+    val albumCount: Int,
+    val isFollowed: Boolean
+)
+
 object KugouRepository {
 
     private const val TAG = "KugouRepository"
@@ -1044,6 +1064,158 @@ object KugouRepository {
                     artworkUrl = resolveArtworkUrl(artwork)
                 )
             }.getOrNull()
+        }
+    }
+
+    /**
+     * 通用 KMR 歌曲数组提取：每日推荐 /personal/fm /artist/audios 的 data 形态不一
+     * （对象包 song_list/songs/list/info，或直接为数组），统一在此归一。
+     */
+    private fun extractSongArray(json: JSONObject): JSONArray? {
+        when (val data = json.opt("data")) {
+            is JSONArray -> return data
+            is JSONObject -> return data.optJSONArray("song_list")
+                ?: data.optJSONArray("songs")
+                ?: data.optJSONArray("list")
+                ?: data.optJSONArray("info")
+        }
+        return json.optJSONArray("song_list")
+            ?: json.optJSONArray("songs")
+            ?: json.optJSONArray("list")
+            ?: json.optJSONArray("info")
+    }
+
+    /**
+     * 通用歌曲条目解析（/recommend/songs、/personal/fm、/artist/audios 共用），
+     * 字段族与 /top/song 同构但键位不定，全部做宽容回退；duration > 10000 视为毫秒。
+     */
+    private fun parseKmrSongItem(s: JSONObject): KugouNewSong? {
+        val transParam = s.optJSONObject("trans_param")
+        val audioInfo = s.optJSONObject("audio_info")
+        val albumInfo = s.optJSONObject("album_info")
+        val hash = s.optString("hash").ifEmpty { s.optString("FileHash") }
+            .ifEmpty { s.optString("Hash128") }
+            .ifEmpty { transParam?.optString("ogg_128_hash") ?: "" }
+            .ifEmpty { audioInfo?.optString("hash") ?: "" }
+        if (hash.isEmpty()) return null
+
+        var author = s.optString("author_name")
+            .ifEmpty { s.optString("SingerName") }
+            .ifEmpty { s.optString("artist_name") }
+            .ifEmpty { s.optString("singername") }
+        if (author.isEmpty()) {
+            val authors = s.optJSONArray("authors")
+            if (authors != null && authors.length() > 0) {
+                author = (0 until authors.length()).mapNotNull { j ->
+                    authors.optJSONObject(j)?.optString("author_name")?.takeIf { it.isNotEmpty() }
+                }.joinToString("、")
+            }
+        }
+        if (author.isEmpty()) {
+            val si = s.optJSONArray("singerinfo")
+            if (si != null && si.length() > 0) {
+                author = (0 until si.length()).mapNotNull { j ->
+                    si.optJSONObject(j)?.optString("name")?.takeIf { it.isNotEmpty() }
+                }.joinToString("、")
+            }
+        }
+
+        val rawName = s.optString("songname").ifEmpty { s.optString("SongName") }
+            .ifEmpty { s.optString("name") }
+            .ifEmpty { s.optString("filename") }
+        var title = rawName
+        val sepIdx = rawName.indexOf(" - ")
+        if (sepIdx > 0) {
+            val rest = rawName.substring(sepIdx + 3)
+            if (rest.isNotBlank()) {
+                if (author.isEmpty()) author = rawName.substring(0, sepIdx)
+                title = rest
+            }
+        }
+
+        val albumName = s.optString("album_name").ifEmpty { s.optString("albumname") }
+            .ifEmpty { albumInfo?.optString("album_name") ?: "" }
+            .takeIf { it.isNotEmpty() }
+
+        val rawDuration = sequenceOf(
+            s.optLong("timelength", -1L),
+            s.optLong("duration", -1L),
+            s.optLong("time_length", -1L),
+            audioInfo?.optLong("duration", -1L) ?: -1L,
+            audioInfo?.optLong("duration_128", -1L) ?: -1L
+        ).firstOrNull { it >= 0 } ?: 0L
+        val durationMs = if (rawDuration > 10000) rawDuration else rawDuration * 1000
+
+        val artwork = s.optString("album_sizable_cover")
+            .ifEmpty { s.optString("sizable_cover") }
+            .ifEmpty { s.optString("Image") }
+            .ifEmpty { s.optString("ImgUrl") }
+            .ifEmpty { s.optString("img") }
+            .ifEmpty { s.optString("pic") }
+            .ifEmpty { s.optString("cover") }
+            .ifEmpty { transParam?.optString("union_cover") ?: "" }
+            .ifEmpty { albumInfo?.optString("sizable_cover") ?: "" }
+            .ifEmpty { albumInfo?.optString("cover") ?: "" }
+
+        return KugouNewSong(
+            hash = hash,
+            name = title,
+            author = author,
+            albumName = albumName,
+            durationMs = durationMs,
+            artworkUrl = resolveArtworkUrl(artwork)
+        )
+    }
+
+    /** 通用歌曲列表解析：提取数组 → 逐项宽容解析，过滤无 hash 条目。 */
+    private fun parseSongDetailList(json: JSONObject): List<KugouNewSong> {
+        val arr = extractSongArray(json) ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            runCatching { parseKmrSongItem(arr.getJSONObject(i)) }.getOrNull()
+        }
+    }
+
+    /**
+     * 每日推荐歌曲（Discovery「每日推荐」；对齐 Dart getRecommendDaily）。
+     * GET /recommend/songs → data.song_list[]（KMR 歌曲字段族，结构不定走通用解析）。
+     * userid 经 authHeader() cookie 带入；未登录 Rust 侧回退 userid=0 的通用推荐。
+     */
+    suspend fun getEverydayRecommendSongs(): Result<List<KugouNewSong>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getRecommendDailySongs().fold(
+                onSuccess = { json -> Result.success(parseSongDetailList(json)) },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getEverydayRecommendSongs exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 私人FM 歌曲列表（Discovery「私人电台」；对齐 Dart getPersonalFm）。
+     * GET /personal/fm → data.song_list[]；需登录（未登录上游返回错误，UI 侧先做登录门控）。
+     */
+    suspend fun getPersonalFmSongs(
+        mode: String = "normal",
+        hash: String = "",
+        songId: String = ""
+    ): Result<List<KugouNewSong>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getPersonalFm(mode = mode, hash = hash, songId = songId).fold(
+                onSuccess = { json ->
+                    val songs = parseSongDetailList(json)
+                    if (songs.isEmpty()) {
+                        Result.failure(IOException("私人FM 未返回歌曲（可能未登录或无可用推荐）"))
+                    } else {
+                        Result.success(songs)
+                    }
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getPersonalFmSongs exception", e)
+            Result.failure(e)
         }
     }
 
@@ -1940,6 +2112,139 @@ object KugouRepository {
                 Result.failure(e)
             }
         }
+
+    /**
+     * 歌手搜索（激活 /search/artist 死代码；对齐 Dart searchArtists）。
+     * 实测 data 直接为数组（兼容 {info:[...]} 包裹形态），头像字段多变走宽容回退。
+     */
+    suspend fun searchArtists(keyword: String): Result<List<KugouArtistBrief>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().searchArtists(keyword).fold(
+                onSuccess = { json ->
+                    val data = json.opt("data")
+                    val arr = when (data) {
+                        is JSONArray -> data
+                        is JSONObject -> data.optJSONArray("info") ?: data.optJSONArray("artists")
+                        else -> null
+                    } ?: return@fold Result.failure<List<KugouArtistBrief>>(
+                        IllegalStateException("歌手搜索响应缺少列表")
+                    )
+                    val artists = (0 until arr.length()).mapNotNull { i ->
+                        runCatching {
+                            val a = arr.getJSONObject(i)
+                            val id = a.optString("singerid", a.optString("artist_id", ""))
+                                .ifEmpty { a.optString("AuthorID", a.optString("author_id", "")) }
+                            val name = a.optString("singername", a.optString("author_name", ""))
+                                .ifEmpty { a.optString("name", "") }
+                            if (id.isEmpty() || name.isEmpty()) return@runCatching null
+                            KugouArtistBrief(
+                                singerId = id,
+                                name = name,
+                                avatarUrl = resolveArtworkUrl(
+                                    a.optString("sizable_avatar")
+                                        .ifEmpty { a.optString("imgurl") }
+                                        .ifEmpty { a.optString("avatar") }
+                                        .ifEmpty { a.optString("img") }
+                                        .ifEmpty { a.optString("pic") }
+                                )
+                            )
+                        }.getOrNull()
+                    }
+                    Result.success(artists)
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "searchArtists exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 歌手详情（对齐 Dart getArtistDetail / KugouArtistDetail.fromJson）。
+     * GET /artist/detail?id= → data 数组取第一个；关注态仅登录时有值。
+     */
+    suspend fun getArtistDetail(artistId: String): Result<KugouArtistDetailData> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getArtistDetail(artistId).fold(
+                onSuccess = { json ->
+                    val item = json.optJSONArray("data")?.optJSONObject(0)
+                        ?: json.optJSONObject("data")?.let { d ->
+                            d.optJSONArray("info")?.optJSONObject(0) ?: d
+                        }
+                        ?: return@fold Result.failure<KugouArtistDetailData>(
+                            IllegalStateException("歌手详情响应为空")
+                        )
+                    val id = item.optString("singerid", item.optString("artist_id", ""))
+                        .ifEmpty { item.optString("AuthorID", item.optString("author_id", artistId)) }
+                        .ifEmpty { artistId }
+                    var name = item.optString("singername").ifEmpty { item.optString("author_name") }
+                        .ifEmpty { item.optString("name") }
+                    if (name.isEmpty()) {
+                        val si = item.optJSONArray("singerinfo")
+                        if (si != null && si.length() > 0) {
+                            name = si.optJSONObject(0)?.optString("name") ?: ""
+                        }
+                    }
+                    val isFollowed = sequenceOf(
+                        item.optInt("is_follow", -1),
+                        item.optInt("isfollow", -1),
+                        item.optInt("followed", -1)
+                    ).firstOrNull { it >= 0 } == 1
+                    Result.success(
+                        KugouArtistDetailData(
+                            artistId = id,
+                            name = name,
+                            avatarUrl = resolveArtworkUrl(
+                                item.optString("sizable_avatar")
+                                    .ifEmpty { item.optString("imgurl") }
+                                    .ifEmpty { item.optString("img") }
+                                    .ifEmpty { item.optString("pic") }
+                                    .ifEmpty { item.optString("avatar_url") }
+                            ),
+                            intro = sequenceOf("intro", "description", "desc")
+                                .map { item.optString(it) }
+                                .firstOrNull { it.isNotEmpty() },
+                            songCount = item.optInt("songcount", item.optInt("song_count", 0)),
+                            albumCount = item.optInt("albumcount", item.optInt("album_count", 0)),
+                            isFollowed = isFollowed
+                        )
+                    )
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getArtistDetail exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 歌手歌曲单页（对齐 Dart getArtistAudios）。GET /artist/audios?id=&page=&pagesize=30
+     * → data.list|songs|info[]；末页由 UI 以「返回不足一页」判断。
+     */
+    suspend fun getArtistAudios(artistId: String, page: Int = 1, pageSize: Int = 30): Result<List<KugouNewSong>> =
+        withContext(Dispatchers.IO) {
+            try {
+                KugouApiService.getInstance().getArtistAudios(artistId, page, pageSize).fold(
+                    onSuccess = { json -> Result.success(parseSongDetailList(json)) },
+                    onFailure = { e -> Result.failure(e) }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getArtistAudios exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 关注歌手。需登录（token/userid 经 authHeader() cookie 带入）。 */
+    suspend fun followArtist(artistId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        KugouApiService.getInstance().followArtist(artistId).map { }
+    }
+
+    /** 取关歌手。需登录（token/userid 经 authHeader() cookie 带入）。 */
+    suspend fun unfollowArtist(artistId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        KugouApiService.getInstance().unfollowArtist(artistId).map { }
+    }
 
     /**
      * 精选歌单推荐（Discovery「精选歌单」横向 Section）。对齐 Dart getPlaylist → /top/playlist。

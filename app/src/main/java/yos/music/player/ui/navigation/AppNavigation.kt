@@ -108,6 +108,20 @@ fun playlistArguments() = listOf(
 fun NavBackStackEntry.playlistSelection(): PlaylistSelection? =
     PlaylistSelection.fromArguments(arguments)
 
+/** 歌手详情路由参数：artistName 必带；artistId 可空（空 = 进页后按名字搜索解析）。 */
+fun artistDetailArguments() = listOf(
+    navArgument(UI.ArtistDetailIdArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    },
+    navArgument(UI.ArtistDetailNameArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    }
+)
+
 @Immutable
 enum class HouseId(
     val rootRoute: String,

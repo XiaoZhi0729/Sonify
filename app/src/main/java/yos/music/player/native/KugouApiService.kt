@@ -770,6 +770,99 @@ class KugouApiService private constructor() {
             }
         }
 
+    /**
+     * 每日推荐歌曲（对齐 Dart getRecommendDaily，kugou_api_client.dart:2180；Rust everyday.rs:43）。
+     *   GET /recommend/songs（Rust → POST everydayrec.service /everyday_song_recommend）
+     * userid 由 authHeader() 经 cookie 带入（Rust 侧缺省回退 "0"，未登录返回通用推荐）。
+     */
+    suspend fun getRecommendDailySongs(): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val (code, body) = httpGetWithRetry("/recommend/songs", emptyMap())
+            Log.d(TAG, "/recommend/songs -> HTTP $code, body length=${body.length}")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/recommend/songs HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getRecommendDailySongs exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 私人FM（对齐 Dart getPersonalFm，kugou_api_client.dart:2312；Rust fm.rs:171）。
+     *   GET /personal/fm?mode&song_pool_id&hash&songid&action（Rust → POST persnfm.service /v2/personal_recommend）
+     * 需登录（userid+token 由 authHeader() cookie 带入）；响应必须绕 apicache——
+     * 2 分钟缓存会让「换一批」拿到同一批歌，故走 httpGetVipBusiness。
+     */
+    suspend fun getPersonalFm(
+        mode: String = "normal",
+        songPoolId: Int = 0,
+        hash: String = "",
+        songId: String = "",
+        action: String = "play"
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("mode", mode)
+                put("song_pool_id", songPoolId.toString())
+                put("action", action)
+                if (hash.isNotEmpty()) put("hash", hash)
+                if (songId.isNotEmpty()) put("songid", songId)
+            }
+            httpGetVipBusiness("/personal/fm", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "getPersonalFm exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 歌手歌曲（对齐 Dart getArtistAudios，kugou_api_client.dart:2489；Rust artist.rs:41）。
+     *   GET /artist/audios?id&page&pagesize（Rust → POST /kmr/v1/audio_group/author）
+     */
+    suspend fun getArtistAudios(artistId: String, page: Int = 1, pageSize: Int = 30): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+                val params = mapOf(
+                    "id" to artistId,
+                    "page" to page.toString(),
+                    "pagesize" to pageSize.toString()
+                )
+                val (code, body) = httpGetWithRetry("/artist/audios", params)
+                Log.d(TAG, "/artist/audios -> HTTP $code, body length=${body.length}")
+                if (code !in 200..299) return@withContext Result.failure(IOException("/artist/audios HTTP $code: ${body.take(200)}"))
+                Result.success(JSONObject(body))
+            } catch (e: Exception) {
+                Log.e(TAG, "getArtistAudios exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 关注歌手（对齐 Dart followArtist，kugou_api_client.dart:2519；Rust artist.rs:106）：GET /artist/follow?id=。需登录。 */
+    suspend fun followArtist(artistId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            httpGetVipBusiness("/artist/follow", mapOf("id" to artistId))
+        } catch (e: Exception) {
+            Log.e(TAG, "followArtist exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 取关歌手（对齐 Dart unfollowArtist，kugou_api_client.dart:2527；Rust artist.rs:139）：GET /artist/unfollow?id=。需登录。 */
+    suspend fun unfollowArtist(artistId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            httpGetVipBusiness("/artist/unfollow", mapOf("id" to artistId))
+        } catch (e: Exception) {
+            Log.e(TAG, "unfollowArtist exception", e)
+            Result.failure(e)
+        }
+    }
+
     /** 歌手搜索（对齐 Dart searchArtists，kugou_api_client.dart:508；Rust search_more.rs:34）：GET /search/artist?keyword=。 */
     suspend fun searchArtists(keyword: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {

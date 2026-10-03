@@ -300,4 +300,24 @@
         <item>Sat</item>
         <item>Sun</item>
     </string-array>
+
+    <!-- 每日推荐 / 私人FM / 歌手详情（Discovery 快捷入口 + 激活 /artist 死代码） -->
+    <string name="home_everyday_recommend_title">Daily Recommends</string>
+    <string name="home_everyday_recommend_subtitle">Made for you</string>
+    <string name="home_everyday_recommend_date">%1$d/%2$d</string>
+    <string name="everyday_recommend_empty">No recommendations today</string>
+    <string name="everyday_recommend_login_hint">Sign in for personalized daily recommends</string>
+    <string name="home_personal_fm_title">Personal FM</string>
+    <string name="home_personal_fm_subtitle">Tune in anytime</string>
+    <string name="personal_fm_login_hint">Sign in to start Personal FM</string>
+    <string name="personal_fm_empty">No FM songs right now</string>
+    <string name="personal_fm_refresh">Refresh</string>
+    <string name="artist_detail_follow">Follow</string>
+    <string name="artist_detail_unfollow">Following</string>
+    <string name="artist_detail_songs">%1$d songs</string>
+    <string name="artist_detail_albums">%1$d albums</string>
+    <string name="artist_detail_search_hint">Search in this artist</string>
+    <string name="artist_detail_search_empty">No matching songs</string>
+    <string name="artist_detail_empty">No songs found for this artist</string>
+    <string name="artist_detail_not_found">Artist not found</string>
 </resources>
