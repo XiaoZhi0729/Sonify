@@ -2016,6 +2016,69 @@ object KugouRepository {
     }
 
     /**
+     * 新建自建歌单。GET /playlist/add（name/type=0/source=1）。
+     * 成功判定：业务包 status==1 且 errcode==0；否则取 error 字段或原样透出。
+     */
+    suspend fun createMyPlaylist(name: String, isPrivate: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (!KugouApiService.isLoggedIn()) {
+                return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+            }
+            KugouApiService.getInstance().createPlaylist(name, if (isPrivate) 1 else 0).fold(
+                onSuccess = { json ->
+                    val status = json.optInt("status", 1)
+                    val errcode = json.optInt("errcode", 0)
+                    if (status == 1 && errcode == 0) {
+                        Result.success(Unit)
+                    } else {
+                        val reason = json.optString("error").ifEmpty { "status=$status errcode=$errcode" }
+                        Result.failure(IOException("创建歌单失败：$reason"))
+                    }
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "createMyPlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 删除自建歌单。GET /playlist/del?type=0（对齐上游 playlist_page.dart:788）。
+     * 守卫：is_def != 0 的系统歌单（1=默认收藏、2=「我喜欢」）拒绝删除。
+     */
+    suspend fun deleteMyPlaylist(playlist: KugouPlaylist): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (!KugouApiService.isLoggedIn()) {
+                return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+            }
+            if (playlist.isDef != 0) {
+                return@withContext Result.failure(IllegalArgumentException("系统歌单不允许删除"))
+            }
+            val listid = playlist.listid.ifEmpty { playlist.gid }
+            if (listid.isEmpty()) {
+                return@withContext Result.failure(IllegalArgumentException("歌单缺少 listid"))
+            }
+            KugouApiService.getInstance().deletePlaylist(listid, type = 0).fold(
+                onSuccess = { json ->
+                    val status = json.optInt("status", 1)
+                    val errcode = json.optInt("errcode", 0)
+                    if (status == 1 && errcode == 0) {
+                        Result.success(Unit)
+                    } else {
+                        val reason = json.optString("error").ifEmpty { "status=$status errcode=$errcode" }
+                        Result.failure(IOException("删除歌单失败：$reason"))
+                    }
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "deleteMyPlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 歌单封面兜底（情况 B）：/user/playlist 的 pic/imgurl 为空时，
      * 通过 /playlist/detail?ids=<gid> 取封面（对齐 Dart getPlaylistDetail + KugouPlaylistBrief 取链）。
      * 接口也未返回封面时返回 null（情况 C，UI 用默认占位图，不伪造 URL）。

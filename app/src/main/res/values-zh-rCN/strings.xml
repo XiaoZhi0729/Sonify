@@ -320,4 +320,10 @@
     <string name="artist_detail_search_empty">没有匹配的歌曲</string>
     <string name="artist_detail_empty">未找到该歌手的歌曲</string>
     <string name="artist_detail_not_found">未找到该歌手</string>
+
+    <string name="common_ok">确定</string>
+    <string name="online_playlists_create">新建歌单</string>
+    <string name="online_playlists_create_hint">歌单名称</string>
+    <string name="online_playlists_delete">删除歌单</string>
+    <string name="online_playlists_delete_confirm">确定删除歌单「%1$s」？该操作不可撤销。</string>
 </resources>

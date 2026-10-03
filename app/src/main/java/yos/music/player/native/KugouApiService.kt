@@ -947,6 +947,45 @@ class KugouApiService private constructor() {
         }
     }
 
+    /**
+     * 新建歌单（对齐 Dart createPlaylist，kugou_api_client.dart:3156；Rust playlist.rs:133）。
+     *   GET /playlist/add?name=&type=0&source=1&is_pri=&list_create_userid=0&list_create_listid=0
+     * （Rust → POST /cloudlist.service/v5/add_list；userid/token 经 authHeader() cookie 带入）
+     * 走 httpGetVipBusiness：创建/删除必须绕 apicache，且业务错误可能包在 4xx 里。
+     */
+    suspend fun createPlaylist(name: String, isPri: Int = 0): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = mapOf(
+                "name" to name,
+                "type" to "0",
+                "source" to "1",
+                "is_pri" to isPri.toString(),
+                "list_create_userid" to "0",
+                "list_create_listid" to "0"
+            )
+            httpGetVipBusiness("/playlist/add", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "createPlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 删除自建歌单（对齐 Dart deletePlaylist(listid, type=0)，kugou_api_client.dart:3208
+     * 与上游 playlist_page.dart:788 一致用 type=0；Rust playlist.rs:184 → /v2/delete_list）。
+     * 注意 is_def != 0 的系统歌单（我喜欢/默认收藏）不允许传给本接口（仓库层守卫）。
+     */
+    suspend fun deletePlaylist(listid: String, type: Int = 0): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            httpGetVipBusiness("/playlist/del", mapOf("listid" to listid, "type" to type.toString()))
+        } catch (e: Exception) {
+            Log.e(TAG, "deletePlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
     // ==================== VIP / 签到（酷狗 youth 活动，对齐 md3Music kugou_api_client.dart） ====================
     // Rust 路由分发只按路径匹配、忽略 HTTP method，且 build_query 会把 query 与
     // JSON body 合并（与 getPlaylistDetail 同理），故 Dart 端的 POST 全部等价改用 GET。

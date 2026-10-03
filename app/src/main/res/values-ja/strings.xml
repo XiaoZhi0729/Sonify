@@ -211,4 +211,10 @@
     <string name="artist_detail_search_empty">一致する楽曲がありません</string>
     <string name="artist_detail_empty">このアーティストの楽曲が見つかりません</string>
     <string name="artist_detail_not_found">アーティストが見つかりません</string>
+
+    <string name="common_ok">OK</string>
+    <string name="online_playlists_create">新規プレイリスト</string>
+    <string name="online_playlists_create_hint">プレイリスト名</string>
+    <string name="online_playlists_delete">プレイリストを削除</string>
+    <string name="online_playlists_delete_confirm">プレイリスト「%1$s」を削除しますか？この操作は取り消せません。</string>
 </resources>

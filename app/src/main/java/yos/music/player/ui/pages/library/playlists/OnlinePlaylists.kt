@@ -1,6 +1,8 @@
 package yos.music.player.ui.pages.library.playlists
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -69,6 +77,16 @@ fun OnlinePlaylists(
     // "loading" | "ok" | "empty" | "error:<msg>"
     val status = remember("OnlinePlaylists_status") { mutableStateOf("loading") }
     val scope = rememberCoroutineScope()
+
+    // 新建歌单弹层
+    val showCreateDialog = remember("OnlinePlaylists_create") { mutableStateOf(false) }
+    val newPlaylistName = remember("OnlinePlaylists_create_name") { mutableStateOf("") }
+    val creating = remember("OnlinePlaylists_creating") { mutableStateOf(false) }
+    // 弹层内错误文案（status 行不适用于弹层场景）
+    val createError = remember("OnlinePlaylists_create_error") { mutableStateOf<String?>(null) }
+    // 长按待删除的歌单（null = 不弹确认框）
+    val deleteTarget = remember("OnlinePlaylists_delete") { mutableStateOf<KugouPlaylist?>(null) }
+    val deleting = remember("OnlinePlaylists_deleting") { mutableStateOf(false) }
 
     fun load(autoOpenIndex: Int? = null) {
         if (status.value == "loading") return
@@ -129,6 +147,46 @@ fun OnlinePlaylists(
         }
     }
 
+    fun createPlaylist() {
+        val name = newPlaylistName.value.trim()
+        if (name.isEmpty() || creating.value) return
+        creating.value = true
+        scope.launch {
+            KugouRepository.createMyPlaylist(name)
+                .onSuccess {
+                    showCreateDialog.value = false
+                    newPlaylistName.value = ""
+                    // 重建列表：走 getMyPlaylists 全量刷新
+                    status.value = "idle"
+                    load()
+                }
+                .onFailure { e ->
+                    // 失败保留弹层与输入，便于改名词典重试；错误经 status 不适合弹层场景，直接对话框文案
+                    createError.value = e.message ?: e.javaClass.simpleName
+                }
+            creating.value = false
+        }
+    }
+
+    fun deletePlaylist(pl: KugouPlaylist) {
+        if (deleting.value) return
+        deleting.value = true
+        scope.launch {
+            KugouRepository.deleteMyPlaylist(pl)
+                .onSuccess {
+                    // 本地先移除保持即时反馈，再全量刷新对齐云端
+                    playlists.value = playlists.value.filter { it !== pl }
+                    status.value = "idle"
+                    load()
+                }
+                .onFailure { e ->
+                    status.value = "error:${e.message}"
+                }
+            deleting.value = false
+            deleteTarget.value = null
+        }
+    }
+
     LaunchedEffect(Unit) {
         status.value = "idle"
         load()
@@ -136,6 +194,11 @@ fun OnlinePlaylists(
 
     Title(
         title = stringResource(id = R.string.page_online_playlists_title),
+        topRightIcon = Icons.Filled.Add,
+        onTopRightIcon = {
+            createError.value = null
+            showCreateDialog.value = true
+        },
         onBack = {
             navController.popBackStack()
         }
@@ -173,22 +236,26 @@ fun OnlinePlaylists(
                 modifier = Modifier
                     .height(64.dp)
                     .fillMaxWidth()
-                    .clickable {
-                        // 记录来源圆角，详情端转场据此从 3.5dp 渐变到 7dp
-                        SharedCoverStyle.lastSourceCorner = 3.5.dp
-                        scope.launch {
-                            preloadRawCover(context, pl.coverUrl)
-                            openOnlinePlaylist(
-                                PlaylistSelection(
-                                    source = PlaylistSelection.Source.User,
-                                    id = playlistId,
-                                    name = pl.name,
-                                    cover = pl.coverUrl,
-                                    songCount = pl.songCount
+                    .combinedClickable(
+                        onClick = {
+                            // 记录来源圆角，详情端转场据此从 3.5dp 渐变到 7dp
+                            SharedCoverStyle.lastSourceCorner = 3.5.dp
+                            scope.launch {
+                                preloadRawCover(context, pl.coverUrl)
+                                openOnlinePlaylist(
+                                    PlaylistSelection(
+                                        source = PlaylistSelection.Source.User,
+                                        id = playlistId,
+                                        name = pl.name,
+                                        cover = pl.coverUrl,
+                                        songCount = pl.songCount
+                                    )
                                 )
-                            )
-                        }
-                    }
+                            }
+                        },
+                        // 长按删除：系统歌单（is_def != 0）不响应
+                        onLongClick = { if (pl.isDef == 0) deleteTarget.value = pl }
+                    )
                     .padding(horizontal = 22.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -227,5 +294,76 @@ fun OnlinePlaylists(
                 OnlineListItemDivider()
             }
         }
+    }
+
+    // 新建歌单弹层
+    if (showCreateDialog.value) {
+        AlertDialog(
+            onDismissRequest = { if (!creating.value) showCreateDialog.value = false },
+            title = { Text(text = stringResource(id = R.string.online_playlists_create)) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newPlaylistName.value,
+                        onValueChange = { newPlaylistName.value = it },
+                        placeholder = { Text(text = stringResource(id = R.string.online_playlists_create_hint)) },
+                        singleLine = true,
+                        enabled = !creating.value,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    createError.value?.let { err ->
+                        Text(
+                            text = err,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !creating.value && newPlaylistName.value.isNotBlank(),
+                    onClick = { createPlaylist() }
+                ) {
+                    Text(text = stringResource(id = R.string.common_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !creating.value, onClick = { showCreateDialog.value = false }) {
+                    Text(text = stringResource(id = R.string.common_cancel))
+                }
+            }
+        )
+    }
+
+    // 删除确认弹层（长按自建歌单触发）
+    deleteTarget.value?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!deleting.value) deleteTarget.value = null },
+            title = { Text(text = stringResource(id = R.string.online_playlists_delete)) },
+            text = {
+                Text(
+                    text = stringResource(id = R.string.online_playlists_delete_confirm, target.name),
+                    fontSize = 15.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deleting.value,
+                    onClick = { deletePlaylist(target) }
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.common_ok),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !deleting.value, onClick = { deleteTarget.value = null }) {
+                    Text(text = stringResource(id = R.string.common_cancel))
+                }
+            }
+        )
     }
 }

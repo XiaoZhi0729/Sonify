@@ -320,4 +320,10 @@
     <string name="artist_detail_search_empty">No matching songs</string>
     <string name="artist_detail_empty">No songs found for this artist</string>
     <string name="artist_detail_not_found">Artist not found</string>
+
+    <string name="common_ok">OK</string>
+    <string name="online_playlists_create">New Playlist</string>
+    <string name="online_playlists_create_hint">Playlist name</string>
+    <string name="online_playlists_delete">Delete Playlist</string>
+    <string name="online_playlists_delete_confirm">Delete playlist \"%1$s\"? This cannot be undone.</string>
 </resources>
