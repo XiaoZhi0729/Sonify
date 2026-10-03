@@ -40,6 +40,8 @@
 
 前往 [**Releases**](https://github.com/XiaoZhi0729/Sonify/releases) 页面下载最新 APK 安装包。
 
+> 当前发布版本：**v0.1.0（测试版）** —— 项目仍处于早期测试阶段，功能与稳定性都在持续打磨，遇到问题欢迎提 [Issue](https://github.com/XiaoZhi0729/Sonify/issues) 反馈。
+
 > 需要 Android 6.0（API 23）及以上。小米/Redmi（HyperOS）设备建议在「省电策略」中设为无限制并允许自启动，否则息屏后播放可能被冻结。
 
 ## 🙏 致谢

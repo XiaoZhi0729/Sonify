@@ -12,8 +12,9 @@ android {
         applicationId "com.sonify.music"
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        // 版本号单一来源在根目录 gradle.properties（APP_VERSION_*），在此读取
+        versionCode APP_VERSION_CODE.toInteger()
+        versionName APP_VERSION_NAME
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
