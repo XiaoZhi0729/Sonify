@@ -333,6 +333,9 @@ class KugouApiService private constructor() {
 
                 Result.success(JSONObject(body))
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 取消（切歌/超时）不是请求失败：吞掉它会把取消伪装成网络失败层层上报
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Get URL exception", e)
                 Result.failure(e)

@@ -56,6 +56,13 @@ class KugouResolvingDataSource(
             } catch (e: IOException) {
                 YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
                 throw e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 切歌取消（Loader 线程被中断/协程被取消）不是解析失败：不上报 RESOLVE_FAIL，
+                // 也不进负缓存链路；包成 IOException 交回 ExoPlayer——取消中的加载错误会被其吞掉
+                throw IOException("在线歌曲解析被取消 hash=$hash", e)
+            } catch (e: InterruptedException) {
+                // 同上：runBlocking 在线程被中断时抛 InterruptedException（见 resolvePlayUrlBlocking）
+                throw IOException("在线歌曲解析被取消 hash=$hash", e)
             } catch (e: Exception) {
                 // 解析链的领域异常（无 URL、Server 未运行等）统一收敛为 IO 错误
                 YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())

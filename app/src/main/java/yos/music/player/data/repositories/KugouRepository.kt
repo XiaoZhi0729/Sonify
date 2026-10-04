@@ -1548,6 +1548,14 @@ object KugouRepository {
         val resolveStartedAt = System.currentTimeMillis()
         val result = runBlocking { resolvePlayUrlWithFallback(hash, quality) }
         if (result.isFailure) {
+            // 切歌取消（ExoPlayer 中断 Loader 线程）不是解析失败的证据：原样抛回，
+            // 不写负缓存——写进去会让 30s 内快速切回同一首在负缓存里直接跳歌。
+            // 超时（TimeoutCancellationException）不算取消，仍走下面 lastGood 兜底。
+            val firstCause = result.exceptionOrNull()
+            if (firstCause is InterruptedException ||
+                (firstCause is kotlinx.coroutines.CancellationException &&
+                        firstCause !is kotlinx.coroutines.TimeoutCancellationException)
+            ) throw firstCause
             // 兜底：整链失败但本会话曾解析成功过（任一档位 URL 仍在缓存期）时，
             // 直接复用最后可用的 URL——切音质永不把"正在播的歌"变成跳歌；
             // 只有从未成功解析过的歌才抛错走 onPlayerError 跳歌路径。
@@ -1907,6 +1915,10 @@ object KugouRepository {
                     },
                     onFailure = { e -> Result.failure(e) }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 取消不是解析失败：吞掉它会把"切歌取消"伪装成网络失败，
+                // 在 resolvePlayUrlBlocking 里污染 30s 负缓存（快速切回同一首直接跳歌）
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "resolvePlayUrl exception", e)
                 Result.failure(e)
