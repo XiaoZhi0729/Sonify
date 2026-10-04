@@ -398,8 +398,11 @@ fun OnlinePlaylistDetail(
                 }
             }
 
-            item {
-                OnlineDetailDivider()
+            // 分割线仅在非空列表渲染；空歌单只有图标+文字，不要分割线
+            if (status.value != "empty") {
+                item {
+                    OnlineDetailDivider()
+                }
             }
 
             OnlineDetailSongs(
@@ -411,8 +414,10 @@ fun OnlinePlaylistDetail(
                 } else null
             )
 
-            item {
-                OnlineDetailDivider()
+            if (status.value != "empty") {
+                item {
+                    OnlineDetailDivider()
+                }
             }
 
             item("navbar") {
