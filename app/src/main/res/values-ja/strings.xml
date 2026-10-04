@@ -217,4 +217,18 @@
     <string name="online_playlists_create_hint">プレイリスト名</string>
     <string name="online_playlists_delete">プレイリストを削除</string>
     <string name="online_playlists_delete_confirm">プレイリスト「%1$s」を削除しますか？この操作は取り消せません。</string>
+
+    <string name="online_playlists_pending_creating">作成中…</string>
+    <string name="online_playlists_pending_failed">作成できませんでした</string>
+    <string name="online_playlist_pending_creating">プレイリストは酷狗で作成中です。変更は自動的に同期されます。</string>
+    <string name="online_playlist_pending_failed">プレイリストを作成できませんでしたが、変更は保持されています。</string>
+    <string name="online_playlist_pending_retry">作成を再試行</string>
+    <string name="online_playlist_pending_empty">楽曲がありません。下の「楽曲を追加」から追加してください。</string>
+    <string name="online_playlist_add_songs">楽曲を追加</string>
+    <string name="online_playlist_add_search_hint">追加する楽曲を検索</string>
+    <string name="online_playlist_add_added">追加済み</string>
+    <string name="online_playlist_track_remove">プレイリストから削除</string>
+    <string name="online_playlist_track_remove_confirm">「%1$s」をプレイリストから削除しますか？</string>
+    <string name="common_search">検索</string>
+    <string name="search_no_result">結果が見つかりません</string>
 </resources>

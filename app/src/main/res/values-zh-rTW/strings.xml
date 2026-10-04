@@ -217,4 +217,18 @@
     <string name="online_playlists_create_hint">歌單名稱</string>
     <string name="online_playlists_delete">刪除歌單</string>
     <string name="online_playlists_delete_confirm">確定刪除歌單「%1$s」？該操作不可復原。</string>
+
+    <string name="online_playlists_pending_creating">建立中…</string>
+    <string name="online_playlists_pending_failed">建立未成功</string>
+    <string name="online_playlist_pending_creating">歌單正在酷狗建立，歌曲變更會自動同步。</string>
+    <string name="online_playlist_pending_failed">歌單建立未成功，你的變更已保留。</string>
+    <string name="online_playlist_pending_retry">重試建立</string>
+    <string name="online_playlist_pending_empty">還沒有歌曲，點下方「新增歌曲」加歌吧。</string>
+    <string name="online_playlist_add_songs">新增歌曲</string>
+    <string name="online_playlist_add_search_hint">搜尋要加入的歌曲</string>
+    <string name="online_playlist_add_added">已加入</string>
+    <string name="online_playlist_track_remove">從歌單移除</string>
+    <string name="online_playlist_track_remove_confirm">確定從歌單移除「%1$s」？</string>
+    <string name="common_search">搜尋</string>
+    <string name="search_no_result">沒有找到相關結果</string>
 </resources>

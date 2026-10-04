@@ -326,4 +326,19 @@
     <string name="online_playlists_create_hint">歌单名称</string>
     <string name="online_playlists_delete">删除歌单</string>
     <string name="online_playlists_delete_confirm">确定删除歌单「%1$s」？该操作不可撤销。</string>
+
+    <!-- 挂起歌单（创建中/失败）与歌单内加删歌 -->
+    <string name="online_playlists_pending_creating">创建中…</string>
+    <string name="online_playlists_pending_failed">创建未成功</string>
+    <string name="online_playlist_pending_creating">歌单正在酷狗创建，歌曲改动会自动同步。</string>
+    <string name="online_playlist_pending_failed">歌单创建未成功，你的改动已保留。</string>
+    <string name="online_playlist_pending_retry">重试创建</string>
+    <string name="online_playlist_pending_empty">还没有歌曲，点下方「添加歌曲」加歌吧。</string>
+    <string name="online_playlist_add_songs">添加歌曲</string>
+    <string name="online_playlist_add_search_hint">搜索要添加的歌曲</string>
+    <string name="online_playlist_add_added">已添加</string>
+    <string name="online_playlist_track_remove">从歌单移除</string>
+    <string name="online_playlist_track_remove_confirm">确定从歌单移除「%1$s」？</string>
+    <string name="common_search">搜索</string>
+    <string name="search_no_result">没有找到相关结果</string>
 </resources>

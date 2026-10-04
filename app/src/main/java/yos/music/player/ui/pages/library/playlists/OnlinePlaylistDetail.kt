@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -21,8 +22,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -47,12 +51,15 @@ import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import com.google.accompanist.insets.navigationBarsHeight
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.repositories.KugouPlaylistTrack
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.data.repositories.KugouSearchSong
+import yos.music.player.data.repositories.PendingPlaylistStore
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.ui.pages.library.MusicList
@@ -121,15 +128,36 @@ fun OnlinePlaylistDetail(
     val tracks = remember("OnlinePlaylistDetail_tracks") {
         mutableStateOf<List<KugouPlaylistTrack>>(emptyList())
     }
-    // 与 tracks 同步的队列映射（占位符 URI，入队零网络请求）
-    val queue = remember("OnlinePlaylistDetail_queue") {
-        mutableStateOf<List<YosMediaItem>>(emptyList())
-    }
     // "loading" | "ok" | "empty" | "error:<msg>"
     val status = remember("OnlinePlaylistDetail_status") { mutableStateOf("loading") }
     // 分页加载进度文案（大歌单按页拉取时显示 已加载 X / Y）
     val loadProgress = remember("OnlinePlaylistDetail_loadProgress") { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+
+    // ---- 挂起歌单（创建中/创建失败）：selection.id 是 PendingPlaylistStore 的 localId ----
+    val pendingEntry = remember("OnlinePlaylistDetail_pending") {
+        mutableStateOf(PendingPlaylistStore.get(playlistId.orEmpty()))
+    }
+    val isPendingPlaylist = source == PlaylistSelection.Source.User && pendingEntry.value != null
+    // 展示列表 = 服务端歌曲 + 挂起条目未补发的待加歌（绑定真实 listid 前详情页也有内容、可播）
+    val displayTracks: List<KugouPlaylistTrack> = if (isPendingPlaylist) {
+        val queued = pendingEntry.value?.ops?.mapNotNull { op ->
+            if (!op.startsWith("A|")) return@mapNotNull null
+            val p = op.split('|')
+            if (p.size < 3) return@mapNotNull null
+            KugouPlaylistTrack(hash = p[2], name = p[1], artist = "", album = null, durationMs = 0, coverUrl = null)
+        }?.filter { q -> tracks.value.none { it.hash == q.hash } } ?: emptyList()
+        tracks.value + queued
+    } else {
+        tracks.value
+    }
+
+    // 队列即取即建（占位符 URI，入队零网络请求；挂起歌单的待加歌同样可播）
+    fun currentQueue(): List<YosMediaItem> = displayTracks.map { KugouRepository.toQueueMediaItem(it) }
+
+    // 添加歌曲弹层 / 待删除歌曲（长按行触发，仅自有歌单）
+    val showAddDialog = remember("OnlinePlaylistDetail_add") { mutableStateOf(false) }
+    val removeTarget = remember("OnlinePlaylistDetail_remove") { mutableStateOf<KugouPlaylistTrack?>(null) }
 
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
@@ -148,22 +176,24 @@ fun OnlinePlaylistDetail(
                     }
                 }
             }
-            val result: Result<List<KugouPlaylistTrack>> = when (source) {
-                PlaylistSelection.Source.User ->
+            val entry = pendingEntry.value
+            val result: Result<List<KugouPlaylistTrack>> = when {
+                // 挂起歌单未绑定真实 listid：先展示空列表（待加歌来自 ops 队列）
+                isPendingPlaylist && entry?.isBound != true -> Result.success(emptyList())
+                isPendingPlaylist && entry != null -> KugouRepository.getPlaylistSongs(entry.realListid, onProgress)
+                source == PlaylistSelection.Source.User ->
                     KugouRepository.getPlaylistSongs(playlistId.orEmpty(), onProgress)
-                PlaylistSelection.Source.Recommend ->
+                source == PlaylistSelection.Source.Recommend ->
                     KugouRepository.getPlaylistSongsByGcid(playlistId.orEmpty(), onProgress)
-                null -> Result.failure(IllegalStateException("Missing playlist selection"))
+                else -> Result.failure(IllegalStateException("Missing playlist selection"))
             }
             result
                 .onSuccess { list ->
                     tracks.value = list
-                    queue.value = list.map { KugouRepository.toQueueMediaItem(it) }
                     status.value = if (list.isEmpty()) "empty" else "ok"
                 }
                 .onFailure { e ->
                     tracks.value = emptyList()
-                    queue.value = emptyList()
                     status.value = "error:${e.message}"
                 }
         }
@@ -171,7 +201,7 @@ fun OnlinePlaylistDetail(
 
     // 整列表播放：全部歌曲进 Media3 队列，从 index 处开始；URL 由播放器惰性解析
     fun playAt(index: Int) {
-        val list = queue.value
+        val list = currentQueue()
         if (index !in list.indices) return
         scope.launch(Dispatchers.IO) {
             MediaController.prepare(list[index], list)
@@ -180,6 +210,23 @@ fun OnlinePlaylistDetail(
 
     LaunchedEffect(source, playlistId) {
         loadTracks()
+    }
+
+    // 挂起歌单对账轮询：绑定真实 listid（含创建失败后的重试）→ 刷新状态并拉真实歌曲
+    LaunchedEffect(playlistId) {
+        val localId = playlistId.orEmpty()
+        if (PendingPlaylistStore.get(localId) == null) return@LaunchedEffect
+        var wasUnbound = PendingPlaylistStore.get(localId)?.isBound == false
+        while (true) {
+            delay(4_000L)
+            val fresh = PendingPlaylistStore.get(localId) ?: break
+            pendingEntry.value = fresh
+            if (fresh.isBound) {
+                if (wasUnbound) loadTracks()
+                break
+            }
+            wasUnbound = true
+        }
     }
 
     // 宽屏（≥600dp）歌曲行启用三列布局：歌手列起于屏幕正中央、时长贴右（对齐 Apple Music 平板横屏）
@@ -218,7 +265,7 @@ fun OnlinePlaylistDetail(
                         intro = playlistIntro,
                         onPlayAll = { playAt(0) },
                         onShuffle = {
-                            val list = queue.value
+                            val list = currentQueue()
                             if (list.isNotEmpty()) {
                                 MediaController.mediaControl?.shuffleModeEnabled = true
                                 playAt(list.indices.random())
@@ -236,7 +283,7 @@ fun OnlinePlaylistDetail(
                             animatedVisibilityScope = animatedVisibilityScope,
                         onPlayAll = { playAt(0) },
                         onShuffle = {
-                            val list = queue.value
+                            val list = currentQueue()
                             if (list.isNotEmpty()) {
                                 MediaController.mediaControl?.shuffleModeEnabled = true
                                 playAt(list.indices.random())
@@ -246,11 +293,73 @@ fun OnlinePlaylistDetail(
                 }
             }
 
+            // 挂起歌单同步状态 banner（创建中 / 创建失败可重试）
+            if (isPendingPlaylist) {
+                item("PendingBanner") {
+                    val entry = pendingEntry.value
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (entry?.failed == true) {
+                                stringResource(id = R.string.online_playlist_pending_failed)
+                            } else {
+                                stringResource(id = R.string.online_playlist_pending_creating)
+                            },
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            color = if (entry?.failed == true) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.alpha(if (entry?.failed == true) 1f else 0.7f)
+                        )
+                        if (entry?.failed == true) {
+                            Text(
+                                text = stringResource(id = R.string.online_playlist_pending_retry),
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(top = 6.dp)
+                                    .clickable {
+                                        scope.launch {
+                                            PendingPlaylistStore.retryCreate(entry.localId)
+                                                .onSuccess { pendingEntry.value = PendingPlaylistStore.get(entry.localId) }
+                                                .onFailure { e ->
+                                                    status.value = "error:${e.message}"
+                                                }
+                                        }
+                                    }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 自有歌单：添加歌曲入口（挂起/已绑定均可；挂起时先进本地队列，绑定后自动补发）
+            if (source == PlaylistSelection.Source.User) {
+                item("AddSongs") {
+                    NormalButton(
+                        icon = painterResource(id = R.drawable.ic_add),
+                        label = stringResource(id = R.string.online_playlist_add_songs),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 6.dp)
+                    ) {
+                        showAddDialog.value = true
+                    }
+                }
+            }
+
             item("Status") {
                 OnlineStatusItem(
                     status = status.value,
                     loadingText = loadProgress.value.ifEmpty { loadingBaseText },
-                    emptyText = stringResource(id = R.string.online_playlist_songs_empty)
+                    emptyText = if (isPendingPlaylist) {
+                        stringResource(id = R.string.online_playlist_pending_empty)
+                    } else {
+                        stringResource(id = R.string.online_playlist_songs_empty)
+                    }
                 )
             }
 
@@ -259,9 +368,12 @@ fun OnlinePlaylistDetail(
             }
 
             OnlineDetailSongs(
-                tracks = tracks.value,
+                tracks = displayTracks,
                 isWide = isWideScreen,
-                onPlayAt = { playAt(it) }
+                onPlayAt = { playAt(it) },
+                onRemoveTrack = if (source == PlaylistSelection.Source.User) {
+                    { index -> removeTarget.value = displayTracks.getOrNull(index) }
+                } else null
             )
 
             item {
@@ -279,6 +391,74 @@ fun OnlinePlaylistDetail(
             onBack = { navController.popBackStack() },
             showSmallTitle = showSmallTitle,
             backdrop = titleBackdrop
+        )
+    }
+
+    // 删歌确认弹层（长按歌曲行触发，仅自有歌单）
+    removeTarget.value?.let { target ->
+        AlertDialog(
+            onDismissRequest = { removeTarget.value = null },
+            title = { Text(text = stringResource(id = R.string.online_playlist_track_remove)) },
+            text = {
+                Text(
+                    text = stringResource(id = R.string.online_playlist_track_remove_confirm, target.name),
+                    fontSize = 15.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = target
+                    removeTarget.value = null
+                    scope.launch {
+                        val entry = pendingEntry.value
+                        val result = if (entry != null) {
+                            PendingPlaylistStore.removeSong(entry.localId, t.hash, t.fileId)
+                        } else {
+                            KugouRepository.removeTrackFromPlaylist(playlistId.orEmpty(), t.fileId, t.hash)
+                        }
+                        result
+                            .onSuccess {
+                                if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
+                                else {
+                                    tracks.value = tracks.value.filter { it.hash != t.hash }
+                                    status.value = if (tracks.value.isEmpty()) "empty" else "ok"
+                                }
+                            }
+                            .onFailure { e -> status.value = "error:${e.message}" }
+                    }
+                }) {
+                    Text(
+                        text = stringResource(id = R.string.common_ok),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeTarget.value = null }) {
+                    Text(text = stringResource(id = R.string.common_cancel))
+                }
+            }
+        )
+    }
+
+    // 添加歌曲弹层（搜索 → 点按加入歌单；挂起歌单先进同步队列）
+    if (showAddDialog.value) {
+        AddSongsDialog(
+            onDismiss = { showAddDialog.value = false },
+            onAdd = { song ->
+                val entry = pendingEntry.value
+                val result = if (entry != null) {
+                    PendingPlaylistStore.addSong(entry.localId, song.name, song.hash)
+                } else {
+                    KugouRepository.addTracksToPlaylist(playlistId.orEmpty(), song.name, song.hash)
+                }
+                result
+                    .onSuccess {
+                        if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
+                        else loadTracks()
+                    }
+                result
+            }
         )
     }
 }
@@ -423,11 +603,13 @@ private fun PlaylistHeaderCompact(
 /**
  * 歌曲列表：统一歌曲 Item + 歌曲间分割线（对齐本地列表 MusicList 视觉规范）。
  * 宽屏（≥600dp）换用三列行：歌名（左半）+ 歌手（起于屏幕中央）+ 时长（贴右）。
+ * [onRemoveTrack] 非 null 时行支持长按（自有歌单删歌）。
  */
 private fun LazyListScope.OnlineDetailSongs(
     tracks: List<KugouPlaylistTrack>,
     isWide: Boolean,
-    onPlayAt: (Int) -> Unit
+    onPlayAt: (Int) -> Unit,
+    onRemoveTrack: ((Int) -> Unit)? = null
 ) {
     itemsIndexed(
         tracks,
@@ -441,9 +623,11 @@ private fun LazyListScope.OnlineDetailSongs(
                     onPlayAt(index)
                 }
             } else {
-                MusicList(KugouRepository.toDisplayMediaItem(track)) {
-                    onPlayAt(index)
-                }
+                MusicList(
+                    music = KugouRepository.toDisplayMediaItem(track),
+                    itemClick = { onPlayAt(index) },
+                    onLongClick = onRemoveTrack?.let { cb -> { cb(index) } }
+                )
             }
         }
 
@@ -461,4 +645,126 @@ private fun LazyListScope.OnlineDetailSongs(
             }
         }
     }
+}
+
+/**
+ * 添加歌曲弹层：关键词搜索在线歌曲 → 点按加入歌单。
+ * 挂起歌单（未绑定真实 listid）由调用方入同步队列，此处只消费 [onAdd] 的结果。
+ */
+@Composable
+private fun AddSongsDialog(
+    onDismiss: () -> Unit,
+    onAdd: suspend (KugouSearchSong) -> Result<Unit>
+) {
+    val scope = rememberCoroutineScope()
+    val keyword = remember { mutableStateOf("") }
+    val results = remember { mutableStateOf<List<KugouSearchSong>>(emptyList()) }
+    val searching = remember { mutableStateOf(false) }
+    val searched = remember { mutableStateOf(false) }
+    val addedHashes = remember { mutableStateOf<Set<String>>(emptySet()) }
+    val error = remember { mutableStateOf<String?>(null) }
+    val addingHash = remember { mutableStateOf<String?>(null) }
+
+    fun search() {
+        val kw = keyword.value.trim()
+        if (kw.isEmpty() || searching.value) return
+        searching.value = true
+        error.value = null
+        scope.launch {
+            KugouRepository.searchSongs(kw)
+                .onSuccess {
+                    results.value = it
+                    searched.value = true
+                }
+                .onFailure { e -> error.value = e.message ?: e.javaClass.simpleName }
+            searching.value = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(id = R.string.online_playlist_add_songs)) },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = keyword.value,
+                        onValueChange = { keyword.value = it },
+                        placeholder = { Text(text = stringResource(id = R.string.online_playlist_add_search_hint)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { search() }, enabled = !searching.value) {
+                        Text(text = stringResource(id = R.string.common_search))
+                    }
+                }
+                error.value?.let { err ->
+                    Text(
+                        text = err,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                if (searching.value) {
+                    Text(
+                        text = stringResource(id = R.string.online_playlists_loading),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(vertical = 8.dp).alpha(0.6f)
+                    )
+                } else if (searched.value && results.value.isEmpty()) {
+                    Text(
+                        text = stringResource(id = R.string.search_no_result),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(vertical = 8.dp).alpha(0.6f)
+                    )
+                } else {
+                    results.value.take(10).forEach { song ->
+                        val added = song.hash in addedHashes.value
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .clickable(enabled = !added && addingHash.value == null) {
+                                    addingHash.value = song.hash
+                                    scope.launch {
+                                        onAdd(song)
+                                            .onSuccess { addedHashes.value = addedHashes.value + song.hash }
+                                            .onFailure { e -> error.value = e.message ?: e.javaClass.simpleName }
+                                        addingHash.value = null
+                                    }
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = song.name,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Text(
+                                text = " - ${song.author}",
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).alpha(0.5f)
+                            )
+                            Text(
+                                text = if (added) stringResource(id = R.string.online_playlist_add_added) else "",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(id = R.string.common_ok))
+            }
+        }
+    )
 }

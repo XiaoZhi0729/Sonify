@@ -1348,6 +1348,26 @@ object KugouRepository {
             .map { Unit }
     }
 
+    /** 查询歌曲收藏协议身份（albumId/mixsongId/fileId，搜索解析时登记）。 */
+    fun songIdentityFor(hash: String): SongIdentity? = songIdentity[hash.lowercase()]
+
+    /** 向任意自有歌单加歌（/playlist/tracks/add，协议 name|hash|albumId|mixsongId）。 */
+    suspend fun addTracksToPlaylist(listid: String, title: String, hash: String): Result<Unit> {
+        val id = songIdentity[hash.lowercase()]
+        val data = "$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}"
+        return KugouApiService.getInstance()
+            .addPlaylistTracks(listid, data)
+            .map { Unit }
+    }
+
+    /** 从任意自有歌单删歌（/playlist/tracks/del，fileid 优先、hash 兜底）。 */
+    suspend fun removeTrackFromPlaylist(listid: String, fileId: Long, hash: String): Result<Unit> {
+        val fileids = if (fileId > 0) fileId.toString() else hash
+        return KugouApiService.getInstance()
+            .deletePlaylistTracks(listid, fileids)
+            .map { Unit }
+    }
+
     /** 搜索结果 → 队列用 [YosMediaItem]（uri 为占位符，真实 URL 由播放器惰性解析）。 */
     fun toQueueMediaItem(song: KugouSearchSong): YosMediaItem = buildQueueItem(
         hash = song.hash,
@@ -2018,8 +2038,10 @@ object KugouRepository {
     /**
      * 新建自建歌单。GET /playlist/add（name/type=0/source=1）。
      * 成功判定：业务包 status==1 且 errcode==0；否则取 error 字段或原样透出。
+     * 返回乐观占位行：listid 尽力从响应解析（data.id/listid/gid），解析不到为空串
+     * （酷狗 cloudlist 有秒级传播延迟，列表以 MMKV 挂起操作 + 延迟对账收敛）。
      */
-    suspend fun createMyPlaylist(name: String, isPrivate: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun createMyPlaylist(name: String, isPrivate: Boolean = false): Result<KugouPlaylist> = withContext(Dispatchers.IO) {
         try {
             if (!KugouApiService.isLoggedIn()) {
                 return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
@@ -2029,7 +2051,14 @@ object KugouRepository {
                     val status = json.optInt("status", 1)
                     val errcode = json.optInt("errcode", 0)
                     if (status == 1 && errcode == 0) {
-                        Result.success(Unit)
+                        val data = json.optJSONObject("data")
+                        val newId = data?.optString("id")?.takeIf { it.isNotEmpty() && it != "null" }
+                            ?: data?.optString("listid")?.takeIf { it.isNotEmpty() && it != "null" }
+                            ?: data?.optString("gid")?.takeIf { it.isNotEmpty() && it != "null" }
+                            ?: ""
+                        Result.success(
+                            KugouPlaylist(listid = newId, gid = "", name = name, coverUrl = "", songCount = 0, isDef = 0)
+                        )
                     } else {
                         val reason = json.optString("error").ifEmpty { "status=$status errcode=$errcode" }
                         Result.failure(IOException("创建歌单失败：$reason"))

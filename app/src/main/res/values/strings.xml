@@ -326,4 +326,19 @@
     <string name="online_playlists_create_hint">Playlist name</string>
     <string name="online_playlists_delete">Delete Playlist</string>
     <string name="online_playlists_delete_confirm">Delete playlist \"%1$s\"? This cannot be undone.</string>
+
+    <!-- 挂起歌单（创建中/失败）与歌单内加删歌 -->
+    <string name="online_playlists_pending_creating">Creating…</string>
+    <string name="online_playlists_pending_failed">Creation failed</string>
+    <string name="online_playlist_pending_creating">Playlist is being created on Kugou; your changes will sync automatically.</string>
+    <string name="online_playlist_pending_failed">Playlist was not created, your changes are kept.</string>
+    <string name="online_playlist_pending_retry">Retry creation</string>
+    <string name="online_playlist_pending_empty">No songs yet. Tap &#171;Add Songs&#187; below.</string>
+    <string name="online_playlist_add_songs">Add Songs</string>
+    <string name="online_playlist_add_search_hint">Search songs to add</string>
+    <string name="online_playlist_add_added">Added</string>
+    <string name="online_playlist_track_remove">Remove from Playlist</string>
+    <string name="online_playlist_track_remove_confirm">Remove \"%1$s\" from this playlist?</string>
+    <string name="common_search">Search</string>
+    <string name="search_no_result">No results</string>
 </resources>

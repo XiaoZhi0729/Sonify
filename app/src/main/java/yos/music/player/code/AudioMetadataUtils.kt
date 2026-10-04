@@ -24,6 +24,39 @@ object AudioMetadataUtils {
         }
     }
 
+    /**
+     * 读取音频文件的内嵌歌词。TagLib 会把 M4A 的 ©lyr atom、MP3 的 USLT 帧、
+     * FLAC 的 VORBIS_COMMENT 归一为 LYRICS 属性键，个别文件键名带 description 后缀，做前缀匹配。
+     */
+    fun loadEmbeddedLyric(songPath: String): String? {
+        return try {
+            ParcelFileDescriptor.open(File(songPath), ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                val metadata = TagLib.getMetadata(fd.dup().detachFd(), readPictures = false)
+                metadata?.propertyMap
+                    ?.filterKeys { it.startsWith("LYRICS", ignoreCase = true) }
+                    ?.values
+                    ?.flatMap { values -> values.toList() }
+                    ?.joinToString("\n")
+                    ?.takeIf { it.isNotBlank() }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /** 歌曲总时长（毫秒），供无时间戳歌词合成时间轴用；读不到返回 0。 */
+    fun getAudioLengthMs(filePath: String): Long {
+        return try {
+            ParcelFileDescriptor.open(File(filePath), ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                val properties = TagLib.getAudioProperties(fd.dup().detachFd(), AudioPropertiesReadStyle.Fast)
+                (properties?.length ?: 0).toLong() * 1000L
+            }
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
     fun getQualityInfos(filePath: String): Pair<Int, Int> {
         val songFile = File(filePath)
         var bitrate: Int

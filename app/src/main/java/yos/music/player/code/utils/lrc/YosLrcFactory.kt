@@ -36,6 +36,38 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         return processOtherSide(entries)
     }
 
+    /**
+     * 先按普通 LRC 解析；解析为空且内容非空时，视为无时间戳的纯文本歌词
+     * （常见于 M4A ©lyr / MP3 USLT 内嵌），按歌曲总时长均分合成时间轴后再走同一解析，
+     * 保证滚动 UI 依赖的递增 startTime 成立。
+     */
+    fun formatLrcEntriesWithFallback(lrcText: String, totalDurationMs: Long): List<LyricEntry> {
+        val entries = formatLrcEntries(lrcText)
+        if (entries.isNotEmpty() || lrcText.isBlank()) return entries
+
+        val lines = lrcText.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it != "//" }
+            .toList()
+        if (lines.isEmpty()) {
+            processOtherSide(emptyList())
+            return emptyList()
+        }
+
+        val durationMs = if (totalDurationMs > 0) totalDurationMs else lines.size * 5_000L
+        val synthesized = StringBuilder()
+        lines.forEachIndexed { index, line ->
+            val time = durationMs * index / lines.size
+            val minute = time / 60_000
+            val second = time % 60_000 / 1_000
+            val millis = time % 1_000
+            synthesized.append("[%02d:%02d.%03d]".format(minute, second, millis))
+                .append(line)
+                .append('\n')
+        }
+        return formatLrcEntries(synthesized.toString())
+    }
+
     fun formatKrcEntries(krcText: String, translationText: String? = null): List<LyricEntry> {
         val embeddedTranslations = extractEmbeddedTranslations(krcText)
         val explicitTranslations = translationText?.let {

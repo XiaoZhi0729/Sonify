@@ -489,7 +489,9 @@ class KugouApiService private constructor() {
                 if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
                 val params = mutableMapOf("page" to page.toString(), "pagesize" to pageSize.toString())
                 userid?.let { params["userid"] = it }
-                val (code, body) = httpGetWithRetry("/user/playlist", params)
+                // 必须绕 apicache（Rust 缓存所有 200 响应 2 分钟）：否则新建/删除歌单后
+                // 重新拉列表拿到的是旧缓存，用户会以为操作没生效（真机已复现）
+                val (code, body) = httpGetWithRetry("/user/playlist", params, VIP_NO_CACHE_HEADERS)
                 Log.d(TAG, "/user/playlist -> HTTP $code, body length=${body.length}, loggedIn=${isLoggedIn()}")
                 body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/user/playlist body[$i]: $c") }
                 if (code !in 200..299) return@withContext Result.failure(IOException("/user/playlist HTTP $code: ${body.take(200)}"))
