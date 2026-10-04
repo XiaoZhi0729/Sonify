@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "applicationId": "com.sonify.music",
+  "versionCode": 100,
+  "versionName": "1.2.3-example",
+  "publishedAt": "2026-10-04T00:00:00Z",
+  "minSdk": 23,
+  "abis": ["armeabi-v7a", "arm64-v8a"],
+  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v1.2.3-example/Sonify-v1.2.3-example.apk",
+  "apkSize": 1,
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v1.2.3-example",
+  "releaseNotes": {
+    "en": ["Format example only. Do not publish: APK size and SHA-256 are placeholders."],
+    "zh-CN": ["仅为格式示例，请勿发布：APK 大小和 SHA-256 为占位值。"],
+    "zh-TW": ["僅為格式範例，請勿發布：APK 大小和 SHA-256 為佔位值。"],
+    "ja": ["形式の例です。APK サイズと SHA-256 は仮の値のため、公開しないでください。"]
+  }
+}

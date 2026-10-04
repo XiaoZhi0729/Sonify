@@ -219,10 +219,12 @@ fun NormalMusic(navController: NavController) {
                                 label = stringResource(id = R.string.normal_button_play),
                                 modifier = Modifier.weight(1f)
                             ) {
+                                val currentList = list.value
+                                if (currentList.isEmpty()) return@NormalButton
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
-                                        list.value.first(),
-                                        list.value
+                                        currentList.first(),
+                                        currentList
                                     )
                                 }
                             }
@@ -232,11 +234,13 @@ fun NormalMusic(navController: NavController) {
                                 label = stringResource(id = R.string.normal_button_shuffle),
                                 modifier = Modifier.weight(1f)
                             ) {
+                                val currentList = list.value
+                                if (currentList.isEmpty()) return@NormalButton
                                 MediaController.mediaControl?.shuffleModeEnabled = true
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
-                                        list.value.random(),
-                                        list.value
+                                        currentList.random(),
+                                        currentList
                                     )
                                 }
                             }

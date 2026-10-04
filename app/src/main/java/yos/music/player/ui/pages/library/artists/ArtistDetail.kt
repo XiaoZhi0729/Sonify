@@ -211,10 +211,10 @@ fun ArtistDetail(
             }
         }
     }
+    // Capture items and keys together for deferred lazy layout callbacks.
+    val songItems = displaySongs
     // 酷狗接口可能返回重复 FileHash，item key 按出现序号唯一化
-    val songKeys by remember {
-        derivedStateOf { lazyItemKeys(displaySongs) { it.hash } }
-    }
+    val songKeys = remember(songItems) { lazyItemKeys(songItems) { it.hash } }
 
     Title(
         title = artistName,
@@ -363,7 +363,7 @@ fun ArtistDetail(
                 )
             }
         } else {
-            if (displaySongs.isEmpty()) {
+            if (songItems.isEmpty()) {
                 item("FilteredEmpty") {
                     Text(
                         text = stringResource(id = R.string.artist_detail_search_empty),
@@ -375,10 +375,10 @@ fun ArtistDetail(
                 }
             }
             itemsIndexed(
-                displaySongs,
-                key = { index, _ -> songKeys[index] }
+                songItems,
+                key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
             ) { index, song ->
-                key(songKeys[index]) {
+                key(songKeys.getOrElse(index) { "oob_$index" }) {
                     MusicList(KugouRepository.toDisplayMediaItem(song)) {
                         // 过滤态下点击播放过滤前列表中的同一首
                         val realIndex = songs.value.indexOfFirst { it.hash == song.hash }
@@ -387,7 +387,7 @@ fun ArtistDetail(
                 }
 
                 key("divider_$index") {
-                    if (index < displaySongs.size - 1) {
+                    if (index < songItems.size - 1) {
                         Spacer(
                             modifier = Modifier
                                 .fillMaxWidth()

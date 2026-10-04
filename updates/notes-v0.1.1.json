@@ -1,0 +1,26 @@
+{
+  "en": [
+    "Add in-app update checks, download progress, cancellation and system installation.",
+    "Add daily recommendations, personal FM, online artists and playlist management.",
+    "Improve song crossfade handoff and fix cancellation, timeout and list synchronization issues.",
+    "Refresh glass dialogs, sorting menus and screen corner adaptation."
+  ],
+  "zh-CN": [
+    "新增应用内检查更新、下载进度、取消下载与系统安装入口。",
+    "新增每日推荐、私人 FM、在线艺人和歌单管理。",
+    "优化歌曲平滑过渡，修复切歌取消、解析超时与列表状态不同步问题。",
+    "统一玻璃对话框，优化排序菜单和屏幕圆角适配。"
+  ],
+  "zh-TW": [
+    "新增應用程式內檢查更新、下載進度、取消下載與系統安裝入口。",
+    "新增每日推薦、私人 FM、線上藝人和歌單管理。",
+    "改善歌曲平滑過渡，修正切歌取消、解析逾時與列表狀態不同步問題。",
+    "統一玻璃對話框，改善排序選單與螢幕圓角適配。"
+  ],
+  "ja": [
+    "アプリ内の更新確認、ダウンロード進捗、キャンセル、システムによるインストールを追加。",
+    "毎日のおすすめ、パーソナル FM、オンラインアーティスト、プレイリスト管理を追加。",
+    "曲のクロスフェードを改善し、キャンセル、タイムアウト、リストの同期問題を修正。",
+    "ガラス調のダイアログ、並べ替えメニュー、画面の角の表示を改善。"
+  ]
+}

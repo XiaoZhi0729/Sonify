@@ -97,3 +97,12 @@ _diag_interrupt/
 /_zone_parse.py
 classes.dex
 bfts_logo/
+
+# Promotional render dependencies and output
+/.kotlin/
+/promo/node_modules/
+/promo/out/
+/promo/.remotion/
+
+# Locally generated release manifest; latest.json is reviewed and published separately
+/updates/generated.json
