@@ -55,6 +55,7 @@ import yos.music.player.data.repositories.KugouPlaylistBrief
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.KugouSearchSong
 import yos.music.player.ui.UI
+import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
@@ -100,6 +101,14 @@ fun SearchPage(
     val songEndReached = remember("SearchPage_songEndReached") { mutableStateOf(false) }
     val songNextPage = remember("SearchPage_songNextPage") { mutableStateOf(2) }
     val listState = rememberLazyListState()
+    // 翻页重叠已按 hash 去重，但歌词匹配等结果仍可能重复，item key 按出现序号唯一化兜底。
+    // items 与 keys 必须派生自同一次状态读取：LazyColumn 内容块有独立重组作用域且
+    // key lambda 延迟到测量期才执行，若两处分别读 results.value，内容块可能拿到
+    // 新列表而 keys 还是上一代空表（SearchPage.kt:463 OOB 崩溃根因）
+    val songItems = results.value
+    val resultKeys = remember(songItems) { lazyItemKeys(songItems) { it.hash } }
+    val lyricItems = SearchObject.lyricResults.value
+    val lyricKeys = remember(lyricItems) { lazyItemKeys(lyricItems) { it.song.hash } }
 
     val scope = rememberCoroutineScope()
 
@@ -442,24 +451,24 @@ fun SearchPage(
                     }
 
                     SearchObject.TYPE_LYRIC -> itemsIndexed(
-                        SearchObject.lyricResults.value,
-                        key = { _, item -> "ly:${item.song.hash}" }
+                        lyricItems,
+                        key = { index, _ -> "ly:${lyricKeys.getOrElse(index) { "oob_$index" }}" }
                     ) { index, item ->
                         LyricResultRow(item) { playLyricSong(item) }
-                        if (index < SearchObject.lyricResults.value.size - 1) {
+                        if (index < lyricItems.size - 1) {
                             OnlineListItemDivider()
                         }
                     }
 
                     else -> {
                         itemsIndexed(
-                            results.value,
-                            key = { _, song -> song.hash }
+                            songItems,
+                            key = { index, _ -> resultKeys.getOrElse(index) { "oob_$index" } }
                         ) { index, song ->
                             MusicList(KugouRepository.toDisplayMediaItem(song)) {
                                 playSong(song)
                             }
-                            if (index < results.value.size - 1) {
+                            if (index < songItems.size - 1) {
                                 OnlineListItemDivider()
                             }
                         }

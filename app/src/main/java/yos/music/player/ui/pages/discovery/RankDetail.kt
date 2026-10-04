@@ -53,6 +53,7 @@ import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.RankObject
 import yos.music.player.data.repositories.KugouRankSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.ui.pages.library.MusicList
@@ -111,6 +112,10 @@ fun RankDetail(
     val tracks = remember("RankDetail_tracks") {
         mutableStateOf<List<KugouRankSong>>(emptyList())
     }
+    // 酷狗榜单可能返回重复 FileHash，item key 按出现序号唯一化。
+    // items 与 keys 派生自同一次读取（约定见 LazyItemKeys.kt）
+    val trackItems = tracks.value
+    val songKeys = remember(trackItems) { lazyItemKeys(trackItems) { it.hash } }
     // 与 tracks 同步的队列映射（占位符 URI，入队零网络请求）
     val queue = remember("RankDetail_queue") {
         mutableStateOf<List<YosMediaItem>>(emptyList())
@@ -310,10 +315,10 @@ fun RankDetail(
             }
 
             itemsIndexed(
-                tracks.value,
-                key = { _, song -> song.hash }
+                trackItems,
+                key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
             ) { index, song ->
-                key(song.hash) {
+                key(songKeys.getOrElse(index) { "oob_$index" }) {
                     // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放
                     if (isWideScreen) {
                         DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
@@ -327,7 +332,7 @@ fun RankDetail(
                 }
 
                 key("divider_$index") {
-                    if (index < tracks.value.size - 1) {
+                    if (index < trackItems.size - 1) {
                         Spacer(
                             modifier = Modifier
                                 .fillMaxWidth()
