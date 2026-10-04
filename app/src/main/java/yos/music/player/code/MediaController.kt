@@ -1089,20 +1089,44 @@ class YosPlaybackService : MediaSessionService() {
                         }
 
                         if (!mediaId.orEmpty().startsWith("kugou-online-")) {
-                            val lrcContent: String? = null
-                            val finalLrcContent = if (lrcContent == null) {
-                                val lrcPath = "${thisPath?.substringBeforeLast(".")}.lrc"
-                                println("获取歌词元数据失败，将读取：$lrcPath")
-                                AudioMetadataUtils.loadLrcFile(this@YosPlaybackService, lrcPath) ?: ""
-                            } else {
-                                lrcContent
-                            }
+                            // 本地歌词：同名 .lrc 优先，读不到再取音频内嵌歌词（M4A ©lyr / MP3 USLT / FLAC）。
+                            // TagLib 解析是磁盘 IO，放 IO 线程；发布前回主线程校验 mediaId 防串歌。
+                            val durationMs = player.duration.takeIf { it > 0 } ?: 0L
+                            MediaViewModelObject.lrcEntries.value = emptyList()
+                            MediaViewModelObject.lyricLoading.value = true
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val lrcContent = runCatching {
+                                    val fromFile = thisPath?.let { p ->
+                                        println("读取本地歌词：${p.substringBeforeLast(".")}.lrc")
+                                        AudioMetadataUtils.loadLrcFile(
+                                            this@YosPlaybackService,
+                                            "${p.substringBeforeLast(".")}.lrc"
+                                        )
+                                    }
+                                    val embedded = fromFile?.takeIf { it.isNotBlank() } ?: run {
+                                        if (thisPath != null) println("未找到同名 .lrc，尝试读取内嵌歌词")
+                                        thisPath?.let { AudioMetadataUtils.loadEmbeddedLyric(it) }
+                                    }
+                                    embedded
+                                }.getOrNull().orEmpty()
 
-                            val lrcEntries = YosLrcFactory().formatLrcEntries(finalLrcContent)
-                            MediaViewModelObject.lrcEntries.value = lrcEntries
-                            MediaViewModelObject.lyricMediaId.value = mediaId
-                            MediaViewModelObject.lyricLoading.value = false
-                            YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)                        }
+                                // player.duration 在部分轨道上仍是 UNSET，用 TagLib 读文件时长兜底
+                                val totalDurationMs = if (durationMs > 0) durationMs
+                                else thisPath?.let { AudioMetadataUtils.getAudioLengthMs(it) } ?: 0L
+
+                                val lrcEntries = YosLrcFactory()
+                                    .formatLrcEntriesWithFallback(lrcContent, totalDurationMs)
+
+                                withContext(Dispatchers.Main) {
+                                    if (player.currentMediaItem?.mediaId == mediaId) {
+                                        MediaViewModelObject.lrcEntries.value = lrcEntries
+                                        MediaViewModelObject.lyricMediaId.value = mediaId
+                                        MediaViewModelObject.lyricLoading.value = false
+                                        YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)
+                                    }
+                                }
+                            }
+                        }
 
                         if (thisPath != null && !mediaId.orEmpty().startsWith("kugou-online-")) {
                             // MediaViewModelObject.isDolby.value = thisPath.endsWith(".m4a")

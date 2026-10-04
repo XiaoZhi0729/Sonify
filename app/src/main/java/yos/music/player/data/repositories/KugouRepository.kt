@@ -2173,6 +2173,12 @@ object KugouRepository {
                         ?: data.optJSONArray("list")
                     if (arr == null) {
                         if (page == 1) {
+                            // 空歌单：业务成功但响应没有歌曲列表字段（实测新建空歌单即此形态）
+                            // → 视为空列表而非解析失败；业务失败（status/errcode 异常）才报错
+                            val statusOk = json.optInt("status", 1) == 1 && json.optInt("errcode", 0) == 0
+                            if (statusOk) {
+                                return@withContext Result.success(emptyList())
+                            }
                             return@withContext Result.failure<List<KugouPlaylistTrack>>(
                                 IllegalStateException("歌单歌曲响应缺少列表字段")
                             )

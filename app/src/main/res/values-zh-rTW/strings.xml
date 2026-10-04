@@ -14,7 +14,7 @@
     <string name="online_playlists_loading">載入中…</string>
     <string name="online_playlists_empty">暫無歌單</string>
     <string name="online_playlists_song_unit">首</string>
-    <string name="online_playlist_songs_empty">歌單內暫無歌曲</string>
+    <string name="online_playlist_songs_empty">歌單還沒有歌曲</string>
     <string name="online_playlist_detail_missing">未選中歌單，請返回重試</string>
     <string name="online_playlist_loading_songs">正在載入歌曲…</string>
     <string name="online_playlist_loaded_progress">已載入 %1$d / %2$d</string>

@@ -212,16 +212,24 @@ fun OnlinePlaylistDetail(
         loadTracks()
     }
 
-    // 挂起歌单对账轮询：绑定真实 listid（含创建失败后的重试）→ 刷新状态并拉真实歌曲
+    // 挂起歌单对账轮询：绑定真实 listid（含创建失败后的重试）→ 等 ops 补发完 → 拉真实歌曲
     LaunchedEffect(playlistId) {
         val localId = playlistId.orEmpty()
         if (PendingPlaylistStore.get(localId) == null) return@LaunchedEffect
         var wasUnbound = PendingPlaylistStore.get(localId)?.isBound == false
         while (true) {
             delay(4_000L)
-            val fresh = PendingPlaylistStore.get(localId) ?: break
+            var fresh = PendingPlaylistStore.get(localId) ?: break
             pendingEntry.value = fresh
             if (fresh.isBound) {
+                // 等挂起的加删歌补发完再拉真实列表，避免竞态（补发中拉取会缺最后几首）
+                var waited = 0
+                while (fresh.ops.isNotEmpty() && waited < 30_000) {
+                    delay(2_000L)
+                    waited += 2_000
+                    fresh = PendingPlaylistStore.get(localId) ?: break
+                    pendingEntry.value = fresh
+                }
                 if (wasUnbound) loadTracks()
                 break
             }
@@ -293,8 +301,8 @@ fun OnlinePlaylistDetail(
                 }
             }
 
-            // 挂起歌单同步状态 banner（创建中 / 创建失败可重试）
-            if (isPendingPlaylist) {
+            // 挂起歌单同步状态 banner（创建中 / 创建失败可重试）；绑定完成后自动消失
+            if (isPendingPlaylist && pendingEntry.value?.isBound != true) {
                 item("PendingBanner") {
                     val entry = pendingEntry.value
                     Column(
@@ -352,15 +360,28 @@ fun OnlinePlaylistDetail(
             }
 
             item("Status") {
-                OnlineStatusItem(
-                    status = status.value,
-                    loadingText = loadProgress.value.ifEmpty { loadingBaseText },
-                    emptyText = if (isPendingPlaylist) {
-                        stringResource(id = R.string.online_playlist_pending_empty)
-                    } else {
-                        stringResource(id = R.string.online_playlist_songs_empty)
+                if (status.value == "empty") {
+                    // 空歌单：水平垂直居中提示（替代左对齐状态行，视觉对齐 Apple Music 空态）
+                    Box(
+                        modifier = Modifier
+                            .fillParentMaxWidth()
+                            .fillParentMaxHeight(0.55f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.online_playlist_songs_empty),
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.alpha(0.55f)
+                        )
                     }
-                )
+                } else {
+                    OnlineStatusItem(
+                        status = status.value,
+                        loadingText = loadProgress.value.ifEmpty { loadingBaseText },
+                        emptyText = stringResource(id = R.string.online_playlist_songs_empty)
+                    )
+                }
             }
 
             item {

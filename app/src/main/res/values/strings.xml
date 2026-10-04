@@ -14,7 +14,7 @@
     <string name="online_playlists_loading">Loading…</string>
     <string name="online_playlists_empty">No playlists yet</string>
     <string name="online_playlists_song_unit">songs</string>
-    <string name="online_playlist_songs_empty">No songs in this playlist</string>
+    <string name="online_playlist_songs_empty">This playlist has no songs yet</string>
     <string name="online_playlist_detail_missing">No playlist selected, go back and retry</string>
     <string name="online_playlist_loading_songs">Loading songs…</string>
     <string name="online_playlist_loaded_progress">Loaded %1$d / %2$d</string>
