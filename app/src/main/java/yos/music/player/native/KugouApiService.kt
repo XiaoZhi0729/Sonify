@@ -202,8 +202,9 @@ class KugouApiService private constructor() {
     private suspend fun httpGetWithRetry(
         path: String,
         params: Map<String, String>,
-        extraHeaders: Map<String, String> = emptyMap()
-    ): Pair<Int, String> = retryResult {
+        extraHeaders: Map<String, String> = emptyMap(),
+        maxRetries: Int = 3
+    ): Pair<Int, String> = retryResult(maxRetries) {
         try {
             val response = httpGetOnce(path, params, extraHeaders)
             when {
@@ -315,7 +316,10 @@ class KugouApiService private constructor() {
                 Log.d(TAG, "Getting URL for hash=$hash quality=$quality loggedIn=${isLoggedIn()}")
 
                 val params = mapOf("hash" to hash.lowercase(), "quality" to quality)
-                val (code, body) = httpGetWithRetry("/song/url", params)
+                // 播放路径的重试降为 1 次：这条链跑在 ExoPlayer Loader 线程上且外层
+                // 有 10s 全局截止（resolvePlayUrlBlocking），3 次重试 × readTimeout 15s
+                // 只会把整段准备时间拖到分钟级；瞬时失败交给重试一次 + 失败跳歌兜底
+                val (code, body) = httpGetWithRetry("/song/url", params, maxRetries = 1)
 
                 Log.d(TAG, "/song/url -> HTTP $code, body length=${body.length}, loggedIn=${isLoggedIn()}")
                 if (body.isNotEmpty()) {

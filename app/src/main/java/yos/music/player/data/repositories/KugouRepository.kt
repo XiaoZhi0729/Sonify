@@ -1489,6 +1489,13 @@ object KugouRepository {
     private const val FAIL_CACHE_TTL_MS = 30 * 1000L
 
     /**
+     * 解析整链的全局截止。没有它，弱网下"逐档试探 × 单档 3 次重试 × readTimeout 15s"
+     * 的乘积就是分钟级阻塞（真机实测 92s）。10s 给弱网正常解析（实测 5~8s）留了余量，
+     * 超时后走 lastGood 兜底而非直接判死；观察一段时间后再决定是否收紧。
+     */
+    private const val RESOLVE_TOTAL_TIMEOUT_MS = 10_000L
+
+    /**
      * 阻塞式解析播放 URL，供 Media3 数据源在加载线程调用（底层本就是阻塞 OkHttp）。
      * [quality]/[intentSource] 为本次解析的**意图**及其来源，由
      * [QualityIntentResolver.resolve] 产出（与 UI 同一源头）。
@@ -1546,7 +1553,23 @@ object KugouRepository {
             return cached.url
         }
         val resolveStartedAt = System.currentTimeMillis()
-        val result = runBlocking { resolvePlayUrlWithFallback(hash, quality) }
+        // 整链全局截止：降档链(≤5档) × 每档重试 × 单次 OkHttp readTimeout(15s) 的乘积
+        // 在弱网下可达分钟级（真机实测 92s），整段时间 Loader 线程阻塞、播放器停在 BUFFERING。
+        // 超时不算"曲目被拒"也不算"取消"：在 runBlocking 内捕获落回 Result.failure，
+        // 由下方 lastGood 兜底接管（本会话解析成功过则续播，从未成功则走跳歌，与解析失败同义）。
+        val result = runBlocking {
+            try {
+                kotlinx.coroutines.withTimeout(RESOLVE_TOTAL_TIMEOUT_MS) {
+                    resolvePlayUrlWithFallback(hash, quality)
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                QualityTrace.log(
+                    "RESOLVE", "path" to "timeout", "hash" to lower,
+                    "cost" to (System.currentTimeMillis() - resolveStartedAt)
+                )
+                Result.failure(e)
+            }
+        }
         if (result.isFailure) {
             // 切歌取消（ExoPlayer 中断 Loader 线程）不是解析失败的证据：原样抛回，
             // 不写负缓存——写进去会让 30s 内快速切回同一首在负缓存里直接跳歌。
