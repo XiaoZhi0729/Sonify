@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -361,19 +363,31 @@ fun OnlinePlaylistDetail(
 
             item("Status") {
                 if (status.value == "empty") {
-                    // 空歌单：水平垂直居中提示（替代左对齐状态行，视觉对齐 Apple Music 空态）
+                    // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛，贴近上方「添加歌曲」按钮）
                     Box(
                         modifier = Modifier
                             .fillParentMaxWidth()
-                            .fillParentMaxHeight(0.55f),
+                            .fillParentMaxHeight(0.32f),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = stringResource(id = R.string.online_playlist_songs_empty),
-                            fontSize = 16.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.alpha(0.55f)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_uitabbar_library),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(70.dp)
+                                    .alpha(0.3f),
+                                tint = Color.Black withNight Color.White
+                            )
+                            Text(
+                                text = stringResource(id = R.string.online_playlist_songs_empty),
+                                fontSize = 16.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .padding(top = 12.dp)
+                                    .alpha(0.55f)
+                            )
+                        }
                     }
                 } else {
                     OnlineStatusItem(
