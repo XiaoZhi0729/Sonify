@@ -14,11 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -46,10 +43,13 @@ import yos.music.player.data.repositories.PendingPlaylistStore
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
+import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
+import yos.music.player.ui.widgets.basic.SonifyDialog
+import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.preloadRawCover
 
@@ -115,9 +115,9 @@ fun OnlinePlaylists(
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val openOnlinePlaylist = onOpenOnlinePlaylist ?: { selection: PlaylistSelection -> navController.navigate(selection.toRoute()) }
-    val playlists = remember("OnlinePlaylists_list") { mutableStateOf<List<KugouPlaylist>>(emptyList()) }
+    val playlists = rememberPageData<List<KugouPlaylist>>("OnlinePlaylists_list") { emptyList() }
     // "loading" | "ok" | "empty" | "error:<msg>"
-    val status = remember("OnlinePlaylists_status") { mutableStateOf("loading") }
+    val status = remember("OnlinePlaylists_status") { mutableStateOf(if (playlists.value.isEmpty()) "loading" else "ok") }
     val scope = rememberCoroutineScope()
     // 挂起删除（MMKV 落盘，跨页面/冷启存续；load() 合并时自动收敛清除）
     val pendingDel = remember("OnlinePlaylists_pending_del") { mutableStateOf(readPendingDeletes()) }
@@ -217,7 +217,6 @@ fun OnlinePlaylists(
                     }
                 }
                 .onFailure { e ->
-                    playlists.value = emptyList()
                     status.value = "error:${e.message}"
                 }
         }
@@ -414,16 +413,15 @@ fun OnlinePlaylists(
 
     // 新建歌单弹层
     if (showCreateDialog.value) {
-        AlertDialog(
+        SonifyDialog(
             onDismissRequest = { if (!creating.value) showCreateDialog.value = false },
-            title = { Text(text = stringResource(id = R.string.online_playlists_create)) },
-            text = {
+            title = stringResource(id = R.string.online_playlists_create),
+            content = {
                 Column {
-                    OutlinedTextField(
+                    SonifyDialogTextField(
                         value = newPlaylistName.value,
                         onValueChange = { newPlaylistName.value = it },
-                        placeholder = { Text(text = stringResource(id = R.string.online_playlists_create_hint)) },
-                        singleLine = true,
+                        placeholder = stringResource(id = R.string.online_playlists_create_hint),
                         enabled = !creating.value,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -437,49 +435,32 @@ fun OnlinePlaylists(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = !creating.value && newPlaylistName.value.isNotBlank(),
-                    onClick = { createPlaylist() }
-                ) {
-                    Text(text = stringResource(id = R.string.common_ok))
-                }
-            },
-            dismissButton = {
-                TextButton(enabled = !creating.value, onClick = { showCreateDialog.value = false }) {
-                    Text(text = stringResource(id = R.string.common_cancel))
-                }
-            }
+            positiveContent = stringResource(id = R.string.common_ok),
+            onPositive = { createPlaylist() },
+            negativeContent = stringResource(id = R.string.common_cancel),
+            onNegative = { showCreateDialog.value = false },
+            positiveEnabled = !creating.value && newPlaylistName.value.isNotBlank(),
+            negativeEnabled = !creating.value,
+            dismissEnabled = !creating.value,
+            closeOnPositive = false
         )
     }
 
     // 删除确认弹层（长按歌单触发）
     deleteTarget.value?.let { target ->
-        AlertDialog(
+        SonifyDialog(
             onDismissRequest = { if (!deleting.value) deleteTarget.value = null },
-            title = { Text(text = stringResource(id = R.string.online_playlists_delete)) },
-            text = {
-                Text(
-                    text = stringResource(id = R.string.online_playlists_delete_confirm, target.name),
-                    fontSize = 15.sp
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !deleting.value,
-                    onClick = { deletePlaylist(target) }
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.common_ok),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(enabled = !deleting.value, onClick = { deleteTarget.value = null }) {
-                    Text(text = stringResource(id = R.string.common_cancel))
-                }
-            }
+            title = stringResource(id = R.string.online_playlists_delete),
+            message = stringResource(id = R.string.online_playlists_delete_confirm, target.name),
+            positiveContent = stringResource(id = R.string.common_ok),
+            onPositive = { deletePlaylist(target) },
+            negativeContent = stringResource(id = R.string.common_cancel),
+            onNegative = { deleteTarget.value = null },
+            positiveEnabled = !deleting.value,
+            negativeEnabled = !deleting.value,
+            dismissEnabled = !deleting.value,
+            destructive = true,
+            closeOnPositive = false
         )
     }
 }

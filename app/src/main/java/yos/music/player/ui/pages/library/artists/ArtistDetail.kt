@@ -55,6 +55,7 @@ import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.repositories.KugouArtistDetailData
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.SearchTextField
@@ -209,6 +210,10 @@ fun ArtistDetail(
                 it.name.contains(query, ignoreCase = true) || it.author.contains(query, ignoreCase = true)
             }
         }
+    }
+    // 酷狗接口可能返回重复 FileHash，item key 按出现序号唯一化
+    val songKeys by remember {
+        derivedStateOf { lazyItemKeys(displaySongs) { it.hash } }
     }
 
     Title(
@@ -371,9 +376,9 @@ fun ArtistDetail(
             }
             itemsIndexed(
                 displaySongs,
-                key = { index, song -> song.hash.ifEmpty { "fidx_$index" } }
+                key = { index, _ -> songKeys[index] }
             ) { index, song ->
-                key(song.hash.ifEmpty { "fidx_$index" }) {
+                key(songKeys[index]) {
                     MusicList(KugouRepository.toDisplayMediaItem(song)) {
                         // 过滤态下点击播放过滤前列表中的同一首
                         val realIndex = songs.value.indexOfFirst { it.hash == song.hash }

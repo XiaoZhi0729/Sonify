@@ -13,12 +13,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheetProperties
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -28,35 +25,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.SecureFlagPolicy
 import io.github.alexzhirkevich.cupertino.CupertinoSlider
 import io.github.alexzhirkevich.cupertino.theme.CupertinoTheme
-import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.DialogContent
-import yos.music.player.ui.widgets.basic.OptionDialog
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenCornerSetDialog(modifier: Modifier = Modifier, onDismiss: () -> Unit) {
-    val dialogProperties = ModalBottomSheetProperties(
-        securePolicy = SecureFlagPolicy.Inherit,
-        shouldDismissOnBackPress = false
-    )
-    val bottomSheetState = rememberModalBottomSheetState()
-    val scope = rememberCoroutineScope()
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) return
 
     val cornerValue = remember("MainActivity_cornerValue") {
-        mutableFloatStateOf(SettingsLibrary.ScreenCorner.toFloat())
+        mutableFloatStateOf(SettingsLibrary.ScreenCorner.toFloatOrNull()?.coerceIn(0f, 130f) ?: 30f)
     }
     val context = LocalContext.current
 
-    OptionDialog(
+    ScreenCornerCalibrationDialog(
         cornerRadius = { cornerValue.floatValue.dp },
         icon = {
             Icon(painter = painterResource(id = R.drawable.ic_tips_roundcorner), contentDescription = null,
@@ -64,8 +53,6 @@ fun ScreenCornerSetDialog(modifier: Modifier = Modifier, onDismiss: () -> Unit) 
         },
         title = stringResource(id = R.string.tip_corner_title),
         subTitle = stringResource(id = R.string.tip_corner_subtitle),
-        properties = dialogProperties,
-        bottomSheetState = bottomSheetState,
         content = {
             val interactionSource = remember { MutableInteractionSource() }
             CupertinoTheme {
@@ -129,11 +116,9 @@ fun ScreenCornerSetDialog(modifier: Modifier = Modifier, onDismiss: () -> Unit) 
         },
         positiveContent = stringResource(id = R.string.tip_corner_save),
         onPositive = {
-            scope.launch { bottomSheetState.hide() }.invokeOnCompletion {
-                onDismiss()
-                SettingsLibrary.ScreenCorner = cornerValue.floatValue.roundToInt().toString()
-                SettingsLibrary.ScreenCornerSet = true
-            }
+            SettingsLibrary.ScreenCorner = cornerValue.floatValue.roundToInt().toString()
+            SettingsLibrary.ScreenCornerSet = true
+            onDismiss()
         }) {
         onDismiss()
     }

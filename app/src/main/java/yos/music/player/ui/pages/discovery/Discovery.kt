@@ -2,16 +2,13 @@ package yos.music.player.ui.pages.discovery
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.Icon
@@ -73,7 +72,6 @@ import yos.music.player.data.libraries.defaultAlbum
 import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.DiscoveryObject
-import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.objects.RankObject
 import yos.music.player.data.repositories.KugouNewAlbum
@@ -95,6 +93,9 @@ import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.preloadRawCover
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
+
+// Content rails retain the natural decay target; Pager still clamps it to the dataset bounds.
+internal val DiscoveryRailSnapDistance = PagerSnapDistance.atMost(Int.MAX_VALUE)
 
 /**
  * 主页（原 Discovery 升级）：单一内容首页，不再维护重复页面。
@@ -237,41 +238,6 @@ fun Discovery(
             )
         }
 
-        // ⓪ 每日推荐 / 私人电台 入口卡（登录后展示个性化内容；未登录每日推荐走通用推荐、FM 页内引导）
-        item("QuickEntries") {
-            val cal = java.util.Calendar.getInstance()
-            val dateText = stringResource(
-                id = R.string.home_everyday_recommend_date,
-                cal.get(java.util.Calendar.MONTH) + 1,
-                cal.get(java.util.Calendar.DAY_OF_MONTH)
-            )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp)
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                QuickEntryCard(
-                    title = stringResource(id = R.string.home_everyday_recommend_title),
-                    subtitle = if (KugouAccountState.isLoggedIn) dateText
-                    else stringResource(id = R.string.home_everyday_recommend_subtitle),
-                    modifier = Modifier.weight(1f),
-                    accent = MaterialTheme.colorScheme.primary
-                ) {
-                    navController.toUI(UI.EverydayRecommendDetail)
-                }
-                QuickEntryCard(
-                    title = stringResource(id = R.string.home_personal_fm_title),
-                    subtitle = stringResource(id = R.string.home_personal_fm_subtitle),
-                    modifier = Modifier.weight(1f),
-                    accent = MaterialTheme.colorScheme.tertiary
-                ) {
-                    navController.toUI(UI.PersonalFmDetail)
-                }
-            }
-        }
-
         // ① 最近播放横向大卡列表（取色模糊背景，无数据则不渲染，无空状态）
         item("RecentlyPlayed") {
             val songs = recentlyPlayed
@@ -342,6 +308,10 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
+                            flingBehavior = PagerDefaults.flingBehavior(
+                                state = pagerState,
+                                pagerSnapDistance = DiscoveryRailSnapDistance
+                            ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { recommendPlaylists.value[it].globalCollectionId },
@@ -418,6 +388,10 @@ fun Discovery(
 
                     HorizontalPager(
                         state = pagerState,
+                        flingBehavior = PagerDefaults.flingBehavior(
+                            state = pagerState,
+                            pagerSnapDistance = DiscoveryRailSnapDistance
+                        ),
                         pageSize = PageSize.Fixed(pageWidth),
                         contentPadding = PaddingValues(start = startInset, end = endInset),
                         // foundation 1.7.0-beta07 默认 CenterVertically → 末页不足 4 首会垂直居中；
@@ -468,6 +442,10 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
+                            flingBehavior = PagerDefaults.flingBehavior(
+                                state = pagerState,
+                                pagerSnapDistance = DiscoveryRailSnapDistance
+                            ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { newAlbums.value[it].albumId },
@@ -511,6 +489,10 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
+                            flingBehavior = PagerDefaults.flingBehavior(
+                                state = pagerState,
+                                pagerSnapDistance = DiscoveryRailSnapDistance
+                            ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { rankList.value[it].rankId },
@@ -602,63 +584,6 @@ internal fun RankCardItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.alpha(0.6f)
-            )
-        }
-    }
-}
-
-/**
- * 主页快捷入口卡（每日推荐 / 私人电台）：左上角主题色圆点 + 标题 + 副标题，
- * 半透明表面底、16dp 圆角，视觉弱于各内容 Section，占位半宽。
- */
-@Composable
-private fun QuickEntryCard(
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier,
-    accent: Color,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(accent.copy(alpha = 0.18f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(accent)
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = subtitle,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .alpha(0.55f)
             )
         }
     }

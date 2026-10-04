@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.SonifyDialogHost
 
 private val DarkColorScheme = darkColorScheme(
     primary = primaryDark,
@@ -66,6 +67,6 @@ fun YosMusicTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        content = content
+        content = { SonifyDialogHost(content) }
     )
 }

@@ -30,6 +30,11 @@ private val ackProjects = listOf(
         name = "Flamingo (FlamingoSank)",
         desc = "本项目的上游基底",
         url = "https://github.com/Yos-X/FlamingoSank"
+    ),
+    AckEntry(
+        name = "Cresto / Glasense",
+        desc = "居中玻璃弹窗、材质与动效的设计及实现来源（Apache-2.0）",
+        url = "https://github.com/nevodev"
     )
 )
 

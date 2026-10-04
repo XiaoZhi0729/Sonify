@@ -1,16 +1,6 @@
 package yos.music.player.ui.pages.library
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,49 +9,34 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.QueueMusic
-import androidx.compose.material.icons.outlined.AccessTime
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
+import androidx.compose.runtime.NonSkippableComposable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
 import androidx.navigation.NavController
 import com.github.promeg.pinyinhelper.Pinyin
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
@@ -77,10 +52,17 @@ import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
+import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
+import yos.music.player.ui.widgets.basic.LiquidDropdownProgress
+import yos.music.player.ui.widgets.basic.LiquidDropdownRow
+import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
+import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 
 @Composable
 fun NormalMusic(navController: NavController) {
@@ -131,7 +113,9 @@ fun NormalMusic(navController: NavController) {
                         // if (list.value.isEmpty()) delay(320)
                         val filteredList = withContext(Dispatchers.IO) {
                             if (useSearch.value) {
-                                songs.asSequence().filter { song ->
+                                // 只在当前目标列表内过滤（歌曲入口的列表即全库，行为不变）；
+                                // 之前过滤全局 songs 会让歌单/艺人视图的搜索跳出范围
+                                musicList.asSequence().filter { song ->
                                     (song.title ?: defaultTitle).contains(
                                         searchText.value,
                                         ignoreCase = true
@@ -155,30 +139,52 @@ fun NormalMusic(navController: NavController) {
             val scope = rememberCoroutineScope()
 
             val expanded = remember { mutableStateOf(false) }
-            val buttonPosition = remember { mutableStateOf(Offset.Zero) }
 
             Box(Modifier.fillMaxSize()) {
-                YosWrapper {
-                    FloatingMenu({ expanded.value }, {
-                        expanded.value = it
-                    }, buttonPosition.value)
-                }
-
                 Title(
                     title = pageInfo.first, onBack = {
                         navController.popBackStack()
                     },
                     rightBarIcon = {
+                        // 排序菜单的触发按钮与弹层都住在 Title 作用域里：
+                        // LocalTitleOverlayHost/LocalTitlePageBackdrop 由 Title 页根提供，
+                        // 挪到外面兄弟节点会退回独立 Popup 窗口并丢掉玻璃采样源
+                        val anchorBounds = remember { mutableStateOf(IntRect.Zero) }
+                        val followState = rememberLiquidDropdownFollowState()
+
                         TitleBarIcon(
-                            modifier = Modifier.onGloballyPositioned {
-                                if (buttonPosition.value.y == 0f) {
-                                    buttonPosition.value = it.localToRoot(Offset.Zero)
+                            modifier = Modifier
+                                .onGloballyPositioned { coords ->
+                                    val pos = coords.positionInWindow()
+                                    val size = coords.size
+                                    anchorBounds.value = IntRect(
+                                        left = pos.x.toInt(),
+                                        top = pos.y.toInt(),
+                                        right = pos.x.toInt() + size.width,
+                                        bottom = pos.y.toInt() + size.height,
+                                    )
                                 }
-                            },
+                                // 联动必须挂在锚点捕获的下游：按钮会随面板进度
+                                // 下沉/收缩，锚点若跟着走会形成逐帧抖动回环
+                                .liquidDropdownAnchorFollow(followState),
                             icon = Icons.Rounded.MoreHoriz,
                             onBack = {
                                 expanded.value = true
                             }
+                        )
+
+                        SongsSortMenu(
+                            expanded = expanded.value,
+                            anchorBounds = anchorBounds.value,
+                            // 选中态必须读在**注册作用域**（这里）而不是菜单 content lambda 里：
+                            // content 会被 SideEffect 注册进 TitleOverlayHost 的独立组合树，
+                            // 跨组合树读 SettingLibrary 状态不触发宿主重组，勾选会冻住
+                            // （2026-10-04 实测；读在这里，写状态→本作用域重组→SideEffect
+                            // 重注册→宿主 slot 内容必然换新）
+                            selectedSort = SongSort,
+                            descending = EnableDescending,
+                            onDismiss = { expanded.value = false },
+                            onFractionProgress = followState::onProgress,
                         )
                     }
                 ) {
@@ -299,198 +305,90 @@ private fun List<YosMediaItem>.sortX() =
         }
     }
 
+/**
+ * 歌曲页排序玻璃下拉：与播放页音质/「更多」菜单同套 [LiquidDropdownLayout] 引擎
+ * （surfaceAlpha 0.6 同值），摆位用默认 OverlayAnchor——面板从按钮处生长并覆盖它。
+ *
+ * 排序方式与顺序是两个独立维度，所以点完不收（保持打开连着调）。
+ * [selectedSort]/[descending] 由调用方在注册作用域读好后传入（原因见调用处注释），
+ * 行尾勾据此实时反映。分割线把两组分开（左缘与行文字对齐 22dp）。
+ * 动画与新版 NexioSchedule 的右上角菜单同款：面板从按钮方块沿锚点角双向长成。
+ *
+ * **@NonSkippableComposable 是刻意的**：菜单开着时点选项，本函数的 Boolean 参数
+ * 已变化但 Compose 的 skip 检查仍误判"未变化"（2026-10-04 真机埋点实测：调用点
+ * 执行了、函数体被跳过），导致 SideEffect 不重注册、勾号冻住；禁用 skip 强制
+ * 函数体随调用点执行——重注册链路（host.set 换新 content）已验证能即时刷勾，
+ * 且 slotKey 走 remember 稳定持有，重建的只是注册 lambda，面板动画状态不受影响。
+ */
+@NonSkippableComposable
 @Composable
-fun FloatingMenu(
-    expandedLambda: () -> Boolean,
-    expandedOnChanged: (Boolean) -> Unit,
-    buttonPosition: Offset = Offset.Zero
+private fun SongsSortMenu(
+    expanded: Boolean,
+    anchorBounds: IntRect,
+    selectedSort: Int,
+    descending: Boolean,
+    onDismiss: () -> Unit,
+    onFractionProgress: (LiquidDropdownProgress) -> Unit,
 ) {
-
-    val keepPopup = remember("FloatingMenu_keepPopup") {
-        mutableStateOf(false)
-    }
-    val showPopup = remember("FloatingMenu_showPopup") {
-        mutableStateOf(false)
-    }
-
-    if (keepPopup.value) {
-        Popup(
-            //offset = IntOffset(0, buttonPosition.y.toInt()),
-            onDismissRequest = {
-                expandedOnChanged(false)
-            }
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() }) {
-                        expandedOnChanged(false)
-                    }) {
-                val animationSpec =
-                    spring(dampingRatio = 0.7f, stiffness = 340f, visibilityThreshold = 0.0001f)
-                val shadow = animateFloatAsState(
-                    targetValue = if (showPopup.value) 225f else 0f,
-                    animationSpec = if (showPopup.value) tween(
-                        durationMillis = 300,
-                        delayMillis = 430
-                    ) else tween(durationMillis = 0)
-                )
-                AnimatedVisibility(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = with(LocalDensity.current) {
-                            buttonPosition.y
-                                .toDp()
-                                .plus(10.dp)
-                        }),
-                    visible = showPopup.value,
-                    enter = fadeIn(animationSpec = animationSpec) + scaleIn(
-                        initialScale = 0.618f,
-                        animationSpec = animationSpec,
-                        transformOrigin = TransformOrigin(0.95f, 0f)
-                    ),
-                    exit = fadeOut(animationSpec = animationSpec) + scaleOut(
-                        targetScale = 0.618f,
-                        animationSpec = animationSpec,
-                        transformOrigin = TransformOrigin(0.95f, 0f)
-                    )
-                ) {
-                    val shape = RoundedCornerShape(10.dp)
-                    val shadowColor = Color(0xB3000000)
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.TopEnd
-                    ) {
-                        Column(
-                            Modifier
-                                .padding(end = 12.dp)
-                                /*.shadow(
-                                    spotColor = shadowColor,
-                                    shape = shape,
-                                    elevation = shadow.value.dp,
-                                    clip = false
-                                )*/
-                                .graphicsLayer {
-                                    this.shape = shape
-                                    this.spotShadowColor = shadowColor
-                                    this.shadowElevation = shadow.value
-                                }
-                                .graphicsLayer {
-                                    this.shape = shape
-                                    this.clip = true
-                                }
-                                .background(Color(0xF2E9E9E9) withNight Color(0xFA161616), shape),
-                        ) {
-                            FloatingMenuItem(
-                                label = stringResource(id = R.string.normal_button_sort_by_name),
-                                icon = Icons.AutoMirrored.Outlined.QueueMusic
-                            ) {
-                                SongSort =
-                                    SettingsLibrary.SongSortEnum.MUSIC_TITLE.ordinal
-                                println("SongSort: $SongSort")
-                            }
-                            FloatingMenuItemDivider()
-                            FloatingMenuItem(
-                                label = stringResource(id = R.string.normal_button_sort_by_artist),
-                                icon = Icons.Outlined.Person
-                            ) {
-                                SongSort =
-                                    SettingsLibrary.SongSortEnum.ARTIST_NAME.ordinal
-                                println("SongSort: $SongSort")
-                            }
-                            FloatingMenuDivider()
-                            FloatingMenuItem(
-                                label = stringResource(id = R.string.normal_button_sort_by_date),
-                                icon = Icons.Outlined.AccessTime
-                            ) {
-                                SongSort =
-                                    SettingsLibrary.SongSortEnum.MODIFIED_DATE.ordinal
-                                println("SongSort: $SongSort")
-                            }
-                            FloatingMenuDivider()
-                            FloatingMenuItem(
-                                label = stringResource(id = R.string.normal_button_sort_ascending),
-                                icon = Icons.Rounded.ArrowUpward
-                            ) {
-                                EnableDescending = false
-                                println("SongSort: $EnableDescending")
-                            }
-                            FloatingMenuItemDivider()
-                            FloatingMenuItem(
-                                label = stringResource(id = R.string.normal_button_sort_descending),
-                                icon = Icons.Rounded.ArrowDownward
-                            ) {
-                                EnableDescending = true
-                                println("SongSort: $EnableDescending")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // println("Popup 显示")
-    } else {
-        // println("Popup 隐藏")
-    }
-
-    LaunchedEffect(key1 = expandedLambda()) {
-        if (expandedLambda()) {
-            keepPopup.value = true
-            delay(100)
-            showPopup.value = true
-        } else {
-            showPopup.value = false
-            delay(300)
-            keepPopup.value = false
-        }
-    }
-}
-
-
-@Composable
-fun FloatingMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth(0.618f)
-            .height(48.dp)
-            .background((Color.White withNight Color.Black).copy(alpha = 0.68f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically
+    LiquidDropdownLayout(
+        expanded = expanded,
+        anchorBounds = anchorBounds,
+        onDismissRequest = onDismiss,
+        surfaceAlpha = 0.6f,
+        backdrop = LocalTitlePageBackdrop.current,
+        onFractionProgress = onFractionProgress,
     ) {
-        Text(
-            text = label,
-            fontSize = 17.5.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .alpha(0.9f)
-                .padding(end = 18.dp)
-        )
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(24.dp),
-            tint = MaterialTheme.colorScheme.onBackground
-        )
+        LiquidDropdownColumn {
+            LiquidDropdownRow(
+                text = stringResource(id = R.string.normal_button_sort_by_name),
+                selected = selectedSort == SettingsLibrary.SongSortEnum.MUSIC_TITLE.ordinal,
+                onClick = {
+                    SongSort = SettingsLibrary.SongSortEnum.MUSIC_TITLE.ordinal
+                },
+                isFirst = true,
+            )
+            LiquidDropdownRow(
+                text = stringResource(id = R.string.normal_button_sort_by_artist),
+                selected = selectedSort == SettingsLibrary.SongSortEnum.ARTIST_NAME.ordinal,
+                onClick = {
+                    SongSort = SettingsLibrary.SongSortEnum.ARTIST_NAME.ordinal
+                },
+            )
+            LiquidDropdownRow(
+                text = stringResource(id = R.string.normal_button_sort_by_date),
+                selected = selectedSort == SettingsLibrary.SongSortEnum.MODIFIED_DATE.ordinal,
+                onClick = {
+                    SongSort = SettingsLibrary.SongSortEnum.MODIFIED_DATE.ordinal
+                },
+            )
+            SongsSortMenuDivider()
+            LiquidDropdownRow(
+                text = stringResource(id = R.string.normal_button_sort_ascending),
+                selected = !descending,
+                onClick = {
+                    EnableDescending = false
+                },
+            )
+            LiquidDropdownRow(
+                text = stringResource(id = R.string.normal_button_sort_descending),
+                selected = descending,
+                onClick = {
+                    EnableDescending = true
+                },
+                isLast = true,
+            )
+        }
     }
 }
 
+/** 排序方式与顺序两组之间的细分割线：左缘与行文字对齐（行 8dp 内缩 + 14dp 内边距）。 */
 @Composable
-fun FloatingMenuItemDivider() =
+private fun SongsSortMenuDivider() =
     Spacer(
         modifier = Modifier
-            .fillMaxWidth(0.618f)
+            .padding(start = 22.dp, end = 14.dp)
+            .padding(vertical = 5.dp)
             .alpha(0.1f)
             .height(0.65.dp)
             .background(Color.Black withNight Color.White)
-    )
-
-@Composable
-fun FloatingMenuDivider() =
-    Spacer(
-        modifier = Modifier.height(8.dp)
     )

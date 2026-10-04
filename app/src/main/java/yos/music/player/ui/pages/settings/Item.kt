@@ -137,8 +137,6 @@ fun SelectItem(
             expanded = expanded.value && resolvedEnabled,
             anchorBounds = anchorBounds,
             onDismissRequest = { expanded.value = false },
-            // 总条目超过 2 时，揭示裁剪到两行高度（Nexio 同规则）
-            revealLimitHeight = if (items.size > 2) 112.dp else 0.dp,
             backdrop = pageBackdrop,
             onFractionProgress = { progress -> fractionState.value = progress.fraction },
         ) {

@@ -31,6 +31,7 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.update.UpdateSettingsItems
 
 private val bannerCorner = YosRoundedCornerShape(9.dp)
 
@@ -80,6 +81,7 @@ fun About(navController: NavController) =
                                 onClick = null,
                                 desc = appVersion.value
                             )
+                            UpdateSettingsItems()
                         }
 
                         GroupSpacer()

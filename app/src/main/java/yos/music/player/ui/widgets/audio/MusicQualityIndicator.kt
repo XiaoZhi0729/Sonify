@@ -258,14 +258,12 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
 
 /**
  * 音质选择玻璃下拉：**只有四档单选行**，与播放页「更多」菜单同属一套
- * [LiquidDropdownLayout] 引擎——进入/退出弹簧（0.78/232 与 0.78/400）、alpha tween
- * (120/320)、缩放 0.24→1、反向补偿圆角 25dp、vibrancy + blur(24dp)、表面 0.6 全部
- * 同源同值，不再维护第二套弹层。
+ * [LiquidDropdownLayout] 引擎——进入/退出弹簧（0.78/240 与 0.78/400）、alpha tween
+ * (120/400)、缩放 0.24→1、独立锚点动画、从胶囊方块生长的裁剪揭示、反向补偿圆角
+ * 25dp、vibrancy + blur(24dp)、表面 0.6 全部同源同值，不再维护第二套弹层。
  *
- * 与「更多」菜单只有两处因几何而不同的参数：这里胶囊在时间行居中，所以面板跟着
- * 居中摆位（[alignCenterHorizontally]）；四行比两行长，按 Nexio 的"条目超过两行就
- * 把揭示裁剪压到两行高"规则给了 [revealLimitHeight]（本组件行高下两行≈ 96dp，
- * 不同于设置页 Miuix 度量的 112dp），面板从胶囊处向下展开而不是纯缩放。
+ * 与「更多」菜单因几何而不同的参数：这里胶囊在时间行居中，所以面板跟着
+ * 居中摆位（[alignCenterHorizontally]），裁剪从中心长出而不是从角落。
  *
  * [onFractionProgress] 逐帧回传给胶囊本体，驱动它的下沉/收缩/淡出（与「更多」按钮同机制）。
  *
@@ -290,7 +288,6 @@ private fun QualitySheet(
         // 播放页专属透明度：深浅色统一 0.6（与「更多」菜单同值；设置页保持 0.72/0.8 不变）
         surfaceAlpha = 0.6f,
         onDismissRequest = onDismiss,
-        revealLimitHeight = 96.dp,
         backdrop = LocalTitlePageBackdrop.current,
         onFractionProgress = onFractionProgress
     ) {

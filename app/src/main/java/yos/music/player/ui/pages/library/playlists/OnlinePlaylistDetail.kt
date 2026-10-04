@@ -23,10 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import yos.music.player.ui.navigation.PlaylistSelection
+import yos.music.player.ui.lazyItemKeys
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import com.google.accompanist.insets.navigationBarsHeight
@@ -72,6 +71,8 @@ import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.enterCoverCorner
 import yos.music.player.ui.widgets.basic.ShadowImage
+import yos.music.player.ui.widgets.basic.SonifyDialog
+import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBar
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -156,6 +157,9 @@ fun OnlinePlaylistDetail(
 
     // 队列即取即建（占位符 URI，入队零网络请求；挂起歌单的待加歌同样可播）
     fun currentQueue(): List<YosMediaItem> = displayTracks.map { KugouRepository.toQueueMediaItem(it) }
+
+    // 服务端+挂起条目拼出的列表可能出现重复 FileHash，item key 按出现序号唯一化
+    val trackKeys = remember(displayTracks) { lazyItemKeys(displayTracks) { it.hash } }
 
     // 添加歌曲弹层 / 待删除歌曲（长按行触发，仅自有歌单）
     val showAddDialog = remember("OnlinePlaylistDetail_add") { mutableStateOf(false) }
@@ -407,6 +411,7 @@ fun OnlinePlaylistDetail(
 
             OnlineDetailSongs(
                 tracks = displayTracks,
+                trackKeys = trackKeys,
                 isWide = isWideScreen,
                 onPlayAt = { playAt(it) },
                 onRemoveTrack = if (source == PlaylistSelection.Source.User) {
@@ -436,48 +441,35 @@ fun OnlinePlaylistDetail(
 
     // 删歌确认弹层（长按歌曲行触发，仅自有歌单）
     removeTarget.value?.let { target ->
-        AlertDialog(
+        SonifyDialog(
             onDismissRequest = { removeTarget.value = null },
-            title = { Text(text = stringResource(id = R.string.online_playlist_track_remove)) },
-            text = {
-                Text(
-                    text = stringResource(id = R.string.online_playlist_track_remove_confirm, target.name),
-                    fontSize = 15.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val t = target
-                    removeTarget.value = null
-                    scope.launch {
-                        val entry = pendingEntry.value
-                        val result = if (entry != null) {
-                            PendingPlaylistStore.removeSong(entry.localId, t.hash, t.fileId)
-                        } else {
-                            KugouRepository.removeTrackFromPlaylist(playlistId.orEmpty(), t.fileId, t.hash)
-                        }
-                        result
-                            .onSuccess {
-                                if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
-                                else {
-                                    tracks.value = tracks.value.filter { it.hash != t.hash }
-                                    status.value = if (tracks.value.isEmpty()) "empty" else "ok"
-                                }
-                            }
-                            .onFailure { e -> status.value = "error:${e.message}" }
+            title = stringResource(id = R.string.online_playlist_track_remove),
+            message = stringResource(id = R.string.online_playlist_track_remove_confirm, target.name),
+            positiveContent = stringResource(id = R.string.common_ok),
+            onPositive = {
+                val t = target
+                removeTarget.value = null
+                scope.launch {
+                    val entry = pendingEntry.value
+                    val result = if (entry != null) {
+                        PendingPlaylistStore.removeSong(entry.localId, t.hash, t.fileId)
+                    } else {
+                        KugouRepository.removeTrackFromPlaylist(playlistId.orEmpty(), t.fileId, t.hash)
                     }
-                }) {
-                    Text(
-                        text = stringResource(id = R.string.common_ok),
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    result
+                        .onSuccess {
+                            if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
+                            else {
+                                tracks.value = tracks.value.filter { it.hash != t.hash }
+                                status.value = if (tracks.value.isEmpty()) "empty" else "ok"
+                            }
+                        }
+                        .onFailure { e -> status.value = "error:${e.message}" }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { removeTarget.value = null }) {
-                    Text(text = stringResource(id = R.string.common_cancel))
-                }
-            }
+            negativeContent = stringResource(id = R.string.common_cancel),
+            onNegative = { removeTarget.value = null },
+            destructive = true
         )
     }
 
@@ -647,15 +639,16 @@ private fun PlaylistHeaderCompact(
  */
 private fun LazyListScope.OnlineDetailSongs(
     tracks: List<KugouPlaylistTrack>,
+    trackKeys: List<String>,
     isWide: Boolean,
     onPlayAt: (Int) -> Unit,
     onRemoveTrack: ((Int) -> Unit)? = null
 ) {
     itemsIndexed(
         tracks,
-        key = { _, track -> track.hash }
+        key = { index, _ -> trackKeys[index] }
     ) { index, track ->
-        key(track.hash) {
+        key(trackKeys[index]) {
             // 统一歌曲 Item：与本地列表同款 MusicList 视觉规范；
             // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
             if (isWide) {
@@ -721,17 +714,16 @@ private fun AddSongsDialog(
         }
     }
 
-    AlertDialog(
+    SonifyDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(id = R.string.online_playlist_add_songs)) },
-        text = {
+        title = stringResource(id = R.string.online_playlist_add_songs),
+        content = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
+                    SonifyDialogTextField(
                         value = keyword.value,
                         onValueChange = { keyword.value = it },
-                        placeholder = { Text(text = stringResource(id = R.string.online_playlist_add_search_hint)) },
-                        singleLine = true,
+                        placeholder = stringResource(id = R.string.online_playlist_add_search_hint),
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = { search() }, enabled = !searching.value) {
@@ -801,10 +793,8 @@ private fun AddSongsDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(id = R.string.common_ok))
-            }
-        }
+        positiveContent = stringResource(id = R.string.common_ok),
+        onPositive = onDismiss,
+        wide = true
     )
 }

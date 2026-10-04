@@ -66,6 +66,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -80,6 +81,7 @@ import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
@@ -227,6 +229,8 @@ import kotlin.math.roundToInt
 var mediaController = yos.music.player.code.MediaController*/
 
 class MainActivity : BaseActivity() {
+    private val updateViewModel: yos.music.player.update.UpdateViewModel by viewModels()
+    private var updateStartupReady by mutableStateOf(false)
     private val mediaViewModel: MediaViewModel by viewModels()
     private val mainViewModel: MainViewModel by viewModels()
 
@@ -244,6 +248,7 @@ class MainActivity : BaseActivity() {
         setContent {
             YosMusicTheme {
                 ProvideWindowInsets {
+                    yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
                     val context = LocalContext.current
                     val density = LocalDensity.current
                     // 播放壳玻璃的消融探针。默认值就是"修好后该有的样子"，开关只做消融，
@@ -262,10 +267,9 @@ class MainActivity : BaseActivity() {
                         remember("MainActivity_parentWidth") { mutableIntStateOf(0) }
                     val navBarBottomInsetPx =
                         LocalWindowInsets.current.navigationBars.bottom
-                    val screenCorner = remember("MainActivity_screenCorner") {
-                        val corner = SettingsLibrary.ScreenCorner.toInt()
-                        if (corner == 0) 1 else corner
-                    }
+                    val effectiveScreenCorner = yos.music.player.ui.theme.rememberScreenCornerRadius()
+                    val screenCorner = rememberUpdatedState(effectiveScreenCorner)
+                    val screenCornerPx = rememberUpdatedState(with(density) { effectiveScreenCorner.toPx() })
                     val bottomBarWidthPx = remember("MainActivity_bottomBarWidthPx") { mutableIntStateOf(0) }
                     val height = remember("MainActivity_height") { mutableIntStateOf(0) }
                     val lastPlayerAnchor = remember("MainActivity_lastPlayerAnchor") {
@@ -297,8 +301,7 @@ class MainActivity : BaseActivity() {
                     // Configuration 在首次组合就是确定值。同一个判据也用来选迷你内容分支（见 isWideMiniBar），
                     // 保证“壳高度”与“内容分支”永不错位。
                     val isWideMiniBar = LocalConfiguration.current.screenWidthDp.dp >= 600.dp
-                    // 流畅性测试：整块还原 Flamingo 原版——迷你条与原版一致恒为 62dp。
-                    val miniPlayerHeight = if (SettingsLibrary.SmoothnessTest || isWideMiniBar) 62.dp else 43.dp
+                    val miniPlayerHeight = if (isWideMiniBar) 62.dp else 43.dp
                     val miniPlayerHeightPx = with(density) { miniPlayerHeight.toPx() }
                     // 封面 morph 的几何来源：迷你封面节点与全屏 Album 封面节点的
                     // 窗口矩形，以及 morph 层自身的窗口原点。存的是不可变值而非
@@ -520,7 +523,7 @@ class MainActivity : BaseActivity() {
                             // 完全展开后的静止态由独立的落位状态切换为矩形铺满屏幕。
                             val shellRadius: Float
                                 get() = with(density) {
-                                    val targetCorner = screenCorner.toFloat().dp.toPx()
+                                    val targetCorner = screenCornerPx.value
                                     val collapsedRadius = miniPlayerHeightPx / 2f - 0.5f.dp.toPx()
                                     val settledExpanded = !dragActive.value &&
                                             playerMotionJob.value == null &&
@@ -646,7 +649,7 @@ class MainActivity : BaseActivity() {
                                 val playerAnimating = dragActive.value ||
                                         playerMotionJob.value != null
                                 if (playerAnimating || yosBottomSheetConfig.progress > 0.5f) {
-                                    screenCorner.dp
+                                    screenCorner.value
                                 } else {
                                     0.dp
                                 }
@@ -828,10 +831,10 @@ class MainActivity : BaseActivity() {
                             YosWrapper {
                                 val showCornerSetDialog =
                                     remember("MainActivity_showCornerSetDialog") {
-                                        mutableStateOf(!SettingsLibrary.ScreenCornerSet)
+                                        mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.S && !SettingsLibrary.ScreenCornerSet)
                                     }
 
-                                if (showCornerSetDialog.value) {
+                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && showCornerSetDialog.value) {
                                     ScreenCornerSetDialog {
                                         showCornerSetDialog.value = false
                                     }
@@ -1112,7 +1115,6 @@ class MainActivity : BaseActivity() {
                                                 // 无感；动画重启时回到本分支，节点重建、蒙版按当前
                                                 // 圆角重录。玻璃效果本身不动。
                                                 if (SettingsLibrary.BarBlurEffect &&
-                                                    !SettingsLibrary.SmoothnessTest &&
                                                     glassProbe.shellGlass &&
                                                     shellRadiusDp != 0.dp
                                                 ) {
@@ -1203,9 +1205,7 @@ class MainActivity : BaseActivity() {
                                                             }
                                                         }
                                                     )
-                                                } else if (!SettingsLibrary.BarBlurEffect &&
-                                                    !SettingsLibrary.SmoothnessTest
-                                                ) {
+                                                } else if (!SettingsLibrary.BarBlurEffect) {
                                                     // 关闭工具栏液态玻璃时，与底栏使用同一个 Kyant
                                                     // drawBackdrop backend，避免 Haze 与底栏的 surface
                                                     // 合成顺序不同而产生颜色偏差。
@@ -1251,10 +1251,8 @@ class MainActivity : BaseActivity() {
                                             // 关闭玻璃的分支表面层在动画期停画，若没有这层接管颜色，
                                             // 迷你条会从"85% 表面色"跳到"模糊内容透底"再跳回——
                                             // 这就是静止态与动画态色差的来源。
-                                            // SmoothnessTest 走纯色 background，再叠 80% 层反而改变
-                                            // 它的颜色，故排除。
                                             .then(
-                                                if (!SettingsLibrary.SmoothnessTest && animFillAlpha > 0.001f) {
+                                                if (animFillAlpha > 0.001f) {
                                                     Modifier.background(
                                                         shellAnimFill.copy(alpha = 0.8f * animFillAlpha),
                                                         shellShape
@@ -1419,8 +1417,7 @@ class MainActivity : BaseActivity() {
                                         ) {
                                             // 分支判据与壳高度同一个变量：两者若分别取 maxWidth 与
                                             // screenWidthDp，边界机型会出现“62dp 的壳里装 31dp 内容”。
-                                            // 流畅性测试打开时也走下面的原版简单条（原版没有平板分支）。
-                                            if (isWideMiniBar && !SettingsLibrary.SmoothnessTest) {
+                                            if (isWideMiniBar) {
                                                 // 平板扩展：Apple Music 风格扁平工具条（左侧 5 传输键 + 中部封面/标题/歌手 + 右侧歌词/队列入口）
                                                 TabletMiniContent(
                                                     progressGate = miniContentInteractive.value,
@@ -1445,16 +1442,13 @@ class MainActivity : BaseActivity() {
                                                 )
                                             } else {
                                                 // 手机/竖屏：紧凑迷你条（43dp），尺寸按参考图实测值定。
-                                                // 流畅性测试打开时改用 Flamingo 原版数值（62dp 条 / 47dp 封面 /
-                                                // 16sp 单行标题 / 8dp 边距 / 34+18+36 按钮）做代码级还原。
-                                                val orig = SettingsLibrary.SmoothnessTest
                                                 Row(
                                                     Modifier
                                                         .height(miniPlayerHeight)
                                                         .fillMaxWidth()
                                                         // 胶囊左边到封面左边：参考图 29/923 屏宽 = 12.4dp（原版 8dp）
                                                         .padding(
-                                                            start = if (orig) 8.dp else 12.dp,
+                                                            start = 12.dp,
                                                             end = 8.dp
                                                         )
                                                 ) {
@@ -1468,7 +1462,7 @@ class MainActivity : BaseActivity() {
                                                         // 这里不再用“封面 = 两行行高之和”的等式：
                                                         // 参考图的封面本身就比标题+歌手的文字块
                                                         // （12+11=23dp）高出约 3dp。
-                                                        val miniCoverSize = if (orig) 47.dp else 26.dp
+                                                        val miniCoverSize = 26.dp
                                                         YosWrapper {
                                                             ShadowImageWithCache(
                                                                 dataLambda = { MediaViewModelObject.bitmap.value },
@@ -1485,28 +1479,26 @@ class MainActivity : BaseActivity() {
                                                                         coverGeometry.mini = it
                                                                         coverGeometry.refreshReady()
                                                                     },
-                                                                cornerRadius = if (orig) 6.dp else 4.dp,
+                                                                cornerRadius = 4.dp,
                                                                 shadowAlpha = 0f,
                                                                 imageQuality = ImageQuality.LOW
                                                             )
                                                         }
                                                         Column(
                                                             // 封面右缘到文字：参考图 19/923 屏宽 = 8.1dp（原版 10dp）
-                                                            Modifier.padding(start = if (orig) 10.dp else 8.dp, end = 5.dp),
+                                                            Modifier.padding(start = 8.dp, end = 5.dp),
                                                             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                                                         ) {
                                                             Text(
                                                                 text = MediaController.musicPlaying.value?.title
                                                                     ?: defaultTitle,
                                                                 fontWeight = FontWeight.Medium,
-                                                                fontSize = if (orig) 16.sp else 12.sp,
-                                                                lineHeight = if (orig) 16.sp else 12.sp,
+                                                                fontSize = 12.sp,
+                                                                lineHeight = 12.sp,
                                                                 maxLines = 1,
                                                                 overflow = TextOverflow.Ellipsis,
                                                                 color = Color.Black withNight Color.White
                                                             )
-                                                            // 原版迷你条只有单行标题（副标题在原版即被注释掉）。
-                                                            if (!orig) {
                                                             Text(
                                                                 text = MediaController.musicPlaying.value?.artists ?: "",
                                                                 fontWeight = FontWeight.Normal,
@@ -1516,7 +1508,6 @@ class MainActivity : BaseActivity() {
                                                                 overflow = TextOverflow.Ellipsis,
                                                                 color = (Color.Black withNight Color.White).copy(alpha = 0.6f)
                                                             )
-                                                            }
                                                         }
                                                     }
                                                     Row(
@@ -1529,19 +1520,18 @@ class MainActivity : BaseActivity() {
                                                         // 正好 39dp（参考图实测）。图标单独收到 24dp 是因为
                                                         // 32 视口里 play 墨迹占 18/32，24dp 盒→13.5dp 墨迹，
                                                         // 对上参考图的 13.7dp；若墨迹填满 30dp 盒会明显偏大。
-                                                        // 原版数值：播放键 34dp、间隔 18dp、下一首 36dp。
                                                         PlayPauseButton(
                                                             progressGate = miniContentInteractive.value,
-                                                            boxSize = if (orig) 34.dp else 30.dp,
-                                                            iconSize = if (orig) 34.dp else 24.dp
+                                                            boxSize = 30.dp,
+                                                            iconSize = 24.dp
                                                         )
-                                                        Spacer(modifier = Modifier.width(if (orig) 18.dp else 9.dp))
+                                                        Spacer(modifier = Modifier.width(9.dp))
                                                         TransportIconButton(
                                                             iconRes = R.drawable.ic_nowplaying_mp_fforward,
                                                             contentDescription = "Next",
                                                             enabled = miniContentInteractive.value,
-                                                            boxSize = if (orig) 36.dp else 30.dp,
-                                                            iconSize = if (orig) 36.dp else 24.dp,
+                                                            boxSize = 30.dp,
+                                                            iconSize = 24.dp,
                                                             onClick = {
                                                                 MediaController.mediaControl?.seekToNextMediaItem()
                                                             }
@@ -1725,8 +1715,7 @@ YosWrapper {
             val externalIndex: () -> Int = {
                 selectedHouse().tabIndex
             }
-            // 注：关闭"工具栏液态玻璃"时，BottomNavigator 内部会退回 flamingo 原始扁平底栏；
-            // "流畅性测试"只作用于迷你播放器，底栏与其解耦。
+            // 注：关闭"工具栏液态玻璃"时，BottomNavigator 内部会退回 flamingo 原始扁平底栏。
             BottomNavigator(
                 initialIndex = externalIndex(),
                 externalIndex = externalIndex,
@@ -1787,6 +1776,7 @@ YosWrapper {
         val requestPermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
+            updateStartupReady = true
             val isGranted = permissions.entries.all { it.value }
             if (isGranted) {
                 // Load music list here
@@ -1839,6 +1829,7 @@ YosWrapper {
                 }
                 else {
                     loadMusic(context)
+                    updateStartupReady = true
                 }
             }
         }
@@ -2522,7 +2513,7 @@ private fun TabletMiniContent(
         }
         Spacer(modifier = Modifier.width(10.dp))
         Column(
-            modifier = Modifier.widthIn(max = 220.dp),
+            modifier = Modifier.weight(1f),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
         ) {
             Text(
@@ -2544,7 +2535,7 @@ private fun TabletMiniContent(
                 color = subTitleColor
             )
         }
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.width(10.dp))
 
         // --- 右：歌词 + 播放列表（与 PlayPause 同尺寸 34dp、间距 10dp） ---
         TransportIconButton(

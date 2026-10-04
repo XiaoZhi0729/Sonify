@@ -13,14 +13,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.R
 
 @Composable
-fun SmallLabelItem(icon: Painter, label: String, onClick: () -> Unit) =
+fun SmallLabelItem(
+    icon: Painter,
+    label: String,
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    iconPadding: Dp = 0.dp,
+    onClick: () -> Unit
+) =
     Row(
         Modifier
             .fillMaxWidth()
@@ -32,8 +40,9 @@ fun SmallLabelItem(icon: Painter, label: String, onClick: () -> Unit) =
             contentDescription = null,
             modifier = Modifier
                 .padding(start = 18.dp, end = 2.dp)
-                .size(40.dp),
-            tint = MaterialTheme.colorScheme.primary
+                .size(40.dp)
+                .padding(iconPadding),
+            tint = iconTint
         )
         Text(text = label, fontSize = 20.sp, modifier = Modifier.fillMaxWidth().weight(1f))
         Icon(

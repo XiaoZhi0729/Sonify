@@ -9,4 +9,5 @@
     <files-path
         name="diag_logs_internal"
         path="logs" />
+    <files-path name="update_apks" path="updates/" />
 </paths>

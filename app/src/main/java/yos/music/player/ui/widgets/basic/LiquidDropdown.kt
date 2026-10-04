@@ -4,11 +4,13 @@ import android.graphics.BlurMaskFilter
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -101,17 +103,34 @@ import kotlin.math.min
 // =====================================================================
 
 private val FractionEnterAnimSpec =
-    spring<Float>(dampingRatio = 0.78f, stiffness = 232f, visibilityThreshold = 0.0001f)
+    spring<Float>(dampingRatio = 0.78f, stiffness = 240f, visibilityThreshold = 0.0001f)
 private val FractionExitAnimSpec =
     spring<Float>(dampingRatio = 0.78f, stiffness = 400f, visibilityThreshold = 0.0001f)
 private val AlphaEnterAnimSpec = tween<Float>(durationMillis = 120)
-private val AlphaExitAnimSpec = tween<Float>(durationMillis = 320)
+private val AlphaExitAnimSpec = tween<Float>(durationMillis = 400)
+
+/**
+ * 缩放锚点独立动画（对齐 NexioSchedule 1.6.1 LiquidGlassDropdownMenu）：
+ * 锚点从按钮角移到面板中心不再跟 fraction 绑定——进场是更快的 spring(0.78/500)，
+ * 退出走 450ms 先发散后收敛的曲线，面板"飘回"按钮的手感与缩放弹簧分离。
+ */
+private val OriginEnterAnimSpec =
+    spring<Float>(dampingRatio = 0.78f, stiffness = 500f, visibilityThreshold = 0.0001f)
+private val OriginExitAnimSpec =
+    tween<Float>(durationMillis = 450, easing = CubicBezierEasing(0f, 0f, 0f, 1f))
 
 private val PopupMinWidth = 200.dp
 private val PopupMaxWidth = 288.dp
 private val PopupMinHeight = 50.dp
 private val PopupCornerRadius = 25.dp
 private val PopupShadowPadding = 24.dp
+
+/**
+ * 裁剪揭示的起始尺寸：面板从被按按钮大小的方块长出（NexioSchedule 1.6.1 的
+ * DropdownClipShape 用 42dp，与其右上角玻璃圆钮同径；本项目的 TitleBarIcon
+ * 玻璃圆钮同为 42dp）。
+ */
+private val DropdownButtonDiameter = 42.dp
 
 /** 缩放区间：0.24 → 1.0（Nexio 原值） */
 private const val ScaleBase = 0.24f
@@ -124,6 +143,8 @@ private const val ScaleBase = 0.24f
 data class LiquidDropdownProgress(
     val fraction: Float,
     val position: LiquidDropdownLayoutPosition,
+    /** 缩放锚点水平位（1f 右对齐 / 0.5f 居中 / 0f 左对齐），供触发元件决定让位方向 */
+    val pivotX: Float = 1f,
 )
 
 /** 弹层放置方向：决定裁剪揭示方向与缩放锚点角 */
@@ -263,7 +284,8 @@ private fun Density.calculateDropdownPosition(
  * 展开弹簧的起步不会被截断；无宿主时退回 androidx Popup 独立窗口。
  *
  * 动画：单 fraction 驱动——缩放 0.24→1、transformOrigin 从锚点角插值到中心、
- * 方向性裁剪揭示（revealLimitHeight>0 时从两行薄片展开）、内容 blur 8dp→0；
+ * 方向性裁剪揭示已随 1.6.1 更换为"从按钮方块双向生长"（dropdownClipReveal）、
+ * 内容 blur 8dp→0；
  * 进入 spring(0.78/232) + alpha tween(120)，退出 spring(0.78/400) + alpha tween(320)，
  * 阴影迟到淡入（fraction≥0.78）与提前消失（≥0.99）。
  *
@@ -285,7 +307,6 @@ fun LiquidDropdownLayout(
     anchorBounds: IntRect,
     onDismissRequest: () -> Unit,
     onDismissFinished: () -> Unit = {},
-    revealLimitHeight: Dp = 0.dp,
     backdrop: Backdrop? = null,
     alignCenterHorizontally: Boolean = false,
     surfaceAlpha: Float? = null,
@@ -309,7 +330,6 @@ fun LiquidDropdownLayout(
                     anchorBounds = anchorBounds,
                     onDismissRequest = onDismissRequest,
                     onDismissFinished = onDismissFinished,
-                    revealLimitHeight = revealLimitHeight,
                     backdrop = backdrop,
                     alignCenterHorizontally = alignCenterHorizontally,
                     surfaceAlpha = surfaceAlpha,
@@ -333,7 +353,6 @@ fun LiquidDropdownLayout(
                 anchorBounds = anchorBounds,
                 onDismissRequest = onDismissRequest,
                 onDismissFinished = onDismissFinished,
-                revealLimitHeight = revealLimitHeight,
                 backdrop = backdrop,
                 alignCenterHorizontally = alignCenterHorizontally,
                 surfaceAlpha = surfaceAlpha,
@@ -356,7 +375,6 @@ private fun LiquidDropdownBody(
     anchorBounds: IntRect,
     onDismissRequest: () -> Unit,
     onDismissFinished: () -> Unit,
-    revealLimitHeight: Dp,
     backdrop: Backdrop?,
     alignCenterHorizontally: Boolean,
     surfaceAlpha: Float?,
@@ -367,6 +385,7 @@ private fun LiquidDropdownBody(
     content: @Composable () -> Unit,
 ) {
     val fractionProgress = remember { Animatable(0f) }
+    val originProgress = remember { Animatable(0f) }
     val alphaProgress = remember { Animatable(0f) }
     var internalVisible by remember { mutableStateOf(false) }
     var layoutPosition by remember { mutableStateOf(LiquidDropdownLayoutPosition()) }
@@ -374,18 +393,23 @@ private fun LiquidDropdownBody(
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentOnDismissFinished by rememberUpdatedState(onDismissFinished)
     val currentOnFractionProgress by rememberUpdatedState(onFractionProgress)
-    val revealLimitHeightPx = with(LocalDensity.current) { revealLimitHeight.toPx() }
 
+    // 三轨并行（对齐 NexioSchedule 1.6.1 LiquidGlassDropdownMenu）：
+    // fraction 驱动缩放/裁剪，originProgress 驱动缩放锚点从按钮角移向中心（独立曲线），
+    // alphaProgress 驱动整体淡入淡出；退出三轨并行，alpha（最长）收尾后统一归零
     LaunchedEffect(expanded) {
         if (expanded) {
             internalVisible = true
             launch { fractionProgress.animateTo(1f, FractionEnterAnimSpec) }
+            launch { originProgress.animateTo(1f, OriginEnterAnimSpec) }
             launch { alphaProgress.animateTo(1f, AlphaEnterAnimSpec) }
         } else {
             if (!internalVisible) return@LaunchedEffect
             launch { fractionProgress.animateTo(0f, FractionExitAnimSpec) }
+            launch { originProgress.animateTo(0f, OriginExitAnimSpec) }
             alphaProgress.animateTo(0f, AlphaExitAnimSpec)
             fractionProgress.snapTo(0f)
+            originProgress.snapTo(0f)
             alphaProgress.snapTo(0f)
             internalVisible = false
             currentOnDismissFinished()
@@ -394,9 +418,15 @@ private fun LiquidDropdownBody(
 
     LaunchedEffect(Unit) {
         currentOnFractionProgress?.let { callback ->
-            // 朝向也进快照：它是在 measure 阶段回写的，单靠 fraction 变化发不出新朝向
-            snapshotFlow { LiquidDropdownProgress(fractionProgress.value, layoutPosition) }
-                .collect { callback(it) }
+            // 朝向也进快照：它是在 measure 阶段回写的，单靠 fraction 变化发不出新朝向；
+            // pivotX 同理（锚点角决定触发元件的让位方向）
+            snapshotFlow {
+                LiquidDropdownProgress(
+                    fractionProgress.value,
+                    layoutPosition,
+                    anchorOrigin.pivotFractionX,
+                )
+            }.collect { callback(it) }
         }
     }
 
@@ -473,11 +503,11 @@ private fun LiquidDropdownBody(
         ) {
             LiquidDropdownContent(
                 fractionProgress = { fractionProgress.value },
+                originProgress = { originProgress.value },
                 alphaProgress = { alphaProgress.value },
                 layoutPosition = layoutPosition,
                 originAnchor = anchorOrigin,
                 backdrop = backdrop,
-                revealLimitHeightPx = revealLimitHeightPx,
                 surfaceAlpha = surfaceAlpha,
                 recedeFraction = recedeFraction,
                 content = content,
@@ -487,17 +517,18 @@ private fun LiquidDropdownBody(
 }
 
 /**
- * 弹层视觉本体（移植 Nexio ListPopupContent）：阴影迟到淡入、缩放/透明度/锚点角
- * transformOrigin、方向性裁剪揭示、内容模糊渐入、玻璃面板与边缘光。
+ * 弹层视觉本体（移植 Nexio ListPopupContent，动画对齐 1.6.1 LiquidGlassDropdownMenu）：
+ * 阴影迟到淡入、缩放/透明度、独立锚点角 transformOrigin、从按钮方块生长的裁剪揭示、
+ * 内容独立透明度与模糊渐入、玻璃面板与边缘光。
  */
 @Composable
 private fun LiquidDropdownContent(
     fractionProgress: () -> Float,
+    originProgress: () -> Float,
     alphaProgress: () -> Float,
     layoutPosition: LiquidDropdownLayoutPosition,
     originAnchor: TransformOrigin,
     backdrop: Backdrop?,
-    revealLimitHeightPx: Float,
     surfaceAlpha: Float?,
     recedeFraction: (() -> Float)?,
     content: @Composable () -> Unit,
@@ -534,6 +565,26 @@ private fun LiquidDropdownContent(
                         }
                     }
                 }
+            }
+    }
+
+    // 内容透明度（Nexio 1.6.1 同款）：按 fraction 的变化方向区分进退场——
+    // 进场 0.2 + 0.8f（弹簧过冲到 ~1.03 时内容保持全显），退出 fraction>0.5 前
+    // 保持全显、之后 f*2 加速消失
+    val contentAlpha = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        var prevFraction = 0f
+        snapshotFlow { fractionProgress() }
+            .collect { current ->
+                val isEntering = current >= prevFraction
+                prevFraction = current
+                contentAlpha.snapTo(
+                    if (isEntering) {
+                        0.2f + 0.8f * current
+                    } else {
+                        if (current > 0.5f) 1f else current * 2f
+                    }
+                )
             }
     }
 
@@ -579,19 +630,23 @@ private fun LiquidDropdownContent(
                     scaleX = shrunk
                     scaleY = shrunk
                     alpha = alphaProgress()
-                    // 缩放锚点：从锚点角插值到中心（Nexio 同公式）
+                    // 缩放锚点：从锚点角插值到中心——但走**独立的** originProgress 曲线
+                    // （进场 spring(0.78/500)、退出 tween(450)+发散收敛），与缩放弹簧解绑，
+                    // 退出时面板"飘回"按钮的手感由此而来（NexioSchedule 1.6.1 同款）
                     transformOrigin = TransformOrigin(
                         pivotFractionX = originAnchor.pivotFractionX +
-                                (0.5f - originAnchor.pivotFractionX) * fraction,
+                                (0.5f - originAnchor.pivotFractionX) * originProgress(),
                         pivotFractionY = originAnchor.pivotFractionY +
-                                (0.5f - originAnchor.pivotFractionY) * fraction,
+                                (0.5f - originAnchor.pivotFractionY) * originProgress(),
                     )
                 }
-                // 方向性裁剪揭示（在 blur 外层，裁掉模糊产生的圆角溢出）
-                .popupClipReveal(
+                // 裁剪揭示（在 blur 外层，裁掉模糊产生的圆角溢出）：
+                // 从被按按钮大小的方块沿锚点角双向长成完整面板（Nexio 1.6.1 同款）
+                .dropdownClipReveal(
                     fractionProgress = fractionProgress,
-                    layoutPosition = layoutPosition,
-                    revealLimitHeightPx = revealLimitHeightPx,
+                    pivotX = originAnchor.pivotFractionX,
+                    showBelow = layoutPosition.showBelow,
+                    showAbove = layoutPosition.showAbove,
                 )
                 // 内容模糊渐入：进入 8dp→0，退出 0→8dp（API<31 Modifier.blur 无效果，自动跳过）
                 .contentBlur(radius = (8f * (1f - fractionProgress())).dp)
@@ -634,7 +689,12 @@ private fun LiquidDropdownContent(
                     blurRadius = 0.8f.dp,
                 )
         ) {
-            content()
+            // 内容独立透明度（Nexio 1.6.1 同款）：进场随 fraction 0.2→1 渐显，
+            // 退出时面板先保持全显、fraction 过半才开始淡出——玻璃壳与内容的
+            // 消隐节奏错开，是新版"壳先走、内容后散"手感的来源
+            Box(modifier = Modifier.graphicsLayer { alpha = contentAlpha.value }) {
+                content()
+            }
             // 退让遮罩：盖在行之上、裁进面板圆角。alpha 在绘制期读，不逐帧重组。
             // 颜色用黑（同 Miuix 的 windowDimming x 0.5），深浅色一致都是"往后退"
             if (recedeFraction != null) {
@@ -658,61 +718,64 @@ private fun DrawScope.panelShape(size: Size, cornerPx: Float): Shape {
 }
 
 /**
- * 方向性裁剪揭示（移植 Nexio popupClipReveal）：
- * 下方展开=从顶向下；上方=从底向上；居中=从中心向两侧；
- * revealLimitHeightPx>0 且有方向时，可见高度从薄片高度展开到完整高度。
- * 裁剪路径用反向补偿圆角的 squircle，动画中视觉圆角恒定。
+ * 裁剪揭示（对齐 NexioSchedule 1.6.1 LiquidGlassDropdownMenu 的 DropdownClipShape）：
+ * 可见区域从**被按按钮大小**（[DropdownButtonDiameter] 见方）的方块沿锚点角
+ * 双向长成完整面板——宽高都参与生长，不再是旧版的"全宽薄片向下展开"。
+ *
+ * [pivotX] 是缩放锚点水平位（1f 右对齐 / 0.5f 居中 / 0f 左对齐，与 transformOrigin
+ * 同源），方块固定在锚点角不动；垂直方向跟随摆位（下方展开贴顶、上方贴底、居中）。
+ * 裁剪在未缩放坐标系中进行，尺寸与圆角都除以 scale 反向补偿，动画中视觉尺寸与
+ * 视觉圆角都从按钮平滑长到面板。
  */
-private fun Modifier.popupClipReveal(
+private fun Modifier.dropdownClipReveal(
     fractionProgress: () -> Float,
-    layoutPosition: LiquidDropdownLayoutPosition,
-    revealLimitHeightPx: Float,
+    pivotX: Float,
+    showBelow: Boolean,
+    showAbove: Boolean,
 ): Modifier = drawWithCache {
     val path = Path()
     onDrawWithContent {
         val progress = fractionProgress().coerceIn(0f, 1f)
         if (progress <= 0f) return@onDrawWithContent
 
-        val height = size.height
-        val visibleHeight =
-            if (revealLimitHeightPx > 0f && (layoutPosition.showBelow || layoutPosition.showAbove)) {
-                (revealLimitHeightPx + (height - revealLimitHeightPx) * progress)
-                    .coerceIn(0f, height)
-            } else {
-                height
-            }
-        if (visibleHeight <= 0f) return@onDrawWithContent
+        val scale = ScaleBase + (1f - ScaleBase) * progress
+        val buttonPx = DropdownButtonDiameter.toPx()
+        // 目标视觉尺寸：progress=0 时为按钮方块，progress=1 时为完整面板；
+        // clip 在未缩放坐标系，尺寸除以 scale 补偿 graphicsLayer 缩放
+        val targetWidth = buttonPx + (size.width - buttonPx) * progress
+        val targetHeight = buttonPx + (size.height - buttonPx) * progress
+        val clipWidth = (targetWidth / scale).coerceAtMost(size.width)
+        val clipHeight = (targetHeight / scale).coerceAtMost(size.height)
 
-        val clipStart = when {
-            layoutPosition.showBelow -> 0f
-            layoutPosition.showAbove -> height - visibleHeight
-            else -> height * (0.5f - 0.5f * progress)
+        val left = when {
+            pivotX >= 0.99f -> size.width - clipWidth
+            pivotX <= 0.01f -> 0f
+            else -> (size.width - clipWidth) / 2f
+        }
+        val top = when {
+            showBelow -> 0f
+            showAbove -> size.height - clipHeight
+            else -> (size.height - clipHeight) / 2f
         }
 
-        val fraction = fractionProgress()
-        val avgScale = ScaleBase + (1f - ScaleBase) * fraction
-        val outline = panelShape(Size(size.width, visibleHeight), PopupCornerRadius.toPx() / avgScale)
-            .createOutline(
-                size = Size(size.width, visibleHeight),
-                layoutDirection = layoutDirection,
-                density = this@drawWithCache,
-            )
+        val outline = panelShape(
+            Size(clipWidth, clipHeight),
+            PopupCornerRadius.toPx() / scale,
+        ).createOutline(
+            size = Size(clipWidth, clipHeight),
+            layoutDirection = layoutDirection,
+            density = this@drawWithCache,
+        )
         path.rewind()
         when (outline) {
             is Outline.Rounded -> path.addRoundRect(outline.roundRect)
             is Outline.Generic -> path.addPath(outline.path)
             is Outline.Rectangle -> path.addRect(outline.rect)
         }
-        if (clipStart == 0f) {
+        translate(left = left, top = top) {
             clipPath(path) {
-                this@onDrawWithContent.drawContent()
-            }
-        } else {
-            translate(top = clipStart) {
-                clipPath(path) {
-                    translate(top = -clipStart) {
-                        this@onDrawWithContent.drawContent()
-                    }
+                translate(left = -left, top = -top) {
+                    this@onDrawWithContent.drawContent()
                 }
             }
         }
@@ -767,8 +830,7 @@ private fun Modifier.rectEdgeLight(
 }
 
 // =====================================================================
-// 锚点联动：触发元件随弹层揭示进度收缩/下沉/淡出
-// （Nexio OverlayDropdownMenu 里作用在行尾内容上的 contentAlpha 手法，扩展到整个触发元件）
+// 锚点联动：触发元件随弹层揭示进度让位（NexioSchedule 1.6.1 同款）或收缩下沉淡出
 // =====================================================================
 
 /** 进入时隐藏、退出时提前恢复的滞回阈值（Nexio 原值：0.15 / 0.2）*/
@@ -779,17 +841,21 @@ private const val FollowShowThreshold = 0.2f
 private val FollowAlphaAnimSpec = tween<Float>(durationMillis = 180)
 
 /**
+ * 让位位移（NexioSchedule 1.6.1 MorePopupMenus 原值）：菜单向下生长时，
+ * 触发按钮向左 100dp、向下 45dp 滑开，全程可见地"给面板让位"。
+ */
+private val FollowSlideX = 100.dp
+private val FollowSlideY = 45.dp
+
+/**
  * 弹层进度 → 触发元件变换的联动状态。
  *
- * 为什么需要它：弹层的可见顶边压在锚点上方 7dp（Nexio 原生的"盖住锚点"语义），
- * 触发元件就住在玻璃底下。不做联动时要么透过 0.6 的表面看见按钮和面板内容叠在一起，
- * 要么（旧写法）在点击那一帧就把图标淡掉——面板还没长到位，先露出一个洞。
- *
- * 两路进度有意分开：
- * - **位移与缩放直接用面板的 fraction**（原样透传，含 spring(0.78/232) 的过冲）——
- *   元件和面板是同一条曲线，看上去像被面板带着走；
- * - **淡出走滞回**（进入 ≥0.15 才开始隐、退出 ≤0.2 就恢复，tween 180）——
- *   面板盖住之前不提前消失，面板还没收完就先把按钮放回去。
+ * 两种联动模式（按面板摆位自动分流）：
+ * - **让位滑开**（面板向下生长且右缘对齐锚点——顶栏"更多"按钮的标定场景）：
+ *   按钮不消失，沿 `(-100dp, +45dp)` 滑到面板旁边，对齐 NexioSchedule 1.6.1
+ *   的 buttonFraction offset 手法；
+ * - **收缩下沉淡出**（面板向上翻或居中摆位——按钮滑不开，滑了也会留在玻璃面板底下）：
+ *   沿用旧版下沉 6dp + 缩 0.9 + 滞回淡出，避免按钮透过 0.6 表面与面板行内容叠影。
  */
 class LiquidDropdownFollowState internal constructor(
     internal val shiftPx: Float,
@@ -800,6 +866,9 @@ class LiquidDropdownFollowState internal constructor(
 
     /** 揭示方向的 Y 分量：+1 面板向下长、-1 向上长、0 居中或上下都塞不下 */
     internal val directionY = mutableFloatStateOf(0f)
+
+    /** 面板缩放锚点水平位：1f 右对齐 / 0.5f 居中 / 0f 左对齐 */
+    internal val pivotX = mutableFloatStateOf(1f)
 
     /** 淡出进度 0..1（由滞回判定驱动）*/
     internal val hidden = Animatable(0f)
@@ -812,6 +881,7 @@ class LiquidDropdownFollowState internal constructor(
             progress.position.showAbove -> -1f
             else -> 0f
         }
+        pivotX.floatValue = progress.pivotX
     }
 }
 
@@ -828,12 +898,22 @@ class LiquidDropdownFollowState internal constructor(
 fun Modifier.liquidDropdownAnchorFollow(state: LiquidDropdownFollowState): Modifier =
     graphicsLayer {
         val reveal = state.fraction.floatValue
-        // 收缩：跟面板同一条弹簧，过冲时元件也会多缩一点再弹回
-        val scale = 1f - (1f - state.openScale) * reveal
-        scaleX = scale
-        scaleY = scale
-        translationY = state.directionY.floatValue * state.shiftPx * reveal
-        alpha = 1f - state.hidden.value
+        val slideAway = state.directionY.floatValue > 0.5f && state.pivotX.floatValue >= 0.99f
+        if (slideAway) {
+            // 让位滑开（NexioSchedule 1.6.1 同款）：面板从按钮位置向下生长，
+            // 按钮向左下平移让位、全程可见。用 graphicsLayer 的 translation 而不是
+            // Modifier.offset——offset 会改布局坐标，锚点 onGloballyPositioned 会
+            // 跟着更新、弹层重定位，形成回环
+            translationX = -FollowSlideX.toPx() * reveal
+            translationY = FollowSlideY.toPx() * reveal
+        } else {
+            // 面板向上翻/居中：按钮滑不开，沿用收缩+下沉+滞回淡出
+            val scale = 1f - (1f - state.openScale) * reveal
+            scaleX = scale
+            scaleY = scale
+            translationY = state.directionY.floatValue * state.shiftPx * reveal
+            alpha = 1f - state.hidden.value
+        }
     }
 
 /**
@@ -1010,6 +1090,10 @@ fun LiquidDropdownRow(
     // 深浅两态都不是纯黑/纯白，玻璃面板上会跟着底色发灰
     val contentColor = Color.Black withNight Color.White
     val selectedColor = MaterialTheme.colorScheme.primary
+    val interactionSource = remember { MutableInteractionSource() }
+    // 按下遮罩：M3 涟漪在这层玻璃上会画出方形色斑所以 indication 关掉，但行内补一块
+    // 同形状的按下暗化，否则用户得不到"已按下去"的反馈（2026-10-04 用户反馈）
+    val pressed by interactionSource.collectIsPressedAsState()
     Row(
         modifier = modifier
             .padding(
@@ -1022,11 +1106,14 @@ fun LiquidDropdownRow(
             // 参考实现行容器透明（liquidGlassDropdownColors 的 container/selected
             // 均为 Transparent）：选中态只靠文字与勾着色，没有高亮色块；
             // 行高内容自适应（MinHeight 56dp 只用于对话框模式）
-            // 关掉默认涟漪：M3 水波会在这层玻璃上画出一块方形色斑（选中态本来就只靠
-            // 文字与勾表达，没有高亮块），与整个 liquid 家族的无涟漪语言不一致
+            .drawBehind {
+                if (pressed) {
+                    drawRect(contentColor.copy(alpha = 0.10f))
+                }
+            }
             .clickable(
                 enabled = enabled,
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             )

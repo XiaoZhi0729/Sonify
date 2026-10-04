@@ -72,41 +72,30 @@ fun UserInterfaceSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.BarBlurEffect }
                             )
-
-                            Divider()
-
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_ui_smoothness_test_title),
-                                onClick = {
-                                    SettingsLibrary.SmoothnessTest = !SettingsLibrary.SmoothnessTest
-                                },
-                                checkedLambda = { SettingsLibrary.SmoothnessTest }
-                            )
                         }
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_blur_effect_desc))
-                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_smoothness_test_desc))
 
-                        GroupSpacerMedium()
+                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+                            GroupSpacerMedium()
 
-                        val showCornerSetDialog =
-                        remember("UserInterfaceSetting_showCornerSetDialog") {
-                            mutableStateOf(false)
-                        }
-
-                        RoundColumn {
-                            LabelItem(
-                                title = stringResource(id = R.string.settings_performance_ui_screen_corner_title),
-                                // desc = stringResource(id = R.string.settings_performance_ui_screen_corner_desc),
-                                superLink = true
-                            ) {
-                                showCornerSetDialog.value = true
+                            val showCornerSetDialog = remember("UserInterfaceSetting_showCornerSetDialog") {
+                                mutableStateOf(false)
                             }
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_screen_corner_desc))
 
-                        if (showCornerSetDialog.value) {
-                            ScreenCornerSetDialog {
-                                showCornerSetDialog.value = false
+                            RoundColumn {
+                                LabelItem(
+                                    title = stringResource(id = R.string.settings_performance_ui_screen_corner_title),
+                                    superLink = true
+                                ) {
+                                    showCornerSetDialog.value = true
+                                }
+                            }
+                            ListHeader(content = stringResource(id = R.string.settings_performance_ui_screen_corner_desc))
+
+                            if (showCornerSetDialog.value) {
+                                ScreenCornerSetDialog {
+                                    showCornerSetDialog.value = false
+                                }
                             }
                         }
 

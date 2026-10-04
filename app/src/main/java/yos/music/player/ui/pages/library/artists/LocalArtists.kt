@@ -54,8 +54,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -149,9 +151,11 @@ fun LocalArtists(navController: NavController) {
                     key = { _, artist -> artist }/*,
                     contentType = { _, _ -> "LocalArtists_item" }*/
                 ) { index, artist ->
-                    // 激活歌手详情页：本地歌手无在线 id，传空 artistId 由详情页按名字搜索解析
+                    // 本地艺人：只查看该歌手已存到本地的歌曲（复用 NormalMusic 通用歌曲列表页）；
+                    // 酷狗歌手详情入口在「在线音乐」分区的艺人列表
                     ArtistItem(artistName = artist) {
-                        navController.navigate(UI.artistDetailRoute(artistId = null, artistName = artist))
+                        LibraryObject.setTargetListWithTitle(artist, MusicLibrary.Artist[artist])
+                        navController.toUI(UI.NormalMusic)
                     }
 
                     key(index) {

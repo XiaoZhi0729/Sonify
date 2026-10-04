@@ -144,17 +144,6 @@ object SettingsLibrary {
     )
 
     /**
-     * 流畅性测试：开启后底栏强制切回 flamingo 原始样式（无液态玻璃），
-     * 用于对照实验，判断迷你播放器展开/收起的流畅度瓶颈是否来自底栏玻璃。
-     */
-    @Stable
-    var SmoothnessTest by mutableDataSaverStateOf(
-        dataSaverInterface = SettingsSaver,
-        key = "settings_performance_ui_smoothness_test",
-        initialValue = false
-    )
-
-    /**
      * 媒体通知-额外的媒体图标
      */
     @Stable
@@ -280,25 +269,11 @@ object SettingsLibrary {
     )
         private set
 
-    /** 上一次偏好变更前快照（会话内"撤销上次改动"用）；null = 无可撤销。 */
-    @Stable
-    var lastQualitySnapshot = mutableStateOf<Pair<String, String>?>(null)
-
-    /** 偏好唯一写入口：写前先存快照，使任何全局改动都可一步回退。 */
+    /** 在线音质偏好的唯一写入口。 */
     fun updateOnlineQuality(wifi: String? = null, mobile: String? = null) {
         if (wifi == null && mobile == null) return
-        lastQualitySnapshot.value = OnlineQualityWifi to OnlineQualityMobile
         wifi?.let { OnlineQualityWifi = it }
         mobile?.let { OnlineQualityMobile = it }
-    }
-
-    /** 一步撤销上一次偏好改动（无快照时返回 false，不做任何写入）。 */
-    fun undoOnlineQualityChange(): Boolean {
-        val snapshot = lastQualitySnapshot.value ?: return false
-        OnlineQualityWifi = snapshot.first
-        OnlineQualityMobile = snapshot.second
-        lastQualitySnapshot.value = null
-        return true
     }
 
     /**

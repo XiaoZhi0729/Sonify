@@ -1,0 +1,18 @@
+Cresto / Glasense UI
+Author identified in upstream application: Nevoit (https://github.com/nevodev)
+Source snapshot: Cresto-1.0-alpha1082
+License: Apache License 2.0 (see cresto-Apache-2.0.txt).
+
+SonifyDialog.kt adapts the centered dialog geometry, button layout and enter/exit
+motion from app/ui/components/glasense/GlasenseDialog.kt and glasense-ui tokens.
+DialogMaterial.kt adapts the thin material recipe and AGSL shader from
+app/ui/components/glasense/material/{MaterialRecipes,MaterialRecipeRenderEffect,
+MaterialShaderCode}.kt.
+
+Modified for Sonify: application-local overlay registration, Backdrop 1.0.5,
+slot-based content, asynchronous enabled/error states, responsive width,
+keyboard insets, accessibility, local theme and compatibility fallback.
+The complete glasense-ui module is not included. CrestoDialogStyle.kt includes
+its Blue500/Red500 tokens; their Tailwind MIT notice is retained in
+cresto-THIRD_PARTY_NOTICES.md. CrestoDialogEffects.kt adapts GlasenseHighlight,
+GlasenseDialog shadow drawing and glasense-ui DimIndication.

@@ -424,7 +424,7 @@ private fun VerifyCaptchaDialog(pending: KugouVipState.PendingCaptcha) {
         )
     ) {
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            shape = com.kyant.shapes.RoundedRectangle(24.dp),
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
                 .fillMaxWidth(0.92f)
@@ -447,6 +447,7 @@ private fun VerifyCaptchaDialog(pending: KugouVipState.PendingCaptcha) {
                         contentDescription = stringResource(id = R.string.kugou_vip_captcha_close),
                         tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                         modifier = Modifier
+                            .clickable { KugouVipState.cancelCaptcha() }
                             .padding(8.dp)
                     )
                 }

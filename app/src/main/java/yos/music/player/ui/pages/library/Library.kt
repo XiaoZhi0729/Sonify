@@ -10,6 +10,9 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Radio
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
 import io.github.alexzhirkevich.cupertino.icons.outlined.PersonCropCircle
 import yos.music.player.R
@@ -26,7 +29,7 @@ import yos.music.player.ui.widgets.basic.YosWrapper
 /**
  * 资料库枢纽（本地 / 在线两分区）。
  *
- * 信息架构：本地音乐（歌曲/专辑/歌手/播放列表）+ 在线音乐（在线搜索/我的在线歌单）。
+ * 信息架构：本地音乐（歌曲/专辑/歌手/播放列表）+ 在线音乐（在线艺人/我的在线歌单）。
  * 酷狗账号入口保留在 Settings（在线音乐分组，带登录状态），此处不重复制造入口。
  * 分区标题复用 Settings 的 ListHeader；条目沿用原版 SmallLabelItem + LibraryDivider
  * 平铺语言（Library 原生即为无边距卡片平铺，与 Settings 的 RoundColumn 卡片语言区分）。
@@ -112,13 +115,43 @@ fun Library(
                     GroupSpacer()
                     ListHeader(content = stringResource(id = R.string.settings_online_title))
 
+                    // 在线艺人：选择 UI 与本地艺人一致，点击走酷狗歌手详情（artistId 空按名解析）
+                    SmallLabelItem(
+                        icon = painterResource(id = R.drawable.ic_library_link_icon_artists),
+                        label = stringResource(id = R.string.page_library_artists)
+                    ) {
+                        navController.toUI(UI.OnlineArtists)
+                    }
+
+                    LibraryDivider()
+
                     // 我的在线歌单（酷狗 Rust 链路，第二阶段：歌单 → 歌曲 → /song/url → Media3）；
                     // 在线搜索已迁移至一级 Search Tab
                     SmallLabelItem(
-                        icon = painterResource(id = R.drawable.ic_library_link_icon_playlists),
+                        icon = painterResource(id = R.drawable.ic_library_link_icon_album),
                         label = stringResource(id = R.string.page_library_online_playlists)
                     ) {
                         navController.toUI(UI.OnlinePlaylists)
+                    }
+
+                    LibraryDivider()
+
+                    SmallLabelItem(
+                        icon = painterResource(id = R.drawable.ic_library_link_icon_heart),
+                        label = stringResource(id = R.string.home_everyday_recommend_title),
+                        iconTint = Color(0xFFF54047)
+                    ) {
+                        navController.toUI(UI.EverydayRecommendDetail)
+                    }
+
+                    LibraryDivider()
+
+                    SmallLabelItem(
+                        icon = rememberVectorPainter(Icons.Outlined.Radio),
+                        label = stringResource(id = R.string.home_personal_fm_title),
+                        iconPadding = 8.dp
+                    ) {
+                        navController.toUI(UI.PersonalFmDetail)
                     }
                 }
             }

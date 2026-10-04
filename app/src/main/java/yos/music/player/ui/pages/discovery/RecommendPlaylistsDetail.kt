@@ -25,6 +25,7 @@ import yos.music.player.R
 import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.UI
+import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
@@ -48,12 +49,12 @@ fun RecommendPlaylistsDetail(
 ) {
     val openOnlinePlaylist = onOpenOnlinePlaylist ?: { selection: PlaylistSelection -> navController.navigate(selection.toRoute()) }
     // 首屏数据：主页已加载的第 1 页快照（本页追加不回写 holder，避免影响主页展示条数）
-    val playlists = remember { mutableStateOf(DiscoveryObject.recommendPlaylists.value.toList()) }
-    val nextPage = remember { mutableStateOf(if (playlists.value.isEmpty()) 1 else 2) }
-    val loading = remember { mutableStateOf(playlists.value.isEmpty()) }
-    val endReached = remember { mutableStateOf(false) }
+    val playlists = rememberPageData("recommend_playlists") { DiscoveryObject.recommendPlaylists.value.toList() }
+    val nextPage = rememberPageData("recommend_next_page") { if (playlists.value.isEmpty()) 1 else 2 }
+    val loading = remember { mutableStateOf(false) }
+    val endReached = rememberPageData("recommend_end_reached") { false }
     // 非空 = 首拉/追加失败的具体错误，展示为可点击重试的状态行/页脚
-    val loadError = remember { mutableStateOf<String?>(null) }
+    val loadError = rememberPageData<String?>("recommend_load_error") { null }
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
 

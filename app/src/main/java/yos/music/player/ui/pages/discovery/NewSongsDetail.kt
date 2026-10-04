@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -26,6 +27,7 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
@@ -43,6 +45,8 @@ import yos.music.player.ui.widgets.basic.Title
 fun NewSongsDetail(navController: NavController) {
     val songs = DiscoveryObject.newSongs.value
     val scope = rememberCoroutineScope()
+    // 酷狗接口可能返回重复 FileHash，item key 按出现序号唯一化
+    val songKeys = remember(songs) { lazyItemKeys(songs) { it.hash } }
 
     // 整列表播放：全部歌曲进 Media3 队列，从 index 处开始；URL 由播放器惰性解析
     fun playAt(index: Int) {
@@ -115,9 +119,9 @@ fun NewSongsDetail(navController: NavController) {
 
         itemsIndexed(
             songs,
-            key = { _, song -> song.hash }
+            key = { index, _ -> songKeys[index] }
         ) { index, song ->
-            key(song.hash) {
+            key(songKeys[index]) {
                 // 统一歌曲 Item：与本地/榜单列表同款 MusicList 视觉规范；
                 // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
                 MusicList(KugouRepository.toDisplayMediaItem(song)) {

@@ -32,6 +32,7 @@ import yos.music.player.R
 import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
@@ -52,12 +53,12 @@ fun NewAlbumsDetail(
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     // 首屏数据：主页已加载的第 1 页快照（本页追加不回写 holder，避免影响主页展示条数）
-    val albums = remember { mutableStateOf(DiscoveryObject.newAlbums.value.toList()) }
-    val nextPage = remember { mutableStateOf(if (albums.value.isEmpty()) 1 else 2) }
-    val loading = remember { mutableStateOf(albums.value.isEmpty()) }
-    val endReached = remember { mutableStateOf(false) }
+    val albums = rememberPageData("new_albums") { DiscoveryObject.newAlbums.value.toList() }
+    val nextPage = rememberPageData("albums_next_page") { if (albums.value.isEmpty()) 1 else 2 }
+    val loading = remember { mutableStateOf(false) }
+    val endReached = rememberPageData("albums_end_reached") { false }
     // 非空 = 首拉/追加失败的具体错误，展示为可点击重试的状态行/页脚
-    val loadError = remember { mutableStateOf<String?>(null) }
+    val loadError = rememberPageData<String?>("albums_load_error") { null }
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
 

@@ -24,6 +24,7 @@ interface UI {
         const val NormalMusic = "NormalMusic"
         const val PlayLists = "PlayLists"
         const val LocalArtists = "LocalArtists"
+        const val OnlineArtists = "OnlineArtists"
         const val LocalAlbums = "LocalAlbums"
 
         // 在线歌单（酷狗 Rust 链路，第二阶段；入口在 Library）

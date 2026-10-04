@@ -588,8 +588,6 @@ fun Modifier.titleCollapseTouchTracker(state: TitleCollapseState): Modifier =
         }
     }
 
-private class CollapseUi(val alpha: Float, val bar: Boolean, val small: Boolean)
-
 /**
  * 大标题折叠逻辑（NexioSchedule CollapsibleTopAppBar 式二态收敛）：
  *
@@ -613,6 +611,7 @@ fun rememberTitleCollapse(state: LazyListState, extraTopPadding: Dp = 0.dp): Tit
             state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
                 ?.let { Pair(it.offset, it.size) }
         },
+        isLayoutReady = { state.layoutInfo.totalItemsCount > 0 },
         extraTopPadding = extraTopPadding
     )
 
@@ -624,6 +623,7 @@ fun rememberTitleCollapse(state: LazyGridState, extraTopPadding: Dp = 0.dp): Tit
             state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
                 ?.let { Pair(it.offset.y, it.size.height) }
         },
+        isLayoutReady = { state.layoutInfo.totalItemsCount > 0 },
         extraTopPadding = extraTopPadding
     )
 
@@ -631,6 +631,7 @@ fun rememberTitleCollapse(state: LazyGridState, extraTopPadding: Dp = 0.dp): Tit
 private fun rememberTitleCollapseImpl(
     scrollable: ScrollableState,
     firstItemInfo: () -> Pair<Int, Int>?,
+    isLayoutReady: () -> Boolean,
     extraTopPadding: Dp
 ): TitleCollapseState {
     val density = LocalDensity.current
@@ -638,6 +639,7 @@ private fun rememberTitleCollapseImpl(
     val statusPx = LocalWindowInsets.current.statusBars.top
     val extraPx = with(density) { extraTopPadding.roundToPx() }
     val currentFirstItem by rememberUpdatedState(firstItemInfo)
+    val currentLayoutReady by rememberUpdatedState(isLayoutReady)
     val touchActive = remember { mutableStateOf(false) }
 
     // 三个对外状态必须与 ui 在同一个 remember(key) 里创建：statusPx 首帧是 0、
@@ -645,21 +647,12 @@ private fun rememberTitleCollapseImpl(
     // 会永久引用旧 ui（旧 statusPx/zone），小标题永远差一截到不了折叠态。
     val states = remember(scrollable, extraPx, statusPx) {
         val uiState = derivedStateOf {
-            val info = currentFirstItem()
-                ?: return@derivedStateOf CollapseUi(alpha = 0f, bar = true, small = true)
-            // zone：从静止到"文本底边触及顶栏底缘"的总滚动量 = 额外下移 + 文本高度
-            val zone = (extraPx + info.second - statusPx).coerceAtLeast(1)
-            val raw = -info.first.toFloat() / zone
-            when {
-                raw <= 0f -> CollapseUi(alpha = 1f, bar = false, small = false)
-                raw >= 1f -> CollapseUi(alpha = 0f, bar = true, small = true)
-                else -> {
-                    // extraTopPadding > 0 时大标题离栏更远：触及栏缘（raw=edge）前不渐隐
-                    val edge = (extraPx.toFloat() / zone).coerceIn(0f, 1f)
-                    val fade = ((raw - edge) / (1f - edge).coerceAtLeast(0.001f)).coerceIn(0f, 1f)
-                    CollapseUi(alpha = 1f - fade, bar = true, small = false)
-                }
-            }
+            calculateTitleCollapse(
+                firstItemInfo = currentFirstItem(),
+                isLayoutReady = currentLayoutReady(),
+                extraPx = extraPx,
+                statusPx = statusPx
+            )
         }
         Triple(
             derivedStateOf { uiState.value.alpha },

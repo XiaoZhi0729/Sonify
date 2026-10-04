@@ -1599,6 +1599,7 @@ internal fun PlayingList(
                     title = stringResource(id = R.string.queue_delete_confirm, selectedIds.size),
                     content = null,
                     positiveContent = stringResource(id = R.string.queue_delete),
+                    destructive = true,
                     negativeContent = stringResource(id = R.string.common_cancel),
                     onPositive = {
                         confirmDelete = false

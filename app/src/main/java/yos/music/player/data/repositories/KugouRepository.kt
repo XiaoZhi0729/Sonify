@@ -1120,9 +1120,13 @@ object KugouRepository {
             }
         }
 
+        // /artist/audios 条目歌名只在 audio_name（含后缀），其余接口走 songname/filename 族
         val rawName = s.optString("songname").ifEmpty { s.optString("SongName") }
             .ifEmpty { s.optString("name") }
             .ifEmpty { s.optString("filename") }
+            .ifEmpty { s.optString("audio_name") }
+            .ifEmpty { s.optString("ori_song_name") }
+            .ifEmpty { s.optString("OriSongName") }
         var title = rawName
         val sepIdx = rawName.indexOf(" - ")
         if (sepIdx > 0) {

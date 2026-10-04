@@ -1,5 +1,7 @@
 package yos.music.player.ui.pages.discovery
 
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -102,6 +104,10 @@ internal fun RecentListeningRail(
 
     LazyRow(
         state = listState,
+        flingBehavior = rememberSnapFlingBehavior(
+            lazyListState = listState,
+            snapPosition = SnapPosition.Start
+        ),
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(start = 20.dp, end = 136.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)

@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -72,7 +73,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- 诊断报告导出用：只共享应用私有外部目录下的 logs，不需要任何存储权限 -->
+        <!-- Shared paths are limited to diagnostic logs and verified update APKs. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

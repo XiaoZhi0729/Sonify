@@ -22,7 +22,6 @@ import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.PerSongQualityIntent
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
-import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SelectItem
 import yos.music.player.ui.pages.settings.SettingBackground
@@ -42,7 +41,6 @@ import yos.music.player.ui.widgets.basic.Title
 fun OnlineQualitySettings(navController: NavController) =
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_audio_online_quality),
-            subTitle = stringResource(id = R.string.settings_audio_online_quality_sub),
             onBack = {
                 navController.popBackStack()
             },
@@ -78,7 +76,7 @@ fun OnlineQualitySettings(navController: NavController) =
                         ListHeader(stringResource(id = R.string.settings_audio_online_quality))
                         RoundColumn {
                             /**
-                             * 偏好写入唯一路径：写前存快照供撤销 — 全局改动视为最强意图，
+                             * 偏好写入唯一路径：全局改动视为最强意图，
                              * 顺便清掉所有本曲例外（否则会出现"设置了却不生效"的黑盒）。
                              */
                             fun applyPreference(isWifi: Boolean, tier: String) {
@@ -150,17 +148,6 @@ fun OnlineQualitySettings(navController: NavController) =
                                     )
                                 )
                             )
-                        }
-                        if (SettingsLibrary.lastQualitySnapshot.value != null) {
-                            RoundColumn {
-                                LabelItem(title = stringResource(id = R.string.quality_undo_change)) {
-                                    if (SettingsLibrary.undoOnlineQualityChange()) {
-                                        noticeForSource = null
-                                        PerSongQualityIntent.clearAll()
-                                        scope.launch { MediaController.reapplyOnlineQuality() }
-                                    }
-                                }
-                            }
                         }
                         ListHeader(content = stringResource(id = R.string.settings_audio_online_quality_downgrade_toast_desc))
 

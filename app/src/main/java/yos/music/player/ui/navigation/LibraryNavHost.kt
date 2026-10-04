@@ -11,11 +11,15 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
+import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
+import yos.music.player.ui.pages.library.artists.ArtistDetail
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.albums.LocalAlbums
 import yos.music.player.ui.pages.library.artists.LocalArtists
+import yos.music.player.ui.pages.library.artists.OnlineArtists
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylists
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 import yos.music.player.ui.pages.library.playlists.PlayLists
@@ -46,6 +50,8 @@ fun LibraryNavHost(
         }
         composable(UI.PlayLists) { PlayLists(navController) }
         composable(UI.NormalMusic) { NormalMusic(navController) }
+        composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
+        composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
         composable(UI.OnlinePlaylists) {
             OnlinePlaylists(
                 navController = navController,
@@ -62,6 +68,18 @@ fun LibraryNavHost(
             )
         }
         composable(UI.LocalArtists) { LocalArtists(navController) }
+        composable(UI.OnlineArtists) { OnlineArtists(navController) }
+        // 本地歌手列表点击进入歌手详情：与 HomeNavHost 各自持图，destination 需两侧都注册
+        composable(
+            route = UI.ArtistDetailPattern,
+            arguments = artistDetailArguments()
+        ) { entry ->
+            ArtistDetail(
+                navController = navController,
+                artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
+            )
+        }
         composable(UI.AlbumInfo) {
             AlbumInfo(
                 navController = navController,
