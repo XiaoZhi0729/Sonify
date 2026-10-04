@@ -35,6 +35,7 @@ import yos.music.player.code.MediaController
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
@@ -67,6 +68,10 @@ fun PersonalFmDetail(navController: NavController) {
     val cursorHash = remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    // FM 补货批次间可能拿到重复 FileHash，item key 按出现序号唯一化。
+    // items 与 keys 派生自同一次读取（约定见 LazyItemKeys.kt）
+    val songItems = songs.value
+    val songKeys = remember(songItems) { lazyItemKeys(songItems) { it.hash } }
     // 首拉全部落空且无异常时的空态文案（协程内不能用 stringResource，提前解析）
     val fmEmptyText = stringResource(id = R.string.personal_fm_empty)
 
@@ -219,17 +224,17 @@ fun PersonalFmDetail(navController: NavController) {
         }
 
         itemsIndexed(
-            songs.value,
-            key = { index, song -> song.hash.ifEmpty { "idx_$index" } }
+            songItems,
+            key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
         ) { index, song ->
-            key(song.hash.ifEmpty { "idx_$index" }) {
+            key(songKeys.getOrElse(index) { "oob_$index" }) {
                 MusicList(KugouRepository.toDisplayMediaItem(song)) {
                     playAt(index)
                 }
             }
 
             key("divider_$index") {
-                if (index < songs.value.size - 1) {
+                if (index < songItems.size - 1) {
                     Spacer(
                         modifier = Modifier
                             .fillMaxWidth()
