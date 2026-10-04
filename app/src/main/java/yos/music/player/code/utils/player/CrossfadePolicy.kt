@@ -13,6 +13,9 @@ object CrossfadePolicy {
 
     /** Time reserved for the next player to start rendering before the audible fade. */
     const val PREFETCH_LEAD_MS = 4_000L
+
+    /** The audible fade may begin slightly before the overlap window opens. */
+    const val START_TOLERANCE_MS = 200L
     const val WINDOW_MAX_RATIO = 1f / 3f
     const val WINDOW_MIN_MS = 1_000L
     const val MIN_RAMP_MS = 300L
@@ -44,15 +47,20 @@ object CrossfadePolicy {
     fun isEqualPower(t: Float): Boolean =
         abs(volumeOut(1f, t) * volumeOut(1f, t) + volumeIn(t) * volumeIn(t) - 1f) < 1e-4f
 
-    /** The next player must be ready and rendering before the primary is muted. */
+    /**
+     * The next player must be buffered and ready before the fade may begin, and the fade only
+     * starts once the overlap window is actually open — a ready secondary alone must not cut the
+     * current track short.
+     */
     fun crossfade(
-        secondaryRendering: Boolean,
+        secondaryReady: Boolean,
         remainingWallMs: Long,
         elapsedWallMs: Long,
+        windowMs: Long,
     ): CrossfadeDecision = when {
         remainingWallMs <= 0L -> CrossfadeDecision.AbortTooLate
-        !secondaryRendering && elapsedWallMs >= PREFETCH_LEAD_MS -> CrossfadeDecision.AbortNotRendering
-        secondaryRendering -> CrossfadeDecision.Start
+        !secondaryReady && elapsedWallMs >= PREFETCH_LEAD_MS -> CrossfadeDecision.AbortNotRendering
+        secondaryReady && remainingWallMs <= windowMs + START_TOLERANCE_MS -> CrossfadeDecision.Start
         else -> CrossfadeDecision.Wait
     }
 

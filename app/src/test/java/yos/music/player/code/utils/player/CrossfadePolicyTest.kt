@@ -61,25 +61,40 @@ class CrossfadePolicyTest {
     }
 
     @Test
-    fun notRenderingDoesNotMutePrimaryBeforeLeadTimeout() {
+    fun notRenderingDoesNotStartFadeBeforeLeadTimeout() {
         assertEquals(
             CrossfadeDecision.Wait,
             CrossfadePolicy.crossfade(
-                secondaryRendering = false,
+                secondaryReady = false,
                 remainingWallMs = 4_000L,
                 elapsedWallMs = 1_000L,
+                windowMs = 5_000L,
             )
         )
     }
 
     @Test
-    fun renderingStartsCrossfadeWithoutAnyTailRealignment() {
+    fun readySecondaryStillWaitsUntilOverlapWindowOpens() {
+        assertEquals(
+            CrossfadeDecision.Wait,
+            CrossfadePolicy.crossfade(
+                secondaryReady = true,
+                remainingWallMs = 5_000L + CrossfadePolicy.START_TOLERANCE_MS + 1L,
+                elapsedWallMs = 1_000L,
+                windowMs = 5_000L,
+            )
+        )
+    }
+
+    @Test
+    fun readySecondaryStartsOnceOverlapWindowOpens() {
         assertEquals(
             CrossfadeDecision.Start,
             CrossfadePolicy.crossfade(
-                secondaryRendering = true,
-                remainingWallMs = 4_000L,
+                secondaryReady = true,
+                remainingWallMs = 5_000L + CrossfadePolicy.START_TOLERANCE_MS,
                 elapsedWallMs = 1_000L,
+                windowMs = 5_000L,
             )
         )
     }
@@ -89,17 +104,19 @@ class CrossfadePolicyTest {
         assertEquals(
             CrossfadeDecision.AbortNotRendering,
             CrossfadePolicy.crossfade(
-                secondaryRendering = false,
+                secondaryReady = false,
                 remainingWallMs = 3_000L,
                 elapsedWallMs = PREFETCH_LEAD_MS,
+                windowMs = 5_000L,
             )
         )
         assertEquals(
             CrossfadeDecision.AbortTooLate,
             CrossfadePolicy.crossfade(
-                secondaryRendering = true,
+                secondaryReady = true,
                 remainingWallMs = 0L,
                 elapsedWallMs = PREFETCH_LEAD_MS,
+                windowMs = 5_000L,
             )
         )
     }

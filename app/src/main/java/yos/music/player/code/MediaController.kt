@@ -844,6 +844,16 @@ class YosPlaybackService : MediaSessionService() {
     private val notificationID = 1145
     private val channelID = "YosMediaControllerChannelV2"
 
+    // ---------- Crossfade 扶正（promote）状态 ----------
+    // currentPlayer 是音频真相（真 ExoPlayer 实例），forwardingPlayer 是 MediaSession
+    // 绑定的会话外壳。副 player 扶正时两者整体换引用：音频流不断，只换管理层。
+    private var currentPlayer: ExoPlayer? = null
+    private var forwardingPlayer: ForwardingPlayer? = null
+    private var sessionAudioAttributes: AudioAttributes? = null
+
+    /** 应用侧大监听器：onCreate 里创建并挂到外壳上，扶正时随外壳迁移到新 player。 */
+    private var playbackListener: Player.Listener? = null
+
     private val shuffleMode = "shuffle_mode"
     private val repeatMode = "repeat_mode"
 
@@ -979,6 +989,7 @@ class YosPlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
+        sessionAudioAttributes = audioAttributes
         // 主/副 player 共用这一套解码配置：过渡窗口里新曲必须与正在播的这曲走同一条解码
         // 路径，否则"切个歌顺便换了渲染器"会听出音色差
         fun renderFactory(): DefaultRenderersFactory =
@@ -1006,19 +1017,27 @@ class YosPlaybackService : MediaSessionService() {
             // 在线歌曲惰性 URL 解析：占位符 URI 在播放前才解析真实 CDN URL（本地歌曲透传不变）
             .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
             .build()
+        currentPlayer = player
 
         // ---------- 歌曲平滑过渡（Crossfade） ----------
         // 副 player 只在过渡窗口里发声，且不申请音频焦点（handleAudioFocus=false：它一旦去
         // 抢焦点，主 player 会被抑制，重叠就变成"两边都没声"），也不接 MediaSession——
         // 通知栏、锁屏、歌词、音质逻辑全部仍以主 player 为准。
-        // 创建推迟到第一次真需要过渡时：开关没打开过就不多占一套解码器。
-        CrossfadeExo.attach(player) {
-            ExoPlayer.Builder(this, renderFactory())
-                .setAudioAttributes(audioAttributes, false)
-                .setHandleAudioBecomingNoisy(false)
-                .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
-                .build()
-        }
+        // 淡化结束时不做任何 seek：副 player 携带完整队列克隆被就地扶正（promoteSecondary），
+        // 音频流从头到尾同一条 AudioTrack，接缝在音频层面不存在。
+        CrossfadeExo.attach(
+            player,
+            secondaryBuilder = {
+                ExoPlayer.Builder(this, renderFactory())
+                    .setAudioAttributes(audioAttributes, false)
+                    // handleAudioBecomingNoisy 是 builder-only 配置，出生就设 true：过渡期拔
+                    // 耳机两个 player 一起暂停，crossfade 正常 abort，行为与单 player 一致
+                    .setHandleAudioBecomingNoisy(true)
+                    .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
+                    .build()
+            },
+            onPromote = ::promoteSecondary,
+        )
         CrossfadeExo.start()
 
         // 恢复持久化的播放倍速（服务每次创建/进程重启后仍保持用户选择）
@@ -1026,182 +1045,33 @@ class YosPlaybackService : MediaSessionService() {
             player.setPlaybackSpeed(SettingsLibrary.PlaybackSpeed.toFloat())
         }
 
-        val forwardingPlayer = object : ForwardingPlayer(player) {
-            override fun play() {
-                player.fadePlay()
-            }
-
-            // ——诊断探针（只记录不改行为）——
-            // stop()/prepare() 是能把"播到一半、缓冲充足"的播放器直接打成 IDLE 的
-            // 仅有两个常规入口（真错误会另有 PLAY_ERROR）。会话外部 controller（通知
-            // 栏/语音/车机/耳机）与 app 内音质重建、队列排序最终都落到这里；
-            // 归因靠邻近的 SRC/TLMUT 行，缺省即"外源"。排查"无错静默停播"的唯一目击点。
-            override fun stop() {
-                YosDiagnostics.log("TLMUT", "op" to "stop", "th" to Thread.currentThread().name)
-                super.stop()
-            }
-
-            override fun prepare() {
-                YosDiagnostics.log("TLMUT", "op" to "prepare", "th" to Thread.currentThread().name)
-                super.prepare()
-            }
-
-            override fun pause() {
-                player.fadePause()
-            }
-
-            override fun isPlaying(): Boolean {
-                return FadeExo.targetStatus != 0
-            }
-        }
-
-        forwardingPlayer.addListener(
-            object : Player.Listener {
+        forwardingPlayer = makeForwardingPlayer(player)
+        val listener = object : Player.Listener {
                 // 在线歌曲解析/加载失败的连续跳过计数（成功播放后归零）
                 var consecutiveOnlineFailures = 0
 
                 override fun onTracksChanged(tracks: Tracks) {
-                    runCatching {
-
-                        if (tracks.isEmpty) return@runCatching
-
-                        val mediaId = player.currentMediaItem?.mediaId
-                        val path = player.currentMediaItem?.uri
-
-                        val thisPath = path?.path
-
-                        println("质量分析 内置实现获取")
-                        var samplingRate = 0
-                        var bitrate = 0
-                        var haveJOC = false
-
-                        for (i in tracks.groups) {
-                            for (j in 0 until i.length) {
-                                if (!i.isTrackSelected(j)) continue
-                                val trackFormat = i.getTrackFormat(j)
-                                samplingRate = trackFormat.sampleRate
-                                bitrate = trackFormat.bitrate / 1000
-                                haveJOC =
-                                    trackFormat.sampleMimeType?.contains("-joc", ignoreCase = true)
-                                        ?: false
-                                break
-                            }
-                        }
-
-                        if (!mediaId.orEmpty().startsWith("kugou-online-")) {
-                            // 本地歌词：同名 .lrc 优先，读不到再取音频内嵌歌词（M4A ©lyr / MP3 USLT / FLAC）。
-                            // TagLib 解析是磁盘 IO，放 IO 线程；发布前回主线程校验 mediaId 防串歌。
-                            val durationMs = player.duration.takeIf { it > 0 } ?: 0L
-                            MediaViewModelObject.lrcEntries.value = emptyList()
-                            MediaViewModelObject.lyricLoading.value = true
-                            CoroutineScope(Dispatchers.IO).launch {
-                                val lrcContent = runCatching {
-                                    val fromFile = thisPath?.let { p ->
-                                        println("读取本地歌词：${p.substringBeforeLast(".")}.lrc")
-                                        AudioMetadataUtils.loadLrcFile(
-                                            this@YosPlaybackService,
-                                            "${p.substringBeforeLast(".")}.lrc"
-                                        )
-                                    }
-                                    val embedded = fromFile?.takeIf { it.isNotBlank() } ?: run {
-                                        if (thisPath != null) println("未找到同名 .lrc，尝试读取内嵌歌词")
-                                        thisPath?.let { AudioMetadataUtils.loadEmbeddedLyric(it) }
-                                    }
-                                    embedded
-                                }.getOrNull().orEmpty()
-
-                                // player.duration 在部分轨道上仍是 UNSET，用 TagLib 读文件时长兜底
-                                val totalDurationMs = if (durationMs > 0) durationMs
-                                else thisPath?.let { AudioMetadataUtils.getAudioLengthMs(it) } ?: 0L
-
-                                val lrcEntries = YosLrcFactory()
-                                    .formatLrcEntriesWithFallback(lrcContent, totalDurationMs)
-
-                                withContext(Dispatchers.Main) {
-                                    if (player.currentMediaItem?.mediaId == mediaId) {
-                                        MediaViewModelObject.lrcEntries.value = lrcEntries
-                                        MediaViewModelObject.lyricMediaId.value = mediaId
-                                        MediaViewModelObject.lyricLoading.value = false
-                                        YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)
-                                    }
-                                }
-                            }
-                        }
-
-                        if (thisPath != null && !mediaId.orEmpty().startsWith("kugou-online-")) {
-                            // MediaViewModelObject.isDolby.value = thisPath.endsWith(".m4a")
-                            // 改为 JOC 判断
-
-                            if (samplingRate == 0 || bitrate == 0) {
-                                val audioInfo = AudioMetadataUtils.getQualityInfos(thisPath)
-                                if (samplingRate == 0) {
-                                    samplingRate = audioInfo.second
-                                } else {
-                                    bitrate = audioInfo.first
-                                }
-                            }
-                        }
-
-                        MediaViewModelObject.isDolby.value = haveJOC
-                        MediaViewModelObject.samplingRate.intValue = samplingRate
-                        MediaViewModelObject.bitrate.intValue = bitrate
-
-                        // 在线曲：把解码器观测档作为交叉校验证据记入事实表（只计指标、
-                        // 不推翻服务端回写值——在线流 bitrate 常为 -1，拿它推翻声明会造大面
-                        // 积假"未知"）。本地文件不受音质概念影响，不记事实。
-                        if (mediaId?.startsWith("kugou-online-") == true) {
-                            KugouRepository.recordObservedTier(
-                                mediaId.removePrefix("kugou-online-"),
-                                KugouQuality.tierFromSpec(bitrate, samplingRate)
-                            )
-                        }
-
-                        println("质量分析 采样率：${MediaViewModelObject.samplingRate.intValue}，比特率：${MediaViewModelObject.bitrate.intValue}")
-                    }
+                    // 抽到 handleTracksChanged：扶正后副 player 不会再有 tracks 事件，
+                    // promote 事务需要手动补发同一套处理
+                    currentPlayer?.let { runCatching { handleTracksChanged(it, tracks) } }
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    YosDiagnostics.log(
-                        "TRANSITION",
-                        "mediaId" to mediaItem?.mediaId,
-                        // 直记 media3 原值：本版本的 reason 常量集与旧 ExoPlayer 不一致（没有
-                        // UNKNOWN/MANUAL），拿记忆里的表去翻译会把 auto/repeat 说成别的
-                        "reason" to reason
-                    )
-                    /*mediaSession?.let { MediaController.sendNotification(it,context) }*/
-                    // 换曲瞬间清掉上一首的实测规格：这两个值是全局态且只在 onTracksChanged 里
-                    // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
-                    MediaViewModelObject.bitrate.intValue = 0
-                    MediaViewModelObject.samplingRate.intValue = 0
-                    mediaItem?.let {
-                        val yosItem = it.toYosMediaItem()
-                        yos.music.player.code.MediaController.onCase(yosItem)
-                        MusicLibrary.recordRecentlyPlayed(yosItem)
-                    }
-                    yos.music.player.code.MediaController.preloadNextCover(player, applicationContext)
-
-                    // 播放即探测：换曲后立刻把这首歌的档位阶梯问一轮（单调阶梯，通常一个
-                    // 请求就定完），结论写进能力表。用户打开面板时就能看到哪些档拿不到，
-                    // 而不是逐档点下去试探。本地文件无档位概念，跳过。
-                    mediaItem?.localConfiguration?.uri
-                        ?.takeIf { it.scheme == KugouRepository.PLACEHOLDER_SCHEME }
-                        ?.lastPathSegment?.let { probeHash ->
-                            CoroutineScope(Dispatchers.IO).launch {
-                                KugouRepository.probeAllQualities(probeHash)
-                            }
-                        }
-
+                    // 抽到 handleTrackSwitched：扶正后副 player 不会再有 transition 事件，
+                    // promote 事务需要手动补发同一套处理
+                    handleTrackSwitched(mediaItem, reason)
                     println("更新 $mediaItem")
                     super.onMediaItemTransition(mediaItem, reason)
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     super.onPlaybackStateChanged(playbackState)
+                    val p = currentPlayer
                     YosDiagnostics.log(
                         "STATE",
                         "s" to YosDiagnostics.stateLabel(playbackState),
-                        "pos" to player.currentPosition,
-                        "buf" to player.bufferedPosition
+                        "pos" to p?.currentPosition,
+                        "buf" to p?.bufferedPosition
                     )
                     if (playbackState == Player.STATE_READY) {
                         consecutiveOnlineFailures = 0
@@ -1210,6 +1080,7 @@ class YosPlaybackService : MediaSessionService() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     super.onPlayerError(error)
+                    val p = currentPlayer ?: return
                     // 先把完整现场落盘（错误码 + 因果链头 + 媒体），再走原有的跳歌策略：
                     // 下面那些 println 在 release 全部会被 R8 剥掉，当初就是靠它们查不出东西的
                     val errorCause = generateSequence<Throwable>(error) { it.cause }
@@ -1217,19 +1088,19 @@ class YosPlaybackService : MediaSessionService() {
                     YosDiagnostics.log(
                         "PLAY_ERROR",
                         "code" to error.errorCodeName,
-                        "mediaId" to player.currentMediaItem?.mediaId,
+                        "mediaId" to p.currentMediaItem?.mediaId,
                         "chain" to errorCause,
-                        "buf" to player.bufferedPosition
+                        "buf" to p.bufferedPosition
                     )
                     // 在线歌曲 URL 解析/加载失败：自动跳下一首，不崩溃、不清空队列；
                     // 连续失败达上限则停下，避免全队列失效时无限循环。
-                    val failedItem = player.currentMediaItem
+                    val failedItem = p.currentMediaItem
                     if (failedItem?.mediaId?.startsWith("kugou-online-") == true) {
                         // 错误态下 hasNextMediaItem() 恒 false，改用队列索引判断是否还有下一首
-                        val hasNext = if (player.repeatMode == REPEAT_MODE_ALL) {
-                            player.mediaItemCount > 1
+                        val hasNext = if (p.repeatMode == REPEAT_MODE_ALL) {
+                            p.mediaItemCount > 1
                         } else {
-                            player.currentMediaItemIndex < player.mediaItemCount - 1
+                            p.currentMediaItemIndex < p.mediaItemCount - 1
                         }
                         if (consecutiveOnlineFailures < 10 && hasNext) {
                             consecutiveOnlineFailures++
@@ -1251,11 +1122,11 @@ class YosPlaybackService : MediaSessionService() {
                                 "$reason，已跳到下一首"
                             }
                             Toast.makeText(this@YosPlaybackService, toastMsg, Toast.LENGTH_SHORT).show()
-                            forwardingPlayer.seekToNextMediaItem()
                             // Source error 后播放器处于 STATE_IDLE 错误态，hasNextMediaItem() 恒 false，
                             // 必须重新 prepare 才能清除错误态并加载新曲目
-                            forwardingPlayer.prepare()
-                            forwardingPlayer.play()
+                            forwardingPlayer?.seekToNextMediaItem()
+                            forwardingPlayer?.prepare()
+                            forwardingPlayer?.play()
                         } else {
                             // 打满上限：此处只弹 Toast、不重试也不自愈——息屏时用户看不见，
                             // 整晚就是这么静默停掉的，必须单独一条关键事件
@@ -1294,11 +1165,14 @@ class YosPlaybackService : MediaSessionService() {
 
                 override fun onRepeatModeChanged(repeatMode: Int) {
                     super.onRepeatModeChanged(repeatMode)
+                    // 循环/随机变化会让副 player 克隆的队列语义失真：过渡窗口内直接作废
+                    CrossfadeExo.abort("repeat_mode")
                     MediaViewModelObject.repeatMode.intValue = repeatMode
                 }
 
                 override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                     super.onShuffleModeEnabledChanged(shuffleModeEnabled)
+                    CrossfadeExo.abort("shuffle_mode")
                     MediaViewModelObject.shuffleModeEnabled.value = shuffleModeEnabled
                 }
 
@@ -1308,8 +1182,8 @@ class YosPlaybackService : MediaSessionService() {
                     YosDiagnostics.log(
                         "ISPLAYING",
                         "v" to isPlaying,
-                        "state" to YosDiagnostics.stateLabel(player.playbackState),
-                        "sup" to player.playbackSuppressionReason
+                        "state" to YosDiagnostics.stateLabel(currentPlayer?.playbackState ?: Player.STATE_IDLE),
+                        "sup" to (currentPlayer?.playbackSuppressionReason ?: -1)
                     )
                 }
 
@@ -1338,7 +1212,8 @@ class YosPlaybackService : MediaSessionService() {
                 }
 
             }
-        )
+        playbackListener = listener
+        forwardingPlayer!!.addListener(listener)
 
         /*val repeatButton = CommandButton.Builder()
             .setIconResId(android.R.drawable.ic_media_rew)
@@ -1402,24 +1277,25 @@ class YosPlaybackService : MediaSessionService() {
                 customCommand: SessionCommand,
                 args: Bundle
             ): ListenableFuture<SessionResult> {
+                val p = currentPlayer
                 if (customCommand.customAction == shuffleMode) {
-                    player.shuffleModeEnabled = !player.shuffleModeEnabled
-                    setCustomButtons(forwardingPlayer)
-                } else if (customCommand.customAction == repeatMode) {
-                    when (player.repeatMode) {
+                    if (p != null) p.shuffleModeEnabled = !p.shuffleModeEnabled
+                    forwardingPlayer?.let { setCustomButtons(it) }
+                } else if (customCommand.customAction == repeatMode && p != null) {
+                    when (p.repeatMode) {
                         REPEAT_MODE_OFF -> {
-                            player.repeatMode = REPEAT_MODE_ALL
+                            p.repeatMode = REPEAT_MODE_ALL
                         }
 
                         REPEAT_MODE_ALL -> {
-                            player.repeatMode = REPEAT_MODE_ONE
+                            p.repeatMode = REPEAT_MODE_ONE
                         }
 
                         else -> {
-                            player.repeatMode = REPEAT_MODE_OFF
+                            p.repeatMode = REPEAT_MODE_OFF
                         }
                     }
-                    setCustomButtons(forwardingPlayer)
+                    forwardingPlayer?.let { setCustomButtons(it) }
                 }
                 return Futures.immediateFuture(
                     SessionResult(SessionResult.RESULT_SUCCESS)
@@ -1456,7 +1332,7 @@ class YosPlaybackService : MediaSessionService() {
 
         mediaSession =
             MediaSession
-                .Builder(this, forwardingPlayer)
+                .Builder(this, forwardingPlayer!!)
                 .setSessionActivity(
                     PendingIntent.getActivity(
                         this,
@@ -1516,7 +1392,7 @@ class YosPlaybackService : MediaSessionService() {
 
         this.setMediaNotificationProvider(notificationProvider)
 
-        setCustomButtons(forwardingPlayer)
+        setCustomButtons(forwardingPlayer!!)
 
         YosDiagnostics.log("SVC_CREATE", "player" to player.javaClass.simpleName)
         // 心跳读原始 player（真相），不读 ForwardingPlayer：后者的 isPlaying() 被重写成
@@ -1526,16 +1402,237 @@ class YosPlaybackService : MediaSessionService() {
         onServiceRunning()
     }
 
+    /**
+     * 会话外壳工厂：play/pause 走淡入淡出，isPlaying 用 FadeExo 的目标态平滑系统亮度图标，
+     * stop/prepare 挂诊断探针。扶正时对副 player 重建一个同等外壳。
+     */
+    private fun makeForwardingPlayer(p: ExoPlayer): ForwardingPlayer =
+        object : ForwardingPlayer(p) {
+            override fun play() {
+                p.fadePlay()
+            }
+
+            // ——诊断探针（只记录不改行为）——
+            // stop()/prepare() 是能把"播到一半、缓冲充足"的播放器直接打成 IDLE 的
+            // 仅有两个常规入口（真错误会另有 PLAY_ERROR）。会话外部 controller（通知
+            // 栏/语音/车机/耳机）与 app 内音质重建、队列排序最终都落到这里；
+            // 归因靠邻近的 SRC/TLMUT 行，缺省即"外源"。排查"无错静默停播"的唯一目击点。
+            override fun stop() {
+                YosDiagnostics.log("TLMUT", "op" to "stop", "th" to Thread.currentThread().name)
+                super.stop()
+            }
+
+            override fun prepare() {
+                YosDiagnostics.log("TLMUT", "op" to "prepare", "th" to Thread.currentThread().name)
+                super.prepare()
+            }
+
+            override fun pause() {
+                p.fadePause()
+            }
+
+            override fun isPlaying(): Boolean {
+                return FadeExo.targetStatus != 0
+            }
+        }
+
+    /**
+     * Crossfade 扶正事务（由 CrossfadeExo 在 ramp 结束时回调，主线程）：
+     * 把仍在发声的副 player 就地升为主 player。音频流全程不断——无 seek、无换音源，
+     * 换的只是会话绑定/监听器/焦点，接缝在音频层面不存在。
+     *
+     * 契约：setPlayer（会话重绑）之前的步骤失败要抛出，CrossfadeExo 会回退硬切；
+     * 会话重绑之后绝不抛出（不可回退点），收尾步骤各自 runCatching。
+     */
+    private fun promoteSecondary(secondary: ExoPlayer) {
+        val old = currentPlayer ?: throw IllegalStateException("promote without primary")
+        val attrs = sessionAudioAttributes ?: throw IllegalStateException("promote without attrs")
+
+        // ① 摘除旧 player 上的应用监听器：接下来焦点交接会让它暂停，不能再触发 UI 事件
+        val listener = playbackListener
+        if (listener != null) forwardingPlayer?.removeListener(listener)
+        // ② 焦点交接：副 player 预取期不抢焦点，此刻以主 player 身份接管
+        //    （旧 player 收到焦点丢失而暂停——它已无人监听、音量为 0、即将释放）
+        secondary.setAudioAttributes(attrs, true)
+        secondary.volume = 1f
+        // ③ 重建会话外壳并迁移监听器/诊断心跳
+        val newForwarding = makeForwardingPlayer(secondary)
+        if (listener != null) newForwarding.addListener(listener)
+        YosDiagnostics.attachPlayback(this, secondary)
+        // ④ 会话重绑：从此刻起 controller/通知栏/UI 全部跟随副 player —— 不可回退点
+        val session = mediaSession ?: throw IllegalStateException("promote without session")
+        session.setPlayer(newForwarding)
+        forwardingPlayer = newForwarding
+        currentPlayer = secondary
+        setCustomButtons(newForwarding)
+        // ⑤ 收尾：释放旧 player；补发换曲事件（副 player 本来就在播，不会再有 transition/tracks
+        //    通知，歌词/最近播放/音质探测/封面预载必须手动补跑，且顺序与自然换曲一致）
+        runCatching { old.release() }
+        runCatching { syncUiSnapshot(secondary) }
+        runCatching {
+            handleTrackSwitched(secondary.currentMediaItem, Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+            handleTracksChanged(secondary, secondary.currentTracks)
+        }
+        YosDiagnostics.log("XFADE_SERVICE_PROMOTE", "idx" to secondary.currentMediaItemIndex)
+    }
+
+    /** 扶正后用新 player 的状态快照刷新 UI 全局态，防止迁移窗口内丢增量事件。 */
+    private fun syncUiSnapshot(p: ExoPlayer) {
+        MediaViewModelObject.isPlaying.value = p.isPlaying
+        MediaViewModelObject.repeatMode.intValue = p.repeatMode
+        MediaViewModelObject.shuffleModeEnabled.value = p.shuffleModeEnabled
+    }
+
+    /**
+     * 换曲处理（onMediaItemTransition 的主体）：歌词重置、当前曲状态、最近播放、
+     * 封面预载、在线档位探测。扶正时手动补调，与自然换曲走同一份代码。
+     */
+    private fun handleTrackSwitched(mediaItem: MediaItem?, transitionReason: Int) {
+        YosDiagnostics.log(
+            "TRANSITION",
+            "mediaId" to mediaItem?.mediaId,
+            // 直记 media3 原值：本版本的 reason 常量集与旧 ExoPlayer 不一致（没有
+            // UNKNOWN/MANUAL），拿记忆里的表去翻译会把 auto/repeat 说成别的
+            "reason" to transitionReason
+        )
+        // 换曲瞬间清掉上一首的实测规格：这两个值是全局态且只在 handleTracksChanged 里
+        // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
+        MediaViewModelObject.bitrate.intValue = 0
+        MediaViewModelObject.samplingRate.intValue = 0
+        mediaItem?.let {
+            val yosItem = it.toYosMediaItem()
+            yos.music.player.code.MediaController.onCase(yosItem)
+            MusicLibrary.recordRecentlyPlayed(yosItem)
+        }
+        currentPlayer?.let { yos.music.player.code.MediaController.preloadNextCover(it, applicationContext) }
+
+        // 播放即探测：换曲后立刻把这首歌的档位阶梯问一轮（单调阶梯，通常一个
+        // 请求就定完），结论写进能力表。用户打开面板时就能看到哪些档拿不到，
+        // 而不是逐档点下去试探。本地文件无档位概念，跳过。
+        mediaItem?.localConfiguration?.uri
+            ?.takeIf { it.scheme == KugouRepository.PLACEHOLDER_SCHEME }
+            ?.lastPathSegment?.let { probeHash ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    KugouRepository.probeAllQualities(probeHash)
+                }
+            }
+    }
+
+    /** 轨道处理（onTracksChanged 的主体）：歌词加载 + 实测规格 + 在线档位交叉校验。 */
+    private fun handleTracksChanged(p: Player, tracks: Tracks) {
+        runCatching {
+            if (tracks.isEmpty) return
+
+            val mediaId = p.currentMediaItem?.mediaId
+            val path = p.currentMediaItem?.uri
+
+            val thisPath = path?.path
+
+            println("质量分析 内置实现获取")
+            var samplingRate = 0
+            var bitrate = 0
+            var haveJOC = false
+
+            for (i in tracks.groups) {
+                for (j in 0 until i.length) {
+                    if (!i.isTrackSelected(j)) continue
+                    val trackFormat = i.getTrackFormat(j)
+                    samplingRate = trackFormat.sampleRate
+                    bitrate = trackFormat.bitrate / 1000
+                    haveJOC =
+                        trackFormat.sampleMimeType?.contains("-joc", ignoreCase = true)
+                            ?: false
+                    break
+                }
+            }
+
+            if (!mediaId.orEmpty().startsWith("kugou-online-")) {
+                // 本地歌词：同名 .lrc 优先，读不到再取音频内嵌歌词（M4A ©lyr / MP3 USLT / FLAC）。
+                // TagLib 解析是磁盘 IO，放 IO 线程；发布前回主线程校验 mediaId 防串歌。
+                val durationMs = p.duration.takeIf { it > 0 } ?: 0L
+                MediaViewModelObject.lrcEntries.value = emptyList()
+                MediaViewModelObject.lyricLoading.value = true
+                CoroutineScope(Dispatchers.IO).launch {
+                    val lrcContent = runCatching {
+                        val fromFile = thisPath?.let { fp ->
+                            println("读取本地歌词：${fp.substringBeforeLast(".")}.lrc")
+                            AudioMetadataUtils.loadLrcFile(
+                                this@YosPlaybackService,
+                                "${fp.substringBeforeLast(".")}.lrc"
+                            )
+                        }
+                        val embedded = fromFile?.takeIf { it.isNotBlank() } ?: run {
+                            if (thisPath != null) println("未找到同名 .lrc，尝试读取内嵌歌词")
+                            thisPath?.let { AudioMetadataUtils.loadEmbeddedLyric(it) }
+                        }
+                        embedded
+                    }.getOrNull().orEmpty()
+
+                    // player.duration 在部分轨道上仍是 UNSET，用 TagLib 读文件时长兜底
+                    val totalDurationMs = if (durationMs > 0) durationMs
+                    else thisPath?.let { AudioMetadataUtils.getAudioLengthMs(it) } ?: 0L
+
+                    val lrcEntries = YosLrcFactory()
+                        .formatLrcEntriesWithFallback(lrcContent, totalDurationMs)
+
+                    withContext(Dispatchers.Main) {
+                        if (p.currentMediaItem?.mediaId == mediaId) {
+                            MediaViewModelObject.lrcEntries.value = lrcEntries
+                            MediaViewModelObject.lyricMediaId.value = mediaId
+                            MediaViewModelObject.lyricLoading.value = false
+                            YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)
+                        }
+                    }
+                }
+            }
+
+            if (thisPath != null && !mediaId.orEmpty().startsWith("kugou-online-")) {
+                // MediaViewModelObject.isDolby.value = thisPath.endsWith(".m4a")
+                // 改为 JOC 判断
+
+                if (samplingRate == 0 || bitrate == 0) {
+                    val audioInfo = AudioMetadataUtils.getQualityInfos(thisPath)
+                    if (samplingRate == 0) {
+                        samplingRate = audioInfo.second
+                    } else {
+                        bitrate = audioInfo.first
+                    }
+                }
+            }
+
+            MediaViewModelObject.isDolby.value = haveJOC
+            MediaViewModelObject.samplingRate.intValue = samplingRate
+            MediaViewModelObject.bitrate.intValue = bitrate
+
+            // 在线曲：把解码器观测档作为交叉校验证据记入事实表（只计指标、
+            // 不推翻服务端回写值——在线流 bitrate 常为 -1，拿它推翻声明会造大面
+            // 积假"未知"）。本地文件不受音质概念影响，不记事实。
+            if (mediaId?.startsWith("kugou-online-") == true) {
+                KugouRepository.recordObservedTier(
+                    mediaId.removePrefix("kugou-online-"),
+                    KugouQuality.tierFromSpec(bitrate, samplingRate)
+                )
+            }
+
+            println("质量分析 采样率：${MediaViewModelObject.samplingRate.intValue}，比特率：${MediaViewModelObject.bitrate.intValue}")
+        }
+    }
+
     override fun onDestroy() {
         YosDiagnostics.log("SVC_DESTROY")
         YosDiagnostics.attachPlayback(this, null)
         // 先退过渡：它持有副 player（独立于会话），放在 session 释放前后都会漏，显式收尾
         CrossfadeExo.release()
         mediaSession?.run {
+            // player 是会话外壳（ForwardingPlayer），release 透传到当前真 player——
+            // 无论是否发生过扶正，释放的都是音频真相那一侧
             player.release()
             release()
             mediaSession = null
         }
+        currentPlayer = null
+        forwardingPlayer = null
+        playbackListener = null
         super.onDestroy()
     }
 
