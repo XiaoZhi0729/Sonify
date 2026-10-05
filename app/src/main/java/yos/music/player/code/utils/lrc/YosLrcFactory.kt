@@ -6,7 +6,14 @@ import kotlin.math.abs
 
 /** Converts provider lyric payloads into timed lines with explicit translations. */
 class YosLrcFactory(private val formatText: Boolean = true) {
-    private data class TimedText(val time: Float, val text: String)
+    private data class TimedText(
+        val time: Float,
+        val text: String,
+        val words: List<WordSpan>? = null
+    )
+
+    /** 词级片段。[endMs] 是该词高亮结束时间（与 KRC 词级同语义）；行末词由下一行起点回填。 */
+    private data class WordSpan(val endMs: Float?, val text: String)
 
     fun formatLrcEntries(lrcText: String, translationText: String? = null): List<LyricEntry> {
         val rows = parseLrcRows(lrcText)
@@ -24,8 +31,19 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             val texts = group.map { it.text }.filter { it.isNotBlank() }
             val main = texts.firstOrNull().orEmpty()
             val inline = texts.drop(1).lastOrNull()
+            // 逐字行：与 KRC 逐词路径同形——首元素行起点锚点 + (词结束时间, 词文本) + 尾部空锚点，
+            // 渲染层据此走逐字卡拉OK高亮，序列化端据此判定词级 ELRC
+            val wordRow = group.firstOrNull { !it.words.isNullOrEmpty() }
+            val mainLyric = if (wordRow != null) {
+                val spans = wordRow.words.orEmpty()
+                listOf(time to "") +
+                    spans.map { (it.endMs ?: time) to it.text } +
+                    listOf((spans.last().endMs ?: time) to "")
+            } else {
+                listOf(time to "", time to normalize(main))
+            }
             LyricEntry(
-                mainLyric = listOf(time to "", time to normalize(main)),
+                mainLyric = mainLyric,
                 translation = (
                     nearestText(translations, time)
                         ?: translations.getOrNull(index)?.text
@@ -117,24 +135,67 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             value.startsWith("演唱") || value.startsWith("出品")
     }
 
+    private val lineRegex = Regex("\\[(\\d{1,3}):(\\d{2})(?:\\.(\\d{1,3}))?\\]([^\\[]*)")
+
     private fun parseLrcRows(text: String): List<TimedText> {
         val result = mutableListOf<TimedText>()
-        val lineRegex = Regex("\\[(\\d{1,3}):(\\d{2})(?:\\.(\\d{1,3}))?\\]([^\\[]*)")
+        // 逐字行的末词结束时间无行内后继标签可依，挂起等待下一行首个时间戳回填；-1 表示无挂起行
+        var openWordRowIndex = -1
         text.lineSequence().forEach { line ->
-            lineRegex.findAll(line).forEach { match ->
-                val fraction = match.groupValues[3]
-                    .ifEmpty { "000" }
-                    .padEnd(3, '0')
-                    .take(3)
-                val millis = match.groupValues[1].toInt() * 60_000 +
-                    match.groupValues[2].toInt() * 1_000 + fraction.toInt()
+            val matches = lineRegex.findAll(line).toList()
+            if (matches.isEmpty()) return@forEach
+            val millis = matches.map { timestampMillis(it) }
+            if (openWordRowIndex >= 0) {
+                val pending = result[openWordRowIndex]
+                val words = pending.words.orEmpty()
+                result[openWordRowIndex] = pending.copy(
+                    words = words.dropLast(1) + words.last().copy(endMs = millis.first())
+                )
+                openWordRowIndex = -1
+            }
+            // 逐字行判定：时间戳出现在非空白文本之后。注意 group4（[^\[]*）包含在 match
+            // 范围内、相邻 match 之间的间隙恒为空，因此要看前一个 match 的 group4 文本。
+            // 仅末尾标签前是空白（如 `[00:01] [00:02]text`）仍按经典行处理，保持旧行为。
+            val isWordTimed = line.substring(0, matches.first().range.first).isNotBlank() ||
+                matches.dropLast(1).any { it.groupValues[4].isNotBlank() }
+            if (isWordTimed) {
+                // 词片段不做 trim（区别于整行 normalize），词间空格作为独立词保留以维持排版间距
+                val words = matches.mapIndexed { index, match ->
+                    WordSpan(
+                        endMs = if (index + 1 < matches.size) millis[index + 1] else null,
+                        text = normalizeWord(match.groupValues[4])
+                    )
+                }.filter { it.text.isNotEmpty() }
+                if (words.isNotEmpty()) {
+                    openWordRowIndex = result.size
+                    result += TimedText(millis.first(), words.joinToString("") { it.text }, words)
+                }
+                return@forEach
+            }
+            matches.forEachIndexed { index, match ->
                 val value = normalize(match.groupValues[4])
                 if (value.isNotBlank() && value != "//") {
-                    result += TimedText(millis.toFloat(), value)
+                    result += TimedText(millis[index], value)
                 }
             }
         }
+        openWordRowIndex.takeIf { it >= 0 }?.let { index ->
+            val pending = result[index]
+            val words = pending.words.orEmpty()
+            result[index] = pending.copy(
+                words = words.dropLast(1) + words.last().copy(endMs = pending.time + 3_000f)
+            )
+        }
         return result
+    }
+
+    private fun timestampMillis(match: MatchResult): Float {
+        val fraction = match.groupValues[3]
+            .ifEmpty { "000" }
+            .padEnd(3, '0')
+            .take(3)
+        return (match.groupValues[1].toInt() * 60_000 +
+            match.groupValues[2].toInt() * 1_000 + fraction.toInt()).toFloat()
     }
 
     private fun nearestText(rows: List<TimedText>, time: Float): String? =
@@ -145,6 +206,12 @@ class YosLrcFactory(private val formatText: Boolean = true) {
     private fun normalize(text: String): String =
         decodeUnicodeEscapes(text).let {
             if (formatText) it.replace(Regex("\\s+"), " ").trim() else it
+        }
+
+    /** 词级片段版 normalize：折叠空白但不 trim，避免吞掉词间空格。 */
+    private fun normalizeWord(text: String): String =
+        decodeUnicodeEscapes(text).let {
+            if (formatText) it.replace(Regex("\\s+"), " ") else it
         }
 
     private fun decodeUnicodeEscapes(text: String): String {
