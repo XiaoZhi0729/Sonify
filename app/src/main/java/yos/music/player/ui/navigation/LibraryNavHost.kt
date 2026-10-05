@@ -12,10 +12,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
+import yos.music.player.ui.pages.discovery.OnlineAlbumDetail
 import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
 import yos.music.player.ui.pages.library.artists.ArtistDetail
+import yos.music.player.ui.pages.library.artists.ArtistSongsDetail
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.albums.LocalAlbums
 import yos.music.player.ui.pages.library.artists.LocalArtists
@@ -76,8 +78,28 @@ fun LibraryNavHost(
         ) { entry ->
             ArtistDetail(
                 navController = navController,
+                entryId = entry.id,
+                artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty(),
+                scrimTransition = scrimTransition()
+            )
+        }
+        // 艺人全部歌曲整页列表：destination 每个独立 NavHost 都要注册（与 ArtistDetail 同理）
+        composable(
+            route = UI.ArtistSongsPattern,
+            arguments = artistDetailArguments()
+        ) { entry ->
+            ArtistSongsDetail(
+                navController = navController,
                 artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
                 artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
+            )
+        }
+        composable(UI.OnlineAlbumDetail) {
+            OnlineAlbumDetail(
+                navController = navController,
+                sharedTransitionScope = this@SharedTransitionLayout,
+                animatedVisibilityScope = this@composable
             )
         }
         composable(UI.AlbumInfo) {

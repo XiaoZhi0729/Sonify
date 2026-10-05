@@ -73,10 +73,11 @@
     <string name="tip_scanning">正在從資料庫拉取歌曲…</string>
     <string name="tip_no_song">沒有播放項目。</string>
     <string name="permission_grant_desc">用於讀取裝置上的媒體檔案。</string>
+    <string name="settings_library_show_local_library">顯示本地資料庫</string>
+    <string name="settings_library_title">本地資料庫</string>
     <string name="settings_library_refresh_everytime">每次啟動時刷新</string>
-    <string name="settings_library_refresh_now">刷新媒體庫</string>
-    <string name="settings_library_refresh_now_desc">立即刷新媒體庫。</string>
-    <string name="settings_library_overview">媒體庫概覽</string>
+    <string name="settings_library_refresh_now">刷新本地媒體庫</string>
+        <string name="settings_library_overview">本地媒體庫概覽</string>
     <string name="settings_audio">音訊</string>
     <string name="settings_audio_exoplayer">ExoPlayer 選項</string>
     <string name="settings_play">播放</string>
@@ -260,4 +261,11 @@
     <string name="update_installer_opened">已開啟安裝程式。</string>
     <string name="update_cancelled">更新已取消。</string>
     <string name="update_notes_empty">暫無發行說明。</string>
+    <string name="update_release_notes">更新內容</string>
+    <string name="artist_detail_hot_songs">熱門歌曲</string>
+    <string name="artist_detail_all_songs">全部歌曲</string>
+    <string name="artist_detail_albums_section">專輯</string>
+    <string name="artist_detail_albums_empty">暫無專輯</string>
+    <string name="artist_detail_back">返回</string>
+    <string name="artist_detail_retry">重試</string>
 </resources>

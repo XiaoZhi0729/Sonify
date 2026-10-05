@@ -157,10 +157,11 @@
     <string name="search_hot">Hot Searches</string>
     <string name="search_clear_history">Clear</string>
     <string name="search_load_more">Load more</string>
+    <string name="settings_library_show_local_library">Show Local Library</string>
+    <string name="settings_library_title">Local Library</string>
     <string name="settings_library_refresh_everytime">Refresh every time at startup</string>
-    <string name="settings_library_refresh_now">Refresh Media Library</string>
-    <string name="settings_library_refresh_now_desc">Refresh the media library immediately.</string>
-    <string name="settings_library_overview">Media Library Overview</string>
+    <string name="settings_library_refresh_now">Refresh Local Media Library</string>
+        <string name="settings_library_overview">Local Media Library Overview</string>
     <string name="settings_audio">Audio</string>
     <string name="settings_audio_exoplayer">ExoPlayer Options</string>
     <string name="settings_play">Play</string>
@@ -316,6 +317,9 @@
     <string name="artist_detail_search_empty">No matching songs</string>
     <string name="artist_detail_empty">No songs found for this artist</string>
     <string name="artist_detail_not_found">Artist not found</string>
+    <string name="artist_detail_songs_section">Songs</string>
+    <string name="artist_detail_intro_title">About</string>
+    <string name="artist_detail_intro_collapse">Collapse</string>
 
     <string name="common_ok">OK</string>
     <string name="online_playlists_create">New Playlist</string>
@@ -366,4 +370,11 @@
     <string name="update_installer_opened">Installer opened.</string>
     <string name="update_cancelled">Update cancelled.</string>
     <string name="update_notes_empty">No release notes.</string>
+    <string name="update_release_notes">What’s new</string>
+    <string name="artist_detail_hot_songs">Top Songs</string>
+    <string name="artist_detail_all_songs">All Songs</string>
+    <string name="artist_detail_albums_section">Albums</string>
+    <string name="artist_detail_albums_empty">No albums available</string>
+    <string name="artist_detail_back">Back</string>
+    <string name="artist_detail_retry">Retry</string>
 </resources>

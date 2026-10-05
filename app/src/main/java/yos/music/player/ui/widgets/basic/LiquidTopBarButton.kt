@@ -1,8 +1,13 @@
 package yos.music.player.ui.widgets.basic
 
+import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Path
 import android.os.Build
+import android.util.Log
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -11,6 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -19,10 +28,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -32,9 +43,16 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.toColorInt
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import yos.music.player.ui.theme.isFlamingoInDarkMode
@@ -71,16 +89,83 @@ fun LiquidTopBarButton(
     shadowAlpha: () -> Float = { 1f },
     iconTint: Color = Color.Unspecified,
     containerColor: Color = Color.Unspecified,
-    draggable: Boolean = false
+    draggable: Boolean = false,
+    adaptiveLuminance: Boolean = false
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val isLightTheme = !isFlamingoInDarkMode()
+    val backdropLayer = rememberGraphicsLayer()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val backdropRecordVersion = remember { longArrayOf(0L) }
+    val samplingWarningLogged = remember { booleanArrayOf(false) }
+    val sampledLuminance = remember { mutableStateOf(if (isLightTheme) 1f else 0f) }
+    LaunchedEffect(backdropLayer, adaptiveLuminance, lifecycle) {
+        if (!adaptiveLuminance || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var sampledVersion = 0L
+            var emptyVersion = -1L
+            var consecutiveFailures = 0
+            val pixels = IntArray(25)
+            while (isActive) {
+                delay(250)
+                val version = backdropRecordVersion[0]
+                if (version == 0L || version == sampledVersion) continue
+                try {
+                    val image = backdropLayer.toImageBitmap()
+                    // GraphicsLayer snapshots can be HARDWARE bitmaps: read only a software copy.
+                    val bitmap = checkNotNull(
+                        image.asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, false)
+                    )
+                    val luminance = try {
+                        for (row in 0 until 5) for (column in 0 until 5) {
+                            val x = column * (bitmap.width - 1) / 4
+                            val y = row * (bitmap.height - 1) / 4
+                            pixels[row * 5 + column] = bitmap.getPixel(x, y)
+                        }
+                        liquidBackdropLuminance(pixels)
+                    } finally {
+                        // This copy is ours; the original snapshot belongs to Compose.
+                        bitmap.recycle()
+                    }
+                    consecutiveFailures = 0
+                    if (luminance != null) {
+                        sampledLuminance.value = luminance
+                        sampledVersion = version
+                    } else if (emptyVersion == version) {
+                        sampledVersion = version
+                    } else {
+                        // A first capture may not be ready. Retry once even without another draw.
+                        emptyVersion = version
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!samplingWarningLogged[0]) {
+                        samplingWarningLogged[0] = true
+                        Log.w("LiquidTopBarButton", "Adaptive backdrop sampling failed", e)
+                    }
+                    // Retry a transient first capture, then wait for a new record. Back off
+                    // across records too, so a persistent failure cannot cause a capture storm.
+                    consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(5)
+                    if (consecutiveFailures >= 2) sampledVersion = version
+                    delay((1000L shl consecutiveFailures).coerceAtMost(30_000L))
+                }
+            }
+        }
+    }
+    val adaptiveContentColor by animateColorAsState(
+        targetValue = if (adaptiveLuminance && sampledLuminance.value > 0.5f) Color.Black else Color.White,
+        animationSpec = tween(1000),
+        label = "liquidButtonContentColor"
+    )
+    val animatedLuminance by animateFloatAsState(sampledLuminance.value, tween(1000), label = "glassLuminance")
+    val currentOnClick by rememberUpdatedState(onClick)
     val resolvedContainerColor = if (containerColor != Color.Unspecified) containerColor
+    else if (adaptiveLuminance) Color.White.copy(alpha = 0.10f)
     else if (isLightTheme) Color(0xFFFFFFFF).copy(0.76f)
     else Color(0xFF242424).copy(0.84f)
-    val edgeLightColor = remember(isLightTheme) {
-        if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
-    }
+    val edgeLightColor = if (adaptiveLuminance) adaptiveContentColor.copy(alpha = 0.55f)
+    else if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
     val shadowColor = if (isLightTheme) "#12000000".toColorInt() else "#20000000".toColorInt()
     val interactionSource = remember { MutableInteractionSource() }
     val animationScope = rememberCoroutineScope()
@@ -91,7 +176,7 @@ fun LiquidTopBarButton(
             // 未拖动即抬起由 onTap 承接点击（含触感），与 LiquidBottomTabs 同机制
             onTap = {
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
-                onClick()
+                currentOnClick()
             }
         )
     }
@@ -155,7 +240,7 @@ fun LiquidTopBarButton(
                     onClick = {
                         if (!draggable) {
                             hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
-                            onClick()
+                            currentOnClick()
                         }
                     }
                 )
@@ -163,8 +248,19 @@ fun LiquidTopBarButton(
                     backdrop = backdrop,
                     shape = { CircleShape },
                     effects = {
-                        vibrancy()
-                        blur(4.dp.toPx())
+                        if (adaptiveLuminance && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val signed = animatedLuminance * 2f - 1f
+                            val l = signed * kotlin.math.abs(signed)
+                            colorControls(
+                                brightness = if (l > 0f) 0.1f + 0.4f * l else 0.1f + 0.3f * l,
+                                contrast = if (l > 0f) 1f - l else 1f,
+                                saturation = 1.5f
+                            )
+                            blur((if (l > 0f) 8f + 8f * l else 8f + 6f * l).dp.toPx())
+                        } else {
+                            vibrancy()
+                            blur(4.dp.toPx())
+                        }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             lens(8f.dp.toPx(), 24f.dp.toPx())
                         }
@@ -174,6 +270,14 @@ fun LiquidTopBarButton(
                     layerBlock = {
                         // 只保留滚动联动的玻璃淡入；按压/拖动变换已上移到外层整体图层
                         alpha = backdropAlpha()
+                    },
+                    onDrawBackdrop = { drawBackdrop ->
+                        drawBackdrop()
+                        if (adaptiveLuminance && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            // Only the backdrop is recorded: no surface, edge, icon, or producer recursion.
+                            backdropLayer.record { drawBackdrop() }
+                            backdropRecordVersion[0]++
+                        }
                     },
                     onDrawSurface = {
                         drawRect(resolvedContainerColor)
@@ -193,6 +297,7 @@ fun LiquidTopBarButton(
                 .offset(iconOffset.x, iconOffset.y)
                 .zIndex(1f),
             tint = if (iconTint != Color.Unspecified) iconTint
+            else if (adaptiveLuminance) adaptiveContentColor
             else if (isLightTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.85f)
         )
     }
@@ -203,7 +308,7 @@ fun LiquidTopBarButton(
  * NORMAL 模糊 + PLUS 混合。对照 NexioSchedule EdgeLightModifier 的 Uniform 路径
  * （strokeWidth = ceil(width px) × 2，强度即图层 alpha）。
  */
-private fun Modifier.circleEdgeLight(
+internal fun Modifier.circleEdgeLight(
     color: Color,
     width: Dp,
     blurRadius: Dp
@@ -222,7 +327,10 @@ private fun Modifier.circleEdgeLight(
             if (blurPx > 0f) {
                 maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
             }
-            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.ADD)
+            xfermode = android.graphics.PorterDuffXfermode(
+                if (color.red + color.green + color.blue < 1.5f) android.graphics.PorterDuff.Mode.SRC_OVER
+                else android.graphics.PorterDuff.Mode.ADD
+            )
         }
         canvas.save()
         canvas.nativeCanvas.clipPath(path)

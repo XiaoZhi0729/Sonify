@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 圆角五角星（切角+二次贝塞尔圆滑尖角），与 ic_artist_star_fill 同一路径 -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M11.34,4.37Q12.00,2.70 12.66,4.37L14.01,7.79Q14.56,9.18 16.05,9.27L19.71,9.50Q21.51,9.61 20.12,10.76L17.29,13.09Q16.14,14.04 16.51,15.50L17.43,19.05Q17.88,20.79 16.36,19.82L13.27,17.86Q12.00,17.05 10.73,17.86L7.64,19.82Q6.12,20.79 6.57,19.05L7.49,15.50Q7.86,14.04 6.71,13.09L3.88,10.76Q2.49,9.61 4.29,9.50L7.95,9.27Q9.44,9.18 9.99,7.79Z" />
+</vector>

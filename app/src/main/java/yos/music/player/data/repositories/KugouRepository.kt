@@ -230,6 +230,12 @@ data class KugouNewSong(
     val artworkUrl: String?
 )
 
+/** 艺人歌曲单页：rawCount 是原始数组长度，包含被解析过滤的条目和重复歌曲。 */
+data class ArtistAudioPage(
+    val songs: List<KugouNewSong>,
+    val rawCount: Int
+)
+
 /** 新专辑（/top/album 实测：data 按地区分 chn/eur/jpn/kor 数组，
  * 每项 albumid/albumname/singername/imgurl/{size}/songcount/publishtime）。 */
 data class KugouNewAlbum(
@@ -527,6 +533,65 @@ object KugouRepository {
                 Result.failure(e)
             }
         }
+
+    /** 艺人专辑。真实上游路由已按 author_id 归属查询，不做搜索候选或逐张详情验证。 */
+    suspend fun getVerifiedArtistAlbums(
+        artistId: String,
+        artistName: String
+    ): Result<List<KugouNewAlbum>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getArtistAlbums(artistId).fold(
+                onSuccess = { json ->
+                    val data = json.optJSONObject("data") ?: json
+                    val list = data.optJSONArray("list")
+                        ?: data.optJSONArray("albums")
+                        ?: data.optJSONArray("info")
+                        // kmr /kmr/v1/author/albums 的 data 直接是专辑数组（无 list 包裹）
+                        ?: json.optJSONArray("data")
+                        ?: return@fold Result.failure<List<KugouNewAlbum>>(
+                            IllegalStateException("艺人专辑响应缺少列表")
+                        )
+                    val albums = (0 until list.length()).mapNotNull { index ->
+                        runCatching {
+                            val item = list.getJSONObject(index)
+                            val albumId = item.optString("albumid")
+                                .ifEmpty { item.optString("album_id") }
+                                .ifEmpty { item.optString("AlbumID") }
+                                .ifEmpty { item.optString("id") }
+                            val name = item.optString("albumname")
+                                .ifEmpty { item.optString("album_name") }
+                                .ifEmpty { item.optString("AlbumName") }
+                                .ifEmpty { item.optString("name") }
+                            if (albumId.isEmpty() || name.isEmpty()) return@runCatching null
+                            KugouNewAlbum(
+                                albumId = albumId,
+                                name = name,
+                                singerName = item.optString("singername")
+                                    .ifEmpty { item.optString("author_name") }
+                                    .ifEmpty { artistName },
+                                coverUrl = resolveArtworkUrl(
+                                    item.optString("imgurl")
+                                        .ifEmpty { item.optString("sizable_cover") }
+                                        .ifEmpty { item.optString("img") }
+                                        .ifEmpty { item.optString("pic") }
+                                ) ?: "",
+                                songCount = item.optInt("songcount", item.optInt("song_count", 0)),
+                                publishTime = item.optString("publishtime")
+                                    .ifEmpty { item.optString("publish_date") }
+                                    .takeIf { it.isNotEmpty() }
+                            )
+                        }.getOrNull()
+                    }
+                    Result.success(albums)
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getVerifiedArtistAlbums exception", e)
+            Result.failure(e)
+        }
+    }
+
 
     /** 歌单搜索。对应 Rust GET /search/special（mobilecdnbj /api/v3/search/special）。 */
     suspend fun searchSpecials(keyword: String, page: Int = 1, pageSize: Int = 20): Result<List<KugouPlaylistBrief>> =
@@ -2357,21 +2422,42 @@ object KugouRepository {
     }
 
     /**
-     * 歌手歌曲单页（对齐 Dart getArtistAudios）。GET /artist/audios?id=&page=&pagesize=30
-     * → data.list|songs|info[]；末页由 UI 以「返回不足一页」判断。
+     * 歌手歌曲单页。rawCount 取解析前数组长度，缺少列表字段返回独立失败。
+     * sort="hot" 对齐上游热度排序；默认排序不表示热门。
      */
-    suspend fun getArtistAudios(artistId: String, page: Int = 1, pageSize: Int = 30): Result<List<KugouNewSong>> =
-        withContext(Dispatchers.IO) {
-            try {
-                KugouApiService.getInstance().getArtistAudios(artistId, page, pageSize).fold(
-                    onSuccess = { json -> Result.success(parseSongDetailList(json)) },
-                    onFailure = { e -> Result.failure(e) }
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "getArtistAudios exception", e)
-                Result.failure(e)
-            }
+    suspend fun getArtistAudioPage(
+        artistId: String,
+        page: Int = 1,
+        pageSize: Int = 30,
+        sort: String = ""
+    ): Result<ArtistAudioPage> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getArtistAudios(artistId, page, pageSize, sort).fold(
+                onSuccess = { json ->
+                    val array = extractSongArray(json)
+                        ?: return@fold Result.failure<ArtistAudioPage>(
+                            IllegalStateException("艺人歌曲响应缺少列表")
+                        )
+                    val songs = (0 until array.length()).mapNotNull { index ->
+                        runCatching { parseKmrSongItem(array.getJSONObject(index)) }.getOrNull()
+                    }
+                    Result.success(ArtistAudioPage(songs = songs, rawCount = array.length()))
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getArtistAudioPage exception", e)
+            Result.failure(e)
         }
+    }
+
+    /** 兼容列表调用；分页结束判断请使用 [getArtistAudioPage] 的 rawCount。 */
+    suspend fun getArtistAudios(
+        artistId: String,
+        page: Int = 1,
+        pageSize: Int = 30,
+        sort: String = ""
+    ): Result<List<KugouNewSong>> = getArtistAudioPage(artistId, page, pageSize, sort).map { it.songs }
 
     /** 关注歌手。需登录（token/userid 经 authHeader() cookie 带入）。 */
     suspend fun followArtist(artistId: String): Result<Unit> = withContext(Dispatchers.IO) {

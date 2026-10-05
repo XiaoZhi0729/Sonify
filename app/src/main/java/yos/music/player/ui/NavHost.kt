@@ -110,6 +110,21 @@ interface UI {
                 .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
         }
 
+        // 艺人全部歌曲整页列表（艺人详情页「歌曲」区块标题 → 查看全部；复用 artistId/artistName 参数）
+        const val ArtistSongsDetail = "ArtistSongsDetail"
+        const val ArtistSongsPattern =
+            "$ArtistSongsDetail?$ArtistDetailIdArg={$ArtistDetailIdArg}" +
+                    "&$ArtistDetailNameArg={$ArtistDetailNameArg}"
+
+        fun artistSongsRoute(artistId: String, artistName: String): String = buildString {
+            append(ArtistSongsDetail)
+            append("?")
+            append(ArtistDetailIdArg).append("=")
+                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+            append("&").append(ArtistDetailNameArg).append("=")
+                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+        }
+
         const val AlbumInfo = "AlbumInfo"
     }
 

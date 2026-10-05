@@ -22,6 +22,7 @@ import yos.music.player.ui.pages.discovery.RankListDetail
 import yos.music.player.ui.pages.discovery.RecentPlayedDetail
 import yos.music.player.ui.pages.discovery.RecommendPlaylistsDetail
 import yos.music.player.ui.pages.library.artists.ArtistDetail
+import yos.music.player.ui.pages.library.artists.ArtistSongsDetail
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
@@ -58,6 +59,18 @@ fun HomeNavHost(
                 arguments = artistDetailArguments()
             ) { entry ->
                 ArtistDetail(
+                    navController = navController,
+                    entryId = entry.id,
+                    artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty(),
+                    scrimTransition = scrimTransition()
+                )
+            }
+            composable(
+                route = UI.ArtistSongsPattern,
+                arguments = artistDetailArguments()
+            ) { entry ->
+                ArtistSongsDetail(
                     navController = navController,
                     artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
                     artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()

@@ -157,10 +157,11 @@
     <string name="search_hot">热搜榜</string>
     <string name="search_clear_history">清空</string>
     <string name="search_load_more">加载更多</string>
+    <string name="settings_library_show_local_library">显示本地资料库</string>
+    <string name="settings_library_title">本地资料库</string>
     <string name="settings_library_refresh_everytime">每次启动时刷新</string>
-    <string name="settings_library_refresh_now">刷新媒体库</string>
-    <string name="settings_library_refresh_now_desc">立即刷新媒体库。</string>
-    <string name="settings_library_overview">媒体库概览</string>
+    <string name="settings_library_refresh_now">刷新本地媒体库</string>
+        <string name="settings_library_overview">本地媒体库概览</string>
     <string name="settings_audio">音频</string>
     <string name="settings_audio_exoplayer">ExoPlayer 选项</string>
     <string name="settings_play">播放</string>
@@ -316,6 +317,9 @@
     <string name="artist_detail_search_empty">没有匹配的歌曲</string>
     <string name="artist_detail_empty">未找到该歌手的歌曲</string>
     <string name="artist_detail_not_found">未找到该歌手</string>
+    <string name="artist_detail_songs_section">歌曲</string>
+    <string name="artist_detail_intro_title">简介</string>
+    <string name="artist_detail_intro_collapse">收起</string>
 
     <string name="common_ok">确定</string>
     <string name="online_playlists_create">新建歌单</string>
@@ -366,4 +370,11 @@
     <string name="update_installer_opened">已打开安装程序。</string>
     <string name="update_cancelled">更新已取消。</string>
     <string name="update_notes_empty">暂无发行说明。</string>
+    <string name="update_release_notes">更新内容</string>
+    <string name="artist_detail_hot_songs">热门歌曲</string>
+    <string name="artist_detail_all_songs">全部歌曲</string>
+    <string name="artist_detail_albums_section">专辑</string>
+    <string name="artist_detail_albums_empty">暂无专辑</string>
+    <string name="artist_detail_back">返回</string>
+    <string name="artist_detail_retry">重试</string>
 </resources>

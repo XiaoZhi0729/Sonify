@@ -20,9 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -50,8 +47,6 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.objects.LibraryObject
@@ -75,12 +70,8 @@ fun LocalArtists(navController: NavController) {
             mutableStateOf("")
         }
 
-        val hideMusic = remember("LocalArtists_showMusic") {
-            derivedStateOf {
-                artistsList.isEmpty()
-            }
-        }
-        if (hideMusic.value) {
+        val displayArtists = rememberFilteredArtists(artistsList, searchText.value)
+        if (artistsList.isEmpty()) {
             val message =
                 stringResource(
                     id = R.string.tip_no_song
@@ -101,26 +92,6 @@ fun LocalArtists(navController: NavController) {
                 }
             }
         } else {
-            val useSearch = remember { derivedStateOf { searchText.value.isNotEmpty() } }
-            val list = remember { mutableStateOf(artistsList) }
-
-            YosWrapper {
-                LaunchedEffect(searchText.value) {
-                    withContext(Dispatchers.IO) {
-                        val filteredList = withContext(Dispatchers.IO) {
-                            if (useSearch.value) {
-                                MusicLibrary.artists.asSequence().filter { artist ->
-                                    artist.contains(searchText.value, ignoreCase = true)
-                                }.toList()
-                            } else {
-                                artistsList
-                            }
-                        }
-                        list.value = filteredList
-                    }
-                }
-            }
-
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
                     navController.popBackStack()
@@ -147,9 +118,8 @@ fun LocalArtists(navController: NavController) {
                 }
 
                 itemsIndexed(
-                    list.value,
-                    key = { _, artist -> artist }/*,
-                    contentType = { _, _ -> "LocalArtists_item" }*/
+                    displayArtists,
+                    key = { _, artist -> "artist:$artist" }
                 ) { index, artist ->
                     // 本地艺人：只查看该歌手已存到本地的歌曲（复用 NormalMusic 通用歌曲列表页）；
                     // 酷狗歌手详情入口在「在线音乐」分区的艺人列表
@@ -158,18 +128,15 @@ fun LocalArtists(navController: NavController) {
                         navController.toUI(UI.NormalMusic)
                     }
 
-                    key(index) {
-                        val needDivider = index < artistsList.size - 1
-                        if (needDivider) {
-                            Spacer(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 81.dp, end = 16.dp)
-                                    .alpha(0.15f)
-                                    .height(0.5.dp)
-                                    .background(Color.Black withNight Color.White)
-                            )
-                        }
+                    if (index < displayArtists.lastIndex) {
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 81.dp, end = 16.dp)
+                                .alpha(0.15f)
+                                .height(0.5.dp)
+                                .background(Color.Black withNight Color.White)
+                        )
                     }
                 }
             }
@@ -208,7 +175,7 @@ private fun LazyItemScope.ArtistItem(
                             .precision(Precision.INEXACT)
                             .size(128)
                             .build(),
-                        contentDescription = "Artist_Image",
+                        contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = modifier
                             .size(48.dp)

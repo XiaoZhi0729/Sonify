@@ -827,19 +827,50 @@ class KugouApiService private constructor() {
         }
     }
 
+    /** 歌手专辑（对齐上游 artist.rs：GET /artist/albums?id&page&pagesize&sort）。 */
+    suspend fun getArtistAlbums(
+        artistId: String,
+        page: Int = 1,
+        pageSize: Int = 30,
+        sort: String = ""
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("id", artistId)
+                put("page", page.toString())
+                put("pagesize", pageSize.toString())
+                if (sort.isNotEmpty()) put("sort", sort)
+            }
+            val (code, body) = httpGetWithRetry("/artist/albums", params)
+            Log.d(TAG, "/artist/albums -> HTTP $code, body length=${body.length}")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/artist/albums HTTP $code: ${body.take(200)}"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getArtistAlbums exception", e)
+            Result.failure(e)
+        }
+    }
+
     /**
      * 歌手歌曲（对齐 Dart getArtistAudios，kugou_api_client.dart:2489；Rust artist.rs:41）。
-     *   GET /artist/audios?id&page&pagesize（Rust → POST /kmr/v1/audio_group/author）
+     *   GET /artist/audios?id&page&pagesize&sort（Rust → POST /kmr/v1/audio_group/author）
      */
-    suspend fun getArtistAudios(artistId: String, page: Int = 1, pageSize: Int = 30): Result<JSONObject> =
+    suspend fun getArtistAudios(
+        artistId: String,
+        page: Int = 1,
+        pageSize: Int = 30,
+        sort: String = ""
+    ): Result<JSONObject> =
         withContext(Dispatchers.IO) {
             try {
                 if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-                val params = mapOf(
-                    "id" to artistId,
-                    "page" to page.toString(),
-                    "pagesize" to pageSize.toString()
-                )
+                val params = buildMap {
+                    put("id", artistId)
+                    put("page", page.toString())
+                    put("pagesize", pageSize.toString())
+                    if (sort.isNotEmpty()) put("sort", sort)
+                }
                 val (code, body) = httpGetWithRetry("/artist/audios", params)
                 Log.d(TAG, "/artist/audios -> HTTP $code, body length=${body.length}")
                 if (code !in 200..299) return@withContext Result.failure(IOException("/artist/audios HTTP $code: ${body.take(200)}"))

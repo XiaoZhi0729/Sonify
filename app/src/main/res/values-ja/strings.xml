@@ -73,10 +73,11 @@
     <string name="tip_scanning">ライブラリから曲を取得中…</string>
     <string name="tip_no_song">再生項目がありません。</string>
     <string name="permission_grant_desc">デバイス上のメディアファイルを読み取るために使用します。</string>
+    <string name="settings_library_show_local_library">ローカルライブラリを表示</string>
+    <string name="settings_library_title">ローカルライブラリ</string>
     <string name="settings_library_refresh_everytime">起動時に毎回更新</string>
-    <string name="settings_library_refresh_now">メディアライブラリを更新</string>
-    <string name="settings_library_refresh_now_desc">すぐにメディアライブラリを更新します。</string>
-    <string name="settings_library_overview">メディアライブラリの概要</string>
+    <string name="settings_library_refresh_now">ローカルメディアライブラリを更新</string>
+        <string name="settings_library_overview">ローカルメディアライブラリの概要</string>
     <string name="settings_audio">音響</string>
     <string name="settings_audio_exoplayer">ExoPlayer のオプション</string>
     <string name="settings_play">再生</string>
@@ -260,4 +261,11 @@
     <string name="update_installer_opened">インストーラーを開きました。</string>
     <string name="update_cancelled">更新をキャンセルしました。</string>
     <string name="update_notes_empty">リリースノートはありません。</string>
+    <string name="update_release_notes">更新内容</string>
+    <string name="artist_detail_hot_songs">人気の曲</string>
+    <string name="artist_detail_all_songs">すべての曲</string>
+    <string name="artist_detail_albums_section">アルバム</string>
+    <string name="artist_detail_albums_empty">アルバムはありません</string>
+    <string name="artist_detail_back">戻る</string>
+    <string name="artist_detail_retry">再試行</string>
 </resources>

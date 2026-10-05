@@ -12,6 +12,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.discovery.OnlineAlbumDetail
+import yos.music.player.ui.pages.library.artists.ArtistDetail
+import yos.music.player.ui.pages.library.artists.ArtistSongsDetail
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 import yos.music.player.ui.pages.search.SearchPage
 
@@ -38,6 +40,28 @@ fun SearchNavHost(
                     onOpenSettings = { navigator.openSettings(HouseId.Search) },
                     sharedTransitionScope = this@SharedTransitionLayout,
                     animatedVisibilityScope = this@composable
+                )
+            }
+            composable(
+                route = UI.ArtistDetailPattern,
+                arguments = artistDetailArguments()
+            ) { entry ->
+                ArtistDetail(
+                    navController = navController,
+                    entryId = entry.id,
+                    artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty(),
+                    scrimTransition = scrimTransition()
+                )
+            }
+            composable(
+                route = UI.ArtistSongsPattern,
+                arguments = artistDetailArguments()
+            ) { entry ->
+                ArtistSongsDetail(
+                    navController = navController,
+                    artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
                 )
             }
             composable(UI.OnlineAlbumDetail) {
