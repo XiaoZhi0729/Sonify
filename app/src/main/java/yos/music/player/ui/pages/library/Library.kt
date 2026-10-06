@@ -17,6 +17,7 @@ import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
 import io.github.alexzhirkevich.cupertino.icons.outlined.PersonCropCircle
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary.songs
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.settings.GroupSpacer
@@ -62,53 +63,56 @@ fun Library(
                         .fillMaxSize(),
                 ) {
                     // ---------- 本地音乐 ----------
-                    ListHeader(content = stringResource(id = R.string.library_section_local))
+                    // 设置页「显示本地资料库」关闭时整块隐藏，只保留在线音乐分区
+                    if (SettingsLibrary.ShowLocalLibrary) {
+                        ListHeader(content = stringResource(id = R.string.library_section_local))
 
-                    YosWrapper {
-                        val targetTitle = stringResource(
-                            id = R.string.page_library_songs
-                        )
-                        val targetList = songs
-                        SmallLabelItem(
-                            icon = painterResource(id = R.drawable.ic_library_link_icon_songs),
-                            label = targetTitle
-                        ) {
-                            LibraryObject.setTargetListWithTitle(targetTitle, targetList)
-                            navController.toUI(UI.NormalMusic)
+                        YosWrapper {
+                            val targetTitle = stringResource(
+                                id = R.string.page_library_songs
+                            )
+                            val targetList = songs
+                            SmallLabelItem(
+                                icon = painterResource(id = R.drawable.ic_library_link_icon_songs),
+                                label = targetTitle
+                            ) {
+                                LibraryObject.setTargetListWithTitle(targetTitle, targetList)
+                                navController.toUI(UI.NormalMusic)
+                            }
                         }
-                    }
 
-                    LibraryDivider()
+                        LibraryDivider()
 
-                    SmallLabelItem(
-                        icon = painterResource(id = R.drawable.ic_library_link_icon_album),
-                        label = stringResource(
-                            id = R.string.page_library_albums
-                        )
-                    ) {
-                        navController.toUI(UI.LocalAlbums)
-                    }
+                        SmallLabelItem(
+                            icon = painterResource(id = R.drawable.ic_library_link_icon_album),
+                            label = stringResource(
+                                id = R.string.page_library_albums
+                            )
+                        ) {
+                            navController.toUI(UI.LocalAlbums)
+                        }
 
-                    LibraryDivider()
+                        LibraryDivider()
 
-                    SmallLabelItem(
-                        icon = painterResource(id = R.drawable.ic_library_link_icon_artists),
-                        label = stringResource(
-                            id = R.string.page_library_artists
-                        )
-                    ) {
-                        navController.toUI(UI.LocalArtists)
-                    }
+                        SmallLabelItem(
+                            icon = painterResource(id = R.drawable.ic_library_link_icon_artists),
+                            label = stringResource(
+                                id = R.string.page_library_artists
+                            )
+                        ) {
+                            navController.toUI(UI.LocalArtists)
+                        }
 
-                    LibraryDivider()
+                        LibraryDivider()
 
-                    SmallLabelItem(
-                        icon = painterResource(id = R.drawable.ic_library_link_icon_playlists),
-                        label = stringResource(
-                            id = R.string.page_library_playlists
-                        )
-                    ) {
-                        navController.toUI(UI.PlayLists)
+                        SmallLabelItem(
+                            icon = painterResource(id = R.drawable.ic_library_link_icon_playlists),
+                            label = stringResource(
+                                id = R.string.page_library_playlists
+                            )
+                        ) {
+                            navController.toUI(UI.PlayLists)
+                        }
                     }
 
                     // ---------- 在线音乐 ----------
@@ -144,6 +148,9 @@ fun Library(
                         navController.toUI(UI.EverydayRecommendDetail)
                     }
 
+                    // 私人电台入口暂时隐藏（加载体验待优化）。恢复时取消注释即可，
+                    // 分隔线需随入口一起回位，否则 EverydayRecommend 之后会留下悬空分隔线。
+                    /*
                     LibraryDivider()
 
                     SmallLabelItem(
@@ -153,6 +160,7 @@ fun Library(
                     ) {
                         navController.toUI(UI.PersonalFmDetail)
                     }
+                    */
                 }
             }
         }

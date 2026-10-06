@@ -64,7 +64,9 @@ object FollowedArtistsObject {
             val uid = KugouApiService.userid ?: return
             // 缓存不属于当前账号：静默弃用，等下一次云端拉取覆盖
             if (snapshot.userid != uid) return
-            if (snapshot.artists.isNotEmpty()) {
+            // first() 触发元素 checkcast：若混淆丢签名致 Gson 解出 LinkedTreeMap，
+            // CCE 被 runCatching 就地接住弃缓存，脏数据不进 UI
+            if (snapshot.artists.firstOrNull()?.artistId?.isNotBlank() == true) {
                 _artists.value = snapshot.artists
                 loadedAt = snapshot.loadedAt
                 loadedUserid = snapshot.userid
@@ -116,7 +118,9 @@ object FollowedArtistsObject {
                 // 云端失败且内存为空：回退持久缓存（同账号）
                 runCatching {
                     val snapshot = gson.fromJson(NormalSaver.readData(KEY, ""), FollowedArtistsSnapshot::class.java)
-                    if (snapshot != null && snapshot.userid == uid && snapshot.artists.isNotEmpty()) {
+                    // 同 preload：first() 触发元素 checkcast，脏缓存在 runCatching 内弃用
+                    val cached = snapshot?.artists?.firstOrNull()?.takeIf { it.artistId.isNotBlank() }
+                    if (snapshot != null && snapshot.userid == uid && cached != null) {
                         _artists.value = snapshot.artists
                         loadedAt = snapshot.loadedAt
                         loadedUserid = uid

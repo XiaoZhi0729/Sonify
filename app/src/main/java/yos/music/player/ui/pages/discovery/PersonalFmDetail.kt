@@ -45,14 +45,26 @@ import yos.music.player.ui.widgets.basic.Title
  * 私人FM 页（主页「私人电台」入口卡进入）。
  *
  * 数据链：GET /personal/fm（需 userid+token，authHeader() cookie 带入；绕 apicache 保证每次新鲜）。
- * 上游接口每批固定下发 ~5 首（酷狗电台协议如此，官方/上游 Flutter 也是边播边补货），
- * 本页对齐上游 FmRefill 策略做批量补货：
- *   - 首次进入连拉 3 批（带上一批末首歌 hash 作游标，保证连续性），约 15 首；
- *   - 滚动距底部 6 项时自动带游标追加 1 批，哈希去重，空批/整批重复即认为无更多；
- *   - 「换一批」重置列表重新拉 3 批。
+ * 上游接口无分页参数、每批固定下发 ~5 首（酷狗电台协议如此，官方/上游 Flutter 也是靠末首
+ * hash 作游标边播边补货）。因此补货节奏完全由本地决定，本页策略：
+ *   - 首次进入补到 [FM_BUFFER_TARGET]（约 20 首，逐批带末首 hash 游标保证连续性）；
+ *   - 视口末尾之后剩余不足 [FM_PREFETCH_REMAINING] 项即预热，一次**连续补多批**直到
+ *     视口后积压到 [FM_BUFFER_TARGET] 项——不能"触发一次只加一批"，否则列表会每 5 首停顿一次；
+ *   - 哈希去重，空批/整批重复即认为上游暂无更多；
+ *   - 「换一批」重置列表重新补货。
  * 红心/跳过上报（action/hash/songid/playtime）依赖播放进度回调，留待后续批次
  * （KugouApiService.getPersonalFm 参数已预留）。
  */
+
+/** 视口末尾之后剩余不足这么多项就提前补货（约一屏，留足网络往返时间）。 */
+private const val FM_PREFETCH_REMAINING = 10
+
+/** 单次补货目标：视口后至少积压这么多项（约 2~3 屏），把补货从「每 5 首一次」拉长到「每 20 首一次」。 */
+private const val FM_BUFFER_TARGET = 20
+
+/** 单次补货累计上限，防御上游无去重地无限返回。 */
+private const val FM_TOPUP_CAP = 40
+
 @Composable
 fun PersonalFmDetail(navController: NavController) {
     val songs = remember { mutableStateOf<List<KugouNewSong>>(emptyList()) }
@@ -84,10 +96,12 @@ fun PersonalFmDetail(navController: NavController) {
         songs.value = emptyList()
         cursorHash.value = ""
         scope.launch {
-            // 首拉 3 批（游标接续）：任一批为空/无新歌即停
+            // 首拉补到 FM_BUFFER_TARGET（约 20 首）：与滚动补货同一目标，
+            // 避免进入后首屏就再次触发补货造成重复请求。任一批为空/无新歌即停。
             var firstError: String? = null
-            repeat(3) {
-                if (endReached.value) return@repeat
+            var attempts = 0
+            while (!endReached.value && songs.value.size < FM_BUFFER_TARGET && attempts < FM_TOPUP_CAP) {
+                attempts++
                 val result = KugouRepository.getPersonalFmSongs(hash = cursorHash.value)
                 val fresh = result.getOrDefault(emptyList())
                 val known = songs.value.map { it.hash }.toSet()
@@ -98,7 +112,7 @@ fun PersonalFmDetail(navController: NavController) {
                     } else {
                         endReached.value = true
                     }
-                    return@repeat
+                    break
                 }
                 songs.value = songs.value + batch
                 cursorHash.value = batch.last().hash
@@ -109,18 +123,29 @@ fun PersonalFmDetail(navController: NavController) {
         }
     }
 
-    fun appendMore() {
+    /**
+     * 补货：上游每批仅 ~5 首，这里连续拉多批，直到视口后积压 >= [FM_BUFFER_TARGET]
+     * 或上游无更多（endReached）或达 [FM_TOPUP_CAP] 为止。
+     * [remainingAtTrigger] 为触发时视口末尾之后的剩余项数，用于判断还差多少。
+     */
+    fun appendMore(remainingAtTrigger: Int) {
         if (inFlight.value || appending.value || endReached.value) return
         appending.value = true
         scope.launch {
-            val fresh = KugouRepository.getPersonalFmSongs(hash = cursorHash.value).getOrDefault(emptyList())
-            val known = songs.value.map { it.hash }.toSet()
-            val batch = fresh.filter { it.hash.isNotEmpty() && it.hash !in known }
-            if (batch.isEmpty()) {
-                endReached.value = true
-            } else {
+            var remaining = remainingAtTrigger
+            var added = 0
+            while (!endReached.value && remaining < FM_BUFFER_TARGET && added < FM_TOPUP_CAP) {
+                val fresh = KugouRepository.getPersonalFmSongs(hash = cursorHash.value).getOrDefault(emptyList())
+                val known = songs.value.map { it.hash }.toSet()
+                val batch = fresh.filter { it.hash.isNotEmpty() && it.hash !in known }
+                if (batch.isEmpty()) {
+                    endReached.value = true
+                    break
+                }
                 songs.value = songs.value + batch
                 cursorHash.value = batch.last().hash
+                added += batch.size
+                remaining += batch.size
             }
             appending.value = false
         }
@@ -128,14 +153,17 @@ fun PersonalFmDetail(navController: NavController) {
 
     LaunchedEffect(Unit) { load() }
 
-    // 滚动补货：最后一个可见项进入「距底部 6 项」范围即追加一批
+    // 滚动补货预热：视口末尾之后剩余项数低于阈值即触发（不是「每触发一次只加一批」）
     LaunchedEffect(listState) {
         snapshotFlow {
             val info = listState.layoutInfo
             val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 6
-        }.distinctUntilChanged().collect { shouldLoad ->
-            if (shouldLoad && songs.value.isNotEmpty()) appendMore()
+            // 列表尾部下方还剩多少项（末尾为 0）；比最后可见项索引更稳，无需关心头部槽位
+            info.totalItemsCount - 1 - lastVisible
+        }.distinctUntilChanged().collect { remaining ->
+            if (songs.value.isNotEmpty() && remaining < FM_PREFETCH_REMAINING) {
+                appendMore(remaining)
+            }
         }
     }
 

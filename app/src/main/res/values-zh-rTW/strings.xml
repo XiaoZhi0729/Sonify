@@ -49,6 +49,7 @@
     <string name="kugou_phone_choose_account_title">選擇帳號</string>
     <string name="kugou_phone_choose_account_subtitle">該手機號綁定了多個酷狗帳號，請選擇要登入的帳號</string>
     <string name="kugou_logout">登出</string>
+    <string name="kugou_logout_confirm">確定要登出酷狗帳號嗎？</string>
     <string name="page_settings_title">設定</string>
     <string name="page_library_title">資料庫</string>
     <string name="page_discovery_title">新發現</string>
@@ -193,6 +194,9 @@
     <string name="settings_others_about_acknowledgements">致謝</string>
     <string name="settings_others_about_ack_projects">項目</string>
     <string name="settings_others_about_ack_libraries">開源庫</string>
+    <string name="settings_others_reset">重設所有設定</string>
+    <string name="settings_others_reset_confirm">所有設定將恢復為預設值，此操作無法復原。登入狀態與資料庫資料不受影響。</string>
+    <string name="settings_others_reset_done">已重設為預設設定</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">顯示音量條</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">在播放界面的下部顯示音量調節條。</string>
     <string name="settings_performance_ui_theme">主題</string>
@@ -240,6 +244,8 @@
     <string name="online_playlist_track_remove_confirm">確定從歌單移除「%1$s」？</string>
     <string name="common_search">搜尋</string>
     <string name="search_no_result">沒有找到相關結果</string>
+    <string name="settings_others_about_developer_mode">開發者模式</string>
+    <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">檢查更新</string>
     <string name="update_auto_check">自動檢查更新</string>
     <string name="update_checking">正在檢查更新…</string>

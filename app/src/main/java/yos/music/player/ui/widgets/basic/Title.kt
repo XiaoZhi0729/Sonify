@@ -819,7 +819,8 @@ fun TitleBarIcon(modifier: Modifier = Modifier, icon: ImageVector? = null, onBac
                 iconSize = 23.dp,
                 backdropAlpha = glass.backdropAlpha,
                 shadowAlpha = glass.shadowAlpha,
-                draggable = true
+                draggable = true,
+                adaptiveLuminance = true
             )
         }
     } else {
@@ -961,7 +962,8 @@ fun TitleBar(
                                     iconOffset = DpOffset((-2).dp, 0.dp),
                                     backdropAlpha = { glassBackdropAlpha.value },
                                     shadowAlpha = { glassShadowAlpha.value },
-                                    draggable = true
+                                    draggable = true,
+                                    adaptiveLuminance = true
                                 )
                             } else {
                                 // 关闭"工具栏液态玻璃"后不再有玻璃圆底/边缘光，退回纯图标

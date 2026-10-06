@@ -86,10 +86,12 @@ import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImage
+import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.preloadRawCover
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
@@ -458,8 +460,10 @@ fun Discovery(
                                 sharedTransitionScope = sharedTransitionScope,
                                 animatedVisibilityScope = animatedVisibilityScope
                             ) {
-                                OnlineAlbumObject.setSelected(album)
-                                navController.toUI(UI.OnlineAlbumDetail)
+                                NavGuard.run {
+                                    OnlineAlbumObject.setSelected(album)
+                                    navController.navigate(UI.onlineAlbumRoute(album.albumId))
+                                }
                             }
                         }
                     }
@@ -646,6 +650,13 @@ internal fun NewAlbumCard(
     val sharedKey = "album/online/${album.albumId}"
     Column(
         modifier.clickable {
+            // 注意：这里不包 NavGuard——本组件被多页复用，防抖由外层调用方的
+            // onOpen 统一负责（双层 run 会自己吞掉自己：内层刚记录时间戳，
+            // 外层立即落在窗口内被拦，表现为「卡片点不开」）。
+            // 来源封面圆角 7dp：目标端（专辑详情封面）转场从这里渐变到自身 7dp
+            SharedCoverStyle.lastSourceCorner = 7.dp
+            // 记录本次来源 key：详情页据此与本卡封面配对，避免艺人页同专辑多处争抢
+            OnlineAlbumObject.setSharedCoverKey(album.albumId, sharedKey)
             prefetchScope.launch {
                 preloadRawCover(context, album.coverUrl)
                 onClick()

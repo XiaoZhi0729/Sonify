@@ -95,6 +95,7 @@ private enum class QrState { IDLE, LOADING, WAITING, SCANNED, EXPIRED, TIMEOUT, 
  * 两种方式登录成功均由 KugouApiService 内部 applyLogin 写 MMKV 并同步
  * [KugouAccountState]，本页不保存任何 token/userid；随后重建 VIP 派生态。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KugouLogin(navController: NavController) =
     SettingBackground {
@@ -107,6 +108,8 @@ fun KugouLogin(navController: NavController) =
             content = {
                 item("kugou_login") {
                     Column(Modifier.fillMaxSize()) {
+                        var showLogoutConfirm by remember { mutableStateOf(false) }
+
                         // ---------- 状态区（唯一真实源 KugouAccountState） ----------
                         ListHeader(content = stringResource(id = R.string.kugou_login_hint))
                         RoundColumn {
@@ -159,9 +162,27 @@ fun KugouLogin(navController: NavController) =
                             GroupSpacer()
                             RoundColumn {
                                 LabelItem(title = stringResource(id = R.string.kugou_logout)) {
-                                    // 只清账号凭证（token/userid/vip_token），dfid 与本地数据保留
-                                    KugouApiService.clearLogin()
+                                    showLogoutConfirm = true
                                 }
+                            }
+
+                            if (showLogoutConfirm) {
+                                OptionDialog(
+                                    icon = {},
+                                    title = stringResource(id = R.string.kugou_logout),
+                                    subTitle = stringResource(id = R.string.kugou_logout_confirm),
+                                    content = null,
+                                    positiveContent = stringResource(id = R.string.kugou_logout),
+                                    negativeContent = stringResource(id = R.string.common_cancel),
+                                    destructive = true,
+                                    onPositive = {
+                                        showLogoutConfirm = false
+                                        // 只清账号凭证（token/userid/vip_token），dfid 与本地数据保留
+                                        KugouApiService.clearLogin()
+                                    },
+                                    onNegative = { showLogoutConfirm = false },
+                                    onDismissRequest = { showLogoutConfirm = false }
+                                )
                             }
                         } else {
                             // ---------- 未登录：扫码 / 手机号两种方式分段切换 ----------

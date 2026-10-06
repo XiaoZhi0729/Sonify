@@ -126,7 +126,9 @@ fun SonifyDialog(
     wide: Boolean = false,
     cornerRadius: Dp? = null,
     dismissOnBackPress: Boolean = false,
-    dismissOnClickOutside: Boolean = false
+    dismissOnClickOutside: Boolean = false,
+    tertiaryContent: String? = null,
+    onTertiary: (() -> Unit)? = null
 ) {
     val host = LocalDialogOverlayHost.current
     val callerContext = currentCompositionLocalContext
@@ -138,7 +140,7 @@ fun SonifyDialog(
                     title, onDismissRequest, content, message, icon, positiveContent, onPositive,
                     negativeContent, onNegative, positiveEnabled, negativeEnabled, dismissEnabled,
                     destructive, closeOnPositive, wide, cornerRadius, dismissOnBackPress,
-                    dismissOnClickOutside
+                    dismissOnClickOutside, tertiaryContent, onTertiary
                 )
             }
         }
@@ -174,7 +176,9 @@ private fun DialogPanel(
     wide: Boolean,
     cornerRadius: Dp?,
     dismissOnBackPress: Boolean,
-    dismissOnClickOutside: Boolean
+    dismissOnClickOutside: Boolean,
+    tertiaryContent: String?,
+    onTertiary: (() -> Unit)?
 ) {
     val backdrop = LocalTitlePageBackdrop.current
     val dark = isFlamingoInDarkMode()
@@ -191,6 +195,7 @@ private fun DialogPanel(
     val latestDismiss by rememberUpdatedState(onDismissRequest)
     val latestPositive by rememberUpdatedState(onPositive)
     val latestNegative by rememberUpdatedState(onNegative ?: onDismissRequest)
+    val latestTertiary by rememberUpdatedState(onTertiary ?: onDismissRequest)
 
     LaunchedEffect(closing) {
         if (closing) return@LaunchedEffect
@@ -264,7 +269,7 @@ private fun DialogPanel(
                 CompositionLocalProvider(LocalContentColor provides foreground) {
                     Column(
                         Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Spacer(Modifier.height(8.dp))
                         icon?.invoke()
@@ -288,6 +293,9 @@ private fun DialogPanel(
                         }
                         negativeContent?.let {
                             DialogAction(it, negativeEnabled, false, false, style) { finish { latestNegative() } }
+                        }
+                        tertiaryContent?.let {
+                            DialogAction(it, dismissEnabled, false, false, style) { finish { latestTertiary() } }
                         }
                     }
                 }

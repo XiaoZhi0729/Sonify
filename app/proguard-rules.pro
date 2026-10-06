@@ -36,6 +36,18 @@
 -keep class * extends com.google.gson.reflect.TypeToken
 -keepattributes AnnotationDefault,RuntimeVisibleAnnotations
 
+# Gson 反射反序列化依赖字段泛型签名（Signature 属性）。R8 full mode（AGP 8+ 默认）
+# 会剥掉未被 keep 的类的 Signature，导致 List<T>/Map<K,V> 字段元素被反序列化成
+# LinkedTreeMap，UI 读取时 ClassCastException（仅 release 复现，debug 不混淆无此问题）。
+# data.libraries.** 已被上方 -keepnames 覆盖；这里补齐 data.objects 中走 Gson 的
+# 快照模型及其嵌套类型（KugouArtistDetailData 为扁平结构，无需继续展开）。
+-keep class yos.music.player.data.objects.FollowedArtistsSnapshot { <fields>; }
+-keep class yos.music.player.data.objects.KugouFollowedArtist { <fields>; }
+-keep class yos.music.player.data.objects.ArtistCacheSnapshot { <fields>; }
+-keep class yos.music.player.data.objects.ArtistCachedDetail { <fields>; }
+-keep class yos.music.player.data.objects.ArtistCachedPalette { <fields>; }
+-keep class yos.music.player.data.repositories.KugouArtistDetailData { <fields>; }
+
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** e(...);

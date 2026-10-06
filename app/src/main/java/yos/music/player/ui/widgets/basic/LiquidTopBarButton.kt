@@ -1,13 +1,8 @@
 package yos.music.player.ui.widgets.basic
 
-import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Path
 import android.os.Build
-import android.util.Log
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -16,9 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -28,12 +21,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -43,21 +35,20 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.toColorInt
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 import kotlin.math.ceil
+
+/** 非自适应路径的稳定单例 onDrawBackdrop（库默认值同款）：内联 lambda 会被
+ * DrawBackdropElement.equals 判为参数变化，每次重组都 invalidateDrawCache。 */
+private val DefaultButtonOnDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit = {
+    it()
+}
 
 /**
  * 顶栏液态玻璃圆钮（移植自 NexioSchedule LiquidTopBarButton，材质保持一致）：
@@ -94,77 +85,20 @@ fun LiquidTopBarButton(
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val isLightTheme = !isFlamingoInDarkMode()
-    val backdropLayer = rememberGraphicsLayer()
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val backdropRecordVersion = remember { longArrayOf(0L) }
-    val samplingWarningLogged = remember { booleanArrayOf(false) }
-    val sampledLuminance = remember { mutableStateOf(if (isLightTheme) 1f else 0f) }
-    LaunchedEffect(backdropLayer, adaptiveLuminance, lifecycle) {
-        if (!adaptiveLuminance || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@LaunchedEffect
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            var sampledVersion = 0L
-            var emptyVersion = -1L
-            var consecutiveFailures = 0
-            val pixels = IntArray(25)
-            while (isActive) {
-                delay(250)
-                val version = backdropRecordVersion[0]
-                if (version == 0L || version == sampledVersion) continue
-                try {
-                    val image = backdropLayer.toImageBitmap()
-                    // GraphicsLayer snapshots can be HARDWARE bitmaps: read only a software copy.
-                    val bitmap = checkNotNull(
-                        image.asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, false)
-                    )
-                    val luminance = try {
-                        for (row in 0 until 5) for (column in 0 until 5) {
-                            val x = column * (bitmap.width - 1) / 4
-                            val y = row * (bitmap.height - 1) / 4
-                            pixels[row * 5 + column] = bitmap.getPixel(x, y)
-                        }
-                        liquidBackdropLuminance(pixels)
-                    } finally {
-                        // This copy is ours; the original snapshot belongs to Compose.
-                        bitmap.recycle()
-                    }
-                    consecutiveFailures = 0
-                    if (luminance != null) {
-                        sampledLuminance.value = luminance
-                        sampledVersion = version
-                    } else if (emptyVersion == version) {
-                        sampledVersion = version
-                    } else {
-                        // A first capture may not be ready. Retry once even without another draw.
-                        emptyVersion = version
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (!samplingWarningLogged[0]) {
-                        samplingWarningLogged[0] = true
-                        Log.w("LiquidTopBarButton", "Adaptive backdrop sampling failed", e)
-                    }
-                    // Retry a transient first capture, then wait for a new record. Back off
-                    // across records too, so a persistent failure cannot cause a capture storm.
-                    consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(5)
-                    if (consecutiveFailures >= 2) sampledVersion = version
-                    delay((1000L shl consecutiveFailures).coerceAtMost(30_000L))
-                }
-            }
-        }
-    }
-    val adaptiveContentColor by animateColorAsState(
-        targetValue = if (adaptiveLuminance && sampledLuminance.value > 0.5f) Color.Black else Color.White,
-        animationSpec = tween(1000),
-        label = "liquidButtonContentColor"
+    // 自适应亮度共享设施（AdaptiveLuminanceGlass demo 同款，实现见 BackdropAdaptiveLuminance）；
+    // null = 关闭或 API<31，走主题静态材质。
+    val luminance = rememberAdaptiveBackdropLuminance(
+        enabled = adaptiveLuminance,
+        tag = "LiquidTopBarButton",
+        initialLuminance = if (isLightTheme) 1f else 0f
     )
-    val animatedLuminance by animateFloatAsState(sampledLuminance.value, tween(1000), label = "glassLuminance")
+    val adaptiveContentColor = luminance?.contentColor() ?: Color.White
     val currentOnClick by rememberUpdatedState(onClick)
     val resolvedContainerColor = if (containerColor != Color.Unspecified) containerColor
-    else if (adaptiveLuminance) Color.White.copy(alpha = 0.10f)
+    else if (luminance != null) Color.White.copy(alpha = 0.10f)
     else if (isLightTheme) Color(0xFFFFFFFF).copy(0.76f)
     else Color(0xFF242424).copy(0.84f)
-    val edgeLightColor = if (adaptiveLuminance) adaptiveContentColor.copy(alpha = 0.55f)
+    val edgeLightColor = if (luminance != null) adaptiveContentColor.copy(alpha = 0.55f)
     else if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
     val shadowColor = if (isLightTheme) "#12000000".toColorInt() else "#20000000".toColorInt()
     val interactionSource = remember { MutableInteractionSource() }
@@ -248,15 +182,10 @@ fun LiquidTopBarButton(
                     backdrop = backdrop,
                     shape = { CircleShape },
                     effects = {
-                        if (adaptiveLuminance && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val signed = animatedLuminance * 2f - 1f
-                            val l = signed * kotlin.math.abs(signed)
-                            colorControls(
-                                brightness = if (l > 0f) 0.1f + 0.4f * l else 0.1f + 0.3f * l,
-                                contrast = if (l > 0f) 1f - l else 1f,
-                                saturation = 1.5f
-                            )
-                            blur((if (l > 0f) 8f + 8f * l else 8f + 6f * l).dp.toPx())
+                        if (luminance != null) {
+                            val l = luminance.l()
+                            adaptiveGlassColorControls(l)
+                            blur(adaptiveBlurPx(8f.dp.toPx(), l))
                         } else {
                             vibrancy()
                             blur(4.dp.toPx())
@@ -271,14 +200,8 @@ fun LiquidTopBarButton(
                         // 只保留滚动联动的玻璃淡入；按压/拖动变换已上移到外层整体图层
                         alpha = backdropAlpha()
                     },
-                    onDrawBackdrop = { drawBackdrop ->
-                        drawBackdrop()
-                        if (adaptiveLuminance && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            // Only the backdrop is recorded: no surface, edge, icon, or producer recursion.
-                            backdropLayer.record { drawBackdrop() }
-                            backdropRecordVersion[0]++
-                        }
-                    },
+                    onDrawBackdrop = if (luminance != null) luminance.onDrawBackdrop
+                    else DefaultButtonOnDrawBackdrop,
                     onDrawSurface = {
                         drawRect(resolvedContainerColor)
                         drawRect(Color.Black.copy(alpha = 0.03f * interactiveHighlight.pressProgress))
@@ -297,7 +220,7 @@ fun LiquidTopBarButton(
                 .offset(iconOffset.x, iconOffset.y)
                 .zIndex(1f),
             tint = if (iconTint != Color.Unspecified) iconTint
-            else if (adaptiveLuminance) adaptiveContentColor
+            else if (luminance != null) adaptiveContentColor
             else if (isLightTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.85f)
         )
     }

@@ -37,6 +37,11 @@
         android:enableOnBackInvokedCallback="true"
         android:largeHeap="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <!-- ColorOS-Live-Lyrics-Bridge 接入协议 §10：声明参与 OPlus 媒体历史/黑名单策略，
+             防止部分 ColorOS 在媒体会话进入 OPlus 管线前过滤外部播放器包。 -->
+        <meta-data
+            android:name="io.github.andrealtb.lockscreenlyrics.OPLUS_MEDIA_HISTORY"
+            android:value="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

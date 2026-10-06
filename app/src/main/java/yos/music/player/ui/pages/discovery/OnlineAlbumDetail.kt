@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,9 +54,11 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.OnlineAlbumObject
+import yos.music.player.data.repositories.AlbumArtist
 import yos.music.player.data.repositories.KugouAlbumDetail
 import yos.music.player.ui.UI
 import yos.music.player.ui.lazyItemKeys
+import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.pages.library.DetailPageHeader
@@ -91,10 +95,14 @@ import yos.music.player.ui.widgets.effects.ShadowType
 @Composable
 fun OnlineAlbumDetail(
     navController: NavController,
+    albumId: String = "",
+    sourceArtistId: String? = null,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
-    val album = OnlineAlbumObject.getSelected()
+    // 按路由里的 albumId 取本页专辑：多层堆叠时各自解析自己的那一张，
+    // 不再共用「最后选中」的全局槽（否则返回时全部变成最新那张）。
+    val album = OnlineAlbumObject.album(albumId)
 
     if (album == null) {
         // 边界：无选中专辑（如进程重建后 holder 丢失）
@@ -176,7 +184,11 @@ fun OnlineAlbumDetail(
 
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
-    val coverSharedElementKey = "album/online/${album.albumId}"
+    // 目标封面 key：跟随入口点击时按本专辑 id 记录的来源 key（多层堆叠时各自正确）；
+    // 记录缺失或与本专辑不符时回退默认 key。
+    val recordedCoverKey = OnlineAlbumObject.coverKeyFor(album.albumId)
+        ?.takeIf { it.endsWith("/${album.albumId}") }
+    val coverSharedElementKey = recordedCoverKey ?: "album/online/${album.albumId}"
 
     Box(
         Modifier
@@ -212,28 +224,21 @@ fun OnlineAlbumDetail(
                             stringResource(id = R.string.online_playlists_song_unit),
                         intro = detail.value?.intro,
                         extraLines = {
-                            // 歌手名（详情优先，失败用选中专辑字段兜底）；点击进入歌手详情页
-                            val artistName = detail.value?.artistName?.takeIf { it.isNotEmpty() }
-                                ?: album.singerName
-                            if (artistName.isNotEmpty()) {
-                                Text(
-                                    text = artistName,
-                                    fontSize = 14.sp,
-                                    lineHeight = 20.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .alpha(0.6f)
-                                        .padding(top = 2.dp)
-                                        .clickable {
-                                            navController.navigate(
-                                                UI.artistDetailRoute(
-                                                    artistId = detail.value?.artistId,
-                                                    artistName = artistName
-                                                )
-                                            )
-                                        }
-                                )
+                            // 歌手名：逐个作者单独成链接（见手机头部同款说明）
+                            val authors = albumArtists(detail.value, album.singerName)
+                            if (authors.isNotEmpty()) {
+                                AlbumArtistLinks(
+                                    artists = authors,
+                                    textAlign = TextAlign.Start,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                ) { artist ->
+                                    navController.navigate(
+                                        UI.artistDetailRoute(
+                                            artistId = artist.id.takeIf { it.isNotEmpty() },
+                                            artistName = artist.name
+                                        )
+                                    )
+                                }
                             }
 
                             // 发行日期（在线专辑额外展示，本地 AlbumInfo 无此字段）
@@ -308,28 +313,22 @@ fun OnlineAlbumDetail(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    // 歌手名（详情优先，失败用选中专辑字段兜底）；点击进入歌手详情页
-                    val artistName = detail.value?.artistName?.takeIf { it.isNotEmpty() } ?: album.singerName
-                    if (artistName.isNotEmpty()) {
-                        Text(
-                            text = artistName,
-                            fontSize = 14.sp,
+                    // 歌手名：合辑/多歌手专辑逐个作者单独成链接（各自带自己的名字/id 进对应
+                    // 艺人页）；不能把拼接整串当单歌手去搜索，否则解析失败。
+                    val authors = albumArtists(detail.value, album.singerName)
+                    if (authors.isNotEmpty()) {
+                        AlbumArtistLinks(
+                            artists = authors,
                             textAlign = TextAlign.Center,
-                            lineHeight = 20.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .alpha(0.6f)
-                                .padding(top = 2.dp)
-                                .clickable {
-                                    navController.navigate(
-                                        UI.artistDetailRoute(
-                                            artistId = detail.value?.artistId,
-                                            artistName = artistName
-                                        )
-                                    )
-                                }
-                        )
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) { artist ->
+                            navController.navigate(
+                                UI.artistDetailRoute(
+                                    artistId = artist.id.takeIf { it.isNotEmpty() },
+                                    artistName = artist.name
+                                )
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(2.dp))
@@ -457,6 +456,56 @@ fun OnlineAlbumDetail(
             showSmallTitle = showSmallTitle,
             backdrop = titleBackdrop
         )
+    }
+}
+
+/**
+ * 专辑作者列表：优先详情接口的逐项作者 [KugouAlbumDetail.artists]；
+ * 缺失时把兜底歌手串按枚举分隔符拆开（合辑会拼成「A、B、C」整串）。
+ */
+private fun albumArtists(detail: KugouAlbumDetail?, fallbackSinger: String): List<AlbumArtist> {
+    val fromDetail = detail?.artists.orEmpty().filter { it.name.isNotBlank() }
+    if (fromDetail.isNotEmpty()) return fromDetail
+    return fallbackSinger
+        .split('、', '，', ',', '；', ';')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .map { AlbumArtist("", it) }
+}
+
+/**
+ * 逐作者可点链接：每个作者独立承载点击（各自名字/id 进对应艺人页），
+ * 用 FlowRow 在宽度不足时自动换行；分隔符「·」不可点。整体 60% 透明度。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AlbumArtistLinks(
+    artists: List<AlbumArtist>,
+    textAlign: TextAlign,
+    modifier: Modifier = Modifier,
+    onClick: (AlbumArtist) -> Unit
+) {
+    FlowRow(
+        modifier = modifier.alpha(0.6f),
+        horizontalArrangement = if (textAlign == TextAlign.Center) Arrangement.Center else Arrangement.Start
+    ) {
+        artists.forEachIndexed { index, artist ->
+            if (index > 0) {
+                Text(" · ", fontSize = 14.sp, lineHeight = 20.sp)
+            }
+            Text(
+                text = artist.name,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                textAlign = textAlign,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable {
+                    NavGuard.run { onClick(artist) }
+                }
+            )
+        }
     }
 }
 

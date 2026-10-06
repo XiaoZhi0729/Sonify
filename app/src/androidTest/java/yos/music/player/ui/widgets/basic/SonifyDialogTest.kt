@@ -100,6 +100,38 @@ class SonifyDialogTest {
     }
 
     @Test
+    fun tertiaryActionIsPinnedAndDeliveredAfterExit() {
+        compose.mainClock.autoAdvance = false
+        val visible = mutableStateOf(true)
+        var ignored = 0
+        compose.setContent {
+            YosMusicTheme(darkTheme = false) {
+                if (visible.value) {
+                    SonifyDialog(
+                        title = "Update available",
+                        onDismissRequest = { visible.value = false },
+                        positiveContent = "Download",
+                        onPositive = {},
+                        negativeContent = "Later",
+                        tertiaryContent = "Ignore this update",
+                        onTertiary = { ignored++; visible.value = false },
+                        content = { Column { repeat(80) { Text("Note $it") } } }
+                    )
+                }
+            }
+        }
+        compose.mainClock.advanceTimeBy(1000)
+        compose.onNodeWithText("Download").assertIsDisplayed()
+        compose.onNodeWithText("Later").assertIsDisplayed()
+        compose.onNodeWithText("Note 79").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Ignore this update").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(0, ignored) }
+        compose.mainClock.advanceTimeBy(500)
+        compose.runOnIdle { assertEquals(1, ignored) }
+        compose.onNodeWithText("Update available").assertDoesNotExist()
+    }
+
+    @Test
     fun longBodyScrollsWithoutHidingActions() {
         compose.setContent {
             YosMusicTheme(darkTheme = false) {

@@ -26,11 +26,13 @@ import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
+import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.pages.settings.startWeb
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.update.DeveloperSettings
 import yos.music.player.update.UpdateSettingsItems
 
 private val bannerCorner = YosRoundedCornerShape(9.dp)
@@ -47,6 +49,8 @@ fun About(navController: NavController) =
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
                         val context = LocalContext.current
+                        // 本地 State 镜像 MMKV：MMKV 写入不触发重组，开关勾选态靠它即时刷新
+                        val devMode = remember { mutableStateOf(DeveloperSettings.fakeUpdateDialog) }
 
                         val coolapkLink = "https://www.coolapk.com/u/35925506"
 
@@ -81,7 +85,7 @@ fun About(navController: NavController) =
                                 onClick = null,
                                 desc = appVersion.value
                             )
-                            UpdateSettingsItems()
+                            UpdateSettingsItems(developerModeEnabled = devMode.value)
                         }
 
                         GroupSpacer()
@@ -122,6 +126,20 @@ fun About(navController: NavController) =
                                     context
                                 )
                             }
+                        }
+
+                        GroupSpacer()
+
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_others_about_developer_mode),
+                                desc = stringResource(id = R.string.settings_others_about_developer_mode_desc),
+                                checkedLambda = { devMode.value },
+                                onClick = {
+                                    DeveloperSettings.fakeUpdateDialog = !devMode.value
+                                    devMode.value = !devMode.value
+                                }
+                            )
                         }
 
                         // POC Debug Entry

@@ -84,6 +84,16 @@ object SettingsLibrary {
     )
 
     /**
+     * 资料库页是否显示本地音乐分区（关掉后只保留在线音乐相关内容，本地内容入口全部隐藏）
+     */
+    @Stable
+    var ShowLocalLibrary by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_library_show_local_library",
+        initialValue = true
+    )
+
+    /**
      * 每次启动时刷新媒体库
      */
     @Stable
@@ -359,4 +369,51 @@ object SettingsLibrary {
         key = "settings_others_diag_log_enabled",
         initialValue = true
     )
+
+    /**
+     * 一键把全部设置恢复默认值。先清空 settings MMKV（顺带清掉历史遗留的无主 key），
+     * 再把上面每个属性重新赋回声明处的 initialValue——赋值走 setter 会把默认值写回
+     * MMKV，内存态即时生效，UI 无需重启即刷新。
+     *
+     * 登录凭证在独立的 kugou_auth MMKV 实例里，本函数不触碰。
+     *
+     * 注意：新增设置项时必须同步在此补一行赋值，否则该项不会被重置。
+     */
+    fun resetAllToDefaults() {
+        SettingsSaver.clearAll()
+        NowPlayingShowVolumeBar = true
+        CustomTheme = "Auto"
+        ScreenCornerSet = false
+        ScreenCorner = "30"
+        SongSort = SongSortEnum.MUSIC_TITLE.ordinal
+        EnableDescending = false
+        NowPlayingTranslation = true
+        ShowLocalLibrary = true
+        RefreshEveryTime = false
+        LyricFontWeight = "ExtraBold"
+        LyricLineBalance = false
+        LyricBlurEffect = false
+        NowplayingBackgroundEffect = false
+        BarBlurEffect = false
+        NotificationEnableIcon = true
+        NotificationSmallerIcon = false
+        ListenHistory = true
+        StatusBarLyricEnabled = false
+        StatusBarLyricHooked = false
+        SuperIslandLyricEnabled = true
+        AudioAttributes = true
+        Codec = "Auto"
+        HardwareAudioTrackPlayBackParams = false
+        AudioFloatOutput = false
+        OnlineQualityWifi = "128"
+        OnlineQualityMobile = "128"
+        ShowQualityDowngradeToast = true
+        EnableExcludeSongsUnderOneMinute = true
+        PlaybackSpeed = 1.0
+        EnableFinishCurrentSongBeforePause = false
+        CrossfadeEnabled = false
+        CrossfadeDuration =
+            yos.music.player.code.utils.player.CrossfadePolicy.DEFAULT_DURATION_SEC.toString()
+        DiagLogEnabled = true
+    }
 }

@@ -76,4 +76,12 @@ class YosDataSaver(dataType: DataType = DataType.NORMAL) : DataSaverInterface() 
     }
 
     override fun contains(key: String) = mmkv.contains(key)
+
+    /**
+     * 清空本实例的全部键值。只作用于当前 [DataType] 对应的 MMKV，
+     * 其他实例（如登录凭证的 kugou_auth）互不相干。
+     */
+    fun clearAll() {
+        mmkv.clearAll()
+    }
 }

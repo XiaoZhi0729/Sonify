@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.NonRestartableComposable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -102,12 +103,16 @@ fun Modifier.overScrollVertical(
     scrollEasing: ((currentOffset: Float, newOffset: Float) -> Float)? = null,
     springStiff: Float = OutBoundSpringStiff,
     springDamp: Float = OutBoundSpringDamp,
+    offsetObserver: ((Float) -> Unit)? = null,
+    allowTopOverscroll: Boolean = true,
 ): Modifier = overScrollOutOfBound(
     isVertical = true,
     nestedScrollToParent,
     scrollEasing,
     springStiff,
-    springDamp
+    springDamp,
+    offsetObserver,
+    allowTopOverscroll
 )
 
 /**
@@ -118,12 +123,14 @@ fun Modifier.overScrollHorizontal(
     scrollEasing: ((currentOffset: Float, newOffset: Float) -> Float)? = null,
     springStiff: Float = OutBoundSpringStiff,
     springDamp: Float = OutBoundSpringDamp,
+    offsetObserver: ((Float) -> Unit)? = null,
 ): Modifier = overScrollOutOfBound(
     isVertical = false,
     nestedScrollToParent,
     scrollEasing,
     springStiff,
-    springDamp
+    springDamp,
+    offsetObserver
 )
 
 /**
@@ -149,14 +156,24 @@ fun Modifier.overScrollOutOfBound(
     scrollEasing: ((currentOffset: Float, newOffset: Float) -> Float)?,
     springStiff: Float = OutBoundSpringStiff,
     springDamp: Float = OutBoundSpringDamp,
+    offsetObserver: ((Float) -> Unit)? = null,
+    allowTopOverscroll: Boolean = true,
 ): Modifier = composed {
     val nestedScrollToParent by rememberUpdatedState(nestedScrollToParent)
     val scrollEasing by rememberUpdatedState(scrollEasing ?: DefaultParabolaScrollEasing)
     val springStiff by rememberUpdatedState(springStiff)
     val springDamp by rememberUpdatedState(springDamp)
     val isVertical by rememberUpdatedState(isVertical)
+    val offsetObserver by rememberUpdatedState(offsetObserver)
+    val allowTopOverscroll by rememberUpdatedState(allowTopOverscroll)
     val dispatcher = remember { NestedScrollDispatcher() }
     var offset by remember { mutableFloatStateOf(0f) }
+    fun updateOffset(value: Float) {
+        val adjusted = if (!allowTopOverscroll && isVertical) value.coerceAtMost(0f) else value
+        offset = adjusted
+        offsetObserver?.invoke(adjusted)
+    }
+    LaunchedEffect(Unit) { offsetObserver?.invoke(offset) }
 
     val nestedConnection = remember {
         object : NestedScrollConnection {
@@ -193,7 +210,7 @@ fun Modifier.overScrollOutOfBound(
                 val offsetAtLast = scrollEasing(offset, realOffset)
                 // sign changed, coerce to start scrolling and exit
                 return if (sign(offset) != sign(offsetAtLast)) {
-                    offset = 0f
+                    updateOffset(0f)
                     if (isVertical) {
                         Offset(
                             x = available.x - realAvailable.x,
@@ -206,7 +223,7 @@ fun Modifier.overScrollOutOfBound(
                         )
                     }
                 } else {
-                    offset = offsetAtLast
+                    updateOffset(offsetAtLast)
                     if (isVertical) {
                         Offset(x = available.x - realAvailable.x, y = available.y)
                     } else {
@@ -233,7 +250,7 @@ fun Modifier.overScrollOutOfBound(
 
                     else -> available
                 }
-                offset = scrollEasing(offset, if (isVertical) realAvailable.y else realAvailable.x)
+                updateOffset(scrollEasing(offset, if (isVertical) realAvailable.y else realAvailable.x))
                 return if (isVertical) {
                     Offset(x = available.x - realAvailable.x, y = available.y)
                 } else {
@@ -265,10 +282,10 @@ fun Modifier.overScrollOutOfBound(
                             spring(springDamp, springStiff, visibilityThreshold),
                             leftVelocity
                         ) {
-                            offset = scrollEasing(offset, value - offset)
+                            updateOffset(scrollEasing(offset, value - offset))
                         }.endState.velocity
                     } catch (e: IllegalStateException) {
-                        offset = 0f
+                        updateOffset(0f)
                     }
                 }
                 return if (isVertical) {
@@ -295,10 +312,10 @@ fun Modifier.overScrollOutOfBound(
                         spring(springDamp, springStiff, visibilityThreshold),
                         if (isVertical) realAvailable.y else realAvailable.x
                     ) {
-                        offset = scrollEasing(offset, value - offset)
+                        updateOffset(scrollEasing(offset, value - offset))
                     }
                 } catch (e: IllegalStateException) {
-                    offset = 0f
+                    updateOffset(0f)
                 }
                 return if (isVertical) {
                     Velocity(x = available.x - realAvailable.x, y = available.y)

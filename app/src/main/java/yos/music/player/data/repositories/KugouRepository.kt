@@ -236,6 +236,12 @@ data class ArtistAudioPage(
     val rawCount: Int
 )
 
+/** 艺人专辑单页：rawCount 同上，用于判定是否已到末页。 */
+data class ArtistAlbumPage(
+    val albums: List<KugouNewAlbum>,
+    val rawCount: Int
+)
+
 /** 新专辑（/top/album 实测：data 按地区分 chn/eur/jpn/kor 数组，
  * 每项 albumid/albumname/singername/imgurl/{size}/songcount/publishtime）。 */
 data class KugouNewAlbum(
@@ -247,9 +253,17 @@ data class KugouNewAlbum(
     val publishTime: String?
 )
 
+/** 专辑作者（多歌手/合辑专辑的作者逐项给出；每项可点击进对应艺人页）。 */
+data class AlbumArtist(
+    val id: String,
+    val name: String
+)
+
 /** 在线专辑详情（/album/detail 实测：data 为数组取第一个；
  * album_id/album_name/author_name/sizable_cover/{size}/intro/publish_date/authors[]）。
- * 用于在线专辑详情页头部元数据；歌曲列表由 /album/songs 另行拉取。 */
+ * 用于在线专辑详情页头部元数据；歌曲列表由 /album/songs 另行拉取。
+ * [artists] 为逐项作者（来自 authors[]，缺失时按枚举分隔符拆 author_name），
+ * [artistName]/[artistId] 保留为「展示用整串 / 首位作者 id」的兼容字段。 */
 data class KugouAlbumDetail(
     val albumId: String,
     val name: String,
@@ -258,7 +272,8 @@ data class KugouAlbumDetail(
     val intro: String?,
     val publishDate: String?,
     val songCount: Int,
-    val artistId: String?
+    val artistId: String?,
+    val artists: List<AlbumArtist> = emptyList()
 )
 
 /** 歌手搜索条目（/search/artist 实测 data 直接为数组：singerid/singername/sizable_avatar|imgurl|avatar）。 */
@@ -534,13 +549,15 @@ object KugouRepository {
             }
         }
 
-    /** 艺人专辑。真实上游路由已按 author_id 归属查询，不做搜索候选或逐张详情验证。 */
-    suspend fun getVerifiedArtistAlbums(
+    /** 艺人专辑分页（供「专辑」大全页滚动加载）。真实上游路由已按 author_id 归属查询。 */
+    suspend fun getArtistAlbumPage(
         artistId: String,
-        artistName: String
-    ): Result<List<KugouNewAlbum>> = withContext(Dispatchers.IO) {
+        artistName: String,
+        page: Int = 1,
+        pageSize: Int = 30
+    ): Result<ArtistAlbumPage> = withContext(Dispatchers.IO) {
         try {
-            KugouApiService.getInstance().getArtistAlbums(artistId).fold(
+            KugouApiService.getInstance().getArtistAlbums(artistId, page, pageSize).fold(
                 onSuccess = { json ->
                     val data = json.optJSONObject("data") ?: json
                     val list = data.optJSONArray("list")
@@ -548,7 +565,7 @@ object KugouRepository {
                         ?: data.optJSONArray("info")
                         // kmr /kmr/v1/author/albums 的 data 直接是专辑数组（无 list 包裹）
                         ?: json.optJSONArray("data")
-                        ?: return@fold Result.failure<List<KugouNewAlbum>>(
+                        ?: return@fold Result.failure<ArtistAlbumPage>(
                             IllegalStateException("艺人专辑响应缺少列表")
                         )
                     val albums = (0 until list.length()).mapNotNull { index ->
@@ -582,15 +599,21 @@ object KugouRepository {
                             )
                         }.getOrNull()
                     }
-                    Result.success(albums)
+                    Result.success(ArtistAlbumPage(albums, list.length()))
                 },
                 onFailure = { e -> Result.failure(e) }
             )
         } catch (e: Exception) {
-            Log.e(TAG, "getVerifiedArtistAlbums exception", e)
+            Log.e(TAG, "getArtistAlbumPage exception", e)
             Result.failure(e)
         }
     }
+
+    /** 艺人专辑。真实上游路由已按 author_id 归属查询，不做搜索候选或逐张详情验证。 */
+    suspend fun getVerifiedArtistAlbums(
+        artistId: String,
+        artistName: String
+    ): Result<List<KugouNewAlbum>> = getArtistAlbumPage(artistId, artistName).map { it.albums }
 
 
     /** 歌单搜索。对应 Rust GET /search/special（mobilecdnbj /api/v3/search/special）。 */
@@ -900,16 +923,22 @@ object KugouRepository {
                         )
                     val id = item.optString("album_id", item.optString("albumid", albumId))
                     val name = item.optString("album_name", item.optString("albumname", ""))
-                    var artist = item.optString("author_name", item.optString("singername", ""))
-                    var artistId: String? = null
-                    if (artist.isEmpty()) {
-                        val authors = item.optJSONArray("authors")
-                        if (authors != null && authors.length() > 0) {
-                            val first = authors.optJSONObject(0)
-                            artist = first?.optString("author_name", "") ?: ""
-                            artistId = first?.optString("author_id", "")?.takeIf { it.isNotEmpty() }
+                    val rawArtist = item.optString("author_name", item.optString("singername", ""))
+                    // 逐项作者：优先 authors[]（含 author_id，可精确进艺人页）；
+                    // 缺失时按枚举分隔符拆 author_name（合辑/多歌手会拼成一整串）。
+                    val parsedAuthors = item.optJSONArray("authors")?.let { arr ->
+                        (0 until arr.length()).mapNotNull { i ->
+                            val a = arr.optJSONObject(i) ?: return@mapNotNull null
+                            val n = a.optString("author_name").trim().takeIf { it.isNotEmpty() }
+                                ?: return@mapNotNull null
+                            AlbumArtist(a.optString("author_id").trim(), n)
                         }
+                    }.orEmpty()
+                    val artists = parsedAuthors.ifEmpty {
+                        splitArtistNames(rawArtist).map { AlbumArtist("", it) }
                     }
+                    val artist = artists.firstOrNull()?.name ?: rawArtist
+                    val artistId = artists.firstOrNull()?.id?.takeIf { it.isNotEmpty() }
                     val cover = item.optString("sizable_cover", item.optString("imgurl", ""))
                     Result.success(
                         KugouAlbumDetail(
@@ -921,7 +950,8 @@ object KugouRepository {
                             publishDate = item.optString("publish_date", item.optString("publishtime", ""))
                                 .takeIf { it.isNotEmpty() },
                             songCount = item.optInt("songcount", item.optInt("song_count", 0)),
-                            artistId = artistId
+                            artistId = artistId,
+                            artists = artists
                         )
                     )
                 },
@@ -932,6 +962,17 @@ object KugouRepository {
             Result.failure(e)
         }
     }
+
+    /**
+     * 把「A、B、C」这类拼接作者串按枚举分隔符拆成逐个作者。
+     * 只按中文顿号/逗号与半角逗号/分号拆，不拆 `&` 和 `/`（避免误伤 "Simon & Garfunkel"
+     * 这类本身含符号的乐队名）；去重去空。
+     */
+    private fun splitArtistNames(raw: String): List<String> =
+        raw.split('、', '，', ',', '；', ';')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
 
     /**
      * 在线专辑全量歌曲（分页拉取）。GET /album/songs?album_id=&page=&pagesize=
@@ -2324,13 +2365,15 @@ object KugouRepository {
             KugouApiService.getInstance().searchArtists(keyword).fold(
                 onSuccess = { json ->
                     val data = json.opt("data")
+                    // 上游 /api/v3/search/singer 命中为零时返回 {"status":1,"data":null}（不是空数组），
+                    // 且它对“外国歌手的中文译名”不做纠错（库内存的是原名，如 宇多田ヒカル），
+                    // 因此中译名搜索会稳定命中零条。这里把 data 为 null/缺失一律当作“无结果”，
+                    // 让调用方落到 empty 空态，而不是误报“请求失败”。
                     val arr = when (data) {
                         is JSONArray -> data
                         is JSONObject -> data.optJSONArray("info") ?: data.optJSONArray("artists")
                         else -> null
-                    } ?: return@fold Result.failure<List<KugouArtistBrief>>(
-                        IllegalStateException("歌手搜索响应缺少列表")
-                    )
+                    } ?: return@fold Result.success<List<KugouArtistBrief>>(emptyList())
                     val artists = (0 until arr.length()).mapNotNull { i ->
                         runCatching {
                             val a = arr.getJSONObject(i)

@@ -133,7 +133,9 @@ internal fun NowPlayingLandscape(
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
     // 外壳封面 morph 进行中时为 true：本节点停止绘制，
     // 避免与外壳单封面层同时画出两张图。
-    albumCoverSuppressed: () -> Boolean = { false }
+    albumCoverSuppressed: () -> Boolean = { false },
+    // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
+    onOpenArtist: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -167,7 +169,8 @@ internal fun NowPlayingLandscape(
             lyricState = lyricState,
             onControlGesture = onControlGesture,
             albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-            albumCoverSuppressed = albumCoverSuppressed
+            albumCoverSuppressed = albumCoverSuppressed,
+            onOpenArtist = onOpenArtist
         )
         return
     }
@@ -259,7 +262,8 @@ internal fun NowPlayingLandscape(
                     onWhile = onWhile,
                     onControlGesture = onControlGesture,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-                    albumCoverSuppressed = albumCoverSuppressed
+                    albumCoverSuppressed = albumCoverSuppressed,
+                    onOpenArtist = onOpenArtist
                 )
             }
 
@@ -419,7 +423,9 @@ private fun LandscapeMediaColumn(
     // 是 morph 终点的实际视觉正方形，交接时逐像素吻合。
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
     // 外壳封面 morph 进行中时为 true：本节点在图层面隐藏，由外壳单封面层接管。
-    albumCoverSuppressed: () -> Boolean = { false }
+    albumCoverSuppressed: () -> Boolean = { false },
+    // 歌手名点击 → 艺人主页
+    onOpenArtist: (String) -> Unit = {}
 ) {
     Column(
         modifier = modifier,
@@ -442,7 +448,8 @@ private fun LandscapeMediaColumn(
                 .padding(top = 12.dp)
                 .width(contentWidth)
                 .padding(horizontal = 25.dp),
-            thisMusicPlayingLambda = thisMusicPlayingLambda
+            thisMusicPlayingLambda = thisMusicPlayingLambda,
+            onOpenArtist = onOpenArtist
         )
 
         // 进度/时间/传输（五键 shuffle+prev/play/next+repeat）/音量，定高不扩展
@@ -566,7 +573,9 @@ private fun LandscapeAlbumCover(
 @Composable
 private fun LandscapeTitleBlock(
     modifier: Modifier = Modifier,
-    thisMusicPlayingLambda: () -> YosMediaItem?
+    thisMusicPlayingLambda: () -> YosMediaItem?,
+    // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
+    onOpenArtist: (String) -> Unit = {}
 ) {
     YosWrapper {
         AnimatedContent(
@@ -596,7 +605,14 @@ private fun LandscapeTitleBlock(
                     Text(
                         text = it?.artistsName ?: defaultArtistsName,
                         fontSize = 18.5.sp,
-                        modifier = Modifier.overlayEffect(),
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                onOpenArtist(it?.artistsName.orEmpty())
+                            }
+                            .overlayEffect(),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = Color.White.copy(alpha = 0.35f)
@@ -652,7 +668,8 @@ private fun NowPlayingLandscapePhone(
     lyricState: YosLyricScrollState,
     onControlGesture: (Boolean) -> Unit,
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit,
-    albumCoverSuppressed: () -> Boolean
+    albumCoverSuppressed: () -> Boolean,
+    onOpenArtist: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -721,7 +738,8 @@ private fun NowPlayingLandscapePhone(
                         modifier = Modifier
                             .padding(bottom = if (page == Lyric) 4.dp else 20.dp)
                             .padding(horizontal = 32.dp),
-                        thisMusicPlayingLambda = thisMusicPlayingLambda
+                        thisMusicPlayingLambda = thisMusicPlayingLambda,
+                        onOpenArtist = onOpenArtist
                     )
 
                     // 控件区 / 歌词 / 队列。不用水平滑入：手机横屏这块区域

@@ -4,9 +4,10 @@
     android:width="56dp"
     android:viewportWidth="24.0"
     android:viewportHeight="24.0">
+    <!-- Apple 风格实心小屋：圆尖顶、圆屋檐、圆墙角，底部中央圆角门洞 -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z"
+        android:pathData="M3.7,18.3 L3.7,12.3 Q3.7,10.5 5.036,9.294 L10.516,4.34 Q12,3 13.484,4.34 L18.964,9.294 Q20.3,10.5 20.3,12.3 L20.3,18.3 Q20.3,20.5 18.1,20.5 L14.9,20.5 Q14.3,20.5 14.3,19.9 L14.3,15.4 Q14.3,14 12.9,14 L11.1,14 Q9.7,14 9.7,15.4 L9.7,19.9 Q9.7,20.5 9.1,20.5 L5.9,20.5 Q3.7,20.5 3.7,18.3 Z"
         android:strokeColor="#00000000"
         android:strokeWidth="1.0"
         android:fillType="nonZero" />

@@ -49,6 +49,7 @@
     <string name="kugou_phone_choose_account_title">アカウントを選択</string>
     <string name="kugou_phone_choose_account_subtitle">この電話番号には複数のKuGouアカウントが紐づいています。ログインするアカウントを選択してください</string>
     <string name="kugou_logout">ログアウト</string>
+    <string name="kugou_logout_confirm">酷狗アカウントからログアウトしますか？</string>
     <string name="common_cancel">キャンセル</string>
     <string name="page_settings_title">設定</string>
     <string name="page_library_title">ライブラリ</string>
@@ -193,6 +194,9 @@
     <string name="settings_others_about_acknowledgements">謝辞</string>
     <string name="settings_others_about_ack_projects">プロジェクト</string>
     <string name="settings_others_about_ack_libraries">オープンソースライブラリ</string>
+    <string name="settings_others_reset">すべての設定をリセット</string>
+    <string name="settings_others_reset_confirm">すべての設定がデフォルトに戻されます。この操作は元に戻せません。ログイン状態とライブラリデータには影響しません。</string>
+    <string name="settings_others_reset_done">設定をリセットしました</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">音量バーを表示</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">再生画面の下部に音量調節バーを表示します。</string>
     <string name="settings_performance_ui_theme">テーマ</string>
@@ -240,6 +244,8 @@
     <string name="online_playlist_track_remove_confirm">「%1$s」をプレイリストから削除しますか？</string>
     <string name="common_search">検索</string>
     <string name="search_no_result">結果が見つかりません</string>
+    <string name="settings_others_about_developer_mode">開発者モード</string>
+    <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">更新を確認</string>
     <string name="update_auto_check">更新を自動確認</string>
     <string name="update_checking">更新を確認中…</string>

@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
@@ -32,16 +33,20 @@ import yos.music.player.code.utils.player.CrossfadePolicy
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.data.repositories.KugouVipRepository
 import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
+import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Settings(navController: NavController) =
     SettingBackground {
         val context = LocalContext.current
+        val showResetConfirm = remember { mutableStateOf(false) }
         Title(title = stringResource(id = R.string.page_settings_title),
             onBack = {
                 navController.popBackStack()
@@ -67,8 +72,18 @@ fun Settings(navController: NavController) =
 
                         GroupSpacer()
                         // GroupSpacerMedium()
-                        ListHeader(stringResource(id = R.string.page_library_title))
+                        ListHeader(stringResource(id = R.string.settings_library_title))
                         RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_library_show_local_library),
+                                onClick = {
+                                    SettingsLibrary.ShowLocalLibrary =
+                                        !SettingsLibrary.ShowLocalLibrary
+                                },
+                                checkedLambda = { SettingsLibrary.ShowLocalLibrary }
+                            )
+
+                            Divider()
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_library_refresh_everytime),
                                 onClick = {
@@ -89,7 +104,6 @@ fun Settings(navController: NavController) =
                             val scope = rememberCoroutineScope()
                             LabelItem(
                                 title = stringResource(id = R.string.settings_library_refresh_now),
-                                //desc = stringResource(id = R.string.settings_library_refresh_now_desc)
                                 superLink = true
                             ) {
                                 scope.launch(Dispatchers.Main) {
@@ -119,7 +133,6 @@ fun Settings(navController: NavController) =
                                 }
                             }
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_library_refresh_now_desc))
 
                         GroupSpacer()
                         ListHeader(stringResource(id = R.string.settings_performance))
@@ -244,6 +257,43 @@ fun Settings(navController: NavController) =
                             DiagExportItem()
                         }
                         ListHeader(content = stringResource(id = R.string.settings_others_diag_hint))
+
+                        // 一键重置所有设置为默认值（登录凭证在独立 MMKV，不受影响）
+                        GroupSpacerMedium()
+                        RoundColumn {
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_others_reset),
+                                superLink = true
+                            ) {
+                                showResetConfirm.value = true
+                            }
+                        }
+                        if (showResetConfirm.value) {
+                            OptionDialog(
+                                icon = {},
+                                title = stringResource(id = R.string.settings_others_reset),
+                                subTitle = stringResource(id = R.string.settings_others_reset_confirm),
+                                content = null,
+                                positiveContent = stringResource(id = R.string.settings_others_reset),
+                                negativeContent = stringResource(id = R.string.common_cancel),
+                                destructive = true,
+                                onPositive = {
+                                    showResetConfirm.value = false
+                                    SettingsLibrary.resetAllToDefaults()
+                                    // 这个开关也存放在 settings MMKV，但声明在 KugouVipRepository，就地复位
+                                    KugouVipRepository.AutoReceiveVip = true
+                                    // 诊断模块读的是内存副本，不同步就会"重置了还在按旧值写/不写"
+                                    YosDiagnostics.setLoggingEnabled(SettingsLibrary.DiagLogEnabled)
+                                    Toast.makeText(
+                                        context,
+                                        R.string.settings_others_reset_done,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                onNegative = { showResetConfirm.value = false },
+                                onDismissRequest = { showResetConfirm.value = false }
+                            )
+                        }
                     }
                 }
 

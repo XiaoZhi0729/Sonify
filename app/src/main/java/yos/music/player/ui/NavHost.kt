@@ -78,8 +78,23 @@ interface UI {
         // 精选歌单大全（主页「精选歌单」标题/箭头 → 查看全部，滚动分页）
         const val RecommendPlaylistsDetail = "RecommendPlaylistsDetail"
 
-        // 在线专辑详情（Discovery 新专辑；入口在新发现 Tab）
+        // 在线专辑详情（Discovery 新专辑 / 艺人页推荐卡与专辑横排等）。
+        // 带 albumId 让多层堆叠的详情页各自解析自己的专辑；带来源 artistId 让背景
+        // 精确取该歌手的配色（非艺人来源时 artistId 为空）。
         const val OnlineAlbumDetail = "OnlineAlbumDetail"
+        const val OnlineAlbumIdArg = "albumId"
+        const val OnlineAlbumSourceArtistArg = "sourceArtistId"
+        const val OnlineAlbumDetailPattern =
+            "$OnlineAlbumDetail?$OnlineAlbumIdArg={$OnlineAlbumIdArg}" +
+                    "&$OnlineAlbumSourceArtistArg={$OnlineAlbumSourceArtistArg}"
+
+        fun onlineAlbumRoute(albumId: String, sourceArtistId: String? = null): String = buildString {
+            append(OnlineAlbumDetail)
+            append("?").append(OnlineAlbumIdArg).append("=")
+                .append(java.net.URLEncoder.encode(albumId, "UTF-8"))
+            append("&").append(OnlineAlbumSourceArtistArg).append("=")
+                .append(java.net.URLEncoder.encode(sourceArtistId ?: "", "UTF-8"))
+        }
 
         // 新歌精选完整列表（Discovery「新歌精选」查看全部；入口在主页 Tab）
         const val NewSongsDetail = "NewSongsDetail"
@@ -126,6 +141,36 @@ interface UI {
         }
 
         const val AlbumInfo = "AlbumInfo"
+
+        // 艺人热门歌曲整页列表（艺人详情页「热门歌曲」区块标题 → 查看全部；复用 artistId/artistName）
+        const val ArtistHotSongsDetail = "ArtistHotSongsDetail"
+        const val ArtistHotSongsPattern =
+            "$ArtistHotSongsDetail?$ArtistDetailIdArg={$ArtistDetailIdArg}" +
+                    "&$ArtistDetailNameArg={$ArtistDetailNameArg}"
+
+        fun artistHotSongsRoute(artistId: String, artistName: String): String = buildString {
+            append(ArtistHotSongsDetail)
+            append("?")
+            append(ArtistDetailIdArg).append("=")
+                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+            append("&").append(ArtistDetailNameArg).append("=")
+                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+        }
+
+        // 艺人专辑整页网格列表（艺人详情页「专辑」区块标题 → 查看全部；复用 artistId/artistName）
+        const val ArtistAlbumsDetail = "ArtistAlbumsDetail"
+        const val ArtistAlbumsPattern =
+            "$ArtistAlbumsDetail?$ArtistDetailIdArg={$ArtistDetailIdArg}" +
+                    "&$ArtistDetailNameArg={$ArtistDetailNameArg}"
+
+        fun artistAlbumsRoute(artistId: String, artistName: String): String = buildString {
+            append(ArtistAlbumsDetail)
+            append("?")
+            append(ArtistDetailIdArg).append("=")
+                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+            append("&").append(ArtistDetailNameArg).append("=")
+                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+        }
     }
 
     @Stable

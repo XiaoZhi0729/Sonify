@@ -18,8 +18,8 @@ import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.animateColorAsState
@@ -41,6 +41,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
@@ -128,14 +130,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
+import androidx.compose.animation.BoundsTransform
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -251,6 +256,29 @@ object NowPlayingPage {
 }
 
 private const val ShareAlbumKey = "album"
+
+// 歌名/歌手列的共享元素 key：与大封面同一套 morph 机制（同默认 spring 曲线），
+// 大封面↔歌词切换时文字跟随封面一起飞往顶部 PlayingBar 的目标位置。
+private const val ShareTitleKey = "titleArtist"
+
+// 收藏/更多按钮行的共享元素 key：随封面/文字一起 morph 到目标页对应位置。
+private const val ShareActionsKey = "actionButtons"
+
+// Flamingo（yos.music.player）逆向得出的页面编排曲线：全部页面过渡动画统一用
+// spring(1.2f, 800f, 0.001f) —— 过阻尼（>1）起手利落、收尾极软；歌词/歌单滑移、
+// 字号插值、保位淡出、共享元素 morph（下方 BoundsTransform）必须同款才同曲线同拍。
+// 勿改回 tween（硬停生硬）或默认 spring(400)（拖沓）。
+private val MorphFloatSpec = spring<Float>(
+    dampingRatio = 1.2f,
+    stiffness = 800f,
+    visibilityThreshold = 0.001f
+)
+
+private val MorphBoundsSpec = BoundsTransform { _, _ ->
+    // 单位 IntRect 与本项目 Miuix 的 unit.IntRect 导入冲突，故不指定 visibilityThreshold
+    // （仅影响收尾判定精度，观感无差）
+    spring(dampingRatio = 1.2f, stiffness = 800f)
+}
 private const val AnimDurationMillis = 300
 
 // 手机竖屏：播放页内容整体下移 21.5dp（0.5cm≈31.5dp 基础上按用户校准上抬 10dp）。
@@ -282,6 +310,9 @@ fun NowPlaying(
     mainViewModel: MainViewModel,
     mediaViewModel: MediaViewModel,
     navController: NavController,
+    // 歌手名点击 → 艺人主页：由外壳在当前 Tab 的 NavHost 内导航并收回播放页。
+    // 名字有效性（空/Unknown Artist）由外壳回调内部过滤。
+    onOpenArtist: (String) -> Unit = {},
     isPlayingStatusLambda: () -> Boolean,
     isPlayingOnChanged: (Boolean) -> Unit,
     nowPageLambda: () -> String,
@@ -501,7 +532,8 @@ fun NowPlaying(
                     lyricState = lyricScrollState,
                     onControlGesture = onControlGesture,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-                    albumCoverSuppressed = albumCoverSuppressed
+                    albumCoverSuppressed = albumCoverSuppressed,
+                    onOpenArtist = onOpenArtist
                 )
                 return@YosWrapper
             }
@@ -524,6 +556,76 @@ fun NowPlaying(
             val alphaAnim = remember { Animatable(0f) }
 
             val skipPageTransition = showMiniPlayer
+
+            // 内容块入出场滑移（大封面↔歌词/播放列表专用编排）：0=就位，1=完全滑出
+            // 区域下方。提升到页面宿主外用 Animatable 驱动 graphicsLayer（零 alpha），
+            // 出场时旧页面仍组合中，读同一状态滑回下方。仅 与 Album 配对的切换跑滑动；
+            // 其余组合（如 歌词↔播放列表 上推）内容必须就地归位（0）随页面整体位移，
+            // 判据是"自己的页面在 from 或 page 中"——否则退出页内容会瞬间消失。
+            val lyricSlide = remember { Animatable(1f) }
+            val listSlide = remember { Animatable(1f) }
+            // 内容块 presence（1=就位，0=缺席）：歌词↔播放列表切换时驱动内容块缩放
+            // （scale = 0.9 + 0.1×presence）。只在 graphicsLayer 块读取，零重组零重排。
+            val lyricPresence = remember { Animatable(1f) }
+            val listPresence = remember { Animatable(1f) }
+            val slidePrevPage = remember { mutableStateOf(page) }
+            LaunchedEffect(page, skipPageTransition) {
+                val from = slidePrevPage.value
+                slidePrevPage.value = page
+                val lyricTarget = if (page == Lyric) 0f else 1f
+                val listTarget = if (page == PlayingList) 0f else 1f
+                val toLyric = (from == Album && page == Lyric) ||
+                        (from == Lyric && page == Album)
+                val toList = (from == Album && page == PlayingList) ||
+                        (from == PlayingList && page == Album)
+                when {
+                    skipPageTransition -> {
+                        lyricSlide.snapTo(lyricTarget)
+                        listSlide.snapTo(listTarget)
+                        lyricPresence.snapTo(if (page == Lyric) 1f else 0f)
+                        listPresence.snapTo(if (page == PlayingList) 1f else 0f)
+                    }
+                    toLyric -> {
+                        listPresence.snapTo(0f)
+                        lyricPresence.snapTo(1f)
+                        listSlide.snapTo(1f)
+                        lyricSlide.snapTo(1f - lyricTarget)
+                        lyricSlide.animateTo(lyricTarget, MorphFloatSpec)
+                    }
+                    toList -> {
+                        lyricPresence.snapTo(0f)
+                        listPresence.snapTo(1f)
+                        lyricSlide.snapTo(1f)
+                        listSlide.snapTo(1f - listTarget)
+                        listSlide.animateTo(listTarget, MorphFloatSpec)
+                    }
+                    else -> {
+                        lyricSlide.snapTo(if (from == Lyric || page == Lyric) 0f else 1f)
+                        listSlide.snapTo(if (from == PlayingList || page == PlayingList) 0f else 1f)
+                        // 歌词↔播放列表：内容块缩放（0.9↔1）与页面级淡入淡出同拍并行。
+                        // 缩放只能挂内容块——页面级 scale 会拖拽共享元素 morph 边界带动顶栏。
+                        launch {
+                            lyricPresence.animateTo(if (page == Lyric) 1f else 0f, MorphFloatSpec)
+                        }
+                        launch {
+                            listPresence.animateTo(if (page == PlayingList) 1f else 0f, MorphFloatSpec)
+                        }
+                    }
+                }
+            }
+
+            // 文字字号随 morph 进度渐变（与封面/滑移同款 spring）：1=大封面档
+            // （标题 19.5sp / 歌手 18.5sp），0=顶部条档（16.5/15sp）。共享元素 morph
+            // 只动边界不缩放文字内容——字号必须由这里驱动，飞行中才平滑变大变小。
+            val titleFontProgress = remember { Animatable(1f) }
+            LaunchedEffect(page, skipPageTransition) {
+                val target = if (page == Album) 1f else 0f
+                if (skipPageTransition) {
+                    titleFontProgress.snapTo(target)
+                } else {
+                    titleFontProgress.animateTo(target, MorphFloatSpec)
+                }
+            }
 
             // alphaAnim 只服务于歌词页相关的轻量控制项，不再控制整棵歌词树。
             // 歌词树由下方唯一的页面宿主管理，避免 PlayerShell、alphaAnim 与 Crossfade
@@ -554,14 +656,47 @@ fun NowPlaying(
             // 主 View
             YosWrapper {
                 SharedTransitionLayout {
-                    Crossfade(
+                    // 顶部 PlayingBar 提升到页面宿主之外：全局单实例常驻。歌词↔播放列表
+                    // 切换时是同一批节点（visible 恒 true），不存在"旧实例隐藏→overlay
+                    // 接管→新实例交回"的交接，物理上不可能闪；与大封面页的封面/文字/
+                    // 按钮仍经共享元素 morph 配对（caller-managed 可见性即为此用法）。
+                    Box(Modifier.fillMaxSize()) {
+                    AnimatedContent(
                         targetState = page,
-                        animationSpec = if (skipPageTransition) {
-                            snap()
-                        } else {
-                            tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                        transitionSpec = {
+                            if (skipPageTransition) {
+                                fadeIn(snap()) togetherWith fadeOut(snap())
+                            } else if ((initialState == Album && targetState == Lyric) ||
+                                (initialState == Lyric && targetState == Album) ||
+                                (initialState == Album && targetState == PlayingList) ||
+                                (initialState == PlayingList && targetState == Album)
+                            ) {
+                                // 大封面↔歌词/播放列表：页面级不做任何位移/入场 alpha（入场
+                                // 即呈现），运动全部交给元素级编排——封面与歌名/歌手/按钮行的
+                                // 共享元素 morph（默认 spring，同曲线同拍）+ 内容块（歌词/歌曲
+                                // 列表）在固定可视区域内的入出场滑动。出场保位 fadeOut 只作用
+                                // 于非共享残余，morph 需要 OLD 页面整个过渡期保持组合，故不能 snap。
+                                EnterTransition.None togetherWith
+                                    fadeOut(MorphFloatSpec)
+                            } else if ((initialState == Lyric && targetState == PlayingList) ||
+                                (initialState == PlayingList && targetState == Lyric)
+                            ) {
+                                // 歌词↔播放列表：页面级只做淡入淡出。顶栏三件套（封面/文字/按钮）
+                                // 全是共享元素、在 overlay 层绘制，不受页面级 alpha 影响，保持静止；
+                                // 缩放（0.9↔1）绝不能放页面级——scaleOut 会拖拽共享元素 morph 的
+                                // 源边界把顶栏带走，故挂在内容块自己的 presence 进度上（见下方
+                                // lyricPresence/listPresence）。
+                                fadeIn(MorphFloatSpec) togetherWith fadeOut(MorphFloatSpec)
+                            } else {
+                                // 纯位移上推（无 alpha）：半透明/加色内容只要两份同时存在，
+                                // 交叉淡化必有亮度脉冲（同步=变暗、错峰=变亮），位移是唯一
+                                // 零闪的整页过渡。等速推挤两页恰好铺满不重叠。
+                                slideInVertically(tween(280, easing = FastOutSlowInEasing)) { it } togetherWith
+                                    slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { -it }
+                            }
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        label = "nowPlayingPageSwitch"
                     ) {
                         //println("nowPage: ${nowPageLambda()}")
                         //println("nowPageIt: $it")
@@ -584,7 +719,8 @@ fun NowPlaying(
                                                     sharedContentState = rememberSharedContentState(
                                                         key = ShareAlbumKey
                                                     ),
-                                                    visible = isVisible
+                                                    visible = isVisible,
+                                                boundsTransform = MorphBoundsSpec
                                                 ),
                                                 albumUrl = { thisMusicPlaying.value?.thumb },
                                                 isPlaying = isPlayingStatusLambda,
@@ -593,14 +729,15 @@ fun NowPlaying(
                                                 coordsOnChanged = albumCoverCoordsOnChanged,
                                                 suppressed = albumCoverSuppressed
                                             )
-                                            AnimatedContent(
-                                                targetState = thisMusicPlaying.value,
-                                                transitionSpec = {
-                                                    fadeIn() togetherWith fadeOut()
-                                                }, modifier = Modifier
+                                            // 切歌时标题/歌手/按钮就地瞬时更新：任何 alpha 交叉淡化
+                                            // 都会让半透明/加色内容产生亮度脉冲（同步=变暗、
+                                            // 错峰=变亮），这里只能瞬换，不能 fade。
+                                            Box(
+                                                modifier = Modifier
                                                     .padding(bottom = 20.dp)
                                                     .padding(horizontal = 32.dp)
                                             ) {
+                                                val nowMusic = thisMusicPlaying.value
                                                 Row(
                                                     Modifier
                                                         .fillMaxWidth(),
@@ -608,24 +745,58 @@ fun NowPlaying(
                                                 ) {
                                                     Column(
                                                         Modifier
+                                                            // 歌名/歌手与大封面同套共享元素 morph：
+                                                            // 默认 spring 与封面同曲线同拍，飞往
+                                                            // 歌词页 PlayingBar 的目标位置
+                                                            .sharedElementWithCallerManagedVisibility(
+                                                                sharedContentState = rememberSharedContentState(
+                                                                    key = ShareTitleKey
+                                                                ),
+                                                                visible = isVisible,
+                                                            boundsTransform = MorphBoundsSpec
+                                                            )
                                                             .fillMaxWidth()
                                                             .weight(1f)
                                                             .padding(end = 15.dp)
                                                     ) {
                                                         Text(
-                                                            text = it?.title
+                                                            text = nowMusic?.title
                                                                 ?: defaultTitle,/*
                                                         fontWeight = FontWeight.Bold,*/
                                                             fontSize = 19.5.sp,
+                                                            // 字号渐变走 graphicsLayer 缩放（进度只在
+                                                            // 图层块读取）：逐帧改 fontSize 会触发整页
+                                                            // 每帧重新测量排版，是页面卡顿的真凶。
+                                                            modifier = Modifier.graphicsLayer {
+                                                                val s = (16.5f + 3f * titleFontProgress.value) / 19.5f
+                                                                scaleX = s
+                                                                scaleY = s
+                                                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                                            },
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis,
                                                             fontWeight = FontWeight.Medium
                                                         )
                                                         Text(
-                                                            text = it?.artistsName
+                                                            text = nowMusic?.artistsName
                                                                 ?: defaultArtistsName,
                                                             fontSize = 18.5.sp,
-                                                            modifier = Modifier.overlayEffect(),
+                                                            modifier = Modifier
+                                                                .graphicsLayer {
+                                                                    val s = (15f + 3.5f * titleFontProgress.value) / 18.5f
+                                                                    scaleX = s
+                                                                    scaleY = s
+                                                                    transformOrigin = TransformOrigin(0f, 0.5f)
+                                                                }
+                                                                // 点击歌手名 → 艺人主页（导航与收回
+                                                                // 由外壳回调负责；无效名字在回调内过滤）
+                                                                .clickable(
+                                                                    interactionSource = remember { MutableInteractionSource() },
+                                                                    indication = null
+                                                                ) {
+                                                                    onOpenArtist(nowMusic?.artistsName.orEmpty())
+                                                                }
+                                                                .overlayEffect(),
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis,
                                                             color = Color.White.copy(alpha = 0.35f)
@@ -633,9 +804,16 @@ fun NowPlaying(
                                                     }
 
                                                     YosWrapper {
-                                                        ActionButtonsRow {
-                                                            it
-                                                        }
+                                                        ActionButtonsRow(
+                                                            musicPlayingLambda = { nowMusic },
+                                                            modifier = Modifier.sharedElementWithCallerManagedVisibility(
+                                                                sharedContentState = rememberSharedContentState(
+                                                                    key = ShareActionsKey
+                                                                ),
+                                                                visible = isVisible,
+                                                            boundsTransform = MorphBoundsSpec
+                                                            )
+                                                        )
                                                     }
                                                 }
                                             }
@@ -658,34 +836,26 @@ fun NowPlaying(
                                             },
                                             mainViewModel = mainViewModel,
                                             mediaViewModel = mediaViewModel,
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                // 歌词↔播放列表切换时的内容块缩放（页面级只做
+                                                // 淡入淡出，缩放绝不能放页面级——会拖拽共享
+                                                // 元素 morph 边界带动顶栏）
+                                                .graphicsLayer {
+                                                    val s = 0.9f + 0.1f * lyricPresence.value
+                                                    scaleX = s
+                                                    scaleY = s
+                                                },
+                                            // 歌词块从区域底部滑入/滑出（lyricSlide 驱动，
+                                            // 零 alpha）；mask/clip 固定在可视区域上，滑动
+                                            // 全程不越过上下渐隐约束。
+                                            viewModifier = Modifier.graphicsLayer {
+                                                translationY = size.height * lyricSlide.value
+                                            },
                                             // 竖屏控件层压在底部：末句固定上抬到控件之上，不随控件显隐移动。
                                             lastLineObstructionFraction =
                                                 LAST_LINE_OBSTRUCTION_FRACTION
                                         )
-                                    }
-                                    YosWrapper {
-                                        val isVisible = page == Lyric
-                                        Box(
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .statusBarsPadding()
-                                                .padding(top = 22.dp)
-                                        ) {
-                                        PlayingBar(
-                                            modifier = Modifier.sharedElementWithCallerManagedVisibility(
-                                                sharedContentState = rememberSharedContentState(
-                                                    key = ShareAlbumKey
-                                                ),
-                                                visible = isVisible
-                                            ),
-                                            albumUrlLambda = {
-                                                thisMusicPlaying.value?.thumb
-                                            },
-                                            musicPlayingLambda = { thisMusicPlaying.value }) {
-                                            nowPageOnChanged(Album)
-                                        }
-                                        }
                                     }
                                 }
 
@@ -698,23 +868,23 @@ fun NowPlaying(
                                             .padding(top = 22.dp)
                                             .clickable(enabled = false, onClick = {})
                                     ) {
-                                        val isVisible = page == PlayingList
-                                        PlayingBar(
-                                            modifier = Modifier.sharedElementWithCallerManagedVisibility(
-                                                sharedContentState = rememberSharedContentState(
-                                                    key = ShareAlbumKey
-                                                ),
-                                                visible = isVisible
-                                            ),
-                                            albumUrlLambda = {
-                                                thisMusicPlaying.value?.thumb
-                                            },
-                                            musicPlayingLambda = { thisMusicPlaying.value }) {
-                                            nowPageOnChanged(Album)
-                                        }
+                                        // 顶部 PlayingBar 已提升到页面宿主外常驻，此处只留等高占位
+                                        Spacer(modifier = Modifier.height(70.dp))
                                         // 列表态下仅歌曲列表下移；顶部 PlayingBar 行（小封面/歌名/按钮）保持原位。
+                                        // 内容块（列表头+歌曲列表）与歌词同款：clip 固定在区域上、
+                                        // 滑移（listSlide）在最内层，从区域底部滑入/滑出，零 alpha。
                                         YosWrapper {
-                                            Box(Modifier.then(phonePortraitShift)) {
+                                            Box(
+                                                Modifier
+                                                    .then(phonePortraitShift)
+                                                    .clipToBounds()
+                                                    .graphicsLayer {
+                                                        val s = 0.9f + 0.1f * listPresence.value
+                                                        scaleX = s
+                                                        scaleY = s
+                                                        translationY = size.height * listSlide.value
+                                                    }
+                                            ) {
                                                 PlayingList(
                                                     shuffleModeEnabledLambda = { shuffleModeEnabled.value },
                                                     shuffleModeOnChanged = { shuffleModeSet ->
@@ -731,6 +901,70 @@ fun NowPlaying(
                                     }
                                 }
                         }
+                    }
+
+                    // 顶部 PlayingBar：全局单实例常驻（AnimatedContent 之外），任何页面
+                    // 切换都是同一批节点——歌词↔播放列表切换时零交接零闪动。
+                    YosWrapper {
+                        // 预配对（冷启动首转场修复）：caller-managed 共享元素首次转场缺少
+                        // 顶栏图层的已记录内容与匹配残留状态，morph 会退化为瞬换（内容先
+                        // 全消失再跳动画后半段）。**预热必须在完全收起态做**——进度 0 时
+                        // 播放页整体 alpha≡0，数学上不可见；此前放在展开沿上，展开很快
+                        // 越过 alpha≈0 窗口，匹配飞行与完成态渲染在可见区间被看到（闪一下
+                        // 完成后的样式，且只在打开时出现）。收起态进入即预热一次。
+                        var barWarm by remember { mutableStateOf(false) }
+                        LaunchedEffect(showMiniPlayer) {
+                            if (showMiniPlayer) {
+                                withFrameNanos { }
+                                barWarm = true
+                                repeat(4) { withFrameNanos { } }
+                                barWarm = false
+                            }
+                        }
+                        val barVisible = barWarm || page == Lyric || page == PlayingList
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .padding(top = 22.dp)
+                        ) {
+                            PlayingBar(
+                                modifier = Modifier.sharedElementWithCallerManagedVisibility(
+                                    sharedContentState = rememberSharedContentState(
+                                        key = ShareAlbumKey
+                                    ),
+                                    visible = barVisible,
+                                    boundsTransform = MorphBoundsSpec
+                                ),
+                                albumUrlLambda = {
+                                    thisMusicPlaying.value?.thumb
+                                },
+                                musicPlayingLambda = { thisMusicPlaying.value },
+                                titleModifier = Modifier.sharedElementWithCallerManagedVisibility(
+                                    sharedContentState = rememberSharedContentState(
+                                        key = ShareTitleKey
+                                    ),
+                                    visible = barVisible,
+                                    boundsTransform = MorphBoundsSpec
+                                ),
+                                actionsModifier = Modifier.sharedElementWithCallerManagedVisibility(
+                                    sharedContentState = rememberSharedContentState(
+                                        key = ShareActionsKey
+                                    ),
+                                    visible = barVisible,
+                                    boundsTransform = MorphBoundsSpec
+                                ),
+                                titleScaleProvider = { (16.5f + 3f * titleFontProgress.value) / 16.5f },
+                                artistScaleProvider = { (15f + 3.5f * titleFontProgress.value) / 15f },
+                                onAlbumClick = {
+                                    nowPageOnChanged(Album)
+                                },
+                                onArtistClick = {
+                                    onOpenArtist(thisMusicPlaying.value?.artistsName.orEmpty())
+                                }
+                            )
+                        }
+                    }
                     }
                 }
             }
@@ -1084,12 +1318,12 @@ internal fun PlayingList(
                 }
             }
 
-            // 标题栏交叉淡化动画（修复问题1：标题切换闪现）
+            // 标题栏交叉淡化动画（修复问题1：标题切换闪现）；
+            // snap 瞬换：任何 alpha 交叉淡化都对本页半透明内容产生亮度脉冲
             AnimatedContent(
                 targetState = editMode,
                 transitionSpec = {
-                    fadeIn(tween(200, delayMillis = 50)) togetherWith 
-                    fadeOut(tween(150))
+                    fadeIn(snap()) togetherWith fadeOut(snap())
                 },
                 label = "titleBarCrossfade"
             ) { isEditMode ->
@@ -1838,6 +2072,9 @@ internal fun Lyric(
     topSpacerHeight: Dp = 110.dp,
     topSpacerWithStatusBar: Boolean = true,
     modifier: Modifier = Modifier,
+    // 歌词内容的入出场滑动机（调用方传 animateEnterExit）。挂在 mask/clip **之内**：
+    // 渐隐渐显与裁剪固定在静止后的可视区域坐标上，滑动全程歌词只出现在该区域内。
+    viewModifier: Modifier = Modifier,
     lastLineObstructionFraction: Float = 0f
 ) = YosWrapper {
 
@@ -1878,7 +2115,10 @@ internal fun Lyric(
                     noLrcText = stringResource(id = R.string.tip_no_lyrics)
                 ),
                 weightLambda = weightLambda,
-                modifier = Modifier.drawWithCache {
+                modifier = Modifier
+                    // mask 最外（节点坐标固定）→ clip 次之 → 滑动机最内：
+                    // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束
+                    .drawWithCache {
                     val overlayPaint = Paint().apply {
                         blendMode = BlendMode.Plus
                     }
@@ -1943,7 +2183,9 @@ internal fun Lyric(
                         )
                         canvas.restore()
                     }
-                },
+                }
+                    .clipToBounds()
+                    .then(viewModifier),
                 onBackClick = onBackClick,
                 lastLineObstructionFraction = lastLineObstructionFraction
             )
@@ -1952,7 +2194,11 @@ internal fun Lyric(
 }
 
 @Composable
-internal fun ActionButtonsRow(musicPlayingLambda: () -> YosMediaItem?) {
+internal fun ActionButtonsRow(
+    musicPlayingLambda: () -> YosMediaItem?,
+    // 外部可传共享元素 modifier：页面切换时按钮行随封面/文字一起 morph
+    modifier: Modifier = Modifier
+) {
     var moreMenuOpen by remember { mutableStateOf(false) }
     // 「更多」按钮本体的窗口系边界，供玻璃弹层定位与展开方向判定。
     // 必须是按钮本体（28dp）而不是整行：弹层按锚点右缘内收 27dp 对齐、缩放原点取
@@ -1967,7 +2213,7 @@ internal fun ActionButtonsRow(musicPlayingLambda: () -> YosMediaItem?) {
     val moreFollow = rememberLiquidDropdownFollowState()
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .overlayEffect(),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2016,7 +2262,7 @@ internal fun ActionButtonsRow(musicPlayingLambda: () -> YosMediaItem?) {
                 targetState = musicPlayingLambda()?.let { FavoriteRepository.isFavorite(it) }
                     ?: false,
                 transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
+                    fadeIn(snap()) togetherWith fadeOut(snap())
                 }) {
                 if (it) {
                     Icon(
@@ -2072,7 +2318,7 @@ internal fun ActionButtonsRow(musicPlayingLambda: () -> YosMediaItem?) {
             AnimatedContent(
                 targetState = moreMenuOpen,
                 transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
+                    fadeIn(snap()) togetherWith fadeOut(snap())
                 },
                 modifier = Modifier.liquidDropdownAnchorFollow(moreFollow)
             ) {
@@ -2592,7 +2838,17 @@ private fun PlayingBar(
     modifier: Modifier,
     albumUrlLambda: () -> Uri?,
     musicPlayingLambda: () -> YosMediaItem?,
-    onAlbumClick: () -> Unit
+    onAlbumClick: () -> Unit,
+    // 歌手名点击 → 艺人主页（名字与导航由调用方组装，外壳回调内过滤无效名）
+    onArtistClick: () -> Unit = {},
+    // 歌名/歌手列的共享元素 modifier（由调用方传 sharedElement），空则无 morph
+    titleModifier: Modifier = Modifier,
+    // 收藏/更多按钮行的共享元素 modifier，同上
+    actionsModifier: Modifier = Modifier,
+    // 文字缩放由调用方随 morph 进度驱动：只在 graphicsLayer 块里读状态，
+    // 零重组零重排（逐帧改 fontSize 会触发整页每帧重测排版，是卡顿真凶）
+    titleScaleProvider: () -> Float = { 1f },
+    artistScaleProvider: () -> Float = { 1f }
 ) = YosWrapper {
     Row(
         Modifier
@@ -2615,7 +2871,7 @@ private fun PlayingBar(
             shadowOverlay = true
         )
         Column(
-            Modifier
+            titleModifier
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(start = 12.dp, end = 15.dp)
@@ -2624,6 +2880,12 @@ private fun PlayingBar(
                 text = musicPlayingLambda()?.title ?: defaultTitle,/*
                 fontWeight = FontWeight.Bold,*/
                 fontSize = 16.5.sp,
+                modifier = Modifier.graphicsLayer {
+                    val s = titleScaleProvider()
+                    scaleX = s
+                    scaleY = s
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 fontWeight = FontWeight.Medium,
@@ -2633,7 +2895,19 @@ private fun PlayingBar(
                 text = musicPlayingLambda()?.artistsName
                     ?: defaultArtistsName,
                 fontSize = 15.sp,
-                modifier = Modifier.overlayEffect(),
+                modifier = Modifier
+                    .graphicsLayer {
+                        val s = artistScaleProvider()
+                        scaleX = s
+                        scaleY = s
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onArtistClick
+                    )
+                    .overlayEffect(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = Color.White.copy(alpha = 0.35f)
@@ -2641,7 +2915,7 @@ private fun PlayingBar(
         }
 
         YosWrapper {
-            ActionButtonsRow(musicPlayingLambda)
+            ActionButtonsRow(musicPlayingLambda, modifier = actionsModifier)
         }
     }
 
@@ -2892,7 +3166,7 @@ internal fun TranslationToggleButton(
         AnimatedContent(
             targetState = translation.value,
             transitionSpec = {
-                fadeIn() togetherWith fadeOut()
+                fadeIn(snap()) togetherWith fadeOut(snap())
             }) {
             if (it) {
                 Icon(
@@ -2932,7 +3206,7 @@ internal fun LyricsEntryButton(
         AnimatedContent(
             targetState = nowPage() == Lyric,
             transitionSpec = {
-                fadeIn() togetherWith fadeOut()
+                fadeIn(snap()) togetherWith fadeOut(snap())
             }) {
             if (it) {
                 Icon(
@@ -2972,7 +3246,7 @@ internal fun QueueEntryButton(
         AnimatedContent(
             targetState = nowPage() == PlayingList,
             transitionSpec = {
-                fadeIn() togetherWith fadeOut()
+                fadeIn(snap()) togetherWith fadeOut(snap())
             }) {
             if (it) {
                 Icon(
@@ -3130,7 +3404,7 @@ internal fun RepeatToggleButton(
         ) {
             AnimatedContent(
                 targetState = repeatModeLambda(),
-                transitionSpec = { fadeIn() togetherWith fadeOut() }
+                transitionSpec = { fadeIn(snap()) togetherWith fadeOut(snap()) }
             ) { mode ->
                 if (repeatModeLambda() == REPEAT_MODE_ALL || repeatModeLambda() == REPEAT_MODE_ONE) {
                     Box(
@@ -3986,5 +4260,5 @@ private fun Track(
 fun formatTime(seconds: Long): String {
     val minutes = seconds / 60
     val secs = seconds % 60
-    return "$minutes:${if (secs < 10) "0$secs" else "$secs"}"
+    return "$minutes:${if (secs < 10) "0$secs" else secs.toString()}"
 }

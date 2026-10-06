@@ -1,22 +1,14 @@
 package yos.music.player.ui.pages.library.artists
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
@@ -27,32 +19,35 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
-import yos.music.player.data.objects.ArtistSongsObject
+import yos.music.player.data.objects.ArtistHotSongsObject
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.widgets.basic.Title
 
-private data class ArtistSongsScrollSnapshot(
+private data class ArtistHotScrollSnapshot(
     val lastVisibleIndex: Int,
     val songCount: Int,
-    val page: Int,
     val loading: Boolean,
     val loadError: String?,
     val endReached: Boolean
 )
 
-/** 艺人全部歌曲整页列表。分页状态按艺人 id 共享于详情页和本页。 */
+/**
+ * 热门歌曲整页列表（艺人页「热门歌曲」区块标题 → 查看全部）。
+ * 数据按 sort=hot 分页，与详情页预览共享 [ArtistHotSongsObject] 状态；
+ * 结构对齐 [ArtistSongsDetail]（同一套分页/骨架/错误/播放行为）。
+ */
 @Composable
-fun ArtistSongsDetail(
+fun ArtistHotSongsDetail(
     navController: NavController,
     artistId: String,
     artistName: String
 ) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val state = remember(artistId) { ArtistSongsObject.forArtist(artistId) }
+    val state = remember(artistId) { ArtistHotSongsObject.forArtist(artistId) }
 
     LaunchedEffect(state) {
         state.ensureLoaded()
@@ -62,14 +57,12 @@ fun ArtistSongsDetail(
         snapshotFlow {
             val info = listState.layoutInfo
             val songCount = state.songs.value.size
-            // Title 在歌曲前插入一个标题项，只观察歌曲行，排除页脚和底部留白。
             val lastVisibleSong = info.visibleItemsInfo
                 .lastOrNull { it.index in 1..songCount }
                 ?.let { it.index - 1 } ?: -1
-            ArtistSongsScrollSnapshot(
+            ArtistHotScrollSnapshot(
                 lastVisibleIndex = lastVisibleSong,
                 songCount = songCount,
-                page = state.page.value,
                 loading = state.loading.value,
                 loadError = state.loadError.value,
                 endReached = state.endReached.value
@@ -99,8 +92,8 @@ fun ArtistSongsDetail(
     }
 
     Title(
-        // 层级：区块名当大标题、歌手名当灰色小标题（进入前已知点的是哪位歌手）
-        title = stringResource(R.string.artist_detail_all_songs),
+        // 层级：区块名当大标题、歌手名当灰色小标题
+        title = stringResource(R.string.artist_detail_hot_songs),
         subTitle = artistName,
         onBack = { navController.popBackStack() },
         listState = listState
@@ -138,9 +131,7 @@ fun ArtistSongsDetail(
                 }
 
                 when {
-                    loading -> item("FooterLoading") {
-                        ArtistListFooterLoading()
-                    }
+                    loading -> item("FooterLoading") { ArtistListFooterLoading() }
                     loadError != null -> item("FooterError") {
                         ArtistSongsError(
                             message = loadError,

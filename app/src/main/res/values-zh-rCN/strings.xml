@@ -49,6 +49,7 @@
     <string name="kugou_phone_choose_account_title">选择账号</string>
     <string name="kugou_phone_choose_account_subtitle">该手机号绑定了多个酷狗账号，请选择要登录的账号</string>
     <string name="kugou_logout">退出登录</string>
+    <string name="kugou_logout_confirm">确定要退出登录酷狗账号吗？</string>
     <string name="kugou_vip_sign_in_title">VIP 签到</string>
     <string name="kugou_vip_status_header">会员状态</string>
     <string name="kugou_vip_listen_member">畅听会员</string>
@@ -279,6 +280,9 @@
     <string name="settings_others_diag_desc">把播放相关事件写进应用存储。熄屏无声、自动跳歌、卡缓冲这类问题，只有靠它才能事后定位。</string>
     <string name="settings_others_diag_export">导出诊断日志</string>
     <string name="settings_others_diag_hint">报告包含省电策略快照、关键事件与日志尾部；也可用 adb 从 Android/data/&lt;包名&gt;/files/logs 直接拉取。</string>
+    <string name="settings_others_reset">重置所有设置</string>
+    <string name="settings_others_reset_confirm">所有设置将恢复为默认值，此操作无法撤销。登录状态与资料库数据不受影响。</string>
+    <string name="settings_others_reset_done">已重置为默认设置</string>
     <string name="diag_export_busy">正在汇总…</string>
     <string name="diag_export_size">已落盘 %1$s，点击生成报告并分享</string>
     <string name="diag_export_fail">导出失败：日志目录不可写</string>
@@ -345,6 +349,8 @@
     <string name="online_playlist_track_remove_confirm">确定从歌单移除「%1$s」？</string>
     <string name="common_search">搜索</string>
     <string name="search_no_result">没有找到相关结果</string>
+    <string name="settings_others_about_developer_mode">开发者模式</string>
+    <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">检查更新</string>
     <string name="update_auto_check">自动检查更新</string>
     <string name="update_checking">正在检查更新…</string>

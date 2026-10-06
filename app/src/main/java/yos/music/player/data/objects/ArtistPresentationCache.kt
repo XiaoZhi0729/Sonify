@@ -24,7 +24,8 @@ internal data class ArtistCachedPalette(val key: String, val rgb: Int)
 internal data class ArtistCacheSnapshot(
     val details: List<ArtistCachedDetail> = emptyList(),
     val aliases: Map<String, String> = emptyMap(),
-    val palettes: List<ArtistCachedPalette> = emptyList()
+    val palettes: List<ArtistCachedPalette> = emptyList(),
+    val albumSongCounts: Map<String, Int> = emptyMap()
 )
 
 internal class ArtistPresentationStore(
@@ -39,6 +40,7 @@ internal class ArtistPresentationStore(
     private val details = linkedMapOf<String, ArtistCachedDetail>()
     private val aliases = linkedMapOf<String, String>()
     private val palettes = linkedMapOf<String, State<Int?>>()
+    private val albumSongCounts = linkedMapOf<String, Int>()
     private val follows = mutableMapOf<Pair<String, String>, Follow>()
     private val revisions = mutableMapOf<Pair<String, String>, Int>()
     private val detailRequests = mutableMapOf<Pair<String, String>, CompletableDeferred<KugouArtistDetailData>>()
@@ -50,15 +52,22 @@ internal class ArtistPresentationStore(
         if (loaded) return
         loaded = true
         val snapshot = runCatching { gson.fromJson(read(), ArtistCacheSnapshot::class.java) }.getOrNull() ?: return
-        snapshot.details.orEmpty().takeLast(64).forEach {
-            if (it.detail.artistId.isNotBlank()) details[it.detail.artistId] = it.copy(detail = it.detail.copy(isFollowed = false))
+        // 元素访问触发 checkcast：若混淆丢签名致 Gson 解出 LinkedTreeMap，
+        // CCE 就地吞掉按缓存缺失处理，不冒泡到调用方（preload 在主线程）
+        runCatching {
+            snapshot.details.orEmpty().takeLast(64).forEach {
+                if (it.detail.artistId.isNotBlank()) details[it.detail.artistId] = it.copy(detail = it.detail.copy(isFollowed = false))
+            }
+            snapshot.aliases.orEmpty().entries.toList().takeLast(128).forEach { entry ->
+                val name = entry.key
+                val id = entry.value
+                if (details.containsKey(id)) aliases[name] = id
+            }
+            snapshot.palettes.orEmpty().takeLast(128).forEach { palettes[it.key] = mutableStateOf(it.rgb) }
+            snapshot.albumSongCounts.orEmpty().entries.toList().takeLast(128).forEach {
+                if (it.value > 0) albumSongCounts[it.key] = it.value
+            }
         }
-        snapshot.aliases.orEmpty().entries.toList().takeLast(128).forEach { entry ->
-            val name = entry.key
-            val id = entry.value
-            if (details.containsKey(id)) aliases[name] = id
-        }
-        snapshot.palettes.orEmpty().takeLast(128).forEach { palettes[it.key] = mutableStateOf(it.rgb) }
     }
 
     @Synchronized
@@ -171,6 +180,17 @@ internal class ArtistPresentationStore(
         return request.await()
     }
 
+    /**
+     * 在缓存自身的 CoroutineScope 上启动调色板计算（fire-and-forget）。
+     * 关键：不绑定调用方（艺人页）的生命周期——艺人页离开组合也不会取消计算，
+     * 结果照常写回 [palette] State，供子页面（专辑/歌曲详情）读到并上色。
+     * 重复调用由 [loadPalette] 内部按 key 去重，不会重复加载。
+     */
+    fun ensurePalette(key: String, compute: suspend () -> Int?) {
+        if (key.isBlank()) return
+        scope.launch { runCatching { loadPalette(key, compute) } }
+    }
+
     private fun persist() {
         while (details.size > 64) details.remove(details.keys.first())
         aliases.entries.removeAll { !details.containsKey(it.value) }
@@ -178,13 +198,32 @@ internal class ArtistPresentationStore(
         trimPalettes()
         val snapshot = ArtistCacheSnapshot(
             details.values.toList(), aliases.toMap(),
-            palettes.mapNotNull { (key, state) -> state.value?.let { ArtistCachedPalette(key, it) } }
+            palettes.mapNotNull { (key, state) -> state.value?.let { ArtistCachedPalette(key, it) } },
+            albumSongCounts.toMap()
         )
         write(gson.toJson(snapshot))
     }
 
     private fun trimPalettes() {
         while (palettes.size > 128) palettes.remove(palettes.keys.first())
+    }
+
+    /** 推荐专辑卡片歌曲数：酷狗作者专辑/详情接口常缺 songcount，真实数量只能
+     * 拉歌曲列表数出来（昂贵），故跨页面+跨进程缓存，避免每次进艺人页重载。 */
+    @Synchronized
+    fun albumSongCount(albumId: String): Int? {
+        preload()
+        return albumSongCounts.remove(albumId)?.also { albumSongCounts[albumId] = it }
+    }
+
+    @Synchronized
+    fun rememberAlbumSongCount(albumId: String, count: Int) {
+        preload()
+        if (albumId.isBlank() || count <= 0) return
+        albumSongCounts.remove(albumId)
+        albumSongCounts[albumId] = count
+        while (albumSongCounts.size > 128) albumSongCounts.remove(albumSongCounts.keys.first())
+        persist()
     }
 
     private fun alias(name: String) = name.trim().lowercase(Locale.ROOT)
@@ -216,4 +255,7 @@ object ArtistPresentationCache {
         store.loadDetail(id, name, accountId, force)
     fun palette(key: String): State<Int?> = store.palette(key)
     suspend fun loadPalette(key: String, compute: suspend () -> Int?): Int? = store.loadPalette(key, compute)
+    fun ensurePalette(key: String, compute: suspend () -> Int?) = store.ensurePalette(key, compute)
+    fun albumSongCount(albumId: String): Int? = store.albumSongCount(albumId)
+    fun rememberAlbumSongCount(albumId: String, count: Int) = store.rememberAlbumSongCount(albumId, count)
 }

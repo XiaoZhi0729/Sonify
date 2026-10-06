@@ -16,7 +16,9 @@ import yos.music.player.ui.pages.discovery.OnlineAlbumDetail
 import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
+import yos.music.player.ui.pages.library.artists.ArtistAlbumsDetail
 import yos.music.player.ui.pages.library.artists.ArtistDetail
+import yos.music.player.ui.pages.library.artists.ArtistHotSongsDetail
 import yos.music.player.ui.pages.library.artists.ArtistSongsDetail
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.albums.LocalAlbums
@@ -81,7 +83,9 @@ fun LibraryNavHost(
                 entryId = entry.id,
                 artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
                 artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty(),
-                scrimTransition = scrimTransition()
+                scrimTransition = scrimTransition(),
+                sharedTransitionScope = this@SharedTransitionLayout,
+                animatedVisibilityScope = this@composable
             )
         }
         // 艺人全部歌曲整页列表：destination 每个独立 NavHost 都要注册（与 ArtistDetail 同理）
@@ -89,18 +93,78 @@ fun LibraryNavHost(
             route = UI.ArtistSongsPattern,
             arguments = artistDetailArguments()
         ) { entry ->
-            ArtistSongsDetail(
+            val artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty()
+            ArtistChildBackground(
                 navController = navController,
-                artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty(),
-                artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
-            )
+                entryId = entry.id,
+                artistId = artistId,
+                scrimTransition = scrimTransition()
+            ) {
+                ArtistSongsDetail(
+                    navController = navController,
+                    artistId = artistId,
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
+                )
+            }
         }
-        composable(UI.OnlineAlbumDetail) {
-            OnlineAlbumDetail(
+        composable(
+            route = UI.ArtistHotSongsPattern,
+            arguments = artistDetailArguments()
+        ) { entry ->
+            val artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty()
+            ArtistChildBackground(
                 navController = navController,
-                sharedTransitionScope = this@SharedTransitionLayout,
-                animatedVisibilityScope = this@composable
-            )
+                entryId = entry.id,
+                artistId = artistId,
+                scrimTransition = scrimTransition()
+            ) {
+                ArtistHotSongsDetail(
+                    navController = navController,
+                    artistId = artistId,
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty()
+                )
+            }
+        }
+        composable(
+            route = UI.ArtistAlbumsPattern,
+            arguments = artistDetailArguments()
+        ) { entry ->
+            val artistId = entry.arguments?.getString(UI.ArtistDetailIdArg).orEmpty()
+            ArtistChildBackground(
+                navController = navController,
+                entryId = entry.id,
+                artistId = artistId,
+                scrimTransition = scrimTransition()
+            ) {
+                ArtistAlbumsDetail(
+                    navController = navController,
+                    artistId = artistId,
+                    artistName = entry.arguments?.getString(UI.ArtistDetailNameArg).orEmpty(),
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
+            }
+        }
+        composable(
+            route = UI.OnlineAlbumDetailPattern,
+            arguments = onlineAlbumArguments()
+        ) { entry ->
+            val sourceArtistId = entry.arguments?.getString(UI.OnlineAlbumSourceArtistArg)
+                ?.takeIf { it.isNotBlank() }
+            ArtistChildBackground(
+                navController = navController,
+                entryId = entry.id,
+                artistId = sourceArtistId,
+                scrimTransition = scrimTransition()
+            ) {
+                OnlineAlbumDetail(
+                    navController = navController,
+                    albumId = entry.arguments?.getString(UI.OnlineAlbumIdArg).orEmpty(),
+                    sourceArtistId = sourceArtistId,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
+            }
         }
         composable(UI.AlbumInfo) {
             AlbumInfo(

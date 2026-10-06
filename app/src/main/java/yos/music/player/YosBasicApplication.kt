@@ -107,6 +107,7 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             yos.music.player.data.repositories.KugouRepository.actualQualityVersion.intValue
             // 本曲覆盖表现在跨重启保留了：在主线程把它读进内存，避免首帧组合时才去碰磁盘
             yos.music.player.data.repositories.PerSongQualityIntent.preload()
+            yos.music.player.data.objects.ArtistPresentationCache.preload()
         }
 
         // 音质切换要读偏好与网络形态：主进程侧提前注入应用级 Context（服务侧也会注入一次）

@@ -24,7 +24,6 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -77,9 +76,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
+import yos.music.player.ui.widgets.basic.LocalGlassContentColor
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
+import yos.music.player.ui.widgets.basic.adaptiveBlurPx
+import yos.music.player.ui.widgets.basic.adaptiveGlassColorControls
+import yos.music.player.ui.widgets.basic.rememberAdaptiveBackdropLuminance
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -138,6 +141,7 @@ import androidx.compose.ui.util.lerp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.google.accompanist.insets.LocalWindowInsets
 import com.google.accompanist.insets.ProvideWindowInsets
@@ -146,18 +150,23 @@ import androidx.navigation.compose.NavHost
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.backdrops.emptyBackdrop
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.highlight.HighlightStyle
 import com.kyant.shapes.RoundedRectangle
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import yos.music.player.ui.widgets.liquid.WrapHighlightStyle
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uk.akane.libphonograph.hasScopedStorageWithMediaTypes
 import androidx.media3.common.Player.REPEAT_MODE_OFF
@@ -166,19 +175,25 @@ import androidx.media3.common.Player.REPEAT_MODE_ONE
 import yos.music.player.code.MediaController
 import yos.music.player.code.MediaController.mediaControl
 import yos.music.player.code.YosPlaybackService
+import yos.music.player.code.utils.others.GlassDiagnostics
 import yos.music.player.code.utils.others.GlassProbe
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
+import yos.music.player.data.libraries.toMultipleArtists
 import yos.music.player.data.models.ImageViewModel
 import yos.music.player.data.models.MainViewModel
 import yos.music.player.data.models.MediaViewModel
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.ui.UI
 import yos.music.player.ui.navigation.AppNavigator
+import yos.music.player.ui.navigation.ArtistPageAppearance
+import yos.music.player.ui.navigation.NavGuard
+import yos.music.player.ui.navigation.accentTintOf
 import yos.music.player.ui.navigation.AppTabsShell
 import yos.music.player.ui.navigation.HouseId
 import yos.music.player.ui.navigation.houseForTabIndex
@@ -257,8 +272,17 @@ class MainActivity : BaseActivity() {
                     // 探针自己变成掉帧原因。
                     val glassProbe = remember("MainActivity_glassProbe") {
                         // install 而不是 read：底栏与封面图组件在另一个文件里，需要一个进程级入口。
-                        GlassProbe.install(context)
+                        GlassProbe.install(context).also { probe ->
+                            GlassDiagnostics.event(
+                                "probe_install",
+                                "flags=" + probe.toString()
+                            )
+                        }
                     }
+                    GlassDiagnostics.state(
+                        "settings_bar_blur",
+                        "value=${SettingsLibrary.BarBlurEffect}"
+                    )
                     // offsetY 是播放器唯一的连续状态：拖拽、点击和系统返回都只驱动它
                     val offsetY = remember("MainActivity_offsetY") { Animatable(0f) }
                     val parentHeight =
@@ -287,6 +311,14 @@ class MainActivity : BaseActivity() {
                     }
                     val dragOffsetY = remember("MainActivity_dragOffsetY") {
                         mutableFloatStateOf(0f)
+                    }
+                    // 本次拖拽手势中壳是否发生过**真实位移**。dragActive 只代表手势
+                    // 被接管：按住不动、或朝已顶死的方向拉（如收起态向下拉）时它也是
+                    // true，但壳纹丝不动——材质过渡层若以它为判据，会在壳没有任何
+                    // 位移时闪现动画期半透明材质。置位见 playerDragState（coerce 前后
+                    // 有差值才算动过），清除见 onDragStopped。
+                    val shellDragDisplaced = remember("MainActivity_shellDragDisplaced") {
+                        mutableStateOf(false)
                     }
                     // 音量条/进度条等控件按下即占用本次手势：shell 的竖直收起拖拽必须让位。
                     // 否则手指先上下移动（触发收起判定）再左右移动时，
@@ -355,6 +387,80 @@ class MainActivity : BaseActivity() {
                         val searchNavController = rememberNavController()
                         val selectedHouse = rememberSaveable(key = "MainActivity_selectedHouse") {
                             mutableStateOf(HouseId.Home)
+                        }
+                        val activeHouseController = when (selectedHouse.value) {
+                            HouseId.Home -> homeNavController
+                            HouseId.Library -> libraryNavController
+                            HouseId.Search -> searchNavController
+                        }
+                        // Key the observation to its controller so a tab switch cannot briefly
+                        // reuse the previous retained house's entry before the new flow emits.
+                        val activeEntry = key(activeHouseController) {
+                            activeHouseController.currentBackStackEntryAsState()
+                        }
+                        val rootEntry = rootNavController.currentBackStackEntryAsState()
+                        GlassDiagnostics.state(
+                            "navigation",
+                            "house=${selectedHouse.value} active=${activeEntry.value?.destination?.route} root=${rootEntry.value?.destination?.route}"
+                        )
+                        val navigationKey = "${selectedHouse.value}:${activeEntry.value?.id}:${activeEntry.value?.destination?.route}"
+                        val navigationSettling = remember("MainActivity_navigationSettling") {
+                            mutableStateOf(false)
+                        }
+                        val previousNavigationKey = remember("MainActivity_previousNavigationKey") {
+                            mutableStateOf<String?>(null)
+                        }
+                        LaunchedEffect(navigationKey) {
+                            if (previousNavigationKey.value == null) {
+                                previousNavigationKey.value = navigationKey
+                                navigationSettling.value = false
+                            } else if (previousNavigationKey.value != navigationKey) {
+                                previousNavigationKey.value = navigationKey
+                                navigationSettling.value = true
+                                delay(450L)
+                                navigationSettling.value = false
+                            }
+                        }
+                        GlassDiagnostics.state(
+                            "page_transitioning",
+                            "artist=${ArtistPageAppearance.hasTransitioningRegistration()} nav=${navigationSettling.value}"
+                        )
+                        androidx.compose.runtime.SideEffect {
+                            ArtistPageAppearance.activeEntryId.value = if (rootEntry.value?.destination?.route == "shared_empty") {
+                                activeEntry.value?.id
+                            } else null
+                        }
+                        val defaultScrimColor = rememberUpdatedState(Color.White withNight Color.Black)
+                        // tint 通道与遮罩同源同进度（见 ArtistPageAppearance.blendedTintColor）：
+                        // 注册色即各页已提取的调色板 State，绘制期整形为玻璃着色。
+                        // isDark 经 rememberUpdatedState 进闭包，绘制期读取不触发重组。
+                        val isNightForTint = rememberUpdatedState(isFlamingoInDarkMode())
+                        val tintColorProvider: () -> Color = remember(activeEntry) {
+                            {
+                                ArtistPageAppearance.blendedTintColor(
+                                    default = Color.Transparent,
+                                    activeId = activeEntry.value?.id
+                                ) { source -> accentTintOf(source, isNightForTint.value) }
+                            }
+                        }
+                        val scrimColorProvider: () -> Color = remember(
+                            activeEntry, rootEntry, defaultScrimColor
+                        ) {
+                            {
+                                // SharedNavHost's empty destination exposes the selected house.
+                                // Any shared overlay must stop sampling the artist beneath it.
+                                if (rootEntry.value?.destination?.route == "shared_empty") {
+                                    // 不再只取当前 entry 的注册色：把每个生效的艺人页注册按其
+                                    // 进出场过渡进度混入默认色——进度与页面淡入淡出同帧同曲线，
+                                    // 遮罩换色因此与页面进退场共享同一时机（详见 ArtistPageAppearance）。
+                                    ArtistPageAppearance.blendedScrimColor(
+                                        default = defaultScrimColor.value,
+                                        activeId = activeEntry.value?.id
+                                    )
+                                } else {
+                                    defaultScrimColor.value
+                                }
+                            }
                         }
                         val appNavigator = remember {
                             AppNavigator(
@@ -623,6 +729,28 @@ class MainActivity : BaseActivity() {
                         }
 
 
+                        // 播放页歌手名 → 艺人主页：在**用户当前所在的房子**（Tab）内
+                        // push ArtistDetail，再收回播放页——收回动画揭示的正是艺人页，
+                        // 且系统返回自然逐层回退到打开播放页前的停留位置。
+                        // 多歌手串（「A、B」）只取第一个：ArtistDetail 按单个歌手名精确解析。
+                        // 防抖按单层原则放在最外层导航发起方；栈顶已是同名艺人页则只收回不重复入栈。
+                        val openArtistFromPlayer: (String) -> Unit = { rawName ->
+                            val name = rawName.toMultipleArtists().firstOrNull()?.trim().orEmpty()
+                            if (name.isNotEmpty() && name != defaultArtistsName) {
+                                val topEntry = activeEntry.value
+                                val alreadyThere =
+                                    topEntry?.destination?.route == UI.ArtistDetailPattern &&
+                                        topEntry.arguments?.getString(UI.ArtistDetailNameArg) == name
+                                if (!alreadyThere) NavGuard.run {
+                                    activeHouseController.navigate(
+                                        UI.artistDetailRoute(artistId = null, artistName = name)
+                                    )
+                                }
+                                animatePlayerTo(0f)
+                            }
+                        }
+
+
                         val showNowPlaying = remember("MainActivity_showNowPlaying") {
                             derivedStateOf {
                                 // 对齐参考 Flamingo 源码的 menuAlpha < 0.3（即 progress > 0.7）：
@@ -701,10 +829,18 @@ class MainActivity : BaseActivity() {
 
                         val navBackdropBackground = MaterialTheme.colorScheme.background
                         val navBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
+                            GlassDiagnostics.tick(
+                                "nav_backdrop_producer",
+                                "size=${size.width.toInt()}x${size.height.toInt()}"
+                            )
                             // Producer 的全屏底层保持黑色；页面视觉层仍单独使用主题背景。
                             drawRect(Color.Black)
                             drawContent()
                         }
+                        GlassDiagnostics.state(
+                            "nav_backdrop",
+                            "instance=${System.identityHashCode(navBackdrop)} producerAlways=${glassProbe.producerAlwaysMounted}"
+                        )
                         YosWrapper {
                             val isNight = isFlamingoInDarkMode()
                             val systemUiController = rememberSystemUiController()
@@ -782,6 +918,7 @@ class MainActivity : BaseActivity() {
                                     pageScale = pageScale,
                                     pageCorner = pageCorner,
                                     pageBackground = navBackdropBackground,
+                                    scrimColorProvider = scrimColorProvider,
                                     bottomScrimHeight = bottomScrimHeight,
                                     // 渐隐段 = 迷你条自身高度：屏幕底到迷你条底边是
                                     // 纯 65% 不透明，再在迷你条高度内渐隐到顶边为 0。
@@ -818,10 +955,11 @@ class MainActivity : BaseActivity() {
                                     defaultLibrary = defaultLibrary,
                                     defaultSearch = defaultSearch,
                                     bottomBarWidthPx = bottomBarWidthPx,
+                                    containerTintProvider = tintColorProvider,
                                     height = height,
                                     isSplitMode = isSplitMode,
                                     parentWidth = parentWidth,
-                                    glassProbe = glassProbe
+                                    glassProbe = glassProbe,
                                 )
                             }
 
@@ -982,18 +1120,35 @@ class MainActivity : BaseActivity() {
                                     }
                                     val shellShape: androidx.compose.ui.graphics.Shape =
                                         RoundedRectangle(shellRadiusDp)
-                                    // 展开/关闭动画期间，外壳表面统一为 80% 纯色（浅色=白 / 深色=黑），
-                                    // 液态玻璃与 Haze 两种材质都采用；动画期不做模糊采样，静止后恢复各自材质。
-                                    val shellAnimating = dragActive.value ||
+                                    // 展开/关闭动画期间，外壳表面统一为纯色过渡层，液态玻璃与
+                                    // Haze 两种材质都采用；动画期不做模糊采样，静止后恢复各自材质。
+                                    // "动画中" = 壳真实位移中：拖拽发生过位移（shellDragDisplaced）
+                                    // 或落位动画在跑（playerMotionJob）。不能用 dragActive——它
+                                    // 在手指一接管就置 true，按住不动/朝顶死方向拉时壳没有位移，
+                                    // 材质不该切换。
+                                    // 过渡层颜色与不透明度均跟随迷你条区域的底栏渐隐遮罩
+                                    // （scrimColorProvider + bottomScrimAlpha）：默认主题下仍是
+                                    // 白/黑 + 0.65，艺人页会随页面取色混合，动画覆盖层与迷你条
+                                    // 周围环境观感一致（取值见下方 drawBehind）。
+                                    val shellAnimating = shellDragDisplaced.value ||
                                         playerMotionJob.value != null
-                                    val shellAnimFill = Color.White withNight Color.Black
-                                    // 盖层不透明度：动画期 0.8（见下方覆盖层 0.8f 系数），结束时 0
-                                    // （露出原材质）。两个方向都用 0.2s 过渡，避免瞬间切换。
-                                    val animFillAlpha by animateFloatAsState(
-                                        targetValue = if (shellAnimating) 1f else 0f,
-                                        animationSpec = tween(durationMillis = 200),
-                                        label = "shellAnimFillAlpha"
-                                    )
+                                    // 玻璃边缘带按深浅色分两套配方（数值与 ClassYaba LiquidButton 一致）。
+                                    val shellIsNight = isFlamingoInDarkMode()
+                                    // 盖层 alpha：进入动画期**直切打满**（组合期 if 短路读常数 1，
+                                    // 与表面/背景停画门禁同帧生效）——若淡入，门禁已停画的头几帧
+                                    // 盖层还接近 0，材质层又是空的，整壳呈全透明闪变；退回静止时
+                                    // 保留 0.2s 淡出（Animatable 从 1 渐到 0，露出原材质）。
+                                    val shellFillAnim = remember("MainActivity_shellFillAnim") {
+                                        Animatable(0f)
+                                    }
+                                    LaunchedEffect(shellAnimating) {
+                                        if (shellAnimating) {
+                                            shellFillAnim.snapTo(1f)
+                                        } else {
+                                            shellFillAnim.animateTo(0f, tween(durationMillis = 200))
+                                        }
+                                    }
+                                    val animFillAlpha = if (shellAnimating) 1f else shellFillAnim.value
                                     val shellShadowElevation by animateDpAsState(
                                         targetValue = if (shellAnimating) 0.dp else 4.dp,
                                         animationSpec = tween(durationMillis = 200),
@@ -1014,6 +1169,22 @@ class MainActivity : BaseActivity() {
                                             // 约为行程的 0.22，拖过约 1/5 即果断展开。
                                             finalOffset >= anchor * 0.22f -> 1f
                                             else -> 0f
+                                        }
+
+                                        // 空转短路：壳已顶死在落点端点上（无位移手势直接松手——
+                                        // 按住不动/收起态向下拉，或位移后又拖回端点），落位动画
+                                        // 在 updateBounds 钳制下不会产生任何位移。此时不能启动
+                                        // 动画 Job："动画中"判据含 playerMotionJob 非空，空转 Job
+                                        // 会把材质过渡层直切打满再淡出——表现就是松手闪一下。
+                                        // 簿记对齐静止态即可：dragActive 落 false；offsetY 本就停
+                                        // 在该端点（拖拽只写 dragOffsetY，不碰 offsetY），无需
+                                        // snapTo；morph 状态未被本次手势触碰，保持静止态的 null。
+                                        val pinnedAtTarget =
+                                            (target == 0f && finalOffset <= 0f) ||
+                                                    (target == 1f && finalOffset >= anchor)
+                                        if (pinnedAtTarget) {
+                                            dragActive.value = false
+                                            return
                                         }
 
                                         playerMotionJob.value?.cancel()
@@ -1063,8 +1234,14 @@ class MainActivity : BaseActivity() {
                                         }
                                         val anchor = yosBottomSheetConfig.expandedAnchorPx
                                         if (anchor > 0f) {
+                                            val before = dragOffsetY.floatValue
                                             dragOffsetY.floatValue =
-                                                (dragOffsetY.floatValue + delta).coerceIn(0f, anchor)
+                                                (before + delta).coerceIn(0f, anchor)
+                                            // coerce 后没有变化 = 壳已顶到边界、视觉上没动
+                                            // （收起态向下拉 / 展开态向上拉），不置位，材质不变。
+                                            if (dragOffsetY.floatValue != before) {
+                                                shellDragDisplaced.value = true
+                                            }
                                         }
                                     }
 
@@ -1077,6 +1254,39 @@ class MainActivity : BaseActivity() {
                                         drawContent()
                                     }
                                     val playerOverlayHost = remember { TitleOverlayHost() }
+                                    GlassDiagnostics.state(
+                                        "shell_gate",
+                                        "barBlur=${SettingsLibrary.BarBlurEffect} shellGlass=${glassProbe.shellGlass} " +
+                                                "radius=${shellRadiusDp.value} progressBucket=${(yosBottomSheetConfig.progress * 10f).toInt()} " +
+                                                "animating=$shellAnimating " +
+                                                "backdropDraw=${glassProbe.shellBackdropDraw}"
+                                    )
+                                    val shellAnimatingForDraw by rememberUpdatedState(
+                                        shellAnimating
+                                    )
+                                    val shellProgressForDraw by rememberUpdatedState(yosBottomSheetConfig.progress)
+                                    val shellBackdropDrawEnabled by rememberUpdatedState(glassProbe.shellBackdropDraw)
+                                    val shellColorForDraw by rememberUpdatedState(color)
+                                    val shellSurfaceAlphaForDraw by rememberUpdatedState(hazeSurfaceAlpha)
+                                    val liquidShellOnDrawBackdrop: DrawScope.(DrawScope.() -> Unit) -> Unit =
+                                        remember {
+                                            { drawBackdrop ->
+                                                if (!shellAnimatingForDraw &&
+                                                    shellBackdropDrawEnabled &&
+                                                    shellProgressForDraw < 0.55f
+                                                ) {
+                                                    drawBackdrop()
+                                                }
+                                            }
+                                        }
+                                    val plainShellOnDrawBackdrop: DrawScope.(DrawScope.() -> Unit) -> Unit =
+                                        remember {
+                                            { drawBackdrop ->
+                                                if (!shellAnimatingForDraw && shellProgressForDraw < 0.55f) {
+                                                    drawBackdrop()
+                                                }
+                                            }
+                                        }
                                     CompositionLocalProvider(
                                         LocalTitlePageBackdrop provides playerBackdrop,
                                         LocalTitleOverlayHost provides playerOverlayHost,
@@ -1126,8 +1336,7 @@ class MainActivity : BaseActivity() {
                                                             // （各 ~17.7ms 的近全屏离屏记录，已在下方运动期置 null），
                                                             // vibrancy/lens 量级小但同样可省；blur 在已记录的层上
                                                             // 只值 0-2ms，故运动期照留——模糊质感不丢。
-                                                            val animating = dragActive.value ||
-                                                                playerMotionJob.value != null
+                                                            val animating = shellAnimatingForDraw
                                                             if (glassProbe.shellBlur) {
                                                                 blur(4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade))
                                                             }
@@ -1143,35 +1352,34 @@ class MainActivity : BaseActivity() {
                                                                 }
                                                             }
                                                         },
-                                                        // backdrop 1.0.5 的高光/阴影每帧都会以当前节点尺寸
-                                                        // record 一次离屏层；外壳展开时节点高度逐帧变化，
-                                                        // 两个近全屏离屏层被反复重建，是展开掉帧的主因。
-                                                        // 同机同协议实测（gfxinfo reset -> tap -> 2.5s）：
-                                                        // 摘掉任一个，帧耗时中位数 42.7ms -> ~25ms；而单独
-                                                        // 摘 blur 或 lens 只值 0-2ms。香草音乐（backdrop 作者
-                                                        // 的第二代实现 backdrop2）整个 APK 里 BlurMaskFilter
-                                                        // 出现 0 次——这两层是它压根不存在的东西。
-                                                        // 所以运动期间（拖拽中 / 动画 Job 存活）直接摘掉，
-                                                        // 落定后再淡回；静止的迷你条材质满配、观感无损失。
-                                                        // 摘的方式是让 lambda 返回 null（库内 `highlight()
-                                                        // == null` 会跳过整次 record），而不是把 highlight
-                                                        // 参数本身换成 null——后者会改 Modifier 拓扑，让节点
-                                                        // 在动画中途重建，读数和观感都不干净。
-                                                        // progress>=0.5 的旧门禁保留：那时 backdrop 会硬切
-                                                        // highlight，描边若仍接近满不透明度会跳变。
+                                                        // 黑边环绕高光（数值与 ClassYaba LiquidButton blackSideHighlight
+                                                        // 完全一致）：WrapHighlightStyle 沿轮廓整圈连续，左右最深、
+                                                        // 上下保留 baseline=0.4，黑边不会在上下消失。白色提亮高光
+                                                        // 由下方 emptyBackdrop 覆盖层单独叠加。
+                                                        // 门禁保留：运动期 / progress>=0.5 / 探针 nohigh 时为 null
+                                                        // （库内 highlight 每帧 record 离屏层，展开掉帧主因）。
                                                         highlight = {
                                                             if (!glassProbe.shellHighlight ||
-                                                                shellInMotion(glassProbe, dragActive.value,
+                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
-                                                            else com.kyant.backdrop.highlight.Highlight.Default.copy(
-                                                                alpha = 1f - yosBottomSheetConfig.edgeFade
+                                                            else Highlight.Default.copy(
+                                                                width = if (shellIsNight) 0.4f.dp else 0.5f.dp,
+                                                                blurRadius = if (shellIsNight) 0.1f.dp else 0.2f.dp,
+                                                                alpha = 1f,
+                                                                style = WrapHighlightStyle(
+                                                                    color = Color.Black.copy(alpha = if (shellIsNight) 0.4f else 0.5f),
+                                                                    blendMode = BlendMode.SrcOver,
+                                                                    angle = 0f,
+                                                                    falloff = 0.9f,
+                                                                    baseline = 0.4f
+                                                                )
                                                             )
                                                         },
                                                         shadow = {
                                                             if (!glassProbe.shellShadow ||
-                                                                shellInMotion(glassProbe, dragActive.value,
+                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1181,27 +1389,22 @@ class MainActivity : BaseActivity() {
                                                                 alpha = 1f - smoothStep(0f, 0.50f, yosBottomSheetConfig.progress)
                                                             )
                                                         },
-                                                        onDrawBackdrop = { drawBackdrop ->
-                                                            // 0.55 起 surface 底色已完全不透明（见 onDrawSurface），
-                                                            // 停画省掉后半程离屏 blur/lens 合成（实测 3~7%→~2%）。
-                                                            // 动画期整块停画：由统一的 95% 纯色过渡层接管。
-                                                            if (!shellAnimating &&
-                                                                glassProbe.shellBackdropDraw &&
-                                                                yosBottomSheetConfig.progress < 0.55f
-                                                            ) {
-                                                                drawBackdrop()
-                                                            }
-                                                        },
+                                                        onDrawBackdrop = liquidShellOnDrawBackdrop,
                                                         onDrawSurface = {
-                                                            // 动画期不画材质表面：由统一的 95% 纯色过渡层接管，
+                                                            // 动画期不画材质表面：由统一的纯色过渡层接管（颜色
+                                                            // 与 alpha 均跟随底栏遮罩），
                                                             // 避免与过渡遮罩重复叠加。
-                                                            if (!shellAnimating) {
-                                                                // 前半程保持玻璃白纱 0.5*(1-p)；0.35~0.55 渐入不透明底色，
-                                                                // 之后壳体为实底，半透明的播放内容不会透出未模糊主页。
-                                                                // smoothStep 连续无跳变，终态与内容不透明后的观感一致。
-                                                                val underlay = smoothStep(0.35f, 0.55f, yosBottomSheetConfig.progress)
-                                                                val tint = 0.5f * (1f - yosBottomSheetConfig.progress)
-                                                                drawRect(color.copy(alpha = maxOf(tint, underlay)))
+                                                            if (!shellAnimatingForDraw) {
+                                                                val underlay = smoothStep(0.35f, 0.55f, shellProgressForDraw)
+                                                                val tint = 0.5f * (1f - shellProgressForDraw)
+                                                                drawRect(shellColorForDraw.copy(alpha = maxOf(tint, underlay)))
+                                                                // 提取色 tint 画在表面色之上、描边高光之下（高光由库画在
+                                                                // surface 之后）；随壳展开进度归零，全屏播放页不着色。
+                                                                // 绘制期读取：艺人页转场逐帧只重绘不重组。
+                                                                val shellAccent = tintColorProvider()
+                                                                if (shellAccent.alpha > 0.005f) {
+                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - shellProgressForDraw)))
+                                                                }
                                                             }
                                                         }
                                                     )
@@ -1223,7 +1426,7 @@ class MainActivity : BaseActivity() {
                                                         effects = { blur(12.dp.toPx()) },
                                                         highlight = { null },
                                                         shadow = {
-                                                            if (shellInMotion(glassProbe, dragActive.value,
+                                                            if (shellInMotion(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1232,12 +1435,14 @@ class MainActivity : BaseActivity() {
                                                             )
                                                         },
                                                         innerShadow = { null },
-                                                        onDrawBackdrop = { drawBackdrop ->
-                                                            if (!shellAnimating) drawBackdrop()
-                                                        },
+                                                        onDrawBackdrop = plainShellOnDrawBackdrop,
                                                         onDrawSurface = {
-                                                            if (!shellAnimating) {
-                                                                drawRect(color.copy(alpha = hazeSurfaceAlpha))
+                                                            if (!shellAnimatingForDraw) {
+                                                                drawRect(shellColorForDraw.copy(alpha = shellSurfaceAlphaForDraw))
+                                                                val shellAccent = tintColorProvider()
+                                                                if (shellAccent.alpha > 0.005f) {
+                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - shellProgressForDraw)))
+                                                                }
                                                             }
                                                         }
                                                     )
@@ -1245,19 +1450,108 @@ class MainActivity : BaseActivity() {
                                                     Modifier.background(color, shellShape)
                                                 }
                                             )
-                                            // 动画期 80% 纯色覆盖层（0.2s 过渡淡入淡出）：动画开始淡入到
-                                            // 80%，结束淡出露出原材质；两方向均 0.2s，不瞬间切换。
-                                            // 液态玻璃与关闭液态玻璃（Kyant drawBackdrop）两种材质都启用：
-                                            // 关闭玻璃的分支表面层在动画期停画，若没有这层接管颜色，
-                                            // 迷你条会从"85% 表面色"跳到"模糊内容透底"再跳回——
+                                            // 动画期纯色覆盖层（0.2s 过渡淡入淡出）：动画开始淡入，
+                                            // 结束淡出露出原材质；两方向均 0.2s，不瞬间切换。
+                                            // 颜色与不透明度都跟随底栏渐隐遮罩（scrimColorProvider +
+                                            // bottomScrimAlpha，见文件级常量注释），与迷你条周围
+                                            // 环境观感同源。液态玻璃与关闭液态玻璃（Kyant
+                                            // drawBackdrop）两种材质都启用：关闭玻璃的分支表面层
+                                            // 在动画期停画，若没有这层接管颜色，迷你条会从
+                                            // "85% 表面色"跳到"模糊内容透底"再跳回——
                                             // 这就是静止态与动画态色差的来源。
                                             .then(
                                                 if (animFillAlpha > 0.001f) {
-                                                    Modifier.background(
-                                                        shellAnimFill.copy(alpha = 0.8f * animFillAlpha),
-                                                        shellShape
-                                                    )
+                                                    // 取值在绘制期读取（scrimColorProvider 读的都是快照
+                                                    // 状态）：艺人页转场逐帧混色只失效重绘，不重组这棵
+                                                    // 壳作用域；drawBehind 与 background 语义等价（画在
+                                                    // 后续内容之后/之下），只是把取值时机推迟到 draw。
+                                                    Modifier.drawBehind {
+                                                        // drawRect 没有 shape 参数：圆角矩形用 drawOutline
+                                                        // 画（语义等价 background(color, shellShape)）。
+                                                        drawOutline(
+                                                            outline = shellShape.createOutline(
+                                                                size,
+                                                                layoutDirection,
+                                                                this
+                                                            ),
+                                                            color = scrimColorProvider()
+                                                                .copy(alpha = bottomScrimAlpha * animFillAlpha)
+                                                        )
+                                                    }
                                                 } else Modifier
+                                            )
+                                            // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight
+                                            // 一致）：angle=90 直上直下，亮在上下直边；挂在 emptyBackdrop 上
+                                            // 不再采样玻璃内容，不会盖住下层的黑色环绕高光。门禁与黑边一致。
+                                            .then(
+                                                Modifier.drawBackdrop(
+                                                    backdrop = emptyBackdrop(),
+                                                    shape = { shellShape },
+                                                    effects = {},
+                                                    highlight = {
+                                                        if (!glassProbe.shellHighlight ||
+                                                            shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                playerMotionJob.value != null) ||
+                                                            yosBottomSheetConfig.progress >= 0.5f
+                                                        ) null
+                                                        else Highlight.Default.copy(
+                                                            width = 1f.dp,
+                                                            blurRadius = if (shellIsNight) 0.5f.dp else 0.1f.dp,
+                                                            alpha = if (shellIsNight) 1f else 0.8f,
+                                                            style = HighlightStyle.Default(
+                                                                color = Color.White.copy(alpha = if (shellIsNight) 0.1f else 0.2f),
+                                                                blendMode = BlendMode.Plus,
+                                                                angle = 90f,
+                                                                falloff = 1f
+                                                            )
+                                                        )
+                                                    },
+                                                    shadow = { null },
+                                                    innerShadow = { null },
+                                                    onDrawBackdrop = { },
+                                                    onDrawSurface = {
+                                                        // 上下高光的内阴影延伸：顶部高光向下、底部高光向上
+                                                        // 各拉一条白色内渐变带，颜色与白高光一致、同用 Plus
+                                                        // 叠加。画在本层 surface 记录内（复用已有图层、不新增
+                                                        // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
+                                                        // 门禁与白高光一致。
+                                                        if (!glassProbe.shellHighlight ||
+                                                            shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                playerMotionJob.value != null) ||
+                                                            yosBottomSheetConfig.progress >= 0.5f
+                                                        ) {
+                                                            // 运动期/展开期不画
+                                                        } else {
+                                                            val glowColor = Color.White.copy(
+                                                                alpha = if (shellIsNight) 0.1f else 0.2f
+                                                            )
+                                                            val glowH = 6.dp.toPx()
+                                                            // 顶边高光向下渐隐
+                                                            drawRect(
+                                                                brush = Brush.verticalGradient(
+                                                                    0f to glowColor,
+                                                                    1f to Color.Transparent,
+                                                                    startY = 0f,
+                                                                    endY = glowH
+                                                                ),
+                                                                size = Size(size.width, glowH),
+                                                                blendMode = BlendMode.Plus
+                                                            )
+                                                            // 底边高光向上渐隐
+                                                            drawRect(
+                                                                brush = Brush.verticalGradient(
+                                                                    0f to Color.Transparent,
+                                                                    1f to glowColor,
+                                                                    startY = size.height - glowH,
+                                                                    endY = size.height
+                                                                ),
+                                                                topLeft = Offset(0f, size.height - glowH),
+                                                                size = Size(size.width, glowH),
+                                                                blendMode = BlendMode.Plus
+                                                            )
+                                                        }
+                                                    }
+                                                )
                                             )
                                             // 外壳内容坐标系：迷你封面与全屏封面都相对它换算。
                                             .onGloballyPositioned {
@@ -1289,6 +1583,10 @@ class MainActivity : BaseActivity() {
                                                     if (gestureVetoed.value) {
                                                         gestureVetoed.value = false
                                                     } else {
+                                                        // 先清位移标记再落位：settleFromDrag 会同步
+                                                        // 启动落位动画 Job（playerMotionJob 立即非空），
+                                                        // "动画中"判据无缝衔接，盖层不会中途淡出。
+                                                        shellDragDisplaced.value = false
                                                         settleFromDrag(velocity)
                                                     }
                                                 }
@@ -1367,6 +1665,7 @@ class MainActivity : BaseActivity() {
                                                 mainViewModel = mainViewModel,
                                                 mediaViewModel = mediaViewModel,
                                                 navController = rootNavController,
+                                                onOpenArtist = openArtistFromPlayer,
                                                 isPlayingStatusLambda = { isPlaying.value },
                                                 isPlayingOnChanged = {
                                                     isPlaying.value = it
@@ -1391,6 +1690,11 @@ class MainActivity : BaseActivity() {
                                         }
 
                                         // 迷你内容：收起态的遮罩层；壳体扩张后由 Shell clip 自然遮盖，不再用作整页切换。
+                                        // 迷你条不参与自适应亮度（底栏/迷你条已放弃适配），provide null
+                                        // 让消费方回退主题色；保留 CompositionLocalProvider 结构最小化 diff。
+                                        CompositionLocalProvider(
+                                            LocalGlassContentColor provides null
+                                        ) {
                                         BoxWithConstraints(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -1489,6 +1793,9 @@ class MainActivity : BaseActivity() {
                                                             Modifier.padding(start = 8.dp, end = 5.dp),
                                                             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                                                         ) {
+                                                            val adaptiveMiniColor =
+                                                                LocalGlassContentColor.current
+                                                                    ?: (Color.Black withNight Color.White)
                                                             Text(
                                                                 text = MediaController.musicPlaying.value?.title
                                                                     ?: defaultTitle,
@@ -1497,7 +1804,7 @@ class MainActivity : BaseActivity() {
                                                                 lineHeight = 12.sp,
                                                                 maxLines = 1,
                                                                 overflow = TextOverflow.Ellipsis,
-                                                                color = Color.Black withNight Color.White
+                                                                color = adaptiveMiniColor
                                                             )
                                                             Text(
                                                                 text = MediaController.musicPlaying.value?.artists ?: "",
@@ -1506,7 +1813,7 @@ class MainActivity : BaseActivity() {
                                                                 lineHeight = 11.sp,
                                                                 maxLines = 1,
                                                                 overflow = TextOverflow.Ellipsis,
-                                                                color = (Color.Black withNight Color.White).copy(alpha = 0.6f)
+                                                                color = adaptiveMiniColor.copy(alpha = 0.6f)
                                                             )
                                                         }
                                                     }
@@ -1539,6 +1846,7 @@ class MainActivity : BaseActivity() {
                                                     }
                                                 }
                                             }
+                                        }
                                         }
 
                                         // 外壳封面 morph：形变过程中由这一层单独绘制封面，
@@ -1584,62 +1892,88 @@ class MainActivity : BaseActivity() {
         pageScale: State<Float>,
         pageCorner: State<androidx.compose.ui.unit.Dp>,
         pageBackground: Color,
+        scrimColorProvider: () -> Color,
         bottomScrimHeight: Dp,
         bottomScrimFadeHeight: Dp,
         content: @Composable () -> Unit
     ) {
+        GlassDiagnostics.state(
+            "page_geometry",
+            "backdrop=${System.identityHashCode(navBackdrop)} " +
+                    "scale=${(pageScale.value * 1000f).toInt()} corner=${pageCorner.value.value} " +
+                    "scrim=${bottomScrimHeight.value.toInt()} fade=${bottomScrimFadeHeight.value.toInt()}"
+        )
         // This host remains in full-screen coordinates; scaling belongs to its child.
         // 生产者的 LayoutCoordinates 决定玻璃消费端（底栏/迷你条）的采样映射，
         // 因此它必须留在全屏坐标系里；缩放只作用于其子节点。
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .layerBackdrop(navBackdrop)
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    // 页面缩放必须走**绘制期 canvas 变换**，不能用 graphicsLayer：
-                    // graphicsLayer 会引入离屏层，而 scale 每帧变化 → 该全屏离屏层每帧重建，
-                    // 连带子树里的 backdrop 生产者每帧按全屏尺寸重录（实测提交阶段 8.3ms、
-                    // 等待 RenderThread 5.6ms）。canvas 变换只改绘制矩阵，不建层。
-                    // 实测展开动画满帧 77.5%→87.4%，且**模糊与页面后退效果都保留**。
-                    .drawWithContent {
-                        scale(pageScale.value, pivot = center) {
-                            this@drawWithContent.drawContent()
-                        }
-                    }
-                    .graphicsLayer {
-                        shape = RoundedCornerShape(pageCorner.value)
-                        clip = true
-                    }
-                    .background(pageBackground)
+                    .layerBackdrop(navBackdrop)
             ) {
-                content()
-                // 底栏渐隐遮罩：覆盖底栏与迷你条所占的整段底部区域（下边界=页面底，
-                // 上边界=迷你条顶边）。屏幕底到迷你条底边之间是 65% 不透明的实心段
-                // （即 35% 透明），再在迷你条高度内线性渐隐到顶边为 0。位置在页面
-                // 内容之上、底栏/迷你条之下；同时因为它留在 layerBackdrop 的录制
-                // 范围内，底栏与迷你条的玻璃采样到的就是已经压暗/提亮的内容，两者
-                // 色调一致。颜色随应用内主题：浅色用白、深色用黑。
-                //
-                // 必须挂在这层缩放+裁剪的页面里，而不是外层全屏 Box：否则展开/收起
-                // 播放器时页面缩小、四周露出黑色背景，遮罩却仍按全屏宽度绘制，白色
-                // 就会溢到缩小的页面之外的黑底上（浅色模式尤甚）。放在此处它会随
-                // 页面一起缩放并被圆角裁掉，始终不越出页面边界。
-                if (bottomScrimHeight > 0.dp) {
-                    // 渐隐段占整块遮罩的高度比例：0 在顶边，1 在页面底。实心段从
-                    // 这个比例一直延伸到底边。
-                    val fadeFraction =
-                        (bottomScrimFadeHeight / bottomScrimHeight).coerceIn(0f, 1f)
-                    val scrimColor = Color.White withNight Color.Black
-                    val scrimAlpha = 0.65f
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 页面缩放必须走**绘制期 canvas 变换**，不能用 graphicsLayer：
+                        // graphicsLayer 会引入离屏层，而 scale 每帧变化 → 该全屏离屏层每帧重建，
+                        // 连带子树里的 backdrop 生产者每帧按全屏尺寸重录（实测提交阶段 8.3ms、
+                        // 等待 RenderThread 5.6ms）。canvas 变换只改绘制矩阵，不建层。
+                        // 实测展开动画满帧 77.5%→87.4%，且**模糊与页面后退效果都保留**。
+                        .drawWithContent {
+                            scale(pageScale.value, pivot = center) {
+                                this@drawWithContent.drawContent()
+                            }
+                        }
+                        .graphicsLayer {
+                            shape = RoundedCornerShape(pageCorner.value)
+                            clip = true
+                        }
+                        .background(pageBackground)
+                ) {
+                    content()
+                }
+            }
+
+            // 底栏渐隐遮罩：覆盖底栏与迷你条所占的整段底部区域（下边界=页面底，
+            // 上边界=迷你条顶边）。屏幕底到迷你条底边之间是 65% 不透明的实心段
+            // （即 35% 透明），再在迷你条高度内线性渐隐到顶边为 0。位置在页面
+                            // 内容之上、底栏/迷你条之下。可见艺人页使用其背景色（且随其进出场
+                            // 过渡同步混入/混出），其他页面回退主题白/黑。
+            //
+            // **刻意画在 layerBackdrop 录制子树之外**：65% 遮罩会把玻璃采样输入
+            // 压成均匀色，blur/lens 无纹理可透，底栏呈现"纯色板"。玻璃改为采样
+            // 未遮罩的页面内容（纹理保留），遮罩只负责底栏周边的视觉压暗；可读性
+            // 由自适应内容色 + 自适应表面纱承担。遮罩仍复制页面的 scale+圆角裁剪
+            // 变换，展开/收起播放器时与页面同缩放、不越出页面边界。
+            if (bottomScrimHeight > 0.dp) {
+                // 渐隐段占整块遮罩的高度比例：0 在顶边，1 在页面底。实心段从
+                // 这个比例一直延伸到底边。
+                val fadeFraction =
+                    (bottomScrimFadeHeight / bottomScrimHeight).coerceIn(0f, 1f)
+                val scrimAlpha = bottomScrimAlpha
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawWithContent {
+                            scale(pageScale.value, pivot = center) {
+                                this@drawWithContent.drawContent()
+                            }
+                        }
+                        .graphicsLayer {
+                            shape = RoundedCornerShape(pageCorner.value)
+                            clip = true
+                        }
+                ) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .height(bottomScrimHeight)
                             .drawBehind {
+                                // Read the registered animated State in draw, not composition:
+                                // the artist's existing color animation directly drives each frame.
+                                val scrimColor = scrimColorProvider()
                                 drawRect(
                                     brush = Brush.verticalGradient(
                                         colorStops = arrayOf(
@@ -1670,7 +2004,8 @@ class MainActivity : BaseActivity() {
         height: androidx.compose.runtime.MutableIntState,
         isSplitMode: Boolean,
         parentWidth: androidx.compose.runtime.MutableIntState,
-        glassProbe: yos.music.player.code.utils.others.GlassProbe
+        glassProbe: yos.music.player.code.utils.others.GlassProbe,
+        containerTintProvider: () -> Color,
     ) {
 YosWrapper {
     val density = LocalDensity.current
@@ -1749,6 +2084,7 @@ YosWrapper {
                 containerGlassEnabled = glassProbe.navContainerGlass,
                 hiddenProducerEnabled = glassProbe.navHiddenProducer,
                 tabGlassEnabled = glassProbe.navTabGlass,
+                containerTintProvider = containerTintProvider,
                 modifier = if (effectiveSplitMode) {
                     Modifier
                         .width(splitBarWidthDp)
@@ -1935,6 +2271,11 @@ fun readFile(path: String): String? {
         null
     }
 }
+
+// 底栏渐隐遮罩的基础不透明度。播放器展开/收回动画覆盖层的颜色与透明度
+// 都跟随同一来源（遮罩颜色取 scrimColorProvider，alpha 取本常量），
+// 保证动画期外壳与迷你条周围环境观感一致。两处必须同源，改这里即同步。
+private const val bottomScrimAlpha = 0.65f
 
 private fun routeToPrimaryTabIndex(route: String?): Int = when (route) {
     UI.HomePage -> 0
@@ -2516,6 +2857,11 @@ private fun TabletMiniContent(
             modifier = Modifier.weight(1f),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
         ) {
+            // 自适应内容色（迷你条收起态由 MainActivity provide）：null 回退主题色
+            val adaptiveMiniColor =
+                LocalGlassContentColor.current ?: (Color.Black withNight Color.White)
+            val adaptiveSubColor =
+                LocalGlassContentColor.current?.copy(alpha = 0.6f) ?: subTitleColor
             Text(
                 text = MediaController.musicPlaying.value?.title ?: defaultTitle,
                 fontWeight = FontWeight.Medium,
@@ -2523,7 +2869,7 @@ private fun TabletMiniContent(
                 lineHeight = 16.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                color = Color.Black withNight Color.White
+                color = adaptiveMiniColor
             )
             Text(
                 text = MediaController.musicPlaying.value?.artists ?: "",
@@ -2532,7 +2878,7 @@ private fun TabletMiniContent(
                 lineHeight = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                color = subTitleColor
+                color = adaptiveSubColor
             )
         }
         Spacer(modifier = Modifier.width(10.dp))

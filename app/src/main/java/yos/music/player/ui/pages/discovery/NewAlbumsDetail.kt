@@ -32,6 +32,7 @@ import yos.music.player.R
 import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
@@ -135,8 +136,10 @@ fun NewAlbumsDetail(
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope
             ) {
-                OnlineAlbumObject.setSelected(album)
-                navController.toUI(UI.OnlineAlbumDetail)
+                NavGuard.run {
+                    OnlineAlbumObject.setSelected(album)
+                    navController.navigate(UI.onlineAlbumRoute(album.albumId))
+                }
             }
         }
 

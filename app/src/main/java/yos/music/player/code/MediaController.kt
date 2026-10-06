@@ -666,39 +666,101 @@ object MediaController {
     private val lyricCoordinator = LyricLoadCoordinator()
     private val lyricParseLock = Any()
 
+    private val lyricHandler = Handler(Looper.getMainLooper())
+    private const val LYRIC_PUBLISH_MAX_RETRIES = 5
+    private const val LYRIC_PUBLISH_RETRY_INTERVAL_MS = 800L
+
     private fun isOnlineMedia(mediaId: String?): Boolean =
         mediaId?.startsWith("kugou-online-") == true
 
     /**
      * 把歌词以 LyricInfo 协议写入当前媒体条目的元数据 extras，随 MediaSession 发布给系统，
      * 供 HyperLyric（小米超级岛）与 ColorOS 锁屏歌词等组件读取。
+     *
+     * 发布统一投递主线程执行（media3 MediaController 禁止跨线程访问）；当前条目尚未就绪
+     * （控制器未连上/切歌未落地）时定时重试，歌词先于播放态就绪不再被静默丢弃
+     * （对齐 MD3Music 的"推送先于首次元数据发布不得丢弃"兜底）。
      */
     fun publishSuperIslandLyric(mediaId: String?, entries: List<LyricEntry>) {
         if (!SettingsLibrary.SuperIslandLyricEnabled) return
         if (mediaId == null) return
-        updateSuperIslandExtra(mediaId) { item -> LyricInfoSerializer.encode(item, entries) }
+        requestLyricPublish(mediaId, entries)
     }
 
     /** 无视开关直接移除当前条目的歌词元数据，供关闭开关时清理。 */
     fun removeSuperIslandLyric() {
-        updateSuperIslandExtra(mediaId = null) { null }
+        requestLyricPublish(mediaId = null, entries = null)
     }
 
-    private fun updateSuperIslandExtra(mediaId: String?, encode: (MediaItem) -> String?) {
-        runCatching {
-            val controller = mediaControl ?: return
+    /** 待发布目标：mediaId 为 null 表示清理当前条目；entries 为 null 表示移除歌词键。 */
+    private var lyricPublishTarget: Pair<String?, List<LyricEntry>?>? = null
+    private var lyricPublishRunnable: Runnable? = null
+    private var lyricPublishAttempts = 0
+
+    /**
+     * 会话代次（LyricInfo 协议 §5）：仅在真实换曲（mediaId 变化）时递增，同曲重推不递增，
+     * 供消费端拒绝同会话过期 payload。
+     */
+    private var lyricSessionGeneration = 0
+    private var lyricGenerationMediaId: String? = null
+
+    private fun lyricGenerationFor(mediaId: String): Int {
+        if (mediaId != lyricGenerationMediaId) {
+            lyricGenerationMediaId = mediaId
+            lyricSessionGeneration++
+        }
+        return lyricSessionGeneration
+    }
+
+    private fun requestLyricPublish(mediaId: String?, entries: List<LyricEntry>?) {
+        lyricHandler.post {
+            lyricPublishRunnable?.let { lyricHandler.removeCallbacks(it) }
+            lyricPublishTarget = mediaId to entries
+            lyricPublishAttempts = 0
+            runLyricPublish()
+        }
+    }
+
+    private fun runLyricPublish() {
+        val target = lyricPublishTarget ?: return
+        val (mediaId, entries) = target
+        // 歌曲已切走：放弃旧目标（新一轮请求会覆盖 pending），不做无意义重试。
+        if (mediaId != null && musicPlaying.value?.mediaId != mediaId) {
+            lyricPublishTarget = null
+            return
+        }
+        val generation = if (mediaId != null) lyricGenerationFor(mediaId) else 0
+        val settled = updateSuperIslandExtra(mediaId) { item ->
+            if (entries == null) null else LyricInfoSerializer.encode(item, entries, generation)
+        }
+        if (settled || lyricPublishAttempts >= LYRIC_PUBLISH_MAX_RETRIES) {
+            lyricPublishTarget = null
+            return
+        }
+        lyricPublishAttempts++
+        val run = Runnable { runLyricPublish() }
+        lyricPublishRunnable = run
+        lyricHandler.postDelayed(run, LYRIC_PUBLISH_RETRY_INTERVAL_MS)
+    }
+
+    /**
+     * @return true 表示目标已终结（已发布/已清理/内容无变化），false 表示条目未就绪需重试。
+     */
+    private fun updateSuperIslandExtra(mediaId: String?, encode: (MediaItem) -> String?): Boolean {
+        try {
+            val controller = mediaControl ?: return false
             val index = controller.currentMediaItemIndex
-            if (index == C.INDEX_UNSET) return
+            if (index == C.INDEX_UNSET) return false
             val item = controller.getMediaItemAt(index)
-            if (mediaId != null && item.mediaId != mediaId) return
+            if (mediaId != null && item.mediaId != mediaId) return false
 
             val json = encode(item)
             val oldExtras = item.mediaMetadata.extras
             val oldValue = oldExtras?.getString(LyricInfoSerializer.EXTRAS_KEY)
             if (json == null) {
-                if (oldValue == null) return
+                if (oldValue == null) return true
             } else if (json == oldValue) {
-                return
+                return true
             }
 
             val extras = Bundle(oldExtras ?: Bundle.EMPTY)
@@ -708,13 +770,21 @@ object MediaController {
                 extras.putString(LyricInfoSerializer.EXTRAS_KEY, json)
             }
 
-            // media3 的 MediaMetadata.equals 不比较 extras 内容（只比 null 与否），
-            // 仅改 extras 的 replaceMediaItem 不会触发 framework 元数据重发布。
-            // 先把 extras 置空发布一帧，再写入带歌词的 extras，用两次"不相等"强制重发布。
-            val clearedMetadata = item.mediaMetadata.buildUpon().setExtras(null).build()
-            controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(clearedMetadata).build())
+            // media3 的 MediaMetadata.equals 不比较 extras 内容（只比 null 与否，1.4.0 源码
+            // MediaMetadata.java equals 末行为 ((extras == null) == (that.extras == null))）。
+            // 旧 extras 为 null 时，null→非 null 一次提交即可触发框架元数据重发布；
+            // 旧 extras 非 null（本工程条目普遍自带 ArtistId/AlbumId 等 extras）时两次提交
+            // 的元数据按 equals 相等、不会重发布，必须先把 extras 置空发布一帧，再写入带
+            // 歌词的 extras，用两次"不相等"强制重发布。
+            if (oldExtras != null) {
+                val clearedMetadata = item.mediaMetadata.buildUpon().setExtras(null).build()
+                controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(clearedMetadata).build())
+            }
             val updatedMetadata = item.mediaMetadata.buildUpon().setExtras(extras).build()
             controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(updatedMetadata).build())
+            return true
+        } catch (_: Exception) {
+            return false
         }
     }
 

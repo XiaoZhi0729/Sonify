@@ -2,7 +2,8 @@ package yos.music.player.ui.pages.settings
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -167,9 +168,10 @@ fun LabelItem(
     title: String,
     desc: String? = null,
     superLink: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
     onClick: (() -> Unit)?
 ) =
-    DefaultItem(enabled = enabled, title = title, titleHighLight = superLink, desc = desc, onClick = onClick) {
+    DefaultItem(enabled = enabled, title = title, titleHighLight = superLink, desc = desc, onClick = onClick, onLongClick = onLongClick) {
         if (!superLink) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_action_next), contentDescription = title,
@@ -213,11 +215,13 @@ fun SwitchItem(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun DefaultItem(
     enabled: Boolean = true,
     title: String,
     titleHighLight: Boolean = false,
     desc: String? = null,
+    onLongClick: (() -> Unit)? = null,
     onClick: (() -> Unit)?,
     backIcon: (@Composable () -> Unit)? = null
 ) {
@@ -225,8 +229,12 @@ fun DefaultItem(
         Modifier
             .fillMaxWidth()
             .then(
-                if (onClick == null) Modifier else Modifier.clickable(enabled) {
-                    onClick()
+                when {
+                    onClick == null && onLongClick == null -> Modifier
+                    onClick == null -> Modifier.combinedClickable(enabled = enabled, onLongClick = onLongClick) { }
+                    else -> Modifier.combinedClickable(enabled = enabled, onLongClick = onLongClick) {
+                        onClick()
+                    }
                 }
             )
             .padding(horizontal = 15.dp, vertical = 11.dp)

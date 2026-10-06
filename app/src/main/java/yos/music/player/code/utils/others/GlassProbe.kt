@@ -46,6 +46,9 @@ data class GlassProbe(
     val shellBlur: Boolean = true,
     /** 是否绘制 backdrop 内容（保留表面色与形状）。开关：nobd */
     val shellBackdropDraw: Boolean = true,
+    /** 壳的自适应亮度（采样录制 + colorControls/blur 调制 + 迷你条内容色）。
+     * record 复用 backdrop 绘制门禁（静止期才有），采样 250ms 一拍。开关：nolum */
+    val shellLuminance: Boolean = true,
     /** 是否挂壳内那层全屏 LayerBackdrop 生产者。开关：noproducer */
     val shellProducer: Boolean = true,
     /** 壳内背景光效是否绘制。它每帧 invalidate，逼着全屏生产者重录。开关：nobgeff */
@@ -153,6 +156,7 @@ data class GlassProbe(
             "nolens" to { copy(shellLens = false) },
             "noblur" to { copy(shellBlur = false) },
             "nobd" to { copy(shellBackdropDraw = false) },
+            "nolum" to { copy(shellLuminance = false) },
             "noproducer" to { copy(shellProducer = false) },
             "nobgeff" to { copy(shellBackgroundEffect = false) },
             "dropdecor" to { copy(dropDecorationsInMotion = true) },

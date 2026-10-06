@@ -166,7 +166,7 @@ fun SearchPage(
     }
 
     val loadingText = stringResource(id = R.string.online_playlists_loading)
-    val emptyText = stringResource(id = R.string.tip_no_song)
+    val emptyText = stringResource(id = R.string.search_no_result)
     val requestFailedText = stringResource(id = R.string.search_request_failed)
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -675,6 +675,8 @@ private fun AlbumGrid(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable {
                                 SharedCoverStyle.lastSourceCorner = 8.dp
+                                // 记录来源 key：详情页据此与本卡封面配对
+                                OnlineAlbumObject.setSharedCoverKey(album.albumId, "album/online/${album.albumId}")
                                 preloadScope.launch {
                                     preloadRawCover(context, album.coverUrl)
                                     onAlbumClick(album)

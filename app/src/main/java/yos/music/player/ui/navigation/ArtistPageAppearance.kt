@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 
 /** 一个注册页对底栏遮罩的贡献：页面背景色 + 其进出场过渡进度。 */
 class ScrimRegistration internal constructor(
@@ -47,6 +48,9 @@ object ArtistPageAppearance {
 
     fun colorFor(id: String): Color? = registrations[id]?.color?.value
 
+    fun hasTransitioningRegistration(): Boolean =
+        registrations.values.any { it.transition.transitioning.value }
+
     /**
      * 底栏遮罩颜色 = 默认主题色之上，把每个「对当前画面生效」的注册页按其进出场
      * 过渡进度 lerp 到该页背景色。计入条件：progress>0 且（是当前活跃 entry，或
@@ -67,6 +71,50 @@ object ArtistPageAppearance {
         return result
     }
 
+    /**
+     * 底栏 tint 通道：与 [blendedScrimColor] 同一批注册、同一条进度，但每个注册色先经
+     * [tintOf] 整形成玻璃着色（源即提取色 State，无需页面侧另行注册）。
+     *
+     * 混合语义与 scrim 完全一致（连续 lerp，定版裁决）：
+     * - 后注册者（更新的页面）后参与 lerp、占比更重，push 时 tint 先随新页淡入；
+     * - pop 回已 settle 的上一页时结果是 lerp(上一页tint, 退出页tint, p)——p≈1 时
+     *   即退出页色，随 p 衰减单调滑回，起点无跳变；
+     * - alpha 每步 lerp 恒 ≤1，多页叠加不会越混越实。
+     * 已知边界：色相差异大的两页交叉时中点会经过低 alpha 混色过渡带，tint 浓度
+     * 有限且画在玻璃面内，观感是环境色晕渐变而非色带，接受。
+     */
+    fun blendedTintColor(default: Color, activeId: String?, tintOf: (Color) -> Color): Color {
+        var result = default
+        for ((id, registration) in registrations) {
+            val progress = registration.transition.progress.value
+            if (progress <= 0f) continue
+            if (id != activeId && !registration.transition.transitioning.value) continue
+            result = lerp(result, tintOf(registration.color.value), progress.coerceIn(0f, 1f))
+        }
+        return result
+    }
+
+}
+
+/** tint 绘制浓度（玻璃面内、surface 色之上），与遮罩 [bottomScrimAlpha]（见 MainActivity）相互独立。 */
+internal const val bottomTintAlphaLight = 0.45f
+internal const val bottomTintAlphaDark = 0.40f
+
+/**
+ * 提取色 → 玻璃面 tint：HSV 整形以「忠实还原」为目标，只钳制不失真——
+ * 饱和度/明度走钳制区间（保留提取色本身的明暗特征，不再钉死成单一粉彩/暗辉值，
+ * 此前明度钉 0.80 是底栏取色观感比真提取色浅很多的原因），仅压掉两端极端值
+ * 防脏（过暗发闷）防刺（过亮过饱和）。饱和度 <0.08 的中性色（含调色板未就绪的
+ * 占位白 0xFFF2F2F4 / 占位黑 0xFF1B1B1D）直接返回透明，等价于本页不参与着色。
+ */
+internal fun accentTintOf(source: Color, isDark: Boolean): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(source.toArgb(), hsv)
+    if (hsv[1] < 0.08f) return Color.Transparent
+    hsv[1] = if (isDark) hsv[1].coerceIn(0.40f, 0.90f) else hsv[1].coerceIn(0.35f, 0.85f)
+    hsv[2] = if (isDark) hsv[2].coerceIn(0.30f, 0.60f) else hsv[2].coerceIn(0.55f, 0.92f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+        .copy(alpha = if (isDark) bottomTintAlphaDark else bottomTintAlphaLight)
 }
 
 /**

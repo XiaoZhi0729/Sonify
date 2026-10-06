@@ -90,6 +90,7 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.compose.runtime:runtime-livedata:1.10.2'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     testImplementation 'com.squareup.okhttp3:okhttp-tls:4.12.0'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
@@ -107,6 +108,9 @@ dependencies {
     implementation 'androidx.compose.material:material-icons-extended:1.6.8'
 
     implementation "io.coil-kt:coil-compose:2.5.0"
+
+    // 艺人详情页头像取色（Palette 主色 → 页面背景/渐变过渡）
+    implementation "androidx.palette:palette-ktx:1.0.0"
 
     implementation 'com.google.accompanist:accompanist-insets:0.16.1'
     implementation 'com.google.accompanist:accompanist-insets-ui:0.16.1'

@@ -56,7 +56,10 @@ class LyricInfoSerializerTest {
                 )
             )
         )!!
-        assertEquals("[00:04.000]<00:04.000>编<00:04.700>曲", parse(json).get("rawLyric").asString)
+        assertEquals(
+            "[00:04.000]<00:04.000>编<00:04.700>曲<00:05.200>",
+            parse(json).get("rawLyric").asString
+        )
     }
 
     @Test
@@ -69,7 +72,7 @@ class LyricInfoSerializerTest {
             )
         )!!
         val rawLyric = parse(json).get("rawLyric").asString
-        assertEquals("[00:01.000]普通行\n[00:02.000]<00:02.000>词", rawLyric)
+        assertEquals("[00:01.000]普通行\n[00:02.000]<00:02.000>词<00:03.000>", rawLyric)
     }
 
     @Test
@@ -81,7 +84,10 @@ class LyricInfoSerializerTest {
                 LyricEntry(mainLyric = listOf(9000f to "", 9000f to "第二行"), translation = null)
             )
         )!!
-        assertEquals("[00:04.713]译文", parse(json).get("translation").asString)
+        val obj = parse(json)
+        // 规范键 translationLyric + 旧别名 translation，内容一致
+        assertEquals("[00:04.713]译文", obj.get("translationLyric").asString)
+        assertEquals("[00:04.713]译文", obj.get("translation").asString)
     }
 
     @Test
@@ -90,7 +96,9 @@ class LyricInfoSerializerTest {
             songName = "t", artist = "a", album = null, songId = null,
             entries = listOf(LyricEntry(mainLyric = listOf(1000f to "", 1000f to "原文")))
         )!!
-        assertNull(parse(json).get("translation"))
+        val obj = parse(json)
+        assertNull(obj.get("translation"))
+        assertNull(obj.get("translationLyric"))
     }
 
     @Test
@@ -133,5 +141,44 @@ class LyricInfoSerializerTest {
             entries = listOf(LyricEntry(mainLyric = listOf(1000f to "", 1000f to "词")))
         )
         assertTrue(json != null && parse(json!!).get("lyric").asString == "[00:01.000]词")
+    }
+
+    @Test
+    fun `协议建议字段齐全且代次按传入写入`() {
+        val json = LyricInfoSerializer.encode(
+            songName = "歌", artist = "手", album = "专", songId = "id-9",
+            entries = listOf(LyricEntry(mainLyric = listOf(1000f to "", 1000f to "词"))),
+            sessionGeneration = 7
+        )!!
+        val obj = parse(json)
+        assertEquals(0, obj.get("lyricType").asInt)
+        assertEquals(false, obj.get("noLyric").asBoolean)
+        assertEquals("com.sonify.music", obj.get("provider").asString)
+        assertEquals("com.sonify.music-v1", obj.get("source").asString)
+        assertEquals("id-9|歌|手", obj.get("trackKey").asString)
+        assertEquals(7, obj.get("sessionGeneration").asInt)
+    }
+
+    @Test
+    fun `代次为零与身份为空时相应字段缺省`() {
+        val json = LyricInfoSerializer.encode(
+            songName = "", artist = "手", album = null, songId = null,
+            entries = listOf(LyricEntry(mainLyric = listOf(1000f to "", 1000f to "词"))),
+            sessionGeneration = 0
+        )!!
+        val obj = parse(json)
+        assertFalse(obj.has("sessionGeneration"))
+        assertFalse(obj.has("songId"))
+        // 无 mediaId 且无歌名：无可稳定身份键
+        assertFalse(obj.has("trackKey"))
+    }
+
+    @Test
+    fun `无 songId 时 trackKey 退化为歌名加歌手身份`() {
+        val json = LyricInfoSerializer.encode(
+            songName = "歌", artist = "手", album = null, songId = null,
+            entries = listOf(LyricEntry(mainLyric = listOf(1000f to "", 1000f to "词")))
+        )!!
+        assertEquals("|歌|手", parse(json).get("trackKey").asString)
     }
 }

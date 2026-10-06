@@ -122,6 +122,20 @@ fun artistDetailArguments() = listOf(
     }
 )
 
+/** 在线专辑详情路由参数：albumId 定位专辑；sourceArtistId 为来源歌手（可空 = 非艺人来源）。 */
+fun onlineAlbumArguments() = listOf(
+    navArgument(UI.OnlineAlbumIdArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    },
+    navArgument(UI.OnlineAlbumSourceArtistArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    }
+)
+
 @Immutable
 enum class HouseId(
     val rootRoute: String,

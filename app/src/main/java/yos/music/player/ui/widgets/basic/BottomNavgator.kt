@@ -42,7 +42,9 @@ fun BottomNavigator(
     /** 底栏玻璃的三个子项，逐一对应消融位 navcontainer / navhidden / navtab。 */
     containerGlassEnabled: Boolean = true,
     hiddenProducerEnabled: Boolean = true,
-    tabGlassEnabled: Boolean = true
+    tabGlassEnabled: Boolean = true,
+    /** 容器玻璃面的提取色 tint（见 LiquidBottomTabs.containerTintProvider）。 */
+    containerTintProvider: (() -> Color)? = null
 ) {
     // 单一状态源：selectedIndex 由底栏自身持有，
     // 路由变化通过 externalIndex 在 LaunchedEffect 中异步回投，
@@ -59,7 +61,9 @@ fun BottomNavigator(
         }
     }
     val dark = isFlamingoInDarkMode()
-    val contentColor = if (dark) Color.White else Color.Black
+    // 玻璃容器启用自适应亮度时（LocalGlassContentColor 非 null），Tab 图标/文字
+    // 跟随背后亮度黑↔白；否则保持主题静态色
+    val contentColor = LocalGlassContentColor.current ?: if (dark) Color.White else Color.Black
     val accentColor = if (dark) primaryDark else primary
 
     val selectTab: (Int) -> Unit = { index ->
@@ -96,7 +100,8 @@ fun BottomNavigator(
             solidCapsule = solidCapsule,
             containerGlassEnabled = containerGlassEnabled,
             hiddenProducerEnabled = hiddenProducerEnabled,
-            tabGlassEnabled = tabGlassEnabled
+            tabGlassEnabled = tabGlassEnabled,
+            containerTintProvider = containerTintProvider
         ) {
             items.forEachIndexed { index, item ->
                 LiquidBottomTab(onClick = { selectTab(index) }) {

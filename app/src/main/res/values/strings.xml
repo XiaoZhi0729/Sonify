@@ -49,6 +49,7 @@
     <string name="kugou_phone_choose_account_title">Choose Account</string>
     <string name="kugou_phone_choose_account_subtitle">This phone number is linked to multiple Kugou accounts. Choose one to sign in.</string>
     <string name="kugou_logout">Log out</string>
+    <string name="kugou_logout_confirm">Are you sure you want to log out of your Kugou account?</string>
     <string name="kugou_vip_sign_in_title">VIP Check-in</string>
     <string name="kugou_vip_status_header">Membership</string>
     <string name="kugou_vip_listen_member">Listening VIP</string>
@@ -279,6 +280,9 @@
     <string name="settings_others_diag_desc">Writes playback events to app storage. Screen-off silence, auto-skip storms and buffering stalls can only be located afterwards with it.</string>
     <string name="settings_others_diag_export">Export Diagnostics</string>
     <string name="settings_others_diag_hint">The report bundles a policy snapshot, key events and the log tail. It can also be pulled with adb from Android/data/&lt;package&gt;/files/logs.</string>
+    <string name="settings_others_reset">Reset All Settings</string>
+    <string name="settings_others_reset_confirm">All settings will be restored to their defaults. This cannot be undone. Your login session and library data are not affected.</string>
+    <string name="settings_others_reset_done">All settings have been reset</string>
     <string name="diag_export_busy">Collecting…</string>
     <string name="diag_export_size">%1$s already on disk. Tap to build a report and share it.</string>
     <string name="diag_export_fail">Export failed: the log directory is not writable.</string>
@@ -345,6 +349,8 @@
     <string name="online_playlist_track_remove_confirm">Remove \"%1$s\" from this playlist?</string>
     <string name="common_search">Search</string>
     <string name="search_no_result">No results</string>
+    <string name="settings_others_about_developer_mode">Developer Mode</string>
+    <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">Check for updates</string>
     <string name="update_auto_check">Check for updates automatically</string>
     <string name="update_checking">Checking for updates…</string>
