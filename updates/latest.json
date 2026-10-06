@@ -1,39 +1,54 @@
 {
   "schemaVersion": 1,
   "applicationId": "com.sonify.music",
-  "versionCode": 2,
-  "versionName": "0.1.1",
-  "publishedAt": "2026-10-04T13:39:33.8580494+00:00",
+  "versionCode": 3,
+  "versionName": "0.1.2",
+  "publishedAt": "2026-10-06T12:06:30.5658449+00:00",
   "minSdk": 23,
-  "abis": ["arm64-v8a", "armeabi-v7a"],
-  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.1/Sonify-v0.1.1.apk",
-  "apkSize": 11302449,
-  "sha256": "a2cf28bec88562751b5995045d84b26049383a7f4b0e3fdc5f5312c353986fdf",
-  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.1",
+  "abis": [
+    "arm64-v8a",
+    "armeabi-v7a"
+  ],
+  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.2/Sonify-v0.1.2.apk",
+  "apkSize": 11434266,
+  "sha256": "15a0d079adaa2bd5c271d4fd35c4bcd436d6db2df13580c56d46d1c4986e1941",
+  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.2",
   "releaseNotes": {
     "en": [
-      "Add in-app update checks, download progress, cancellation and system installation.",
-      "Add daily recommendations, personal FM, online artists and playlist management.",
-      "Improve song crossfade handoff and fix cancellation, timeout and list synchronization issues.",
-      "Refresh glass dialogs, sorting menus and screen corner adaptation."
+      "Rebuilt the online artist experience: Apple Music style artist page, dedicated pages for hot songs and all albums, and each artist in a compilation is individually clickable.",
+      "Followed artists now sync with Kugou's followed-singer list and follow the account.",
+      "The artist name on the player opens the artist page; album, lyrics and playlist switching uses smoother animations without flashing.",
+      "Fixed the pause-before-resume when seeking while streaming, and added a disk cache so reversing the progress bar no longer refetches from the network.",
+      "Fixed vertical layout of word-timed lyrics while keeping the karaoke highlight, and added an artist tab with paged album, playlist and lyric results to search.",
+      "Fixed back-gesture stack leaks across tabs and dead tap/scroll areas below the lyric controls.",
+      "Improved glass materials and motion: progressive top bar blur, bottom bar and mini player tint, and player shell material following the scrim."
     ],
     "zh-CN": [
-      "新增应用内检查更新、下载进度、取消下载与系统安装入口。",
-      "新增每日推荐、私人 FM、在线艺人和歌单管理。",
-      "优化歌曲平滑过渡，修复切歌取消、解析超时与列表状态不同步问题。",
-      "统一玻璃对话框，优化排序菜单和屏幕圆角适配。"
+      "重做在线艺人体系：艺人详情页改为 Apple Music 式布局，热门歌曲与全部专辑有独立二级页，合辑中的每位作者可逐个点击。",
+      "在线收藏艺人接入酷狗「我关注的歌手」，收藏跟随账号同步。",
+      "播放页歌手名可点击跳转艺人主页；专辑、歌词与播放列表的切换动画重做，切换不再闪烁。",
+      "修复在线拖动进度条会先暂停再播放的问题，并为在线音频加入磁盘缓存，回退进度不再重新联网拉取。",
+      "修复逐字歌词竖排错位并保留逐字高亮，搜索页新增歌手分类和专辑、歌单、歌词滚动分页。",
+      "修复系统返回手势串栈，以及歌词控件收起后下半屏点击与滚动失效。",
+      "优化玻璃材质与动效：顶栏渐进模糊、底栏与迷你播放条取色，以及播放器外壳材质随遮罩同步。"
     ],
     "zh-TW": [
-      "新增應用程式內檢查更新、下載進度、取消下載與系統安裝入口。",
-      "新增每日推薦、私人 FM、線上藝人和歌單管理。",
-      "改善歌曲平滑過渡，修正切歌取消、解析逾時與列表狀態不同步問題。",
-      "統一玻璃對話框，改善排序選單與螢幕圓角適配。"
+      "重做線上藝人體系：藝人詳情頁改為 Apple Music 式版面，熱門歌曲與全部專輯有獨立二級頁，合輯中的每位作者可逐一點擊。",
+      "線上收藏藝人接入酷狗「我關注的歌手」，收藏跟隨帳號同步。",
+      "播放頁歌手名可點擊跳轉藝人主頁；專輯、歌詞與播放清單的切換動畫重做，切換不再閃爍。",
+      "修正線上拖動進度條會先暫停再播放的問題，並為線上音訊加入磁碟快取，回退進度不再重新連網拉取。",
+      "修正逐字歌詞直排錯位並保留逐字高亮，搜尋頁新增歌手分類與專輯、歌單、歌詞捲動分頁。",
+      "修正系統返回手勢串棧，以及歌詞控制項收起後下半螢幕點擊與捲動失效。",
+      "改善玻璃材質與動效：頂欄漸進模糊、底欄與迷你播放列取色，以及播放器外殼材質隨遮罩同步。"
     ],
     "ja": [
-      "アプリ内の更新確認、ダウンロード進捗、キャンセル、システムによるインストールを追加。",
-      "毎日のおすすめ、パーソナル FM、オンラインアーティスト、プレイリスト管理を追加。",
-      "曲のクロスフェードを改善し、キャンセル、タイムアウト、リストの同期問題を修正。",
-      "ガラス調のダイアログ、並べ替えメニュー、画面の角の表示を改善。"
+      "オンラインアーティストを刷新：Apple Music 風のアーティストページ、人気曲と全アルバムの専用ページ、コンピレーション内の各アーティストを個別に開けるように。",
+      "オンラインでフォローしたアーティストを Kugou のフォロー中シンガーと同期し、アカウントに追従。",
+      "再生ページのアーティスト名からアーティストページへ移動可能に。アルバム・歌詞・プレイリストの切り替えアニメーションを改善し、ちらつきを解消。",
+      "ストリーミング中のシークで一時停止してから再生される問題を修正し、ディスクキャッシュを追加して巻き戻し時の再取得を解消。",
+      "縦表示での単語単位の歌詞のずれを修正し、カラオケハイライトを維持。検索にアーティスト分類とアルバム・プレイリスト・歌詞のページングを追加。",
+      "タブ間の戻るジェスチャーのスタック不具合と、歌詞コントロールを閉じた後の下半分のタップ・スクロール不能を修正。",
+      "ガラス素材とモーションを改善：上部バーの段階的ブラー、下部バーとミニプレーヤーの色抽出、プレーヤー外殻素材のスクリム連動。"
     ]
   }
 }
