@@ -80,6 +80,9 @@ dependencies {
     implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
     implementation 'androidx.activity:activity-compose:1.9.1'
+    // 运行时经 activity-compose 1.13.0 传递引入；AppTabsShell 直接 provide 其
+    // LocalNavigationEventDispatcherOwner 做 house 级返回隔离，需编译期可见
+    implementation 'androidx.navigationevent:navigationevent-compose:1.0.0'
 
     implementation "androidx.compose.foundation:foundation:1.10.2"
     implementation "androidx.compose.animation:animation:1.10.2"

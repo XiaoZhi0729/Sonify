@@ -3,8 +3,9 @@ package yos.music.player.ui.navigation
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
@@ -13,6 +14,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,11 +49,24 @@ fun AppTabsShell(
         label = "search-house-alpha"
     )
 
-    LaunchedEffect(selectedHouse) {
-        homeController.enableOnBackPressed(selectedHouse == HouseId.Home)
-        libraryController.enableOnBackPressed(selectedHouse == HouseId.Library)
-        searchController.enableOnBackPressed(selectedHouse == HouseId.Search)
+    // ---------- 系统返回隔离（侧滑串栈 bug 的修复，详见 HouseBackDispatcherOwner） ----------
+    // 三个 house 各持一个私有 NavigationEventDispatcher；house 内所有 BackHandler（含
+    // NavHost 内置那条、弹层）都注册到自己的 dispatcher。系统返回只经下面这条 bridge
+    // 转发进当前 house —— 隐藏 house 的栈再深也吃不到返回事件。
+    val context = LocalContext.current
+    val homeBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
+    val libraryBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
+    val searchBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
+    val activeBackOwner = when (selectedHouse) {
+        HouseId.Home -> homeBackOwner
+        HouseId.Library -> libraryBackOwner
+        HouseId.Search -> searchBackOwner
     }
+    // bridge 常开：house 内有 enabled 回调（弹层开着或返回栈深>1）→ 转发；house 为空
+    // （已在根且无弹层）→ owner 的 onBackCompletedFallback 兜底退出 Activity。
+    // 常开不影响优先级更靠后的 activity 级回调（展开播放器、根 NavHost）——它们注册
+    // 在本 bridge 之后，系统派发先于本 bridge。
+    BackHandler(enabled = true) { activeBackOwner.dispatchBack() }
 
     Box(modifier) {
         HouseLayer(
@@ -56,6 +74,7 @@ fun AppTabsShell(
             active = selectedHouse == HouseId.Home,
             drawWhenHidden = probe.houseLayersDrawWhenHidden,
             modulateAlpha = probe.houseModulateAlpha,
+            backOwner = homeBackOwner,
         ) {
             HomeNavHost(homeController, navigator)
         }
@@ -64,6 +83,7 @@ fun AppTabsShell(
             active = selectedHouse == HouseId.Library,
             drawWhenHidden = probe.houseLayersDrawWhenHidden,
             modulateAlpha = probe.houseModulateAlpha,
+            backOwner = libraryBackOwner,
         ) {
             LibraryNavHost(libraryController, navigator)
         }
@@ -72,6 +92,7 @@ fun AppTabsShell(
             active = selectedHouse == HouseId.Search,
             drawWhenHidden = probe.houseLayersDrawWhenHidden,
             modulateAlpha = probe.houseModulateAlpha,
+            backOwner = searchBackOwner,
         ) {
             SearchNavHost(searchController, navigator)
         }
@@ -84,6 +105,7 @@ private fun HouseLayer(
     active: Boolean,
     drawWhenHidden: Boolean,
     modulateAlpha: Boolean,
+    backOwner: HouseBackDispatcherOwner,
     content: @Composable () -> Unit
 ) {
     Box(
@@ -113,6 +135,16 @@ private fun HouseLayer(
             )
             .semantics { if (!active) invisibleToUser() }
     ) {
-        content()
+        // 子树内所有 BackHandler 的注册目标从 activity 级根 dispatcher 换成 house 私有
+        // dispatcher。activity-compose 1.13 的 BackHandler 优先读
+        // LocalNavigationEventDispatcherOwner（ViewTree 回退永远命中根，故必须 provide
+        // 新 local 才能截住），旧 local 一并 provide 作兜底；LocalLifecycleOwner 不动，
+        // 仍是 activity，NavHost/页面里依赖它的生命周期观察不受影响。
+        CompositionLocalProvider(
+            androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner provides backOwner,
+            LocalOnBackPressedDispatcherOwner provides backOwner
+        ) {
+            content()
+        }
     }
 }
