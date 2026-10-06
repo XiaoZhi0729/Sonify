@@ -150,9 +150,11 @@
     <string name="queue_sort_duration_desc">时长从长到短</string>
     <string name="common_cancel">取消</string>
     <string name="search_type_song">歌曲</string>
+    <string name="search_type_artist">歌手</string>
     <string name="search_type_album">专辑</string>
     <string name="search_type_special">歌单</string>
     <string name="search_type_lyric">歌词</string>
+    <string name="search_request_failed">请求失败</string>
     <string name="search_history">搜索历史</string>
     <string name="search_hot">热搜榜</string>
     <string name="search_clear_history">清空</string>

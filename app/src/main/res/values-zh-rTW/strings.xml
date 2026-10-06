@@ -53,6 +53,12 @@
     <string name="page_library_title">資料庫</string>
     <string name="page_discovery_title">新發現</string>
     <string name="page_search_title">搜尋</string>
+    <string name="search_type_song">歌曲</string>
+    <string name="search_type_artist">歌手</string>
+    <string name="search_type_album">專輯</string>
+    <string name="search_type_special">歌單</string>
+    <string name="search_type_lyric">歌詞</string>
+    <string name="search_request_failed">請求失敗</string>
     <string name="common_cancel">取消</string>
     <string name="discovery_coming_soon">新歌、排行榜與精選歌單即將到來…</string>
     <string name="discovery_rank_title">排行榜</string>

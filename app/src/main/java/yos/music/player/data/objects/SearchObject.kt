@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.google.gson.Gson
 import com.tencent.mmkv.MMKV
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.repositories.KugouArtistBrief
 import yos.music.player.data.repositories.KugouLyricSearchResult
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouPlaylistBrief
@@ -22,8 +23,9 @@ import yos.music.player.data.repositories.KugouSearchSong
  * 去重头插、上限 10 条，对齐上游 md3Music search_page.dart。
  */
 object SearchObject {
-    /** 搜索类型（结果 Tab）：song / album / special / lyric。 */
+    /** 搜索类型（结果 Tab）：song / artist / album / special / lyric。 */
     const val TYPE_SONG = "song"
+    const val TYPE_ARTIST = "artist"
     const val TYPE_ALBUM = "album"
     const val TYPE_SPECIAL = "special"
     const val TYPE_LYRIC = "lyric"
@@ -43,6 +45,8 @@ object SearchObject {
     val albumResults = mutableStateOf<List<KugouNewAlbum>>(emptyList())
     val playlistResults = mutableStateOf<List<KugouPlaylistBrief>>(emptyList())
     val lyricResults = mutableStateOf<List<KugouLyricSearchResult>>(emptyList())
+    // /search/artist 上游无分页参数，歌手结果一次性全量返回
+    val artistResults = mutableStateOf<List<KugouArtistBrief>>(emptyList())
 
     /** 各类型已搜到的总数（分页判断用；0=未知）。 */
     val songTotal = mutableStateOf(0)
@@ -104,6 +108,7 @@ object SearchObject {
         albumResults.value = emptyList()
         playlistResults.value = emptyList()
         lyricResults.value = emptyList()
+        artistResults.value = emptyList()
         songTotal.value = 0
         suggestions.value = emptyList()
         currentType.value = TYPE_SONG

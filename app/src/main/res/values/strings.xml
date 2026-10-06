@@ -150,9 +150,11 @@
     <string name="queue_sort_duration_desc">Duration long→short</string>
     <string name="common_cancel">Cancel</string>
     <string name="search_type_song">Songs</string>
+    <string name="search_type_artist">Artists</string>
     <string name="search_type_album">Albums</string>
     <string name="search_type_special">Playlists</string>
     <string name="search_type_lyric">Lyrics</string>
+    <string name="search_request_failed">Request failed</string>
     <string name="search_history">Search History</string>
     <string name="search_hot">Hot Searches</string>
     <string name="search_clear_history">Clear</string>
