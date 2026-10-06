@@ -784,10 +784,17 @@ fun NowPlaying(
                                 ),
                                 label = "PortraitControlAlpha"
                             )
+                            // 淡出结束（alpha==0）后整棵控件移出组合：alpha 只影响绘制不影响
+                            // 命中，常驻子树的进度条/传输键会在歌词上留下幽灵命中区；重显时
+                            // 进度由轮询首帧回读 mediaControl 立即同步，playedTime 等经
+                            // rememberSaveable 保留，无闪变。
+                            val controlMounted by remember {
+                                derivedStateOf { controlAlpha > 0f }
+                            }
                             Box(
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                Column(
+                                if (controlMounted) Column(
                                     Modifier
                                         .fillMaxSize()
                                         .graphicsLayer {
@@ -868,20 +875,6 @@ fun NowPlaying(
                                             }
                                         }
                                     }
-                                }
-
-                                // 收起后控件仍常驻组合（保住进度轮询与滑块位置），这里挡住点击，
-                                // 避免「看不见却能点」的播放键；淡出结束前 alpha 已趋 0，观感一致。
-                                if (!controlVisible) {
-                                    Box(
-                                        modifier = Modifier
-                                            .matchParentSize()
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null,
-                                                onClick = {}
-                                            )
-                                    )
                                 }
                             }
                         }
