@@ -41,7 +41,7 @@
 
 前往 [**Releases**](https://github.com/XiaoZhi0729/Sonify/releases) 页面下载最新 APK 安装包。
 
-> 当前发布版本：**[Sonify v0.1.1](https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.1)（测试版）**。新增应用内更新、完善在线歌单与私人 FM，并修复歌曲切换、列表和玻璃界面问题。项目仍处于早期测试阶段，遇到问题欢迎提 [Issue](https://github.com/XiaoZhi0729/Sonify/issues) 反馈。
+> 当前发布版本：**[Sonify v0.1.2](https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.2)（测试版）**。重做在线艺人页与播放页过渡，修复在线拖动进度、返回手势与歌词控件触发范围问题。项目仍处于早期测试阶段，遇到问题欢迎提 [Issue](https://github.com/XiaoZhi0729/Sonify/issues) 反馈。
 
 > 从 v0.1.0 升级需手动下载并覆盖安装一次；v0.1.1 起可在「设置 → 关于 → 检查更新」获取后续版本。更新仅在用户确认后下载和安装，不会静默安装。
 
