@@ -212,6 +212,8 @@
     <string name="personal_fm_refresh">換一批</string>
     <string name="artist_detail_follow">關注</string>
     <string name="artist_detail_unfollow">已關注</string>
+    <string name="online_artists_login_tip">登入酷狗帳號後查看你關注的歌手</string>
+    <string name="online_artists_empty">還沒有關注的歌手</string>
     <string name="artist_detail_songs">%1$d 首歌曲</string>
     <string name="artist_detail_albums">%1$d 張專輯</string>
     <string name="artist_detail_search_hint">在該歌手內搜尋</string>

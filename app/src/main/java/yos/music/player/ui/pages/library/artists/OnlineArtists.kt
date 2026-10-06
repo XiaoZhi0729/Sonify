@@ -16,12 +16,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,8 +51,13 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import yos.music.player.R
-import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.objects.FollowedArtistsObject
+import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.KugouFollowedArtist
 import yos.music.player.ui.UI
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.SearchTextField
@@ -58,34 +67,63 @@ import yos.music.player.ui.widgets.basic.YosWrapper
 /**
  * 在线艺人选择页（资料库「在线音乐」分区入口）。
  *
- * UI 与 LocalArtists 原样一致（艺人来自本地歌曲元数据聚合），点击后走酷狗歌手详情：
- * artistId 传空，详情页内部按名字 searchArtists 解析。
+ * 数据源 = 酷狗云「我关注的歌手」（[FollowedArtistsObject]，MMKV 持久缓存 + 云端同步），
+ * 不再从本地歌曲元数据聚合。点击直达酷狗歌手详情（列表自带真实 singerid，无需按名解析）。
+ * 未登录时引导去酷狗登录页；登录/登出经 [KugouAccountState] 反应式切换，
+ * LaunchedEffect 按 isLoggedIn 键控重拉（登录页是压栈导航，返回时组合不会重建）。
  */
 @Composable
 fun OnlineArtists(navController: NavController) {
+    val account = KugouAccountState
+
+    LaunchedEffect(account.isLoggedIn) {
+        if (account.isLoggedIn) FollowedArtistsObject.ensureLoaded()
+    }
+
+    val artistsList = FollowedArtistsObject.artists.value
+
     Column(
         Modifier
             .fillMaxSize()
         /*.statusBarsPadding()*/
     ) {
-        val artistsList = MusicLibrary.artists
-
         val searchText = remember("OnlineArtists_searchText") {
             mutableStateOf("")
         }
 
-        val displayArtists = rememberFilteredArtists(artistsList, searchText.value)
-        if (artistsList.isEmpty()) {
-            val message =
-                stringResource(
-                    id = R.string.tip_no_song
-                )
+        val displayArtists = rememberFilteredFollowedArtists(artistsList, searchText.value)
+        if (!account.isLoggedIn) {
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
                     navController.popBackStack()
                 }
             ) {
-                item("tip_no_song") {
+                item("login_tip") {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 20.dp),
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.online_artists_login_tip),
+                            fontSize = 18.sp,
+                            modifier = Modifier.alpha(0.6f)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { navController.navigate(UI.Settings.KugouLogin) }) {
+                            Text(text = stringResource(id = R.string.kugou_phone_login))
+                        }
+                    }
+                }
+            }
+        } else if (artistsList.isEmpty()) {
+            val message = stringResource(id = R.string.online_artists_empty)
+            Title(
+                title = stringResource(id = R.string.page_library_artists), onBack = {
+                    navController.popBackStack()
+                }
+            ) {
+                item("empty_followed") {
                     Column(
                         Modifier
                             .fillMaxSize()
@@ -123,10 +161,12 @@ fun OnlineArtists(navController: NavController) {
 
                 itemsIndexed(
                     displayArtists,
-                    key = { _, artist -> "artist:$artist" }
+                    key = { _, artist -> "artist:${artist.artistId}" }
                 ) { index, artist ->
-                    OnlineArtistItem(artistName = artist) {
-                        navController.navigate(UI.artistDetailRoute(artistId = null, artistName = artist))
+                    OnlineArtistItem(artist = artist) {
+                        navController.navigate(
+                            UI.artistDetailRoute(artistId = artist.artistId, artistName = artist.name)
+                        )
                     }
 
                     if (index < displayArtists.lastIndex) {
@@ -145,10 +185,39 @@ fun OnlineArtists(navController: NavController) {
     }
 }
 
+/**
+ * 按名字过滤收藏艺人（保留完整条目）。防抖/快照语义与 [rememberFilteredArtists] 一致。
+ */
+@Composable
+private fun rememberFilteredFollowedArtists(
+    source: List<KugouFollowedArtist>,
+    query: String
+): List<KugouFollowedArtist> {
+    var filteredArtists by remember { mutableStateOf(source) }
+
+    LaunchedEffect(source, query) {
+        if (query.isEmpty()) {
+            filteredArtists = source
+            return@LaunchedEffect
+        }
+
+        delay(250)
+        val result = withContext(Dispatchers.Default) {
+            source.filter { artist ->
+                artist.name.contains(query, ignoreCase = true)
+            }
+        }
+        // LaunchedEffect resumes on Main after the Default calculation.
+        filteredArtists = result
+    }
+
+    return if (query.isEmpty()) source else filteredArtists
+}
+
 @Composable
 private fun LazyItemScope.OnlineArtistItem(
     modifier: Modifier = Modifier,
-    artistName: String,
+    artist: KugouFollowedArtist,
     onClick: () -> Unit
 ) =
     Row(
@@ -160,7 +229,6 @@ private fun LazyItemScope.OnlineArtistItem(
             .padding(start = 18.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val songs = MusicLibrary.Artist[artistName]
         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
             YosWrapper {
                 val shape = CircleShape
@@ -168,7 +236,7 @@ private fun LazyItemScope.OnlineArtistItem(
                     val density = LocalDensity.current
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(data = songs.getOrNull(0)?.thumb).crossfade(true)
+                            .data(data = artist.avatarUrl).crossfade(true)
                             .error(R.drawable.songcredits_monogram_person)
                             .placeholder(R.drawable.songcredits_monogram_person)
                             .fallback(R.drawable.songcredits_monogram_person)
@@ -213,7 +281,7 @@ private fun LazyItemScope.OnlineArtistItem(
         Spacer(modifier = Modifier.width(15.dp))
         Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
             Text(
-                text = artistName,
+                text = artist.name,
                 fontSize = 16.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

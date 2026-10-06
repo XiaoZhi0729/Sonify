@@ -903,6 +903,24 @@ class KugouApiService private constructor() {
         }
     }
 
+    /**
+     * 我关注的歌手列表（对齐 Dart getUserFollow，kugou_api_client.dart:3507；Rust user.rs handle_follow
+     * → relationuser.kugou.com /v4/follow_list）。token/userid 经 authHeader() cookie 带入，
+     * 加密 body 由 Rust 端自行构造，客户端无需业务参数。需登录。
+     * 返回结构：data.lists[]（多 key 兜底 info/list/fans；条目 singerid/singername/pic 系，由调用方解析）。
+     * 必须 bypass apicache：关注/取关后 2 分钟内重拉列表不能吃到旧缓存。
+     */
+    suspend fun getUserFollowedArtists(): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = userid?.let { mapOf("userid" to it) } ?: emptyMap()
+            httpGetVipBusiness("/user/follow", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "getUserFollowedArtists exception", e)
+            Result.failure(e)
+        }
+    }
+
     /** 歌手搜索（对齐 Dart searchArtists，kugou_api_client.dart:508；Rust search_more.rs:34）：GET /search/artist?keyword=。 */
     suspend fun searchArtists(keyword: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {

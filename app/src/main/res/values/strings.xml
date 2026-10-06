@@ -313,6 +313,8 @@
     <string name="personal_fm_refresh">Refresh</string>
     <string name="artist_detail_follow">Follow</string>
     <string name="artist_detail_unfollow">Following</string>
+    <string name="online_artists_login_tip">Sign in to Kugou to see artists you follow</string>
+    <string name="online_artists_empty">No followed artists yet</string>
     <string name="artist_detail_songs">%1$d songs</string>
     <string name="artist_detail_albums">%1$d albums</string>
     <string name="artist_detail_search_hint">Search in this artist</string>

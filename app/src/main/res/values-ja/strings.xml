@@ -212,6 +212,8 @@
     <string name="personal_fm_refresh">更新</string>
     <string name="artist_detail_follow">フォロー</string>
     <string name="artist_detail_unfollow">フォロー中</string>
+    <string name="online_artists_login_tip">ログインするとフォローしたアーティストを表示できます</string>
+    <string name="online_artists_empty">フォローしたアーティストはまだいません</string>
     <string name="artist_detail_songs">楽曲 %1$d</string>
     <string name="artist_detail_albums">アルバム %1$d</string>
     <string name="artist_detail_search_hint">アーティスト内を検索</string>

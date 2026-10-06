@@ -313,6 +313,8 @@
     <string name="personal_fm_refresh">换一批</string>
     <string name="artist_detail_follow">关注</string>
     <string name="artist_detail_unfollow">已关注</string>
+    <string name="online_artists_login_tip">登录酷狗账号后查看你关注的歌手</string>
+    <string name="online_artists_empty">还没有关注的歌手</string>
     <string name="artist_detail_songs">%1$d 首歌曲</string>
     <string name="artist_detail_albums">%1$d 张专辑</string>
     <string name="artist_detail_search_hint">在该歌手内搜索</string>

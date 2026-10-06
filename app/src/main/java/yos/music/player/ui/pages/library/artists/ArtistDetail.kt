@@ -126,6 +126,8 @@ import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
 import yos.music.player.data.objects.ArtistPresentationCache
+import yos.music.player.data.objects.FollowedArtistsObject
+import yos.music.player.data.objects.KugouFollowedArtist
 import yos.music.player.data.libraries.SettingsLibrary
 import android.widget.Toast
 import yos.music.player.ui.widgets.basic.TitleBar
@@ -365,27 +367,37 @@ fun ArtistDetail(
         }
         val id = resolvedId.value.takeIf { it.isNotBlank() } ?: return
         val userId = account.userid
+        val followedArtist = KugouFollowedArtist(
+            artistId = id,
+            name = detail.value?.name?.takeIf { it.isNotBlank() } ?: artistName,
+            avatarUrl = detail.value?.avatarUrl
+        )
         followBusy.value = true
         val target = !isFollowed.value
         isFollowed.value = target
         ArtistPresentationCache.setFollowed(id, userId.orEmpty(), target)
+        // 乐观回写收藏艺人列表（在线音乐-艺人页的数据源），失败回滚时反转
+        FollowedArtistsObject.applyFollowChange(followedArtist, target)
         scope.launch {
             try {
                 val result = if (target) KugouRepository.followArtist(id) else KugouRepository.unfollowArtist(id)
                 if (account.userid == userId) result.onFailure {
                     isFollowed.value = !target
                     ArtistPresentationCache.setFollowed(id, userId.orEmpty(), !target)
+                    FollowedArtistsObject.applyFollowChange(followedArtist, !target)
                 }
             } catch (e: CancellationException) {
                 if (account.userid == userId) {
                     isFollowed.value = !target
                     ArtistPresentationCache.setFollowed(id, userId.orEmpty(), !target)
+                    FollowedArtistsObject.applyFollowChange(followedArtist, !target)
                 }
                 throw e
             } catch (_: Exception) {
                 if (account.userid == userId) {
                     isFollowed.value = !target
                     ArtistPresentationCache.setFollowed(id, userId.orEmpty(), !target)
+                    FollowedArtistsObject.applyFollowChange(followedArtist, !target)
                 }
             } finally {
                 followBusy.value = false
