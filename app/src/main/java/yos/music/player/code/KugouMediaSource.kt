@@ -8,10 +8,14 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.annotation.StringRes
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import yos.music.player.R
 import yos.music.player.code.utils.others.YosDiagnostics
@@ -20,6 +24,7 @@ import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.QualityIntentResolver
 import yos.music.player.data.repositories.QualityVerdict
 import yos.music.player.data.repositories.KugouRepository
+import java.io.File
 import java.io.IOException
 
 /**
@@ -36,12 +41,22 @@ import java.io.IOException
 @OptIn(UnstableApi::class)
 class KugouResolvingDataSource(
     private val upstream: DataSource,
+    /** 在线流专用的磁盘缓存通道；缓存层不可用时为 null，播放回退为直连。 */
+    private val cachedUpstream: DataSource?,
     private val appContext: Context
 ) : DataSource {
+
+    /**
+     * open() 实际选用的数据源。read/close/getUri 必须跟着它走——upstream 与
+     * cachedUpstream 是两个独立实例，open 走 A、read 走 B 会直接 NPE
+     * （DefaultDataSource 在未 open 的实例上 read，内部 mDataSource 为 null）。
+     */
+    private var active: DataSource = upstream
 
     override fun open(dataSpec: DataSpec): Long {
         val openedAt = SystemClock.elapsedRealtime()
         var resolveHash: String? = null
+        var cacheKey: String? = null
         var resolveStartedAt = openedAt
         val spec = if (dataSpec.uri.scheme == KugouRepository.PLACEHOLDER_SCHEME) {
             val hash = dataSpec.uri.lastPathSegment
@@ -71,14 +86,21 @@ class KugouResolvingDataSource(
             YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, true, null)
             notifyQualityDowngradeIfNeeded(hash, decision)
             println("惰性解析 hash=$hash quality=${decision.tier} source=${decision.source} → $realUrl")
-            dataSpec.buildUpon().setUri(realUrl).build()
+            // 缓存 key 与 CDN URL 解耦：签名 URL 30 分钟就轮换，拿 URL 当 key 缓存永不命中。
+            // 用 "hash:实际档位"（可能低于请求档的降级结果）标识一份字节流，
+            // seek 出缓冲的重开、重播、crossfade 预取才能落到同一份磁盘缓存上。
+            cacheKey = OnlineAudioCache.keyOf(hash, effectiveTierOf(hash, decision.tier))
+            dataSpec.buildUpon().setUri(realUrl).setKey(cacheKey).build()
         } else {
             dataSpec
         }
+        // 只有走了解析路径（设置了稳定 key）的 http(s) 流才进缓存通道；本地文件与
+        // 其它直链 scheme 原样透传，不引入"把本地文件再抄一遍进缓存"的磁盘浪费。
+        active = if (cacheKey != null && isHttpOrHttps(spec)) cachedUpstream ?: upstream else upstream
         // 解析成功不等于听得到声：真正卡住的是随后连 CDN。这两段必须分别计时，
         // 否则"熄屏后无声"永远分不清是酷狗 API 不放 URL、还是后台网络被限流。
         val read = try {
-            upstream.open(spec)
+            active.open(spec)
         } catch (e: IOException) {
             YosDiagnostics.log(
                 "OPEN_FAIL",
@@ -98,6 +120,13 @@ class KugouResolvingDataSource(
         }
         return read
     }
+
+    /** 事实档位（服务端实际发放，可能低于请求档）优先；无事实时才落回请求档。 */
+    private fun effectiveTierOf(hash: String, requestedTier: String): String =
+        KugouRepository.factOf(hash)?.stampedTier ?: requestedTier
+
+    private fun isHttpOrHttps(spec: DataSpec): Boolean =
+        spec.uri.scheme == "http" || spec.uri.scheme == "https"
 
     /**
      * 本曲拿不到请求档时提示；同一首同一降级路径 10 分钟内不重复提示。
@@ -135,14 +164,20 @@ class KugouResolvingDataSource(
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-        upstream.read(buffer, offset, length)
+        active.read(buffer, offset, length)
 
-    override fun close() = upstream.close()
+    override fun close() {
+        active.close()
+        active = upstream
+    }
 
-    override fun getUri(): android.net.Uri? = upstream.uri
+    override fun getUri(): android.net.Uri? = active.uri
 
-    override fun addTransferListener(transferListener: TransferListener) =
+    override fun addTransferListener(transferListener: TransferListener) {
+        // open 前不知道会走哪个通道，两个都得挂上（CacheDataSource 会转发给内部实例）
         upstream.addTransferListener(transferListener)
+        cachedUpstream?.addTransferListener(transferListener)
+    }
 
     companion object {
         private const val DOWNGRADE_TOAST_INTERVAL_MS = 10 * 60 * 1000L
@@ -164,8 +199,73 @@ class KugouResolvingDataSourceFactory(
 ) : DataSource.Factory {
     private val appContext = appContext.applicationContext
 
-    override fun createDataSource(): DataSource =
-        KugouResolvingDataSource(upstream.createDataSource(), appContext)
+    override fun createDataSource(): DataSource {
+        // upstream 是单会话对象，直连与缓存通道各要一个独立实例
+        val direct = upstream.createDataSource()
+        val cache = OnlineAudioCache.get(appContext)
+        val cached: DataSource? = cache?.let {
+            CacheDataSource.Factory()
+                .setCache(it)
+                .setUpstreamDataSourceFactory(upstream)
+                // key 已由 open() 写进 DataSpec.key（"hash:实际档位"）；这里只是兜底
+                // 直链 scheme 走默认语义（key 缺省用 uri）
+                .setCacheKeyFactory { spec -> spec.key ?: spec.uri.toString() }
+                // 读缓存出错时回源兜底，别让缓存层故障放大成播放失败
+                .setFlags(
+                    CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                        CacheDataSource.FLAG_BLOCK_ON_CACHE
+                )
+                .createDataSource()
+        }
+        return KugouResolvingDataSource(direct, cached, appContext)
+    }
+}
+
+/**
+ * 在线歌曲磁盘字节缓存——在线 seek"先暂停再播放"的根治层。
+ *
+ * 背景：ExoPlayer 默认 back buffer=0、前向缓冲最多 50s，拖进度条一出缓冲就要重开
+ * 数据源回 CDN 拉流（新建 HTTPS + TLS 握手 + 回填 2.5s 音频），期间 BUFFERING 表现为
+ * 先暂停再播放；本地文件重开毫秒级所以无感。有了磁盘缓存，重开直接命中本地字节，
+ * 不再回源，近瞬时恢复；重播/复听也顺带省流量。
+ *
+ * 约束：同一文件夹进程内只允许一个 SimpleCache 实例（二次构造抛异常），故全局单例；
+ * 256MB LRU 由 LeastRecentlyUsedCacheEvictor 淘汰，磁盘满不需要业务层操心。
+ */
+@OptIn(UnstableApi::class)
+object OnlineAudioCache {
+    private const val DIR_NAME = "kugou_audio_cache"
+    private const val MAX_BYTES = 256L * 1024 * 1024
+
+    private val lock = Any()
+
+    @Volatile
+    private var instance: SimpleCache? = null
+
+    @Volatile
+    private var created = false
+
+    /** 构造失败（磁盘不可用等）返回 null 并记住结果：播放链路直连，不因缓存层反复重试。 */
+    fun get(context: Context): SimpleCache? {
+        if (created) return instance
+        synchronized(lock) {
+            if (created) return instance
+            instance = try {
+                SimpleCache(
+                    File(context.cacheDir, DIR_NAME),
+                    LeastRecentlyUsedCacheEvictor(MAX_BYTES),
+                    StandaloneDatabaseProvider(context)
+                )
+            } catch (e: Exception) {
+                null
+            }
+            created = true
+            return instance
+        }
+    }
+
+    fun keyOf(hash: String, effectiveTier: String): String =
+        "kugou:${hash.lowercase()}:$effectiveTier"
 }
 
 /** 供 ExoPlayer.Builder 使用的媒体源工厂：默认媒体源 + 惰性解析数据源。 */
