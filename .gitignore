@@ -34,6 +34,11 @@ _recovery_*/
 _handoff_backup_*/
 _handoff/
 HANDOFF_*.md
+
+# 发版产物暂存（已签名 APK / 上传前文件）
+/_release/
+/_backups/
+/_shots/
 worktree.diff
 
 # 系统/macOS 跨平台噪音
