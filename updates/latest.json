@@ -1,54 +1,66 @@
 {
-  "schemaVersion": 1,
-  "applicationId": "com.sonify.music",
-  "versionCode": 3,
-  "versionName": "0.1.2",
-  "publishedAt": "2026-10-06T12:06:30.5658449+00:00",
-  "minSdk": 23,
-  "abis": [
-    "arm64-v8a",
-    "armeabi-v7a"
-  ],
-  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.2/Sonify-v0.1.2.apk",
-  "apkSize": 11434266,
-  "sha256": "15a0d079adaa2bd5c271d4fd35c4bcd436d6db2df13580c56d46d1c4986e1941",
-  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.2",
-  "releaseNotes": {
-    "en": [
-      "Rebuilt the online artist experience: Apple Music style artist page, dedicated pages for hot songs and all albums, and each artist in a compilation is individually clickable.",
-      "Followed artists now sync with Kugou's followed-singer list and follow the account.",
-      "The artist name on the player opens the artist page; album, lyrics and playlist switching uses smoother animations without flashing.",
-      "Fixed the pause-before-resume when seeking while streaming, and added a disk cache so reversing the progress bar no longer refetches from the network.",
-      "Fixed vertical layout of word-timed lyrics while keeping the karaoke highlight, and added an artist tab with paged album, playlist and lyric results to search.",
-      "Fixed back-gesture stack leaks across tabs and dead tap/scroll areas below the lyric controls.",
-      "Improved glass materials and motion: progressive top bar blur, bottom bar and mini player tint, and player shell material following the scrim."
-    ],
-    "zh-CN": [
-      "重做在线艺人体系：艺人详情页改为 Apple Music 式布局，热门歌曲与全部专辑有独立二级页，合辑中的每位作者可逐个点击。",
-      "在线收藏艺人接入酷狗「我关注的歌手」，收藏跟随账号同步。",
-      "播放页歌手名可点击跳转艺人主页；专辑、歌词与播放列表的切换动画重做，切换不再闪烁。",
-      "修复在线拖动进度条会先暂停再播放的问题，并为在线音频加入磁盘缓存，回退进度不再重新联网拉取。",
-      "修复逐字歌词竖排错位并保留逐字高亮，搜索页新增歌手分类和专辑、歌单、歌词滚动分页。",
-      "修复系统返回手势串栈，以及歌词控件收起后下半屏点击与滚动失效。",
-      "优化玻璃材质与动效：顶栏渐进模糊、底栏与迷你播放条取色，以及播放器外壳材质随遮罩同步。"
-    ],
-    "zh-TW": [
-      "重做線上藝人體系：藝人詳情頁改為 Apple Music 式版面，熱門歌曲與全部專輯有獨立二級頁，合輯中的每位作者可逐一點擊。",
-      "線上收藏藝人接入酷狗「我關注的歌手」，收藏跟隨帳號同步。",
-      "播放頁歌手名可點擊跳轉藝人主頁；專輯、歌詞與播放清單的切換動畫重做，切換不再閃爍。",
-      "修正線上拖動進度條會先暫停再播放的問題，並為線上音訊加入磁碟快取，回退進度不再重新連網拉取。",
-      "修正逐字歌詞直排錯位並保留逐字高亮，搜尋頁新增歌手分類與專輯、歌單、歌詞捲動分頁。",
-      "修正系統返回手勢串棧，以及歌詞控制項收起後下半螢幕點擊與捲動失效。",
-      "改善玻璃材質與動效：頂欄漸進模糊、底欄與迷你播放列取色，以及播放器外殼材質隨遮罩同步。"
-    ],
-    "ja": [
-      "オンラインアーティストを刷新：Apple Music 風のアーティストページ、人気曲と全アルバムの専用ページ、コンピレーション内の各アーティストを個別に開けるように。",
-      "オンラインでフォローしたアーティストを Kugou のフォロー中シンガーと同期し、アカウントに追従。",
-      "再生ページのアーティスト名からアーティストページへ移動可能に。アルバム・歌詞・プレイリストの切り替えアニメーションを改善し、ちらつきを解消。",
-      "ストリーミング中のシークで一時停止してから再生される問題を修正し、ディスクキャッシュを追加して巻き戻し時の再取得を解消。",
-      "縦表示での単語単位の歌詞のずれを修正し、カラオケハイライトを維持。検索にアーティスト分類とアルバム・プレイリスト・歌詞のページングを追加。",
-      "タブ間の戻るジェスチャーのスタック不具合と、歌詞コントロールを閉じた後の下半分のタップ・スクロール不能を修正。",
-      "ガラス素材とモーションを改善：上部バーの段階的ブラー、下部バーとミニプレーヤーの色抽出、プレーヤー外殻素材のスクリム連動。"
-    ]
-  }
+    "schemaVersion":  1,
+    "applicationId":  "com.sonify.music",
+    "versionCode":  4,
+    "versionName":  "0.1.3",
+    "publishedAt":  "2026-10-09T12:15:41.2997497+00:00",
+    "minSdk":  23,
+    "abis":  [
+                 "arm64-v8a",
+                 "armeabi-v7a"
+             ],
+    "apkUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.3/Sonify-v0.1.3.apk",
+    "apkSize":  11496099,
+    "sha256":  "a1ea0f1c996fcda8db1b9b778a09b2b2bca11f7645e87d1387694ff39dc933c1",
+    "releasePageUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.3",
+    "releaseNotes":  {
+                         "en":  [
+                                    "Added a Favorites page with a bottom-nav entry: manage followed artists and saved songs in one place, synced to your account when signed in.",
+                                    "More robust online playback: added song playability checks and an automatic skip policy, so region-restricted or unresolvable tracks are skipped with a clear notice.",
+                                    "Added listening-time tracking and play-history upload (toggleable in Settings), synced with your account.",
+                                    "Fixed lyrics not showing or dropping out on the ColorOS lock screen.",
+                                    "System status and navigation bars now use the real window insets, fixing the top and bottom bars hugging the screen edges.",
+                                    "Fixed the device name overflowing below the player\u0027s bottom row and misaligned bottom icons on portrait devices without a gesture bar.",
+                                    "Opening the play queue now scrolls to the currently playing song.",
+                                    "The artist name on the player opens the artist page; each artist in a multi-artist credit is individually clickable and names containing spaces are handled correctly.",
+                                    "Aligned the lyric engine with the Flamingo spec and fixed the vertical misalignment of word-timed lyrics.",
+                                    "Added a developer-mode entry on the About page."
+                                ],
+                         "zh-CN":  [
+                                       "新增「收藏」页并加入底部导航：关注歌手与收藏歌曲集中管理，登录后随账号云同步。",
+                                       "在线播放更健壮：新增歌曲可播性判定与自动跳过策略，版权受限或无法解析的曲目会自动跳过并给出明确提示。",
+                                       "新增听歌时长统计与播放历史上报（可在设置中开启），随账号同步。",
+                                       "修复 ColorOS 锁屏歌词不显示或丢失的问题。",
+                                       "全局状态栏与导航栏改用系统真实内边距，修复顶栏与底栏贴边显示异常。",
+                                       "修复竖屏无手势条机型播放页底部设备名越界、底部图标参差不齐。",
+                                       "打开播放列表时自动定位到当前播放歌曲。",
+                                       "播放页歌手名可点击跳转艺人主页，多歌手分别命中，含空格的歌手名正确处理。",
+                                       "歌词引擎对齐 Flamingo 规格，修复逐字歌词竖排错位。",
+                                       "关于页新增开发者模式入口。"
+                                   ],
+                         "zh-TW":  [
+                                       "新增「收藏」頁並加入底部導覽：追蹤歌手與收藏歌曲集中管理，登入後隨帳號雲端同步。",
+                                       "線上播放更穩健：新增歌曲可播放性判定與自動略過策略，版權受限或無法解析的曲目會自動略過並給出明確提示。",
+                                       "新增聽歌時長統計與播放歷史回報（可在設定中開啟），隨帳號同步。",
+                                       "修正 ColorOS 鎖定畫面歌詞不顯示或遺失的問題。",
+                                       "全域狀態列與導覽列改用系統真實內距，修正頂欄與底欄貼邊顯示異常。",
+                                       "修正直向無手勢列機型播放頁底部裝置名稱越界、底部圖示參差不齊。",
+                                       "開啟播放清單時自動定位到目前播放歌曲。",
+                                       "播放頁歌手名可點擊跳轉藝人主頁，多位歌手分別命中，含空格的歌手名正確處理。",
+                                       "歌詞引擎對齊 Flamingo 規格，修正逐字歌詞直排錯位。",
+                                       "關於頁新增開發者模式入口。"
+                                   ],
+                         "ja":  [
+                                    "「お気に入り」ページを追加し下部ナビに配置：フォロー中のアーティストと保存した曲をまとめて管理し、ログイン時はアカウントに同期。",
+                                    "オンライン再生を強化：曲の再生可否判定と自動スキップを追加し、地域制限や解析できない曲は明確な通知とともに自動スキップ。",
+                                    "再生時間の計測と再生履歴の送信を追加（設定でオン/オフ可能）、アカウントに同期。",
+                                    "ColorOS のロック画面で歌詞が表示されない・消える問題を修正。",
+                                    "システムのステータスバー/ナビゲーションバーを実際のウィンドウインセットに変更し、上部・下部バーが画面端に張り付く問題を修正。",
+                                    "ジェスチャーバーのない縦表示端末で、再生ページ下部のデバイス名がはみ出す問題と下部アイコンのずれを修正。",
+                                    "再生リストを開いたとき、現在再生中の曲まで自動スクロール。",
+                                    "再生ページのアーティスト名からアーティストページへ移動可能。複数アーティストは個別にタップでき、空白を含む名前も正しく処理。",
+                                    "歌詞エンジンを Flamingo 仕様に合わせ、単語単位歌詞の縦方向のずれを修正。",
+                                    "アプリについてページに開発者モードの入口を追加。"
+                                ]
+                     }
 }
