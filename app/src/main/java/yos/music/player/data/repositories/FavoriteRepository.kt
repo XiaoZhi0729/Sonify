@@ -2,6 +2,7 @@ package yos.music.player.data.repositories
 
 import yos.music.player.data.libraries.FavPlayListLibrary
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.native.KugouApiService
 
 /** 歌曲来源：收藏按来源分流（本地 ↔ 酷狗云端完全分离，互不同步）。 */
@@ -57,6 +58,9 @@ object FavoriteRepository {
             val result = KugouRepository.cloudAddFavorite(hash, song.title ?: "")
             if (result.isFailure) {
                 KugouRepository.setFavoriteLocal(hash, false)
+            } else {
+                // 写成功：通知「喜爱」/歌单等页面刷新，展示最新云端状态
+                KugouSyncCoordinator.notifyFavoritesChanged()
             }
             result
         }
@@ -83,6 +87,8 @@ object FavoriteRepository {
             val result = KugouRepository.cloudRemoveFavorite(hash)
             if (result.isFailure) {
                 KugouRepository.setFavoriteLocal(hash, true)
+            } else {
+                KugouSyncCoordinator.notifyFavoritesChanged()
             }
             result
         }

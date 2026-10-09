@@ -23,6 +23,8 @@
     <string name="home_online_search_desc">KuGou音楽を検索</string>
     <string name="home_online_playlists_desc">プレイリストを見る</string>
     <string name="settings_online_kugou_account">KuGouアカウント</string>
+    <string name="settings_upload_listening_duration_title">再生時間のアップロード</string>
+    <string name="settings_upload_listening_duration_desc">KuGouアカウントにログインすると、オンライン楽曲の視聴時間がアカウントに同期されて試聴レベルが累積し、再生開始時に再生履歴も報告されます</string>
     <string name="kugou_login_status_logged_in">ログイン済み</string>
     <string name="kugou_login_status_not_logged_in">未ログイン</string>
     <string name="kugou_login_userid">アカウント：%1$s</string>
@@ -55,6 +57,8 @@
     <string name="page_library_title">ライブラリ</string>
     <string name="page_discovery_title">新着</string>
     <string name="page_search_title">検索</string>
+    <string name="page_favorites_title">お気に入り</string>
+    <string name="favorites_not_found">「好きな曲」が見つかりません。先にKugouアカウントへログインしてください。</string>
     <string name="search_type_song">曲</string>
     <string name="search_type_artist">アーティスト</string>
     <string name="search_type_album">アルバム</string>
@@ -187,6 +191,11 @@
     <string name="settings_performance_ui_screen_corner_desc">画面の角の丸みを調整するダイアログを再度表示します。</string>
     <string name="settings_performance_lyric_line_balance">行バランスモード</string>
     <string name="settings_performance_lyric_line_balance_desc">歌詞の各行の文字数をバランスさせ、レイアウトを整えます。特定の言語の歌詞には副作用がある可能性があります。</string>
+    <string name="settings_performance_lyric_style_font_size">文字サイズ</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric">スマート逐字歌詞</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric_desc">逐字タイムスタンプのない歌詞を、線形のグラデーション速度で逐字表示に近づけて表示します。</string>
+    <string name="settings_performance_lyric_timing_offset">歌詞タイミング調整</string>
+    <string name="settings_performance_lyric_timing_offset_desc">正の値で歌詞が早く、負の値で遅く表示されます。</string>
     <string name="settings_others_about_contact_us">お問い合わせ</string>
     <string name="settings_others_about_contact_us_desc">Telegram チャンネルにアクセスしてください。</string>
     <string name="settings_others_about_developer_coolapk">開発者のCoolApkページへ。</string>
@@ -194,6 +203,10 @@
     <string name="settings_others_about_acknowledgements">謝辞</string>
     <string name="settings_others_about_ack_projects">プロジェクト</string>
     <string name="settings_others_about_ack_libraries">オープンソースライブラリ</string>
+    <string name="settings_others_coloros_diag_title">ColorOS 歌詞診断</string>
+    <string name="settings_others_coloros_diag_desc">ColorOS のロック画面で歌詞が表示されない場合にオンにしてください。歌詞配信の全経路を診断ログに記録し続けます。数曲再生してロック画面を確認したら、下のボタンでレポートを書き出して送信してください。</string>
+    <string name="settings_others_coloros_diag_export">ColorOS 歌詞診断レポートを書き出す</string>
+    <string name="settings_others_coloros_diag_export_desc">歌詞経路のみのレポート（OSバージョンとテスト手順付き）を生成して共有します。</string>
     <string name="settings_others_reset">すべての設定をリセット</string>
     <string name="settings_others_reset_confirm">すべての設定がデフォルトに戻されます。この操作は元に戻せません。ログイン状態とライブラリデータには影響しません。</string>
     <string name="settings_others_reset_done">設定をリセットしました</string>

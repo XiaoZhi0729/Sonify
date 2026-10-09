@@ -17,16 +17,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -50,13 +52,14 @@ import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.lazyItemKeys
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
-import com.google.accompanist.insets.navigationBarsHeight
+import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.repositories.KugouPlaylistTrack
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.KugouSearchSong
@@ -91,13 +94,15 @@ import yos.music.player.ui.widgets.effects.ShadowType
  * 页面结构（参考 Apple Music 歌单详情布局）：左上大封面 + 封面右侧歌单名/曲目数 +
  * 下方随机/播放 NormalButton + MusicList 统一歌曲 Item + 浮动返回按钮。
  */
-@OptIn(ExperimentalSharedTransitionApi::class)
+@OptIn(ExperimentalSharedTransitionApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun OnlinePlaylistDetail(
     navController: NavController,
     selection: PlaylistSelection? = null,
     sharedTransitionScope: SharedTransitionScope? = null,
-    animatedVisibilityScope: AnimatedVisibilityScope? = null
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    // 作为 Tab 根页（喜爱）时隐藏返回键；默认显示，保持既有调用点行为不变
+    showBackButton: Boolean = true
 ) {
     val routeSelection = selection
     val source = routeSelection?.source
@@ -112,7 +117,7 @@ fun OnlinePlaylistDetail(
         // 边界：无选中歌单（如进程重建后 holder 丢失）
         Title(
             title = stringResource(id = R.string.page_online_playlists_title),
-            onBack = { navController.popBackStack() }
+            onBack = if (showBackButton) ({ navController.popBackStack() }) else null
         ) {
             item("NoPlaylist") {
                 // 对齐原版列表空态规范（NormalMusic/LocalAlbums：18sp / α0.6）
@@ -135,6 +140,8 @@ fun OnlinePlaylistDetail(
     val status = remember("OnlinePlaylistDetail_status") { mutableStateOf("loading") }
     // 分页加载进度文案（大歌单按页拉取时显示 已加载 X / Y）
     val loadProgress = remember("OnlinePlaylistDetail_loadProgress") { mutableStateOf("") }
+    // 下拉刷新指示器状态（独立于 status，避免刷新时全屏 loading 闪烁）
+    val refreshing = remember("OnlinePlaylistDetail_refreshing") { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // ---- 挂起歌单（创建中/创建失败）：selection.id 是 PendingPlaylistStore 的 localId ----
@@ -168,9 +175,13 @@ fun OnlinePlaylistDetail(
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
 
-    fun loadTracks() {
-        status.value = "loading"
-        loadProgress.value = ""
+    fun loadTracks(pullRefresh: Boolean = false) {
+        if (pullRefresh) {
+            refreshing.value = true
+        } else {
+            status.value = "loading"
+            loadProgress.value = ""
+        }
         scope.launch {
             val onProgress: (Int, Int) -> Unit = { loaded, total ->
                 // 回调在 IO 线程，切回主线程更新状态；仅在未拉完时显示进度
@@ -199,10 +210,20 @@ fun OnlinePlaylistDetail(
                     status.value = if (list.isEmpty()) "empty" else "ok"
                 }
                 .onFailure { e ->
-                    tracks.value = emptyList()
-                    status.value = "error:${e.message}"
+                    // 下拉刷新失败：保留现有列表，只收起指示器，不把页面打成错误态
+                    if (!pullRefresh) {
+                        tracks.value = emptyList()
+                        status.value = "error:${e.message}"
+                    }
                 }
+            refreshing.value = false
         }
+    }
+
+    /** 手动刷新：既重拉当前列表，也通知其它页面（歌单列表/喜爱）同步。 */
+    fun refreshFromPull() {
+        loadTracks(pullRefresh = true)
+        KugouSyncCoordinator.notifyPlaylistsChanged()
     }
 
     // 整列表播放：全部歌曲进 Media3 队列，从 index 处开始；URL 由播放器惰性解析
@@ -214,7 +235,7 @@ fun OnlinePlaylistDetail(
         }
     }
 
-    LaunchedEffect(source, playlistId) {
+    LaunchedEffect(source, playlistId, KugouSyncCoordinator.playlistsRevision.value) {
         loadTracks()
     }
 
@@ -255,6 +276,11 @@ fun OnlinePlaylistDetail(
         val titleBackdrop = rememberTitleBackdrop()
         val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
 
+        PullToRefreshBox(
+            isRefreshing = refreshing.value,
+            onRefresh = { refreshFromPull() },
+            modifier = Modifier.fillMaxSize()
+        ) {
         LazyColumn(
             state = state,
             modifier = Modifier
@@ -429,11 +455,12 @@ fun OnlinePlaylistDetail(
                 Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
             }
         }
+        }
 
         // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
         TitleBar(
             title = playlistName,
-            onBack = { navController.popBackStack() },
+            onBack = if (showBackButton) ({ navController.popBackStack() }) else null,
             showSmallTitle = showSmallTitle,
             backdrop = titleBackdrop
         )
@@ -463,6 +490,7 @@ fun OnlinePlaylistDetail(
                                 tracks.value = tracks.value.filter { it.hash != t.hash }
                                 status.value = if (tracks.value.isEmpty()) "empty" else "ok"
                             }
+                            KugouSyncCoordinator.notifyPlaylistsChanged()
                         }
                         .onFailure { e -> status.value = "error:${e.message}" }
                 }
@@ -488,6 +516,8 @@ fun OnlinePlaylistDetail(
                     .onSuccess {
                         if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
                         else loadTracks()
+                        // 通知歌单列表等页面同步（歌曲数/封面变化）
+                        KugouSyncCoordinator.notifyPlaylistsChanged()
                     }
                 result
             }

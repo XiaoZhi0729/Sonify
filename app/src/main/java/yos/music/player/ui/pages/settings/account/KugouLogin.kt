@@ -54,7 +54,9 @@ import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouVipState
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.repositories.KugouVipRepository
 import yos.music.player.native.KugouApiService
 import yos.music.player.native.KugouLoginAccountCandidate
@@ -156,6 +158,20 @@ fun KugouLogin(navController: NavController) =
                                         KugouVipRepository.AutoReceiveVip = !KugouVipRepository.AutoReceiveVip
                                     },
                                     checkedLambda = { KugouVipRepository.AutoReceiveVip }
+                                )
+                            }
+
+                            GroupSpacer()
+                            // 上传听歌时长：在线收听时长同步酷狗账号（听歌等级）+ 开播上报播放历史
+                            RoundColumn {
+                                SwitchItem(
+                                    title = stringResource(id = R.string.settings_upload_listening_duration_title),
+                                    desc = stringResource(id = R.string.settings_upload_listening_duration_desc),
+                                    onClick = {
+                                        SettingsLibrary.UploadListeningDuration =
+                                            !SettingsLibrary.UploadListeningDuration
+                                    },
+                                    checkedLambda = { SettingsLibrary.UploadListeningDuration }
                                 )
                             }
 
@@ -278,6 +294,8 @@ private fun QrLoginSection() {
                         // 登录成功：applyLogin 已写凭证并按账号重载本地已签标记；
                         // 再后台重建服务端派生态（VIP 详情/当月打卡/自动补签）
                         scope.launch { KugouVipRepository.onLoggedIn() }
+                        // 登录后立刻同步云端收藏/关注歌手/歌单
+                        KugouSyncCoordinator.refreshAllAsync()
                         return@launch
                     }
                     2, 803 -> qrState = QrState.SCANNED
@@ -465,7 +483,10 @@ private fun PhoneLoginSection() {
                         is PhoneLoginResult.Success ->
                             // applyLogin 已写凭证、KugouAccountState 已同步；
                             // 后台重建服务端派生态（VIP 详情/当月打卡/自动补签），与扫码路径一致
-                            scope.launch { KugouVipRepository.onLoggedIn() }
+                            scope.launch {
+                                KugouVipRepository.onLoggedIn()
+                                KugouSyncCoordinator.refreshAll()
+                            }
                         is PhoneLoginResult.NeedChooseAccount -> candidates = result.candidates
                         is PhoneLoginResult.Failed ->
                             showMessage(

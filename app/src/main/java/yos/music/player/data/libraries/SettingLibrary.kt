@@ -134,6 +134,36 @@ object SettingsLibrary {
     )
 
     /**
+     * 歌词字号缩放（对齐 Flamingo 新版，全局钳制 0.8~1.2）
+     */
+    @Stable
+    var LyricFontScale by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_font_scale",
+        initialValue = 1.0f
+    )
+
+    /**
+     * 智能逐字歌词：非逐字歌词按字符数线性分摊行时长模拟逐字扫色
+     */
+    @Stable
+    var SmartWordByWordLyric by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_smart_wbw_lyric",
+        initialValue = false
+    )
+
+    /**
+     * 歌词时间偏移（毫秒）：正值让歌词提前，负值让歌词延后
+     */
+    @Stable
+    var LyricTimingOffset by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_timing_offset",
+        initialValue = 0
+    )
+
+    /**
      * 播放界面背景动态效果
      */
     @Stable
@@ -180,6 +210,18 @@ object SettingsLibrary {
     var ListenHistory by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_history",
+        initialValue = true
+    )
+
+    /**
+     * 上传听歌时长：登录酷狗后，把在线歌曲的收听时长心跳上报到酷狗账号
+     * （/user/grade/info 按 diff_sec 记账），并在在线歌曲开播时上报播放历史
+     * （/playhistory/upload）。关闭后两者都停。
+     */
+    @Stable
+    var UploadListeningDuration by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_upload_listening_duration",
         initialValue = true
     )
 
@@ -371,6 +413,18 @@ object SettingsLibrary {
     )
 
     /**
+     * ColorOS 锁屏歌词全链路诊断开关（事件走 [yos.music.player.code.utils.others.YosDiagnostics]，
+     * 但独立于 [DiagLogEnabled] 生效：开着它即整体落盘，供外部用户排查"锁屏不出歌词"）。
+     * 默认关：只有反馈歌词问题的用户才需要打开。
+     */
+    @Stable
+    var ColorOsLyricDiagEnabled by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_others_coloros_lyric_diag_enabled",
+        initialValue = false
+    )
+
+    /**
      * 一键把全部设置恢复默认值。先清空 settings MMKV（顺带清掉历史遗留的无主 key），
      * 再把上面每个属性重新赋回声明处的 initialValue——赋值走 setter 会把默认值写回
      * MMKV，内存态即时生效，UI 无需重启即刷新。
@@ -393,6 +447,9 @@ object SettingsLibrary {
         LyricFontWeight = "ExtraBold"
         LyricLineBalance = false
         LyricBlurEffect = false
+        LyricFontScale = 1.0f
+        SmartWordByWordLyric = false
+        LyricTimingOffset = 0
         NowplayingBackgroundEffect = false
         BarBlurEffect = false
         NotificationEnableIcon = true
@@ -415,5 +472,6 @@ object SettingsLibrary {
         CrossfadeDuration =
             yos.music.player.code.utils.player.CrossfadePolicy.DEFAULT_DURATION_SEC.toString()
         DiagLogEnabled = true
+        ColorOsLyricDiagEnabled = false
     }
 }

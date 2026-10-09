@@ -16,10 +16,12 @@ import androidx.navigation.NavController
 @Stable
 interface UI {
     companion object {
-        // 一级 Tab（三 Tab 导航）：主页 / 资料库 / 搜索
+        // 一级 Tab（四 Tab 导航）：主页 / 资料库 / 搜索 / 喜爱
         const val HomePage = "HomePage"
         const val Library = "Library"
         const val Search = "Search"
+        // 喜爱：酷狗系统「我喜欢」歌单的直接歌曲页（复用 OnlinePlaylistDetail）
+        const val Favorites = "Favorites"
 
         const val NormalMusic = "NormalMusic"
         const val PlayLists = "PlayLists"
@@ -54,15 +56,17 @@ interface UI {
         ): String = buildString {
             append(OnlinePlaylistDetail)
             append("?")
-            append(OnlinePlaylistSourceArg).append("=").append(java.net.URLEncoder.encode(source, "UTF-8"))
-            append("&").append(OnlinePlaylistIdArg).append("=").append(java.net.URLEncoder.encode(playlistId, "UTF-8"))
-            append("&").append(OnlinePlaylistNameArg).append("=").append(java.net.URLEncoder.encode(name, "UTF-8"))
-            append("&").append(OnlinePlaylistCoverArg).append("=").append(java.net.URLEncoder.encode(cover, "UTF-8"))
+            // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+            // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌单名会变成 "A+B"
+            append(OnlinePlaylistSourceArg).append("=").append(android.net.Uri.encode(source))
+            append("&").append(OnlinePlaylistIdArg).append("=").append(android.net.Uri.encode(playlistId))
+            append("&").append(OnlinePlaylistNameArg).append("=").append(android.net.Uri.encode(name))
+            append("&").append(OnlinePlaylistCoverArg).append("=").append(android.net.Uri.encode(cover))
             count?.let {
                 append("&").append(OnlinePlaylistCountArg).append("=").append(it)
             }
             intro?.let {
-                append("&").append(OnlinePlaylistIntroArg).append("=").append(java.net.URLEncoder.encode(it, "UTF-8"))
+                append("&").append(OnlinePlaylistIntroArg).append("=").append(android.net.Uri.encode(it))
             }
         }
 
@@ -91,9 +95,9 @@ interface UI {
         fun onlineAlbumRoute(albumId: String, sourceArtistId: String? = null): String = buildString {
             append(OnlineAlbumDetail)
             append("?").append(OnlineAlbumIdArg).append("=")
-                .append(java.net.URLEncoder.encode(albumId, "UTF-8"))
+                .append(android.net.Uri.encode(albumId))
             append("&").append(OnlineAlbumSourceArtistArg).append("=")
-                .append(java.net.URLEncoder.encode(sourceArtistId ?: "", "UTF-8"))
+                .append(android.net.Uri.encode(sourceArtistId ?: ""))
         }
 
         // 新歌精选完整列表（Discovery「新歌精选」查看全部；入口在主页 Tab）
@@ -120,9 +124,9 @@ interface UI {
             append(ArtistDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                .append(java.net.URLEncoder.encode(artistId ?: "", "UTF-8"))
+                .append(android.net.Uri.encode(artistId ?: ""))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+                .append(android.net.Uri.encode(artistName))
         }
 
         // 艺人全部歌曲整页列表（艺人详情页「歌曲」区块标题 → 查看全部；复用 artistId/artistName 参数）
@@ -135,9 +139,11 @@ interface UI {
             append(ArtistSongsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
+                .append(android.net.Uri.encode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+                .append(android.net.Uri.encode(artistName))
         }
 
         const val AlbumInfo = "AlbumInfo"
@@ -152,9 +158,11 @@ interface UI {
             append(ArtistHotSongsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
+                .append(android.net.Uri.encode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+                .append(android.net.Uri.encode(artistName))
         }
 
         // 艺人专辑整页网格列表（艺人详情页「专辑」区块标题 → 查看全部；复用 artistId/artistName）
@@ -167,9 +175,11 @@ interface UI {
             append(ArtistAlbumsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                .append(java.net.URLEncoder.encode(artistId, "UTF-8"))
+                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
+                .append(android.net.Uri.encode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(java.net.URLEncoder.encode(artistName, "UTF-8"))
+                .append(android.net.Uri.encode(artistName))
         }
     }
 

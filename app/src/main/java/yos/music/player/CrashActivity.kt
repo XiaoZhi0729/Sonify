@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.ClipboardUtils
 import com.blankj.utilcode.util.DeviceUtils
-import com.google.accompanist.insets.ProvideWindowInsets
+import yos.music.player.ui.widgets.basic.ProvideRawWindowInsets
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import yos.music.player.code.utils.others.subStringX
 import yos.music.player.ui.theme.YosMusicTheme
@@ -70,7 +70,7 @@ class CrashActivity : ComponentActivity() {
         val crashInfo = getCrashInfo(true, intent)
         setContent {
             YosMusicTheme {
-                ProvideWindowInsets {
+                ProvideRawWindowInsets {
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),

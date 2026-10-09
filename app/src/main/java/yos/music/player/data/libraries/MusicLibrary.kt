@@ -254,18 +254,14 @@ object MusicLibrary {
                     .setRecordingMonth(this.recordingMonth)
                     .setRecordingYear(this.recordingYear)
                     .setReleaseYear(this.releaseYear)
-                    .setExtras(Bundle().apply {
-                        this@toMediaItem.artistId?.let { putLong("ArtistId", it) }
-                        this@toMediaItem.albumId?.let { putLong("AlbumId", it) }
-                        this@toMediaItem.genreId?.let { putLong("GenreId", it) }
-                        putString("Author", this@toMediaItem.author)
-                        this@toMediaItem.addDate?.let { putLong("AddDate", it) }
-                        putLong("Duration", this@toMediaItem.duration)
-                        this@toMediaItem.modifiedDate?.let { putLong("ModifiedDate", it) }
-                        this@toMediaItem.cdTrackNumber?.let { putInt("CdTrackNumber", it) }
-                        //this@toMediaItem.samplingRate?.let { putInt("SamplingRate", it) }
-                        //this@toMediaItem.bitrate?.let { putInt("Bitrate", it) }
-                    })
+                    // 自有字段（ArtistId/AlbumId/Duration 等）不得写入 extras：发布给
+                    // session 的条目 extras 必须保持 null。media3 向 framework 发布元数据
+                    // 前用 MediaMetadata.equals 去重，而它对 extras 只比 null 与非 null
+                    // 不比内容——条目自带非空 extras 时，后续 lyricInfo 写入无法触发
+                    // 重发布（ColorOS 锁屏歌词收不到歌词的根因）。这些字段经
+                    // playingMusicList 进程内传递，session 往返读回处按 mediaId 合并
+                    // （syncQueueSnapshot / handleTrackSwitched）。扫描路径的
+                    // readerConfiguration extras 是进程内 Reader→YosMediaItem 中转，不受影响。
                     .build()
             )
             .build()

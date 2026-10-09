@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -38,8 +39,11 @@ import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.enterCoverCorner
+import yos.music.player.ui.widgets.basic.isBlocked
+import yos.music.player.ui.widgets.basic.rememberSongAvailability
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
+import yos.music.player.ui.widgets.basic.showSongUnavailableToast
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.effects.ShadowType
 
@@ -208,11 +212,19 @@ fun DetailSongRowWide(
     music: YosMediaItem,
     itemClick: () -> Unit
 ) {
+    // 不可播（无版权/付费限制等）置灰：点击只提示原因，不进播放、不切歌
+    val availability = rememberSongAvailability(music)
+    val blocked = availability.isBlocked
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
-            .clickable { itemClick() }
+            .alpha(if (blocked) 0.4f else 1f)
+            .clickable {
+                if (blocked) showSongUnavailableToast(context, music, availability.reason)
+                else itemClick()
+            }
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

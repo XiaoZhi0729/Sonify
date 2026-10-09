@@ -17,9 +17,11 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.Loader
 import yos.music.player.R
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.repositories.KugouUpstreamError
 import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.QualityIntentResolver
 import yos.music.player.data.repositories.QualityVerdict
@@ -70,7 +72,8 @@ class KugouResolvingDataSource(
                 KugouRepository.resolvePlayUrlBlocking(hash, decision.tier, decision.source)
             } catch (e: IOException) {
                 YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
-                throw e
+                // 确定性失败（鉴权失效/版权付费拦截）不等退避重试：见 asFatalIfDeterministic
+                throw asFatalIfDeterministic(e)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // 切歌取消（Loader 线程被中断/协程被取消）不是解析失败：不上报 RESOLVE_FAIL，
                 // 也不进负缓存链路；包成 IOException 交回 ExoPlayer——取消中的加载错误会被其吞掉
@@ -124,6 +127,30 @@ class KugouResolvingDataSource(
     /** 事实档位（服务端实际发放，可能低于请求档）优先；无事实时才落回请求档。 */
     private fun effectiveTierOf(hash: String, requestedTier: String): String =
         KugouRepository.factOf(hash)?.stampedTier ?: requestedTier
+
+    /**
+     * 把"重试也不会变好"的确定性失败标成不可重试。
+     *
+     * 为什么必须单独标：上游拒播（鉴权失效、版权/付费拦截）本身也是 IOException，Loader
+     * 就照旧退避重试（实测 +1s、+2s 各一次，而且那两次都是本地负缓存命中、白等），
+     * 于是一首坏曲要 3.4 秒才认输——真机一次鉴权爆发里连跳 10 首就是 34 秒的"看着卡住"。
+     * 网络/超时不在这列：它们确实值得那一次退避。
+     *
+     * 手段用 [Loader.UnexpectedLoaderException]：本版本（media3 1.4.0）的
+     * DefaultLoadErrorHandlingPolicy 把它列进"不重试"集合，而这版还**没有**
+     * `PlaybackException.isRecoverable` 可用（构造参数里根本没有这个开关）。
+     * cause 原样保留，服务侧分诊仍按因果链认得出它属于哪一类。
+     */
+    private fun asFatalIfDeterministic(e: IOException): IOException =
+        if (KugouUpstreamError.hasAuthInvalidCause(e) || isBlockedByUpstream(e)) {
+            Loader.UnexpectedLoaderException(e)
+        } else {
+            e
+        }
+
+    private fun isBlockedByUpstream(e: Throwable): Boolean =
+        generateSequence(e) { it.cause }
+            .any { it is KugouRepository.KugouPlayBlockedException }
 
     private fun isHttpOrHttps(spec: DataSpec): Boolean =
         spec.uri.scheme == "http" || spec.uri.scheme == "https"

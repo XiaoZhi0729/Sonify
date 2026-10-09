@@ -17,6 +17,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -93,7 +94,7 @@ fun LiquidBottomTabs(
     tabsCount: Int,
     modifier: Modifier = Modifier,
     enableInteractiveHighlight: Boolean = true,
-    /** 无玻璃材质的纯色胶囊：容器只画"投影 + 纯色胶囊"，不挂任何 backdrop/折射/高光/色散。 */
+    /** 无玻璃材质的磨砂胶囊：容器只画"投影 + blur(12dp) 磨砂面"，不挂折射/透镜；白高光与内阴影延伸由共用覆盖层补齐（与迷你条关玻璃材质一致）。 */
     solidCapsule: Boolean = false,
     /** 底栏容器玻璃开关（消融位 navcontainer）。退化为普通底色，几何不变。 */
     containerGlassEnabled: Boolean = true,
@@ -119,6 +120,11 @@ fun LiquidBottomTabs(
     val containerColor =
         if (isLightTheme) Color.White.copy(0.5f)
         else Color(0xFF1C1C1E).copy(0.5f)
+    // 关玻璃磨砂胶囊表面：与迷你播放器关玻璃分支完全同材质（MainActivity hazeSurfaceAlpha：
+    // 浅色 0.85 / 深色 0.55）。此前沿用玻璃面的 0.5，磨砂态会比迷你条更透（用户报告）。
+    val solidCapsuleColor =
+        if (isLightTheme) Color.White.copy(0.85f)
+        else Color(0xFF1C1C1E).copy(0.55f)
 
     GlassDiagnostics.state(
         "bottom_tabs_gate",
@@ -138,6 +144,78 @@ fun LiquidBottomTabs(
             if (tint.alpha > 0.005f) drawRect(tint)
         }
     }
+
+    // 磨砂胶囊的 surface：迷你条关玻璃同款表面色，提取色 tint 层序与 containerSurfaceDraw
+    // 一致（tint 在表面色之上、描边高光之下）。
+    val solidCapsuleSurfaceDraw: DrawScope.() -> Unit = {
+        drawRect(solidCapsuleColor)
+        containerTintProvider?.invoke()?.let { tint ->
+            if (tint.alpha > 0.005f) drawRect(tint)
+        }
+    }
+
+    // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight 一致）：angle=90
+    // 直上直下，亮在上下直边；挂在 emptyBackdrop 上不再采样玻璃，不会盖住玻璃分支
+    // 主层的黑色环绕高光。磨砂胶囊与玻璃分支共用这一层——迷你播放器关玻璃分支
+    // （MainActivity PlayerShell Kyant 分支）同样挂着这层高光+内阴影延伸，缺了它
+    // 关闭玻璃时底栏会比迷你条少一层亮边（用户报告的材质不一致）。
+    val containerHighlightOverlay = Modifier.drawBackdrop(
+        backdrop = emptyBackdrop(),
+        shape = { Capsule() },
+        effects = {},
+        highlight = {
+            if (GlassProbe.current.navContainerHighlight) {
+                Highlight.Default.copy(
+                    width = 1f.dp,
+                    blurRadius = if (isLightTheme) 0.1f.dp else 0.5f.dp,
+                    alpha = if (isLightTheme) 0.8f else 1f,
+                    style = HighlightStyle.Default(
+                        color = Color.White.copy(alpha = if (isLightTheme) 0.2f else 0.1f),
+                        blendMode = BlendMode.Plus,
+                        angle = 90f,
+                        falloff = 1f
+                    )
+                )
+            } else null
+        },
+        shadow = { null },
+        innerShadow = { null },
+        onDrawBackdrop = { },
+        onDrawSurface = {
+            // 上下高光的内阴影延伸（与迷你条同款）：顶部高光向下、底部高光向上各拉
+            // 一条白色内渐变带，颜色与白高光一致、同用 Plus 叠加。画在本层 surface
+            // 记录内，节点已按 Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
+            if (GlassProbe.current.navContainerHighlight) {
+                val glowColor = Color.White.copy(
+                    alpha = if (isLightTheme) 0.2f else 0.1f
+                )
+                val glowH = 6f.dp.toPx()
+                // 顶边高光向下渐隐
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to glowColor,
+                        1f to Color.Transparent,
+                        startY = 0f,
+                        endY = glowH
+                    ),
+                    size = Size(size.width, glowH),
+                    blendMode = BlendMode.Plus
+                )
+                // 底边高光向上渐隐
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to glowColor,
+                        startY = size.height - glowH,
+                        endY = size.height
+                    ),
+                    topLeft = Offset(0f, size.height - glowH),
+                    size = Size(size.width, glowH),
+                    blendMode = BlendMode.Plus
+                )
+            }
+        }
+    )
 
     val tabsBackdrop = rememberLayerBackdrop()
 
@@ -239,153 +317,118 @@ fun LiquidBottomTabs(
         CompositionLocalProvider(
             LocalGlassContentColor provides null
         ) {
-            Row(
-                Modifier
-                    .graphicsLayer {
-                        translationX = panelOffset
-                    }
-                    .then(
-                        if (solidCapsule) {
-                            // 无玻璃材质：磨砂胶囊（Haze 式）——只做背景模糊，不做折射/透镜/高光/
-                            // 色散；阴影改用与"液态玻璃"分支完全一致的 Shadow.Default（此前自加的
-                            // shadow(6dp) 过于浓重，已去除）。半透明纯色面叠在模糊层上即为磨砂效果。
-                            Modifier.drawBackdrop(
-                                backdrop = backdrop,
-                                shape = { Capsule() },
-                                // 采样层已降为 1/2，模糊由库经 drawImage 作用其上。半径取 12dp。
-                                effects = { blur(12.dp.toPx()) },
-                                highlight = { null },
-                                shadow = { Shadow.Default },
-                                innerShadow = { null },
-                                onDrawSurface = containerSurfaceDraw
-                            )
+            // 磨砂/玻璃两分支都是 backdrop 库同类型的 DrawBackdropElement 且同槽位，
+            // 运行时翻转开关会被 Compose 原地 update（不重建节点录制管线），模糊层从此
+            // 不出图、只剩半透明 surface 色；key 换值强制整行节点销毁重建，双向立即恢复。
+            key(solidCapsule) {
+                Row(
+                    Modifier
+                        .graphicsLayer {
+                            translationX = panelOffset
                         }
-                        // 底栏容器玻璃：navcontainer 时整块不挂，退回 containerColor。
-                        else if (!containerGlassEnabled) {
-                            Modifier.drawBehind { containerSurfaceDraw() }
-                        } else {
-                            Modifier.drawBackdrop(
-                                backdrop = backdrop,
-                                shape = { Capsule() },
-                                // 玻璃材质与迷你播放器收起态逐项对齐（MainActivity PlayerShell）：
-                                // 自适应 colorControls + blur 4dp + lens(16,32) + Shadow.Default。
-                                // 黑边环绕高光（数值与 ClassYaba LiquidButton blackSideHighlight 一致）：
-                                // WrapHighlightStyle 整圈连续、左右最深、上下保留 baseline=0.4；
-                                // 白色提亮高光由下方 emptyBackdrop 覆盖层单独叠加。
-                                effects = {
-                                    // 整条效果链一个开关：量它挂在 1190x208 层上到底贵不贵。
-                                    if (GlassProbe.current.navContainerEffects) {
-                                        vibrancy()
-                                        blur(4f.dp.toPx())
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                            lens(16f.dp.toPx(), 32f.dp.toPx())
-                                        }
-                                    }
-                                },
-                                highlight = {
-                                    if (GlassProbe.current.navContainerHighlight) {
-                                        Highlight.Default.copy(
-                                            width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
-                                            blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
-                                            alpha = 1f,
-                                            style = WrapHighlightStyle(
-                                                color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
-                                                blendMode = BlendMode.SrcOver,
-                                                angle = 0f,
-                                                falloff = 0.9f,
-                                                baseline = 0.4f
-                                            )
-                                        )
-                                    } else null
-                                },
-                                shadow = {
-                                    if (GlassProbe.current.navContainerShadow) Shadow.Default else null
-                                },
-                                // 静止时 pressProgress==0，缩放恒为 1 —— 这层 graphicsLayer 是白开的。
-                                layerBlock = if (!GlassProbe.current.navContainerLayer) null else {
-                                    {
-                                        val progress = dampedDragAnimation.pressProgress
-                                        val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
-                                        scaleX = scale
-                                        scaleY = scale
-                                    }
-                                },
-                                // 采样 + 记录（探针关掉采样时连 record 一起停）。
-                                onDrawBackdrop = containerOnDrawBackdrop,
-                                onDrawSurface = containerSurfaceDraw
-                            )
-                            // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight 一致）：
-                            // angle=90 直上直下，亮在上下直边；挂在 emptyBackdrop 上不再采样玻璃，
-                            // 不会盖住下层的黑色环绕高光。门禁与黑边同用 navContainerHighlight。
-                            .then(
+                        .then(
+                            if (solidCapsule) {
+                                // 无玻璃材质：磨砂胶囊（Haze 式）——只做背景模糊，不做折射/透镜/
+                                // 色散；阴影与"液态玻璃"分支一致用 Shadow.Default。半透明纯色面叠在
+                                // 模糊层上即为磨砂效果。表面色/透明度、黑边环绕高光与白高光+内阴影
+                                // 延伸（共用覆盖层）全部对齐迷你播放器关玻璃分支，另按用户要求补上
+                                // 玻璃态才有的黑色描边。
                                 Modifier.drawBackdrop(
-                                    backdrop = emptyBackdrop(),
+                                    backdrop = backdrop,
                                     shape = { Capsule() },
-                                    effects = {},
+                                    // 采样层已降为 1/2，模糊由库经 drawImage 作用其上。半径取 12dp。
+                                    effects = { blur(12.dp.toPx()) },
+                                    // 黑边环绕高光：与玻璃分支/迷你条玻璃面同配方
+                                    // （ClassYaba LiquidButton blackSideHighlight）。
                                     highlight = {
                                         if (GlassProbe.current.navContainerHighlight) {
                                             Highlight.Default.copy(
-                                                width = 1f.dp,
-                                                blurRadius = if (isLightTheme) 0.1f.dp else 0.5f.dp,
-                                                alpha = if (isLightTheme) 0.8f else 1f,
-                                                style = HighlightStyle.Default(
-                                                    color = Color.White.copy(alpha = if (isLightTheme) 0.2f else 0.1f),
-                                                    blendMode = BlendMode.Plus,
-                                                    angle = 90f,
-                                                    falloff = 1f
+                                                width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
+                                                blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
+                                                alpha = 1f,
+                                                style = WrapHighlightStyle(
+                                                    color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
+                                                    blendMode = BlendMode.SrcOver,
+                                                    angle = 0f,
+                                                    falloff = 0.9f,
+                                                    baseline = 0.4f
                                                 )
                                             )
                                         } else null
                                     },
-                                    shadow = { null },
+                                    shadow = { Shadow.Default },
                                     innerShadow = { null },
-                                    onDrawBackdrop = { },
-                                    onDrawSurface = {
-                                        // 上下高光的内阴影延伸（与迷你条同款）：顶部高光向下、
-                                        // 底部高光向上各拉一条白色内渐变带，颜色与白高光一致、
-                                        // 同用 Plus 叠加。画在本层 surface 记录内，节点已按
-                                        // Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
-                                        if (GlassProbe.current.navContainerHighlight) {
-                                            val glowColor = Color.White.copy(
-                                                alpha = if (isLightTheme) 0.2f else 0.1f
-                                            )
-                                            val glowH = 6f.dp.toPx()
-                                            // 顶边高光向下渐隐
-                                            drawRect(
-                                                brush = Brush.verticalGradient(
-                                                    0f to glowColor,
-                                                    1f to Color.Transparent,
-                                                    startY = 0f,
-                                                    endY = glowH
-                                                ),
-                                                size = Size(size.width, glowH),
-                                                blendMode = BlendMode.Plus
-                                            )
-                                            // 底边高光向上渐隐
-                                            drawRect(
-                                                brush = Brush.verticalGradient(
-                                                    0f to Color.Transparent,
-                                                    1f to glowColor,
-                                                    startY = size.height - glowH,
-                                                    endY = size.height
-                                                ),
-                                                topLeft = Offset(0f, size.height - glowH),
-                                                size = Size(size.width, glowH),
-                                                blendMode = BlendMode.Plus
-                                            )
-                                        }
-                                    }
+                                    onDrawSurface = solidCapsuleSurfaceDraw
                                 )
-                            )
-                        }
-                    )
-                    .then(if (enableInteractiveHighlight) interactiveHighlight.modifier else Modifier)
-                    .height(58f.dp)
-                    .fillMaxWidth()
-                    .padding(4f.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                content = content
-            )
+                                    .then(containerHighlightOverlay)
+                            }
+                            // 底栏容器玻璃：navcontainer 时整块不挂，退回 containerColor。
+                            else if (!containerGlassEnabled) {
+                                Modifier.drawBehind { containerSurfaceDraw() }
+                            } else {
+                                Modifier.drawBackdrop(
+                                    backdrop = backdrop,
+                                    shape = { Capsule() },
+                                    // 玻璃材质与迷你播放器收起态逐项对齐（MainActivity PlayerShell）：
+                                    // 自适应 colorControls + blur 4dp + lens(16,32) + Shadow.Default。
+                                    // 黑边环绕高光（数值与 ClassYaba LiquidButton blackSideHighlight 一致）：
+                                    // WrapHighlightStyle 整圈连续、左右最深、上下保留 baseline=0.4；
+                                    // 白色提亮高光由下方 emptyBackdrop 覆盖层单独叠加。
+                                    effects = {
+                                        // 整条效果链一个开关：量它挂在 1190x208 层上到底贵不贵。
+                                        if (GlassProbe.current.navContainerEffects) {
+                                            vibrancy()
+                                            blur(4f.dp.toPx())
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                                lens(16f.dp.toPx(), 32f.dp.toPx())
+                                            }
+                                        }
+                                    },
+                                    highlight = {
+                                        if (GlassProbe.current.navContainerHighlight) {
+                                            Highlight.Default.copy(
+                                                width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
+                                                blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
+                                                alpha = 1f,
+                                                style = WrapHighlightStyle(
+                                                    color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
+                                                    blendMode = BlendMode.SrcOver,
+                                                    angle = 0f,
+                                                    falloff = 0.9f,
+                                                    baseline = 0.4f
+                                                )
+                                            )
+                                        } else null
+                                    },
+                                    shadow = {
+                                        if (GlassProbe.current.navContainerShadow) Shadow.Default else null
+                                    },
+                                    // 静止时 pressProgress==0，缩放恒为 1 —— 这层 graphicsLayer 是白开的。
+                                    layerBlock = if (!GlassProbe.current.navContainerLayer) null else {
+                                        {
+                                            val progress = dampedDragAnimation.pressProgress
+                                            val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                                            scaleX = scale
+                                            scaleY = scale
+                                        }
+                                    },
+                                    // 采样 + 记录（探针关掉采样时连 record 一起停）。
+                                    onDrawBackdrop = containerOnDrawBackdrop,
+                                    onDrawSurface = containerSurfaceDraw
+                                )
+                                // 白色提亮高光覆盖层：定义见函数顶部 containerHighlightOverlay
+                                // （磨砂/玻璃两分支共用，保证关玻璃材质与迷你条一致）。
+                                .then(containerHighlightOverlay)
+                            }
+                        )
+                        .then(if (enableInteractiveHighlight) interactiveHighlight.modifier else Modifier)
+                        .height(58f.dp)
+                        .fillMaxWidth()
+                        .padding(4f.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = content
+                )
+            }
         }
 
         CompositionLocalProvider(

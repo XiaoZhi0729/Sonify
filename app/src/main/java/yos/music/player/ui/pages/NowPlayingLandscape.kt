@@ -59,8 +59,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.blankj.utilcode.util.TimeUtils
-import com.google.accompanist.insets.navigationBarsPadding
-import com.google.accompanist.insets.statusBarsPadding
+import yos.music.player.ui.widgets.basic.navigationBarsPadding
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.SettingsLibrary
@@ -602,20 +602,12 @@ private fun LandscapeTitleBlock(
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = FontWeight.Medium
                     )
-                    Text(
-                        text = it?.artistsName ?: defaultArtistsName,
+                    ArtistsTapText(
+                        artistsName = it?.artistsName,
+                        placeholder = defaultArtistsName,
                         fontSize = 18.5.sp,
-                        modifier = Modifier
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onOpenArtist(it?.artistsName.orEmpty())
-                            }
-                            .overlayEffect(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color.White.copy(alpha = 0.35f)
+                        modifier = Modifier,
+                        onArtistClick = onOpenArtist
                     )
                 }
 

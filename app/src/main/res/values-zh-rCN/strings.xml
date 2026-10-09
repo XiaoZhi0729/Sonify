@@ -79,10 +79,14 @@
     <string name="kugou_vip_not_signed_today">今日未签到</string>
     <string name="kugou_vip_auto_receive">自动领取VIP</string>
     <string name="kugou_vip_auto_receive_desc">启动时自动签到领取每日会员</string>
+    <string name="settings_upload_listening_duration_title">上传听歌时长</string>
+    <string name="settings_upload_listening_duration_desc">登录酷狗后，在线歌曲的收听时长会同步到酷狗账号以累计听歌等级，并在开播时上报播放历史</string>
     <string name="page_settings_title">设置</string>
     <string name="page_library_title">资料库</string>
     <string name="page_discovery_title">新发现</string>
     <string name="page_search_title">搜索</string>
+    <string name="page_favorites_title">喜爱</string>
+    <string name="favorites_not_found">未找到「我喜欢」歌单，请先登录酷狗账号</string>
     <string name="discovery_coming_soon">新歌、排行榜与精选歌单即将到来…</string>
     <string name="discovery_rank_title">排行榜</string>
     <string name="discovery_rank_empty">暂无排行榜数据</string>
@@ -269,6 +273,11 @@
     <string name="settings_performance_ui_screen_corner_desc">再次调起调整屏幕圆角的对话框。</string>
     <string name="settings_performance_lyric_line_balance">平衡行模式</string>
     <string name="settings_performance_lyric_line_balance_desc">将歌词的每行字数进行平衡，使版式更整齐。对于某些语言的歌词，可能存在副作用。</string>
+    <string name="settings_performance_lyric_style_font_size">歌词字号</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric">智能逐字歌词</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric_desc">为非逐字歌词按线性渐变速度模拟逐字扫色效果。</string>
+    <string name="settings_performance_lyric_timing_offset">歌词时间偏移</string>
+    <string name="settings_performance_lyric_timing_offset_desc">正值让歌词提前显示，负值让歌词延后显示。</string>
     <string name="settings_others_about_contact_us">联系我们</string>
     <string name="settings_others_about_contact_us_desc">前往我们的 Telegram 频道。</string>
     <string name="settings_others_about_developer_coolapk">前往开发者的酷安主页。</string>
@@ -279,6 +288,10 @@
     <string name="settings_others_diag_title">诊断日志</string>
     <string name="settings_others_diag_desc">把播放相关事件写进应用存储。熄屏无声、自动跳歌、卡缓冲这类问题，只有靠它才能事后定位。</string>
     <string name="settings_others_diag_export">导出诊断日志</string>
+    <string name="settings_others_coloros_diag_title">ColorOS 歌词诊断</string>
+    <string name="settings_others_coloros_diag_desc">锁屏歌词不显示时打开。持续把歌词投递全链路事件写入诊断日志，播放几首并锁屏观察后，用下方按钮导出报告反馈。</string>
+    <string name="settings_others_coloros_diag_export">导出 ColorOS 歌词诊断日志</string>
+    <string name="settings_others_coloros_diag_export_desc">生成仅含歌词链路事件的报告（含系统版本与测试步骤），并拉起分享</string>
     <string name="settings_others_diag_hint">报告包含省电策略快照、关键事件与日志尾部；也可用 adb 从 Android/data/&lt;包名&gt;/files/logs 直接拉取。</string>
     <string name="settings_others_reset">重置所有设置</string>
     <string name="settings_others_reset_confirm">所有设置将恢复为默认值，此操作无法撤销。登录状态与资料库数据不受影响。</string>

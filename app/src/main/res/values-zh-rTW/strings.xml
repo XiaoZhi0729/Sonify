@@ -50,10 +50,14 @@
     <string name="kugou_phone_choose_account_subtitle">該手機號綁定了多個酷狗帳號，請選擇要登入的帳號</string>
     <string name="kugou_logout">登出</string>
     <string name="kugou_logout_confirm">確定要登出酷狗帳號嗎？</string>
+    <string name="settings_upload_listening_duration_title">上傳聽歌時長</string>
+    <string name="settings_upload_listening_duration_desc">登入酷狗後，線上歌曲的收聽時長會同步到酷狗帳號以累計聽歌等級，並在開播時上報播放歷史</string>
     <string name="page_settings_title">設定</string>
     <string name="page_library_title">資料庫</string>
     <string name="page_discovery_title">新發現</string>
     <string name="page_search_title">搜尋</string>
+    <string name="page_favorites_title">喜愛</string>
+    <string name="favorites_not_found">找不到「我喜歡」歌單，請先登入酷狗帳號</string>
     <string name="search_type_song">歌曲</string>
     <string name="search_type_artist">歌手</string>
     <string name="search_type_album">專輯</string>
@@ -187,6 +191,11 @@
     <string name="settings_performance_ui_screen_corner_desc">再次調起調整屏幕圓角的對話框。</string>
     <string name="settings_performance_lyric_line_balance">平衡行模式</string>
     <string name="settings_performance_lyric_line_balance_desc">將歌詞的每行字數進行平衡，使版式更整齊。對於某些語言的歌詞，可能存在副作用。</string>
+    <string name="settings_performance_lyric_style_font_size">歌詞字號</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric">智慧逐字歌詞</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric_desc">為非逐字歌詞以線性漸變速度模擬逐字掃色效果。</string>
+    <string name="settings_performance_lyric_timing_offset">歌詞時間偏移</string>
+    <string name="settings_performance_lyric_timing_offset_desc">正值讓歌詞提前顯示，負值讓歌詞延後顯示。</string>
     <string name="settings_others_about_contact_us">聯繫我們</string>
     <string name="settings_others_about_contact_us_desc">前往我們的 Telegram 頻道。</string>
     <string name="settings_others_about_developer_coolapk">前往開發者的酷安主頁。</string>
@@ -194,6 +203,10 @@
     <string name="settings_others_about_acknowledgements">致謝</string>
     <string name="settings_others_about_ack_projects">項目</string>
     <string name="settings_others_about_ack_libraries">開源庫</string>
+    <string name="settings_others_coloros_diag_title">ColorOS 歌詞診斷</string>
+    <string name="settings_others_coloros_diag_desc">鎖屏歌詞不顯示時開啟。持續把歌詞投遞全鏈路事件寫入診斷日誌，播放幾首並鎖屏觀察後，用下方按鈕匯出報告回報。</string>
+    <string name="settings_others_coloros_diag_export">匯出 ColorOS 歌詞診斷日誌</string>
+    <string name="settings_others_coloros_diag_export_desc">產生僅含歌詞鏈路事件的報告（含系統版本與測試步驟），並開啟分享</string>
     <string name="settings_others_reset">重設所有設定</string>
     <string name="settings_others_reset_confirm">所有設定將恢復為預設值，此操作無法復原。登入狀態與資料庫資料不受影響。</string>
     <string name="settings_others_reset_done">已重設為預設設定</string>

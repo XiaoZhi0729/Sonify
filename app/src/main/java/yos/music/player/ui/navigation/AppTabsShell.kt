@@ -29,6 +29,7 @@ fun AppTabsShell(
     homeController: NavHostController,
     libraryController: NavHostController,
     searchController: NavHostController,
+    favoritesController: NavHostController,
     navigator: AppNavigator,
     modifier: Modifier = Modifier,
     probe: GlassProbe = GlassProbe.Default,
@@ -48,6 +49,11 @@ fun AppTabsShell(
         animationSpec = tween(200),
         label = "search-house-alpha"
     )
+    val favoritesAlpha by animateFloatAsState(
+        targetValue = if (selectedHouse == HouseId.Favorites) 1f else 0f,
+        animationSpec = tween(200),
+        label = "favorites-house-alpha"
+    )
 
     // ---------- 系统返回隔离（侧滑串栈 bug 的修复，详见 HouseBackDispatcherOwner） ----------
     // 三个 house 各持一个私有 NavigationEventDispatcher；house 内所有 BackHandler（含
@@ -57,10 +63,12 @@ fun AppTabsShell(
     val homeBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
     val libraryBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
     val searchBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
+    val favoritesBackOwner = remember { HouseBackDispatcherOwner { (context as? ComponentActivity)?.finish() } }
     val activeBackOwner = when (selectedHouse) {
         HouseId.Home -> homeBackOwner
         HouseId.Library -> libraryBackOwner
         HouseId.Search -> searchBackOwner
+        HouseId.Favorites -> favoritesBackOwner
     }
     // bridge 常开：house 内有 enabled 回调（弹层开着或返回栈深>1）→ 转发；house 为空
     // （已在根且无弹层）→ owner 的 onBackCompletedFallback 兜底退出 Activity。
@@ -95,6 +103,15 @@ fun AppTabsShell(
             backOwner = searchBackOwner,
         ) {
             SearchNavHost(searchController, navigator)
+        }
+        HouseLayer(
+            alpha = favoritesAlpha,
+            active = selectedHouse == HouseId.Favorites,
+            drawWhenHidden = probe.houseLayersDrawWhenHidden,
+            modulateAlpha = probe.houseModulateAlpha,
+            backOwner = favoritesBackOwner,
+        ) {
+            FavoritesNavHost(favoritesController, navigator)
         }
     }
 }

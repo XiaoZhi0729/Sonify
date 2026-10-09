@@ -235,15 +235,22 @@ private fun BackgroundLayer(
 }
 
 /**
- * kenburnsview 1.0.7 的 onDraw 在暂停时仍会经 super.onDraw 绘制；从未运行动画的控件矩阵是单位矩阵，
- * 会把图按原始尺寸画在左上角。这里在绘制前补一个铺满全屏的 cover 矩阵，保证任何时刻画面都是全屏构图，
- * 暂停即定格在动画当前帧，恢复播放时从原地继续。
+ * kenburnsview 1.0.7 的 onDraw 在暂停时会跳过整段矩阵重算；从未运行动画的控件矩阵是单位矩阵，
+ * 会把图按原始尺寸画在左上角。旋转走 configChanges 不重建控件，暂停态旋转后 imageMatrix 仍是
+ * 按旧视口算出的非单位矩阵，旧构图画在新画布上会盖不满全屏、露出底下的静态兜底层。因此不能只修
+ * 单位矩阵场景，改为：视口尺寸与上次计算 cover 矩阵时不一致（首绘 + 旋转等尺寸变化）就重算铺满
+ * 全屏的 cover 矩阵；尺寸未变时不触发，不干扰 Ken Burns 动画自身的 setImageMatrix，暂停仍定格
+ * 在动画当前帧，恢复播放时从原地继续。
  */
 private class SafeKenBurnsView(context: Context) : KenBurnsView(context) {
+    private var lastMatrixWidth = 0
+    private var lastMatrixHeight = 0
+
     override fun onDraw(canvas: Canvas) {
         val d = drawable
-        if (imageMatrix.isIdentity && d != null && width > 0 && height > 0 &&
-            d.intrinsicWidth > 0 && d.intrinsicHeight > 0
+        if (d != null && width > 0 && height > 0 &&
+            d.intrinsicWidth > 0 && d.intrinsicHeight > 0 &&
+            (width != lastMatrixWidth || height != lastMatrixHeight)
         ) {
             val scale = maxOf(
                 width / d.intrinsicWidth.toFloat(),
@@ -258,6 +265,8 @@ private class SafeKenBurnsView(context: Context) : KenBurnsView(context) {
                     )
                 }
             )
+            lastMatrixWidth = width
+            lastMatrixHeight = height
         }
         super.onDraw(canvas)
     }

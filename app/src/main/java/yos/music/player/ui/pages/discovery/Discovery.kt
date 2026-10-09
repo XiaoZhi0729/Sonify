@@ -30,6 +30,7 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -72,6 +73,7 @@ import yos.music.player.data.libraries.defaultAlbum
 import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.DiscoveryObject
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.objects.RankObject
 import yos.music.player.data.repositories.KugouNewAlbum
@@ -104,6 +106,7 @@ internal val DiscoveryRailSnapDistance = PagerSnapDistance.atMost(Int.MAX_VALUE)
  *
  * 内容流节奏（从上到下）：
  *   最近播放    —— 单张全宽大卡（复用 RecommendCardItem 视觉语言），无数据则隐藏
+ *   每日推荐    —— 横向分页多列歌曲（每列 4 首，复用 MusicList），无数据则隐藏
  *   精选歌单    —— 横向自适应歌单卡（最小 150dp）
  *   新歌精选    —— 横向分页多列歌曲（每列 4 首，复用 MusicList）
  *   本周新发行  —— 横向自适应专辑卡（最小 150dp）
@@ -131,6 +134,8 @@ fun Discovery(
     val newAlbumsStatus = DiscoveryObject.newAlbumsStatus
     val recommendPlaylists = DiscoveryObject.recommendPlaylists
     val recommendPlaylistsStatus = DiscoveryObject.recommendPlaylistsStatus
+    val everySongs = DiscoveryObject.everydayRecommendSongs
+    val everyStatus = DiscoveryObject.everydayRecommendSongsStatus
     val scope = rememberCoroutineScope()
 
     // 最近播放：收听历史（最近优先，后台切歌实时更新），首页最多展示 10 首
@@ -196,6 +201,21 @@ fun Discovery(
         }
     }
 
+    fun loadEverydayRecommendSongs() {
+        if (everyStatus.value == "loading") return
+        everyStatus.value = "loading"
+        scope.launch {
+            KugouRepository.getEverydayRecommendSongs()
+                .onSuccess { list ->
+                    everySongs.value = list
+                    everyStatus.value = if (list.isEmpty()) "empty" else "ok"
+                }
+                .onFailure { e ->
+                    everyStatus.value = "error:${e.message}"
+                }
+        }
+    }
+
     // 新歌点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
     fun playNewSongsAt(index: Int) {
         val songs = newSongs.value
@@ -206,17 +226,60 @@ fun Discovery(
         }
     }
 
-    // 首次进入加载；切 Tab 返回时 DiscoveryObject 状态仍在，不重复请求
-    LaunchedEffect(Unit) {
-        if (status.value == "idle") load()
-        // 上次会话残留 loading 态自愈（切页时协程已取消）
-        if (status.value == "loading") {
-            status.value = if (rankList.value.isEmpty()) "idle" else "ok"
-            if (status.value == "idle") load()
+    // 每日推荐点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
+    fun playEverydayRecommendAt(index: Int) {
+        val songs = everySongs.value
+        if (index !in songs.indices) return
+        val queue = songs.map { KugouRepository.toQueueMediaItem(it) }
+        scope.launch(Dispatchers.IO) {
+            MediaController.prepare(queue[index], queue)
         }
-        if (newSongsStatus.value == "idle") loadNewSongs()
-        if (newAlbumsStatus.value == "idle") loadNewAlbums()
-        if (recommendPlaylistsStatus.value == "idle") loadRecommendPlaylists()
+    }
+
+    // 首次进入加载；切 Tab 返回时 DiscoveryObject 状态仍在，不重复请求。
+    // discoveryRevision 变化（重选 Home Tab / 回前台 / 操作完成）时强制重拉全部区块。
+    val discoveryRevision = KugouSyncCoordinator.discoveryRevision.value
+    val refreshing = remember("Discovery_refreshing") { mutableStateOf(false) }
+    val lastRevision = remember("Discovery_lastRevision") { mutableStateOf(discoveryRevision) }
+
+    fun refreshAll() {
+        load()
+        loadNewSongs()
+        loadNewAlbums()
+        loadRecommendPlaylists()
+        loadEverydayRecommendSongs()
+    }
+
+    LaunchedEffect(discoveryRevision) {
+        if (discoveryRevision == lastRevision.value) {
+            if (status.value == "idle") load()
+            // 上次会话残留 loading 态自愈（切页时协程已取消）
+            if (status.value == "loading") {
+                status.value = if (rankList.value.isEmpty()) "idle" else "ok"
+                if (status.value == "idle") load()
+            }
+            if (newSongsStatus.value == "idle") loadNewSongs()
+            if (newAlbumsStatus.value == "idle") loadNewAlbums()
+            if (recommendPlaylistsStatus.value == "idle") loadRecommendPlaylists()
+            if (everyStatus.value == "idle") loadEverydayRecommendSongs()
+        } else {
+            lastRevision.value = discoveryRevision
+            refreshing.value = true
+            refreshAll()
+        }
+    }
+
+    // 全部区块加载完成后收起下拉刷新指示器
+    LaunchedEffect(status.value, newSongsStatus.value, newAlbumsStatus.value, recommendPlaylistsStatus.value, everyStatus.value) {
+        if (refreshing.value &&
+            status.value != "loading" &&
+            newSongsStatus.value != "loading" &&
+            newAlbumsStatus.value != "loading" &&
+            recommendPlaylistsStatus.value != "loading" &&
+            everyStatus.value != "loading"
+        ) {
+            refreshing.value = false
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -226,6 +289,11 @@ fun Discovery(
             onTopRightIcon = {
                 openSettings()
             },
+            onRefresh = {
+                refreshing.value = true
+                refreshAll()
+            },
+            refreshing = refreshing.value,
             extraTopPadding = 57.dp
         ) {
         item("TopDivider") {
@@ -287,7 +355,24 @@ fun Discovery(
             }
         }
 
-        // ② 精选歌单
+        // ② 每日推荐（样式与「新歌精选」一致：横向分页多列歌曲行；无数据则整段隐藏）
+        item("EverydayRecommendSection") {
+            if (everySongs.value.isNotEmpty()) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 24.dp)
+                ) {
+                    DiscoverySectionHeader(
+                        title = stringResource(id = R.string.home_everyday_recommend_title),
+                        onClick = { navController.toUI(UI.EverydayRecommendDetail) }
+                    )
+                    DiscoveryPagedSongColumns(everySongs.value) { playEverydayRecommendAt(it) }
+                }
+            }
+        }
+
+        // ③ 精选歌单
         item("RecommendPlaylistSection") {
             if (recommendPlaylists.value.isNotEmpty()) {
                 Column(
@@ -365,59 +450,7 @@ fun Discovery(
                         title = stringResource(id = R.string.discovery_new_songs_title),
                         onClick = { navController.toUI(UI.NewSongsDetail) }
                     )
-
-                    // 横向分页多列歌曲（HorizontalPager 松手吸附，与排行榜/新专辑/精选歌单同款手感）：
-                    //   每列固定 4 首，使用全部 newSongs.value（不再 .take(20)）；
-                    //   MusicList horizontalPadding=0 → 封面左边缘 = startInset = 20dp = Header；
-                    //   pageWidth = screenWidth - 59（第二列封面左边缘 = startInset + pageWidth = screenWidth - 39，
-                    //   封面右边缘 = screenWidth + 13 → 屏内可见 39dp = 3/4 封面）；
-                    //   startInset(20) + pageWidth + endInset(39) = screenWidth → 吸附等式成立，
-                    //   每个 Page snap 后左边缘落在同一 X 坐标（含末页）。
-                    //   verticalAlignment = Top：末列不足 4 首时贴左上，不垂直居中。
-                    val songs = newSongs.value
-                    val displaySongs = remember(songs) {
-                        songs.map { KugouRepository.toDisplayMediaItem(it) }
-                    }
-                    val songsPerColumn = 4
-                    val columnCount = (songs.size + songsPerColumn - 1) / songsPerColumn
-                    val pagerState = rememberPagerState(pageCount = { columnCount })
-
-                    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-                    val startInset = 20.dp
-                    val endInset = 39.dp
-                    // 横屏 / 分屏 / 小窗时 screenWidth 可能 < 59dp，coerceAtLeast 防止 pageWidth 为负
-                    val pageWidth = (screenWidth - startInset - endInset).coerceAtLeast(100.dp)
-
-                    HorizontalPager(
-                        state = pagerState,
-                        flingBehavior = PagerDefaults.flingBehavior(
-                            state = pagerState,
-                            pagerSnapDistance = DiscoveryRailSnapDistance
-                        ),
-                        pageSize = PageSize.Fixed(pageWidth),
-                        contentPadding = PaddingValues(start = startInset, end = endInset),
-                        // foundation 1.7.0-beta07 默认 CenterVertically → 末页不足 4 首会垂直居中；
-                        // 显式 Top 使所有页面统一顶部对齐。
-                        verticalAlignment = Alignment.Top,
-                        key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
-                        beyondViewportPageCount = 1
-                    ) { page ->
-                        Column(Modifier.fillMaxWidth()) {
-                            repeat(songsPerColumn) { row ->
-                                val globalIndex = page * songsPerColumn + row
-                                if (globalIndex >= songs.size) return@repeat
-                                MusicList(
-                                    displaySongs[globalIndex],
-                                    horizontalPadding = 0.dp
-                                ) {
-                                    playNewSongsAt(globalIndex)
-                                }
-                                if (row < songsPerColumn - 1 && globalIndex + 1 < songs.size) {
-                                    OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
-                                }
-                            }
-                        }
-                    }
+                    DiscoveryPagedSongColumns(newSongs.value) { playNewSongsAt(it) }
                 }
             }
         }
@@ -518,6 +551,67 @@ fun Discovery(
             }
         }
     }
+    }
+}
+
+/**
+ * 横向分页多列歌曲（新歌精选 / 每日推荐共用）：HorizontalPager 松手吸附，
+ * 与排行榜/新专辑/精选歌单同款手感。
+ *   每列固定 4 首，使用传入的完整 [songs]；
+ *   MusicList horizontalPadding=0 → 封面左边缘 = startInset = 20dp = Header；
+ *   pageWidth = screenWidth - 59（第二列封面左边缘 = startInset + pageWidth = screenWidth - 39，
+ *   封面右边缘 = screenWidth + 13 → 屏内可见 39dp = 3/4 封面）；
+ *   startInset(20) + pageWidth + endInset(39) = screenWidth → 吸附等式成立，
+ *   每个 Page snap 后左边缘落在同一 X 坐标（含末页）。
+ *   verticalAlignment = Top：末列不足 4 首时贴左上，不垂直居中。
+ */
+@Composable
+private fun DiscoveryPagedSongColumns(
+    songs: List<KugouNewSong>,
+    onSongClick: (Int) -> Unit
+) {
+    val displaySongs = remember(songs) {
+        songs.map { KugouRepository.toDisplayMediaItem(it) }
+    }
+    val songsPerColumn = 4
+    val columnCount = (songs.size + songsPerColumn - 1) / songsPerColumn
+    val pagerState = rememberPagerState(pageCount = { columnCount })
+
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val startInset = 20.dp
+    val endInset = 39.dp
+    // 横屏 / 分屏 / 小窗时 screenWidth 可能 < 59dp，coerceAtLeast 防止 pageWidth 为负
+    val pageWidth = (screenWidth - startInset - endInset).coerceAtLeast(100.dp)
+
+    HorizontalPager(
+        state = pagerState,
+        flingBehavior = PagerDefaults.flingBehavior(
+            state = pagerState,
+            pagerSnapDistance = DiscoveryRailSnapDistance
+        ),
+        pageSize = PageSize.Fixed(pageWidth),
+        contentPadding = PaddingValues(start = startInset, end = endInset),
+        // foundation 1.7.0-beta07 默认 CenterVertically → 末页不足 4 首会垂直居中；
+        // 显式 Top 使所有页面统一顶部对齐。
+        verticalAlignment = Alignment.Top,
+        key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
+        beyondViewportPageCount = 1
+    ) { page ->
+        Column(Modifier.fillMaxWidth()) {
+            repeat(songsPerColumn) { row ->
+                val globalIndex = page * songsPerColumn + row
+                if (globalIndex >= songs.size) return@repeat
+                MusicList(
+                    displaySongs[globalIndex],
+                    horizontalPadding = 0.dp
+                ) {
+                    onSongClick(globalIndex)
+                }
+                if (row < songsPerColumn - 1 && globalIndex + 1 < songs.size) {
+                    OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
+                }
+            }
+        }
     }
 }
 

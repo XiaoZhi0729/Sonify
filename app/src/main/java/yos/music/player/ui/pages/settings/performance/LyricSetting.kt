@@ -57,6 +57,34 @@ fun LyricSetting(navController: NavController) =
 
                         GroupSpacerMedium()
 
+                        // 歌词字号缩放（对齐 Flamingo 新版 LyricFontScale，钳制 0.8~1.2）
+                        RoundColumn {
+                            SelectItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_style_font_size),
+                                items = listOf("80%", "90%", "100%", "110%", "120%"),
+                                value = {
+                                    when (SettingsLibrary.LyricFontScale.coerceIn(0.8f, 1.2f)) {
+                                        0.8f -> "80%"
+                                        0.9f -> "90%"
+                                        1.1f -> "110%"
+                                        1.2f -> "120%"
+                                        else -> "100%"
+                                    }
+                                },
+                                onValueChange = {
+                                    SettingsLibrary.LyricFontScale = when (it) {
+                                        "80%" -> 0.8f
+                                        "90%" -> 0.9f
+                                        "110%" -> 1.1f
+                                        "120%" -> 1.2f
+                                        else -> 1.0f
+                                    }
+                                }
+                            )
+                        }
+
+                        GroupSpacerMedium()
+
                         RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_line_balance),
@@ -69,6 +97,48 @@ fun LyricSetting(navController: NavController) =
                             )
                         }
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_line_balance_desc))
+
+                        GroupSpacerMedium()
+
+                        // 智能逐字歌词（对齐 Flamingo smart word-by-word）
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric),
+                                onClick = {
+                                    SettingsLibrary.SmartWordByWordLyric =
+                                        !SettingsLibrary.SmartWordByWordLyric
+                                },
+                                checkedLambda = { SettingsLibrary.SmartWordByWordLyric }
+                            )
+                        }
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric_desc))
+
+                        GroupSpacerMedium()
+
+                        // 歌词时间偏移：正值 = 歌词提前，负值 = 歌词延后
+                        RoundColumn {
+                            val offsetSteps = listOf(-500, -300, -200, -100, 0, 100, 200, 300, 500)
+                            fun offsetLabel(ms: Int) = when {
+                                ms > 0 -> "+$ms ms"
+                                else -> "$ms ms"
+                            }
+                            SelectItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_timing_offset),
+                                items = offsetSteps.map { offsetLabel(it) },
+                                value = {
+                                    offsetLabel(
+                                        offsetSteps.minByOrNull {
+                                            kotlin.math.abs(it - SettingsLibrary.LyricTimingOffset)
+                                        } ?: 0
+                                    )
+                                },
+                                onValueChange = { label ->
+                                    SettingsLibrary.LyricTimingOffset =
+                                        offsetSteps.firstOrNull { offsetLabel(it) == label } ?: 0
+                                }
+                            )
+                        }
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_timing_offset_desc))
 
                         GroupSpacer()
 

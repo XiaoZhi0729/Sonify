@@ -255,6 +255,10 @@ fun Settings(navController: NavController) =
                             DiagLogSwitchItem()
                             Divider()
                             DiagExportItem()
+                            Divider()
+                            ColorOsLyricDiagSwitchItem()
+                            Divider()
+                            ColorOsLyricExportItem()
                         }
                         ListHeader(content = stringResource(id = R.string.settings_others_diag_hint))
 
@@ -284,6 +288,7 @@ fun Settings(navController: NavController) =
                                     KugouVipRepository.AutoReceiveVip = true
                                     // 诊断模块读的是内存副本，不同步就会"重置了还在按旧值写/不写"
                                     YosDiagnostics.setLoggingEnabled(SettingsLibrary.DiagLogEnabled)
+                                    YosDiagnostics.setColorOsLyricDiagEnabled(SettingsLibrary.ColorOsLyricDiagEnabled)
                                     Toast.makeText(
                                         context,
                                         R.string.settings_others_reset_done,
@@ -407,6 +412,67 @@ private fun humanSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1048576.0)
     bytes >= 1024 -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
     else -> "$bytes B"
+}
+
+/**
+ * ColorOS 锁屏歌词全链路诊断开关：开着时歌词发布链路（LYRIC_* 事件）随诊断日志落盘，
+ * 独立于 [DiagLogEnabled] 生效（总开关关着也能采）。给外部用户排查"锁屏不出歌词"用。
+ */
+@Composable
+private fun ColorOsLyricDiagSwitchItem() {
+    SwitchItem(
+        title = stringResource(id = R.string.settings_others_coloros_diag_title),
+        desc = stringResource(id = R.string.settings_others_coloros_diag_desc),
+        onClick = {
+            val newValue = !SettingsLibrary.ColorOsLyricDiagEnabled
+            SettingsLibrary.ColorOsLyricDiagEnabled = newValue
+            YosDiagnostics.setColorOsLyricDiagEnabled(newValue)
+            YosDiagnostics.log("LYRIC_DIAG_SWITCH", "on" to newValue)
+        },
+        checkedLambda = { SettingsLibrary.ColorOsLyricDiagEnabled }
+    )
+}
+
+/** 一键导出 ColorOS 歌词诊断报告（只含歌词链路事件 + ROM 版本 + 测试步骤），拉起分享面板。 */
+@Composable
+private fun ColorOsLyricExportItem() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val busy = remember { mutableStateOf(false) }
+    LabelItem(
+        title = stringResource(id = R.string.settings_others_coloros_diag_export),
+        desc = if (busy.value) stringResource(id = R.string.diag_export_busy)
+        else stringResource(id = R.string.settings_others_coloros_diag_export_desc),
+        superLink = false
+    ) {
+        if (busy.value) return@LabelItem
+        busy.value = true
+        scope.launch {
+            val report = withContext(Dispatchers.IO) {
+                runCatching { YosDiagnostics.exportColorOsLyric(context) }.getOrNull()
+            }
+            busy.value = false
+            if (report == null) {
+                Toast.makeText(context, R.string.diag_export_fail, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val uri = YosDiagnostics.shareUri(context, report)
+            if (uri == null) {
+                Toast.makeText(context, context.getString(R.string.diag_export_path, report.parent), Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            safeStartActivity(
+                context,
+                Intent.createChooser(send, context.getString(R.string.settings_others_coloros_diag_export)),
+                null
+            )
+        }
+    }
 }
 
 fun safeStartActivity(context: Context, intent: Intent, options: Bundle?) {

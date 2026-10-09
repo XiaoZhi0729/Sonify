@@ -25,7 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import com.google.accompanist.insets.statusBarsPadding
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -42,8 +42,10 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -80,8 +82,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
-import com.google.accompanist.insets.LocalWindowInsets
-import com.google.accompanist.insets.navigationBarsHeight
+import yos.music.player.ui.widgets.basic.rawStatusBarsTopPx
+import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import com.kyant.backdrop.Backdrop
@@ -182,7 +184,7 @@ fun Title(
         content as Any
     )*/
 
-import com.google.accompanist.insets.statusBarsHeight
+import yos.music.player.ui.widgets.basic.statusBarsHeight
 
 @Composable
 fun Title(
@@ -201,6 +203,9 @@ fun Title(
     titleHorizontalPadding: Dp = 20.dp,
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
+    // 下拉刷新（opt-in）：传 onRefresh 才启用；未传时列表路径逐像素不变
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     content: LazyListScope.() -> Unit
 ) =
     BaseTitle(
@@ -217,6 +222,8 @@ fun Title(
         topRightIcon = topRightIcon,
         onTopRightIcon = onTopRightIcon,
         titleHorizontalPadding = titleHorizontalPadding,
+        onRefresh = onRefresh,
+        refreshing = refreshing,
         content = content
     )
 
@@ -234,6 +241,9 @@ fun TitleWithLazyVerticalGrid(
     onTopRightIcon: (() -> Unit)? = null,
     // 外部持有 gridState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     gridState: LazyGridState = rememberLazyGridState(),
+    // 下拉刷新（opt-in）：传 onRefresh 才启用；未传时网格路径逐像素不变
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     content: LazyGridScope.() -> Unit
 ) =
     BaseTitle(
@@ -249,6 +259,8 @@ fun TitleWithLazyVerticalGrid(
         topRightIcon = topRightIcon,
         onTopRightIcon = onTopRightIcon,
         gridState = gridState,
+        onRefresh = onRefresh,
+        refreshing = refreshing,
         content = content
     )
 
@@ -270,6 +282,8 @@ private fun BaseTitle(
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     content: Any
 ) {
     if (grid) {
@@ -285,6 +299,8 @@ private fun BaseTitle(
             topRightIcon = topRightIcon,
             onTopRightIcon = onTopRightIcon,
             gridState = gridState,
+            onRefresh = onRefresh,
+            refreshing = refreshing,
             content = content as LazyGridScope.() -> Unit
         )
     } else {
@@ -301,6 +317,8 @@ private fun BaseTitle(
             onTopRightIcon = onTopRightIcon,
             titleHorizontalPadding = titleHorizontalPadding,
             listState = listState,
+            onRefresh = onRefresh,
+            refreshing = refreshing,
             content = content as LazyListScope.() -> Unit
         )
     }
@@ -338,6 +356,7 @@ fun rememberTitleBackdrop(): LayerBackdrop {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun BaseTitleGrid(
     title: String,
     subTitle: String? = null,
@@ -350,6 +369,8 @@ private fun BaseTitleGrid(
     topRightIcon: ImageVector? = null,
     onTopRightIcon: (() -> Unit)? = null,
     gridState: LazyGridState = rememberLazyGridState(),
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     content: LazyGridScope.() -> Unit
 ) {
     val state = gridState
@@ -381,41 +402,53 @@ private fun BaseTitleGrid(
         Box(Modifier.fillMaxSize()) {
             val hazeState = remember(title) { HazeState() }
 
-            LazyVerticalGrid(
-                state = state,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .titleCollapseTouchTracker(collapse)
-                    .hazeSource(hazeState)
-                    .layerBackdrop(titleBackdrop)
-                    .overScrollVertical(),
-                flingBehavior = rememberOverscrollFlingBehavior { state },
-                columns = GridCells.Adaptive(minSize = minItemSize),
-                horizontalArrangement = Arrangement.spacedBy(15.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                contentPadding = PaddingValues(
-                    start = 18.dp,
-                    end = 18.dp/*, bottom = 18.dp*/,
-                    top = 54.dp + extraTopPadding
-                )
-            ) {
-                item(key = "title", span = { GridItemSpan(maxLineSpan) }) {
-                    Column {
-                        Spacer(modifier = Modifier.statusBarsHeight())
-                        TitleItem(
-                            title,
-                            subTitle,
-                            rightIcon,
-                            onRightIcon,
-                            collapse.largeTitleAlpha,
-                            true
-                        )
+            val gridContent: @Composable () -> Unit = {
+                LazyVerticalGrid(
+                    state = state,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .titleCollapseTouchTracker(collapse)
+                        .hazeSource(hazeState)
+                        .layerBackdrop(titleBackdrop)
+                        .overScrollVertical(),
+                    flingBehavior = rememberOverscrollFlingBehavior { state },
+                    columns = GridCells.Adaptive(minSize = minItemSize),
+                    horizontalArrangement = Arrangement.spacedBy(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    contentPadding = PaddingValues(
+                        start = 18.dp,
+                        end = 18.dp/*, bottom = 18.dp*/,
+                        top = 54.dp + extraTopPadding
+                    )
+                ) {
+                    item(key = "title", span = { GridItemSpan(maxLineSpan) }) {
+                        Column {
+                            Spacer(modifier = Modifier.statusBarsHeight())
+                            TitleItem(
+                                title,
+                                subTitle,
+                                rightIcon,
+                                onRightIcon,
+                                collapse.largeTitleAlpha,
+                                true
+                            )
+                        }
+                    }
+                    content()
+                    item("navbar", span = { GridItemSpan(maxLineSpan) }) {
+                        Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
                     }
                 }
-                content()
-                item("navbar", span = { GridItemSpan(maxLineSpan) }) {
-                    Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
-                }
+            }
+
+            if (onRefresh != null) {
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize()
+                ) { gridContent() }
+            } else {
+                gridContent()
             }
 
             TitleBar(
@@ -434,6 +467,7 @@ private fun BaseTitleGrid(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun BaseTitleList(
     title: String,
     subTitle: String? = null,
@@ -448,6 +482,8 @@ private fun BaseTitleList(
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     content: LazyListScope.() -> Unit
 ) {
     val state = listState
@@ -479,35 +515,47 @@ private fun BaseTitleList(
         Box(Modifier.fillMaxSize()) {
             val hazeState = remember(title) { HazeState() }
 
-            LazyColumn(
-                state = state,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .titleCollapseTouchTracker(collapse)
-                    .hazeSource(hazeState)
-                    .layerBackdrop(titleBackdrop)
-                    .overScrollVertical(),
-                flingBehavior = rememberOverscrollFlingBehavior { state },
-                contentPadding = PaddingValues(top = 54.dp + extraTopPadding)
-            ) {
-                item("title") {
-                    Column {
-                        Spacer(modifier = Modifier.statusBarsHeight())
-                        TitleItem(
-                            title,
-                            subTitle,
-                            rightIcon,
-                            onRightIcon,
-                            collapse.largeTitleAlpha,
-                            false,
-                            titleHorizontalPadding
-                        )
+            val listContent: @Composable () -> Unit = {
+                LazyColumn(
+                    state = state,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .titleCollapseTouchTracker(collapse)
+                        .hazeSource(hazeState)
+                        .layerBackdrop(titleBackdrop)
+                        .overScrollVertical(),
+                    flingBehavior = rememberOverscrollFlingBehavior { state },
+                    contentPadding = PaddingValues(top = 54.dp + extraTopPadding)
+                ) {
+                    item("title") {
+                        Column {
+                            Spacer(modifier = Modifier.statusBarsHeight())
+                            TitleItem(
+                                title,
+                                subTitle,
+                                rightIcon,
+                                onRightIcon,
+                                collapse.largeTitleAlpha,
+                                false,
+                                titleHorizontalPadding
+                            )
+                        }
+                    }
+                    content()
+                    item("navbar") {
+                        Spacer(modifier = Modifier.navigationBarsHeight(bottomPadding))
                     }
                 }
-                content()
-                item("navbar") {
-                    Spacer(modifier = Modifier.navigationBarsHeight(bottomPadding))
-                }
+            }
+
+            if (onRefresh != null) {
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize()
+                ) { listContent() }
+            } else {
+                listContent()
             }
 
             TitleBar(
@@ -635,8 +683,8 @@ private fun rememberTitleCollapseImpl(
     extraTopPadding: Dp
 ): TitleCollapseState {
     val density = LocalDensity.current
-    // 与 TitleItem 内部 Spacer(statusBarsHeight()) 同源（accompanist），保证几何一致
-    val statusPx = LocalWindowInsets.current.statusBars.top
+    // 与 TitleItem 内部 Spacer(statusBarsHeight()) 同源（RawWindowInsets raw 读数），保证几何一致
+    val statusPx = rawStatusBarsTopPx()
     val extraPx = with(density) { extraTopPadding.roundToPx() }
     val currentFirstItem by rememberUpdatedState(firstItemInfo)
     val currentLayoutReady by rememberUpdatedState(isLayoutReady)

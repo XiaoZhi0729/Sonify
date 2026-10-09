@@ -5,6 +5,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,7 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -101,7 +102,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
-import com.google.accompanist.insets.navigationBarsHeight
+import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
@@ -111,6 +112,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -141,6 +143,7 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.data.objects.ArtistPresentationCache
 import yos.music.player.data.objects.FollowedArtistsObject
 import yos.music.player.data.objects.KugouFollowedArtist
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.libraries.SettingsLibrary
 import android.widget.Toast
 import yos.music.player.ui.widgets.basic.TitleBar
@@ -226,15 +229,16 @@ fun ArtistDetail(
     val isTablet = configuration.smallestScreenWidthDp >= 600
     val landscapeTablet = isTablet && screenWidthDp > screenHeightDp
     val portraitTablet = isTablet && screenWidthDp <= screenHeightDp
-    // 头像 hero 定形：手机沿用旧版「屏高 45% × 整宽」（逐字不变）；平板竖屏改为「按宽度取方形
-    // 铺满」（屏比 <1 时 heroHeight=maxWidth，1:1 头像不再被上下重度裁切），平板横屏走横向头部
-    // （头像是方形封面）。heroAspect 必须与下方渲染盒逐支同形——它同时喂给取色采样
+    val isLandscape = screenWidthDp > screenHeightDp
+    // 头像 hero 定形：手机竖屏沿用旧版「屏高 45% × 整宽」（逐字不变）；平板竖屏改为「按宽度取方形
+    // 铺满」（屏比 <1 时 heroHeight=maxWidth，1:1 头像不再被上下重度裁切），横屏（手机/平板）
+    // 统一走方形头像（头像是方形封面）。heroAspect 必须与下方渲染盒逐支同形——它同时喂给取色采样
     // (sampleArtistBottomColor) 与 paletteKey，否则取色裁窗与 Crop 会错位、顶栏 tint 也偏色。
     val heroAspect = when {
         portraitTablet -> screenWidthDp /
             (minOf(screenWidthDp, screenHeightDp * HeroTabletMaxHeightFraction) - HeroTabletContentRaiseDp)
                 .coerceAtLeast(200f)
-        landscapeTablet -> 1f
+        isLandscape -> 1f  // 横屏（手机+平板）统一方形
         else -> screenWidthDp / (screenHeightDp * HeroPhoneHeightFraction).coerceAtLeast(200f)
     }
     val avatarUrl = detail.value?.avatarUrl?.takeIf { it.isNotBlank() }
@@ -248,6 +252,17 @@ fun ArtistDetail(
         animationSpec = if (hasResolvedArtwork) tween(600) else tween(0),
         label = "artistPageBg"
     )
+    // 页面背景色必须**组合期读取、捕获值进绘制 lambda**：此页绘制期的状态观察会断链
+    // （调色板就绪后目标色已切、组合期读者全部更新，唯绘制期钉在进入前的主题兜底色
+    // 浅 0xFFF2F2F4/深 0xFF1B1B1D，倒影淡出带半透明透出它 = 用户看到的「过渡带从上到下
+    // 发白/发黑」）。协程采集→普通状态→绘制期直读的方案也失败，说明断链与数据源无关；
+    // 捕获值走重组→modifier-diff 强制重绘，不依赖绘制期观察。
+    val bg = bgColorState.value
+    val bgLogHolder = remember { longArrayOf(Long.MIN_VALUE) }
+    if (bgLogHolder[0] != bg.hashCode().toLong()) {
+        bgLogHolder[0] = bg.hashCode().toLong()
+        android.util.Log.d("HeroTrack", "bgCompose=$bg resolved=$hasResolvedArtwork")
+    }
     val contentColor = if (hasResolvedArtwork) artworkColors.content
     else if (isDark) Color.White else Color(0xFF161616)
     DisposableEffect(entryId, bgColorState, scrimTransition) {
@@ -261,10 +276,10 @@ fun ArtistDetail(
     androidx.compose.runtime.SideEffect {
         paletteKey?.let { ArtistBackdrop.bind(resolvedId.value, it) }
     }
-    val seedDraw: ContentDrawScope.() -> Unit = remember(bgColorState) {
+    val seedDraw: ContentDrawScope.() -> Unit = remember(bg) {
         {
             drawRect(
-                color = bgColorState.value,
+                color = bg,
                 size = Size(size.width * 3f, size.height * 3f),
                 topLeft = Offset(-size.width, -size.height)
             )
@@ -372,31 +387,43 @@ fun ArtistDetail(
         }
     }
 
-    // 调色板计算：用 fire-and-forget（在缓存的 scope 上跑），不绑定本页生命周期。
-    // 这样即便用户在本页提取色算完前就点进专辑、本页离开组合，计算也不会被取消，
-    // 结果照常写回缓存，专辑详情页随后自动上色（修复「背景变白、要退出重进才恢复」）。
-    LaunchedEffect(paletteKey, avatarUrl) {
+    // 头像「单次解码」：hero 上屏、调色板采样、倒影烘焙共用同一张软件位图。
+    // 此前三者各解码一次（1024 上屏 / 1024 软件烘焙 / 128 取色），同一张头像要走三遍
+    // 网络/磁盘+解码，且取色被排在最后 —— 这正是「先出一张图、提取色随后才冒出」的分批
+    // 出现来源。统一键 + allowHardware(false) 后：hero 上屏命中同一内存缓存（零解码），
+    // 取色与烘焙复用同一张位图对象。
+    val heroBitmap = remember(avatarUrl) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val heroRevealed = remember(avatarUrl) { mutableStateOf(false) }
+    LaunchedEffect(avatarUrl, heroAspect) {
         val url = avatarUrl ?: return@LaunchedEffect
         val cacheKey = paletteKey ?: return@LaunchedEffect
-        ArtistPresentationCache.ensurePalette(cacheKey) {
-            val drawable = context.imageLoader.execute(
-                ImageRequest.Builder(context).data(url).size(128).allowHardware(false).build()
-            ).drawable ?: return@ensurePalette null
-            val bitmap = drawable.toBitmap()
-            withContext(Dispatchers.Default) { sampleArtistBottomColor(bitmap, heroAspect) }
-        }
-    }
-
-    // 头像预热：详情解析出头像 URL 后，用与英雄图**完全一致的缓存键**预取。
-    // 快速进出/返回时英雄图直接命中内存缓存，不再白屏等待照片。
-    LaunchedEffect(avatarUrl) {
-        val url = avatarUrl ?: return@LaunchedEffect
-        runCatching {
+        val bitmap = runCatching {
             context.imageLoader.execute(
-                ImageRequest.Builder(context).data(url).size(1024).allowHardware(true)
-                    .memoryCacheKey("artist-hero:$url").diskCacheKey(url).build()
-            )
+                ImageRequest.Builder(context)
+                    .data(url)
+                    // 取色/烘焙需读像素 → 必须软件位图；上屏同一张（内存缓存命中）
+                    .allowHardware(false)
+                    .size(1024)
+                    .memoryCacheKey("artist-hero:$url")
+                    .diskCacheKey(url)
+                    .build()
+            ).drawable?.toBitmap()
+        }.getOrNull() ?: return@LaunchedEffect
+        heroBitmap.value = bitmap
+        // 取色仍在缓存自身 scope 上算（不随本页销毁取消，子页面仍能读到）；这里 await 只为
+        // 「照片与提取色同帧落位」—— 取色算完当帧才揭示照片，替换掉旧的两段式 fire-and-forget。
+        runCatching {
+            ArtistPresentationCache.loadPalette(cacheKey) {
+                withContext(Dispatchers.Default) {
+                    val sampleSrc = if (bitmap.width > 128) android.graphics.Bitmap.createScaledBitmap(
+                        bitmap, 128,
+                        (128f * bitmap.height / bitmap.width).roundToInt().coerceAtLeast(1), false
+                    ) else bitmap
+                    sampleArtistBottomColor(sampleSrc, heroAspect)
+                }
+            }
         }
+        heroRevealed.value = true
     }
 
     LaunchedEffect(pagerState, songsState) {
@@ -489,6 +516,8 @@ fun ArtistDetail(
                     ArtistPresentationCache.setFollowed(id, userId.orEmpty(), !target)
                     FollowedArtistsObject.applyFollowChange(followedArtist, !target)
                 }
+                // 写成功：通知「关注歌手」列表页刷新（失败时不通知）
+                if (result.isSuccess) KugouSyncCoordinator.notifyArtistsChanged()
             } catch (e: CancellationException) {
                 if (account.userid == userId) {
                     isFollowed.value = !target
@@ -509,12 +538,18 @@ fun ArtistDetail(
     }
 
     CompositionLocalProvider(LocalContentColor provides contentColor) {
-    BoxWithConstraints(Modifier.fillMaxSize().drawBehind { drawRect(bgColorState.value) }) {
+    val bgDrawHolder = remember { longArrayOf(Long.MIN_VALUE) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(bg)
+    ) {
         // 平板竖屏内容整体上抬 40dp：方形 hero 让列表起始过低，直接减在 hero 高度上
         // （其余比例与此前的 SquareFullBleed 方案一致，hero 略小于正方，裁切可忽略）。
-        val heroHeight = (if (portraitTablet)
-            minOf(maxWidth, maxHeight * HeroTabletMaxHeightFraction) - HeroTabletContentRaiseDp.dp
-        else maxHeight * HeroPhoneHeightFraction).coerceAtLeast(200.dp)
+        // 横屏（手机+平板）统一方形头像：取短边（maxHeight）作为方形边长，确保头像完整可见。
+        val heroHeight = when {
+            portraitTablet -> minOf(maxWidth, maxHeight * HeroTabletMaxHeightFraction) - HeroTabletContentRaiseDp.dp
+            isLandscape -> maxHeight  // 横屏方形：高度 = 短边（屏高）
+            else -> maxHeight * HeroPhoneHeightFraction
+        }.coerceAtLeast(200.dp)
     // BoxWithConstraints 作用域内捕获：item lambda 有自己的接收者，禁止隐式访问外层 maxWidth
     val heroMaxWidth = maxWidth
         // 倒影带 + 照片：静态内容在后台线程一次性烘焙成一张位图（滚动零成本平移；
@@ -533,26 +568,44 @@ fun ArtistDetail(
         val bandHeightPx = with(density) { bandHeight.toPx() }
         val bakeWidthPx = with(density) { heroMaxWidth.toPx() }
         val maxBlurPx = with(density) { ArtistReflectionMaxBlurDp.dp.toPx() }
-        var bakedHero by remember(bakeWidthPx, heroHeightPx, bandHeightPx) {
+        // 烘焙位图按头像 URL 记忆（不含几何尺寸）：旋转等尺寸变化触发重烘焙期间保留旧图
+        // 继续显示——回到同方向后旧图与新盒子几何一致，交换逐像素相同完全无感；烘焙失败也
+        // 不丢图。此前按尺寸做 remember key 且 effect 开头先置空，旋转后合成图立刻消失、
+        // 只剩 item 里一张无倒影的锐利 1:1 原图，直到重烘焙落地（有几率长达数秒甚至永久）。
+        var bakedHero by remember(avatarUrl) {
             mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
         }
-        LaunchedEffect(detail.value?.avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx) {
-            // 平板横屏走横向头部（照片在左、无「照片底边向下」区域），不烘焙倒影。
-            if (landscapeTablet) return@LaunchedEffect
-            val url = detail.value?.avatarUrl ?: return@LaunchedEffect
-            bakedHero = null
-            val result = context.imageLoader.execute(
-                ImageRequest.Builder(context)
-                    .data(url)
-                    // 烘焙在后台软件画布上进行，需要软件位图（HARDWARE 位图不可离屏像素操作）
-                    .allowHardware(false)
-                    .size(1024)
-                    // 独立缓存键：预热/上屏走 HARDWARE 位图缓存，互不污染
-                    .memoryCacheKey("artist-hero-bake:${url}")
-                    .diskCacheKey(url)
-                    .build()
-            )
-            val src = result.drawable?.toBitmap() ?: return@LaunchedEffect
+        var pendingHeroBake by remember(avatarUrl) {
+            mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+        }
+        // Hero item 视口偏移：横竖屏切换的全树重测会让「绘制期 lambda 直接读
+        // derivedStateOf(layoutInfo)」的观察链断链——层冻结在失效前一帧（列表已滚走、
+        // 合成图钉在屏幕上，而同一 layoutInfo 的组合期读者如小标题仍正常）。改为协程层
+        // snapshotFlow 采集（与组合期读者同一条旋转后仍存活的观察路径）写入普通状态，
+        // 绘制期只读普通状态；层本体另由组合期 heroScrolledOut 门禁移除，杜绝僵尸层。
+        val heroViewportTop = remember { mutableStateOf<Int?>(null) }
+        LaunchedEffect(listState) {
+            var lastLogged = Int.MIN_VALUE
+            snapshotFlow {
+                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
+            }.collect { v ->
+                heroViewportTop.value = v
+                val cur = v ?: Int.MIN_VALUE
+                if (lastLogged == Int.MIN_VALUE || cur - lastLogged !in -199..199) {
+                    android.util.Log.d("HeroTrack", "collector heroTop=$v")
+                    lastLogged = cur
+                }
+            }
+        }
+        LaunchedEffect(avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
+            // 横屏（平板+手机）走横向头部（照片在左、无「照片底边向下」区域），不烘焙倒影。
+            if (isLandscape) return@LaunchedEffect
+            // 延展模式（方形 hero：平板竖屏）的带内要随深度溶入提取色——照片底部区域常是
+            // 大片白/浅色，调色板未就绪就烘焙会烘出错误着色的带（用户时序判断:过渡带不能用兜底色显示）。
+            // 先让上屏照片顶住,调色板到位后本 effect 因 key 变化自动重烘焙。
+            if (portraitTablet && originalRgb == null) return@LaunchedEffect
+            // 与上屏/取色共用同一张软件位图（单次解码），不再各自解码。
+            val src = heroBitmap.value ?: return@LaunchedEffect
             // 烘焙分辨率封顶到源图（≤1024px）：源图本就只有 1024px，全宽烘焙（平板 ~2000px）
             // 等于把源图放大 2 倍塞进 ~21MB 位图，零画质收益却极易 OOM/超时 → 概率性烘焙失败
             // → 倒影缺失的硬衔接。这里按比例缩小几何与模糊半径一起烘焙，绘制时再放大回整盒。
@@ -561,13 +614,14 @@ fun ArtistDetail(
             val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
             val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
             val bakeBlurPx = maxBlurPx * bakeScale
-            // 平板竖屏用「边缘延展」（照片底边纵向延展 + 渐进模糊溶入提取色），不做镜像——
-            // 方形 hero 的镜像会把下半张人脸翻转贴上来，观感像第二张脸。手机保留原镜像倒影。
-            val edgeReflection = portraitTablet
+            // 方形 hero 用「边缘延展」（照片底边纵向延展 + 渐进模糊溶入提取色），不做镜像——
+            // 方形 hero 的镜像会把下半张人脸翻转贴上来，观感像第二张脸。手机竖屏保留原镜像倒影。
+            // 横屏（手机+平板）统一方形头像，因此统一用延伸模式。
+            val edgeReflection = portraitTablet || isLandscape
             val shader = newArtistHeroReflectionShader(
                 bakeW, bakePhotoH, bakeBandH, bakeBlurPx, edgeReflection
             )
-            bakedHero = withContext(Dispatchers.Default) {
+            pendingHeroBake = withContext(Dispatchers.Default) {
                 runCatching {
                     bakeHeroReflection(src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader, edgeReflection)
                 }
@@ -575,11 +629,25 @@ fun ArtistDetail(
                     .onFailure { android.util.Log.w("ArtistDetail", "hero reflection bake failed (${bakeW}x${bakePhotoH + bakeBandH})", it) }
                     .getOrNull()
             }?.asImageBitmap()
-        }
-        val heroViewportTop = remember(listState) {
-            derivedStateOf {
-                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
+            pendingHeroBake?.let {
+                android.util.Log.d(
+                    "HeroTrack",
+                    "bake done ${bakeW}x${bakePhotoH + bakeBandH} edge=$edgeReflection " +
+                        "geo w=$bakeWidthPx hero=$heroHeightPx band=$bandHeightPx aspect=$heroAspect rgb=$originalRgb dark=$isDark"
+                )
             }
+        }
+        // 接管落位门禁：重烘焙结果等「Hero item 仍在视口内且滚动静止」才提升为 bakedHero。
+        // 滚动中途直接换上，会在照片半出屏的位置以 <1 的 alpha 让整张合成图突然叠在提取色
+        // 背景上；滚出视口后才落位则 alpha 门禁恒 0、合成图永远不可见。同几何交换逐像素
+        // 相同，落位时机不影响观感；首次烘焙在静止且可见时换上即为设计中的接管。
+        LaunchedEffect(pendingHeroBake) {
+            if (pendingHeroBake == null) return@LaunchedEffect
+            snapshotFlow { heroViewportTop.value to listState.isScrollInProgress }
+                .first { (o, scrolling) -> o != null && !scrolling }
+            bakedHero = pendingHeroBake ?: return@LaunchedEffect
+            pendingHeroBake = null
+            android.util.Log.d("HeroTrack", "bake promoted")
         }
         @Composable fun HeroPhoto(modifier: Modifier) {
             AsyncImage(
@@ -588,9 +656,9 @@ fun ArtistDetail(
                     .error(R.drawable.songcredits_monogram_person)
                     .placeholder(R.drawable.songcredits_monogram_person)
                     .fallback(R.drawable.songcredits_monogram_person)
-                    .allowHardware(true)
+                    .allowHardware(false)
                     .size(1024)
-                    // 与上方预热同键，命中内存缓存即刻显示
+                    // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
                     .memoryCacheKey("artist-hero:${detail.value?.avatarUrl}")
                     .diskCacheKey(detail.value?.avatarUrl)
                     .build(),
@@ -605,8 +673,12 @@ fun ArtistDetail(
                 .fillMaxSize()
                 .layerBackdrop(pageBackdrop)
         ) {
-            // 平板横屏无倒影背景层（bakedHero 恒为 null，这里也不再挂空绘制层）。
-            if (!landscapeTablet) {
+            // 平板横屏无倒影背景层（bakedHero 恒为 null，这里也不再挂空绘制层）；
+            // Hero 滚出视口（heroScrolledOut，组合期读取）时整层从组合中移除——即便
+            // 采集/绘制链再出任何异常，也不可能残留「合成图钉在背景上」的僵尸层。
+            // 烘焙未完成时（平板竖屏调色板未就绪提前退出）也不挂空层，防止半透明空 graphicsLayer 显示为白色渐变。
+            if (!isLandscape && !heroScrolledOut.value && bakedHero != null) {
+                val lastLoggedAlpha = remember { floatArrayOf(Float.NaN) }
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -614,8 +686,14 @@ fun ArtistDetail(
                         .height(heroHeight + bandHeight)
                         .graphicsLayer {
                             val o = heroViewportTop.value
-                            alpha = if (o == null) 0f
+                            val a = if (o == null) 0f
                             else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
+                            alpha = a
+                            val last = lastLoggedAlpha[0]
+                            if (last.isNaN() || a - last > 0.05f || last - a > 0.05f) {
+                                android.util.Log.d("HeroTrack", "layer alpha=$a o=$o")
+                                lastLoggedAlpha[0] = a
+                            }
                         }
                         .drawWithContent {
                             // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制
@@ -635,19 +713,20 @@ fun ArtistDetail(
                 modifier = Modifier
                     .fillMaxSize()
                     .overScrollVertical(allowTopOverscroll = false),
-                // 平板横屏改用横向头部（非沉浸式）：列表加 54dp 顶 padding，
+                // 横屏（平板+手机）改用横向头部（非沉浸式）：列表加 54dp 顶 padding，
                 // 与 RankDetail/OnlineAlbumDetail 等既有的平板详情页约定一致，
                 // 头部不至于被固定的半透明顶栏遮挡。竖屏（手机/平板）保持沉浸式。
-                contentPadding = if (landscapeTablet) PaddingValues(top = 54.dp) else PaddingValues(0.dp),
+                contentPadding = if (isLandscape) PaddingValues(top = 54.dp) else PaddingValues(0.dp),
                 overscrollEffect = null,
                 flingBehavior = rememberOverscrollFlingBehavior { listState }
             ) {
                 item("Hero") {
-                    if (landscapeTablet) {
-                        // 平板横屏：左方形头像 + 右名字/操作/数量/简介（复用既有平板详情页头部风格）。
+                    if (isLandscape) {
+                        // 横屏（平板+手机）：左方形头像 + 右名字/操作/数量/简介
                         ArtistTabletLandscapeHeader(
                             name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
                             avatarUrl = detail.value?.avatarUrl,
+                            avatarRevealed = heroRevealed.value,
                             hasIntro = !detail.value?.intro.isNullOrBlank(),
                             onIntro = { introOpen.value = true },
                             songsEnabled = songs.isNotEmpty(),
@@ -667,10 +746,18 @@ fun ArtistDetail(
                         )
                     } else {
                         Box(Modifier.fillMaxWidth().height(heroHeight)) {
-                            // 仅烘焙完成前显示锐利照片（秒出）；完成后由背景层接管照片区——
-                            // 渐进模糊的路径延伸进照片下半部，item 若继续盖一张锐利照片
-                            // 会把模糊段完全遮住（真机实测如此）
-                            if (bakedHero == null) {
+                            // 与提取色同帧揭示：调色板就绪（heroRevealed）前只显示中性人像占位，
+                            // 就绪当帧照片与背景色一起落位，不再「照片先出、颜色后到」。
+                            // 烘焙完成（bakedHero != null）后由背景层接管照片区——渐进模糊的路径
+                            // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
+                            if (!heroRevealed.value) {
+                                Image(
+                                    painter = painterResource(R.drawable.songcredits_monogram_person),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else if (bakedHero == null) {
                                 HeroPhoto(Modifier.fillMaxSize())
                             }
                             Text(
@@ -691,8 +778,8 @@ fun ArtistDetail(
                     }
                 }
 
-                // 三圆钮行与数量行只在竖屏（手机 / 平板竖屏）出现；平板横屏已并入横向头部。
-                if (!landscapeTablet) {
+                // 三圆钮行与数量行只在竖屏（手机 / 平板竖屏）出现；横屏已并入横向头部。
+                if (!isLandscape) {
                 // 三圆钮行：i（简介弹窗）｜▶ 播放｜☆ 收藏（静态圆钮，收藏后实心红）
                 item("Actions") {
                     Row(
@@ -892,7 +979,7 @@ fun ArtistDetail(
                                     backdrop = pageBackdrop,
                                     shape = { androidx.compose.ui.graphics.RectangleShape },
                                     effects = { blur(14.dp.toPx()) },
-                                    onDrawSurface = { drawRect(bgColorState.value.copy(alpha = 0.7f)) }
+                                    onDrawSurface = { drawRect(bg.copy(alpha = 0.7f)) }
                                 )
                             }
                         )
@@ -1085,6 +1172,7 @@ private fun ArtistPlayButton(enabled: Boolean, onClick: () -> Unit) {
 private fun ArtistTabletLandscapeHeader(
     name: String,
     avatarUrl: String?,
+    avatarRevealed: Boolean,
     hasIntro: Boolean,
     onIntro: () -> Unit,
     songsEnabled: Boolean,
@@ -1116,11 +1204,11 @@ private fun ArtistTabletLandscapeHeader(
         ) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(avatarUrl)
+                    .data(if (avatarRevealed) avatarUrl else null)
                     .error(R.drawable.songcredits_monogram_person)
                     .placeholder(R.drawable.songcredits_monogram_person)
                     .fallback(R.drawable.songcredits_monogram_person)
-                    .allowHardware(true)
+                    .allowHardware(false)
                     .size(1024)
                     // 与竖向 Hero 同键，命中内存缓存即刻显示
                     .memoryCacheKey("artist-hero:$avatarUrl")

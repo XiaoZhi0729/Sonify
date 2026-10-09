@@ -28,6 +28,9 @@ object DiscoveryObject {
     @Stable
     val recommendPlaylists = mutableStateOf<List<KugouRecommendPlaylist>>(emptyList())
 
+    @Stable
+    val everydayRecommendSongs = mutableStateOf<List<KugouNewSong>>(emptyList())
+
     /** Successful detail totals keyed by global collection id; values may legitimately be zero. */
     @Stable
     val recommendPlaylistSongCounts = mutableStateMapOf<String, Int>()
@@ -48,4 +51,7 @@ object DiscoveryObject {
 
     @Stable
     val recommendPlaylistsStatus = mutableStateOf("idle")
+
+    @Stable
+    val everydayRecommendSongsStatus = mutableStateOf("idle")
 }

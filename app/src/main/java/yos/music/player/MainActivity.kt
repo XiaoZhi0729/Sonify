@@ -141,11 +141,14 @@ import androidx.compose.ui.util.lerp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.google.accompanist.insets.LocalWindowInsets
-import com.google.accompanist.insets.ProvideWindowInsets
-import com.google.accompanist.insets.navigationBarsPadding
+import yos.music.player.ui.widgets.basic.ProvideRawWindowInsets
+import yos.music.player.ui.widgets.basic.navigationBarsPadding
+import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomPx
 import androidx.navigation.compose.NavHost
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
@@ -166,6 +169,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uk.akane.libphonograph.hasScopedStorageWithMediaTypes
@@ -188,6 +192,7 @@ import yos.music.player.data.libraries.toMultipleArtists
 import yos.music.player.data.models.ImageViewModel
 import yos.music.player.data.models.MainViewModel
 import yos.music.player.data.models.MediaViewModel
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.ui.UI
 import yos.music.player.ui.navigation.AppNavigator
@@ -262,7 +267,7 @@ class MainActivity : BaseActivity() {
         enableEdgeToEdge()
         setContent {
             YosMusicTheme {
-                ProvideWindowInsets {
+                ProvideRawWindowInsets {
                     yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
                     val context = LocalContext.current
                     val density = LocalDensity.current
@@ -290,7 +295,7 @@ class MainActivity : BaseActivity() {
                     val parentWidth =
                         remember("MainActivity_parentWidth") { mutableIntStateOf(0) }
                     val navBarBottomInsetPx =
-                        LocalWindowInsets.current.navigationBars.bottom
+                        rawNavigationBarsBottomPx()
                     val effectiveScreenCorner = yos.music.player.ui.theme.rememberScreenCornerRadius()
                     val screenCorner = rememberUpdatedState(effectiveScreenCorner)
                     val screenCornerPx = rememberUpdatedState(with(density) { effectiveScreenCorner.toPx() })
@@ -380,11 +385,12 @@ class MainActivity : BaseActivity() {
                                 height.intValue.toDp().plus(miniPlayerHeight)
                             }
                         }
-                        // 四个导航控制器：根共享层 + 三个独立房子。
+                        // 五个导航控制器：根共享层 + 四个独立房子。
                         val rootNavController = rememberNavController()
                         val homeNavController = rememberNavController()
                         val libraryNavController = rememberNavController()
                         val searchNavController = rememberNavController()
+                        val favoritesNavController = rememberNavController()
                         val selectedHouse = rememberSaveable(key = "MainActivity_selectedHouse") {
                             mutableStateOf(HouseId.Home)
                         }
@@ -392,6 +398,7 @@ class MainActivity : BaseActivity() {
                             HouseId.Home -> homeNavController
                             HouseId.Library -> libraryNavController
                             HouseId.Search -> searchNavController
+                            HouseId.Favorites -> favoritesNavController
                         }
                         // Key the observation to its controller so a tab switch cannot briefly
                         // reuse the previous retained house's entry before the new flow emits.
@@ -409,6 +416,20 @@ class MainActivity : BaseActivity() {
                         }
                         val previousNavigationKey = remember("MainActivity_previousNavigationKey") {
                             mutableStateOf<String?>(null)
+                        }
+                        // 酷狗在线状态同步：回到前台强制刷新收藏/关注，并在前台期间定时差分轮询；
+                        // 退到后台即停（不常驻耗电）。
+                        val onlineSyncLifecycleOwner = LocalLifecycleOwner.current
+                        LaunchedEffect(Unit) {
+                            onlineSyncLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                                KugouSyncCoordinator.refreshAll()
+                                KugouSyncCoordinator.startPolling()
+                                try {
+                                    awaitCancellation()
+                                } finally {
+                                    KugouSyncCoordinator.stopPolling()
+                                }
+                            }
                         }
                         LaunchedEffect(navigationKey) {
                             if (previousNavigationKey.value == null) {
@@ -467,12 +488,22 @@ class MainActivity : BaseActivity() {
                                 switchHouseAction = { house ->
                                     rootNavController.popBackStack("shared_empty", false)
                                     selectedHouse.value = house
+                                    when (house) {
+                                        HouseId.Home -> KugouSyncCoordinator.notifyDiscoveryChanged()
+                                        HouseId.Favorites -> KugouSyncCoordinator.notifyFavoritesChanged()
+                                        HouseId.Library -> {
+                                            KugouSyncCoordinator.notifyPlaylistsChanged()
+                                            KugouSyncCoordinator.notifyArtistsChanged()
+                                        }
+                                        HouseId.Search -> Unit
+                                    }
                                 },
                                 openSettingsAction = { house ->
                                     val target = when (house) {
                                         HouseId.Home -> homeNavController
                                         HouseId.Library -> libraryNavController
                                         HouseId.Search -> searchNavController
+                                        HouseId.Favorites -> favoritesNavController
                                     }
                                     target.navigate(UI.Settings.Main)
                                 },
@@ -732,8 +763,9 @@ class MainActivity : BaseActivity() {
                         // 播放页歌手名 → 艺人主页：在**用户当前所在的房子**（Tab）内
                         // push ArtistDetail，再收回播放页——收回动画揭示的正是艺人页，
                         // 且系统返回自然逐层回退到打开播放页前的停留位置。
-                        // 多歌手串（「A、B」）只取第一个：ArtistDetail 按单个歌手名精确解析。
-                        // 防抖按单层原则放在最外层导航发起方；栈顶已是同名艺人页则只收回不重复入栈。
+                        // 播放页侧 ArtistsTapText 已按点击位置定位具体歌手（点谁传谁）；
+                        // 此处 toMultipleArtists().firstOrNull() 仅作兜底：ArtistDetail 按单个
+                        // 歌手名精确解析。防抖按单层原则放在最外层导航发起方；栈顶已是同名艺人页则只收回不重复入栈。
                         val openArtistFromPlayer: (String) -> Unit = { rawName ->
                             val name = rawName.toMultipleArtists().firstOrNull()?.trim().orEmpty()
                             if (name.isNotEmpty() && name != defaultArtistsName) {
@@ -885,6 +917,7 @@ class MainActivity : BaseActivity() {
                         val defaultHome = stringResource(id = R.string.page_home_title)
                         val defaultLibrary = stringResource(id = R.string.page_library_title)
                         val defaultSearch = stringResource(id = R.string.page_search_title)
+                        val defaultFavorites = stringResource(id = R.string.page_favorites_title)
 
                         val nowLabel = rememberSaveable(key = "MainActivity_nowLabel") {
                             mutableStateOf(defaultHome)
@@ -929,6 +962,7 @@ class MainActivity : BaseActivity() {
                                         homeController = homeNavController,
                                         libraryController = libraryNavController,
                                         searchController = searchNavController,
+                                        favoritesController = favoritesNavController,
                                         navigator = appNavigator,
                                         modifier = Modifier.fillMaxSize(),
                                         probe = glassProbe
@@ -948,12 +982,23 @@ class MainActivity : BaseActivity() {
                                             HouseId.Home -> homeNavController.popBackStack(UI.HomePage, false)
                                             HouseId.Library -> libraryNavController.popBackStack(UI.Library, false)
                                             HouseId.Search -> searchNavController.popBackStack(UI.Search, false)
+                                            HouseId.Favorites -> favoritesNavController.popBackStack(UI.Favorites, false)
+                                        }
+                                        when (house) {
+                                            HouseId.Home -> KugouSyncCoordinator.notifyDiscoveryChanged()
+                                            HouseId.Favorites -> KugouSyncCoordinator.notifyFavoritesChanged()
+                                            HouseId.Library -> {
+                                                KugouSyncCoordinator.notifyPlaylistsChanged()
+                                                KugouSyncCoordinator.notifyArtistsChanged()
+                                            }
+                                            HouseId.Search -> Unit
                                         }
                                     },
                                     nowLabel = nowLabel,
                                     defaultHome = defaultHome,
                                     defaultLibrary = defaultLibrary,
                                     defaultSearch = defaultSearch,
+                                    defaultFavorites = defaultFavorites,
                                     bottomBarWidthPx = bottomBarWidthPx,
                                     containerTintProvider = tintColorProvider,
                                     height = height,
@@ -994,7 +1039,7 @@ class MainActivity : BaseActivity() {
                         YosWrapper {
                             // 底栏经 navigationBarsPadding 抬离手势栏，播放条的上移量
                             // 必须同样包含手势栏高度，否则会盖住底栏顶部
-                            val navBarBottomInset = LocalWindowInsets.current.navigationBars.bottom
+                            val navBarBottomInset = rawNavigationBarsBottomPx()
 
                             Box(
                                 modifier = Modifier
@@ -1408,10 +1453,15 @@ class MainActivity : BaseActivity() {
                                                             }
                                                         }
                                                     )
-                                                } else if (!SettingsLibrary.BarBlurEffect) {
+                                                } else if (!SettingsLibrary.BarBlurEffect && shellRadiusDp != 0.dp) {
                                                     // 关闭工具栏液态玻璃时，与底栏使用同一个 Kyant
                                                     // drawBackdrop backend，避免 Haze 与底栏的 surface
                                                     // 合成顺序不同而产生颜色偏差。
+                                                    // 与上方玻璃分支同一条 0 半径守卫：落位静止
+                                                    // （radius==0）改走下方 background 兜底，否则
+                                                    // backdrop 的圆角蒙版在尺寸冻结后不重录，动画末帧
+                                                    // 的弧角会永久残留（默认即此分支，就是"展开后
+                                                    // 四角仍是圆角"的根因）。
                                                     // 动画期门禁与上方液态玻璃分支完全对齐：
                                                     //  - backdrop 内容（blur 12dp 全屏合成）运动期停画，
                                                     //    颜色由下方统一的纯色过渡层接管；
@@ -1424,7 +1474,29 @@ class MainActivity : BaseActivity() {
                                                         backdrop = navBackdrop,
                                                         shape = { shellShape },
                                                         effects = { blur(12.dp.toPx()) },
-                                                        highlight = { null },
+                                                        // 黑边环绕高光：与上方玻璃分支同配方
+                                                        // （ClassYaba blackSideHighlight），关玻璃态也保留
+                                                        // 描边（用户要求与底栏磨砂胶囊一致）。门禁同玻璃
+                                                        // 分支：运动期/展开期/探针 nohigh 时不画。
+                                                        highlight = {
+                                                            if (!glassProbe.shellHighlight ||
+                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                    playerMotionJob.value != null) ||
+                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                            ) null
+                                                            else Highlight.Default.copy(
+                                                                width = if (shellIsNight) 0.4f.dp else 0.5f.dp,
+                                                                blurRadius = if (shellIsNight) 0.1f.dp else 0.2f.dp,
+                                                                alpha = 1f,
+                                                                style = WrapHighlightStyle(
+                                                                    color = Color.Black.copy(alpha = if (shellIsNight) 0.4f else 0.5f),
+                                                                    blendMode = BlendMode.SrcOver,
+                                                                    angle = 0f,
+                                                                    falloff = 0.9f,
+                                                                    baseline = 0.4f
+                                                                )
+                                                            )
+                                                        },
                                                         shadow = {
                                                             if (shellInMotion(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
@@ -1840,7 +1912,7 @@ class MainActivity : BaseActivity() {
                                                             boxSize = 30.dp,
                                                             iconSize = 24.dp,
                                                             onClick = {
-                                                                MediaController.mediaControl?.seekToNextMediaItem()
+                                                                MediaController.userSkipNext()
                                                             }
                                                         )
                                                     }
@@ -2000,6 +2072,7 @@ class MainActivity : BaseActivity() {
         defaultHome: String,
         defaultLibrary: String,
         defaultSearch: String,
+        defaultFavorites: String,
         bottomBarWidthPx: androidx.compose.runtime.MutableIntState,
         height: androidx.compose.runtime.MutableIntState,
         isSplitMode: Boolean,
@@ -2039,10 +2112,12 @@ YosWrapper {
             val navItems = remember(
                 defaultHome,
                 defaultLibrary,
-                defaultSearch
+                defaultSearch,
+                defaultFavorites
             ) {
                 listOf(
                     NavItem(defaultHome, R.drawable.ic_uitabbar_home),
+                    NavItem(defaultFavorites, R.drawable.ic_uitabbar_favorites),
                     NavItem(defaultLibrary, R.drawable.ic_uitabbar_library),
                     NavItem(defaultSearch, R.drawable.ic_uitabbar_search)
                 )
@@ -2058,8 +2133,9 @@ YosWrapper {
                     nowLabel.value = navItems[index].label
                     val target = when (index) {
                         0 -> UI.HomePage
-                        1 -> UI.Library
-                        2 -> UI.Search
+                        1 -> UI.Favorites
+                        2 -> UI.Library
+                        3 -> UI.Search
                         else -> null
                     }
                     if (target != null) {
@@ -2810,7 +2886,7 @@ private fun TabletMiniContent(
             boxSize = 32.dp,
             onClick = {
                 Vibrator.click(context)
-                MediaController.mediaControl?.seekToPreviousMediaItem()
+                MediaController.userSkipPrevious()
             }
         )
         Spacer(modifier = Modifier.width(16.dp))
@@ -2823,7 +2899,7 @@ private fun TabletMiniContent(
             boxSize = 32.dp,
             onClick = {
                 Vibrator.click(context)
-                MediaController.mediaControl?.seekToNextMediaItem()
+                MediaController.userSkipNext()
             }
         )
         Spacer(modifier = Modifier.width(16.dp))

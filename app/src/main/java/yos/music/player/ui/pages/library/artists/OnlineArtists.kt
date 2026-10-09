@@ -58,6 +58,7 @@ import yos.music.player.R
 import yos.music.player.data.objects.FollowedArtistsObject
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouFollowedArtist
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.ui.UI
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.SearchTextField
@@ -76,8 +77,13 @@ import yos.music.player.ui.widgets.basic.YosWrapper
 fun OnlineArtists(navController: NavController) {
     val account = KugouAccountState
 
-    LaunchedEffect(account.isLoggedIn) {
-        if (account.isLoggedIn) FollowedArtistsObject.ensureLoaded()
+    LaunchedEffect(account.isLoggedIn, KugouSyncCoordinator.artistsRevision.value) {
+        if (account.isLoggedIn) FollowedArtistsObject.ensureLoaded(force = true)
+    }
+    // 下拉刷新指示器：松手后由 loading 归零收起
+    val refreshing = remember("OnlineArtists_refreshing") { mutableStateOf(false) }
+    LaunchedEffect(FollowedArtistsObject.loading.value) {
+        if (!FollowedArtistsObject.loading.value) refreshing.value = false
     }
 
     val artistsList = FollowedArtistsObject.artists.value
@@ -137,7 +143,12 @@ fun OnlineArtists(navController: NavController) {
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
                     navController.popBackStack()
-                }
+                },
+                onRefresh = {
+                    refreshing.value = true
+                    KugouSyncCoordinator.notifyArtistsChanged()
+                },
+                refreshing = refreshing.value
             ) {
                 item("SearchField") {
                     val keyboardController = LocalSoftwareKeyboardController.current

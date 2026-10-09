@@ -184,10 +184,11 @@ import androidx.media3.common.Player.REPEAT_MODE_ONE
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
 import com.blankj.utilcode.util.TimeUtils
-import com.google.accompanist.insets.navigationBarsHeight
-import com.google.accompanist.insets.statusBarsHeight
-import com.google.accompanist.insets.navigationBarsPadding
-import com.google.accompanist.insets.statusBarsPadding
+import yos.music.player.ui.widgets.basic.navigationBarsHeight
+import yos.music.player.ui.widgets.basic.navigationBarsPadding
+import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomDp
+import yos.music.player.ui.widgets.basic.statusBarsHeight
+import yos.music.player.ui.widgets.basic.statusBarsPadding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -240,6 +241,9 @@ import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.isBlocked
+import yos.music.player.ui.widgets.basic.rememberSongAvailability
+import yos.music.player.ui.widgets.basic.showSongUnavailableToast
 import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
 import yos.music.player.ui.widgets.basic.liquidDropdownHeightCap
 import yos.music.player.ui.widgets.liquid.YosSwitch
@@ -376,6 +380,19 @@ fun NowPlaying(
         } else {
             Modifier
         }
+        // 竖屏整体下移 PhonePortraitContentShift 假设导航条 inset 会兜住底部：
+        // 内容底边距屏幕底 = inset + 15dp(PlayerControl 底 padding) − 21.5dp。
+        // 系统隐藏小白条（inset=0 或很小）时净值为负，底行（蓝牙设备名最贴底）
+        // 会越界屏幕。差额部分补回 PlayerControl 底部；inset ≥ 21.5dp 时补偿为 0，
+        // 现有校准观感不变。
+        // 用 raw insets（ProvideRawWindowInsets）：HyperOS 派发的 insets 恒为 0，
+        // foundation/accompanist 读数不可用（详见 RawWindowInsets.kt）。
+        val portraitBottomCompensation = if (isPhonePortrait) {
+            (PhonePortraitContentShift - rawNavigationBarsBottomDp())
+                .coerceAtLeast(0.dp)
+        } else {
+            0.dp
+        }
 
         val lrcEntries: MutableState<List<LyricEntry>> =
             MediaViewModelObject.lrcEntries
@@ -457,7 +474,7 @@ fun NowPlaying(
 
         // 播放控制回调：横竖屏共用一份
         val onPreviousAction: () -> Unit = {
-            mediaControl?.seekToPreviousMediaItem()
+            MediaController.userSkipPrevious()
             showControl.value = true
             lastClickTime.longValue = TimeUtils.getNowMills()
         }
@@ -471,7 +488,7 @@ fun NowPlaying(
             lastClickTime.longValue = TimeUtils.getNowMills()
         }
         val onNextAction: () -> Unit = {
-            mediaControl?.seekToNextMediaItem()
+            MediaController.userSkipNext()
             showControl.value = true
             lastClickTime.longValue = TimeUtils.getNowMills()
         }
@@ -777,9 +794,12 @@ fun NowPlaying(
                                                             overflow = TextOverflow.Ellipsis,
                                                             fontWeight = FontWeight.Medium
                                                         )
-                                                        Text(
-                                                            text = nowMusic?.artistsName
-                                                                ?: defaultArtistsName,
+                                                        // 点击歌手名 → 艺人主页（命中具体歌手由
+                                                        // ArtistsTapText 定位；导航与收回由外壳回调
+                                                        // 负责，无效名字在回调内过滤）
+                                                        ArtistsTapText(
+                                                            artistsName = nowMusic?.artistsName,
+                                                            placeholder = defaultArtistsName,
                                                             fontSize = 18.5.sp,
                                                             modifier = Modifier
                                                                 .graphicsLayer {
@@ -787,19 +807,8 @@ fun NowPlaying(
                                                                     scaleX = s
                                                                     scaleY = s
                                                                     transformOrigin = TransformOrigin(0f, 0.5f)
-                                                                }
-                                                                // 点击歌手名 → 艺人主页（导航与收回
-                                                                // 由外壳回调负责；无效名字在回调内过滤）
-                                                                .clickable(
-                                                                    interactionSource = remember { MutableInteractionSource() },
-                                                                    indication = null
-                                                                ) {
-                                                                    onOpenArtist(nowMusic?.artistsName.orEmpty())
-                                                                }
-                                                                .overlayEffect(),
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis,
-                                                            color = Color.White.copy(alpha = 0.35f)
+                                                                },
+                                                            onArtistClick = onOpenArtist
                                                         )
                                                     }
 
@@ -959,9 +968,7 @@ fun NowPlaying(
                                 onAlbumClick = {
                                     nowPageOnChanged(Album)
                                 },
-                                onArtistClick = {
-                                    onOpenArtist(thisMusicPlaying.value?.artistsName.orEmpty())
-                                }
+                                onArtistClick = onOpenArtist
                             )
                         }
                     }
@@ -1057,7 +1064,8 @@ fun NowPlaying(
                                         onControlGesture = onControlGesture,
                                         onQualityMenuExpandedChanged = { qualityMenuOpen.value = it },
                                         modifier = Modifier
-                                            .padding(top = 52.dp),
+                                            .padding(top = 52.dp)
+                                            .padding(bottom = portraitBottomCompensation),
                                         onWhile = onWhileAction)
                                 }
 
@@ -1528,13 +1536,32 @@ internal fun PlayingList(
                 }
             } else {
                 val musicIndex = remember(musicList.value, thisMusicPlayingLambda()) {
-                    musicList.value?.indexOf(musicPlaying.value) ?: 0
+                    val list = musicList.value
+                    val current = musicPlaying.value
+                    // 当前歌不能直接 indexOf(equals)：冷启动恢复/媒体条目重建路径给出的
+                    // musicPlaying 是重建实例（如 PlayStatus 存的 duration=0），与队列里
+                    // 同一首的完整条目全字段不等，equals 必失配（酷狗在线歌单实测命中的
+                    // 就是这条）——当前歌以 mediaId 为稳定身份优先按 mediaId 找。
+                    if (list == null) 0
+                    else if (current != null && current.mediaId != null &&
+                        list.any { it.mediaId == current.mediaId }
+                    ) list.indexOfFirst { it.mediaId == current.mediaId }
+                    else list.indexOf(current)
                 }
                 val scope = rememberCoroutineScope()
                 val state = rememberLazyListState(
-                    initialFirstVisibleItemIndex = musicIndex + 1,
-                    initialFirstVisibleItemScrollOffset = -15
+                    initialFirstVisibleItemIndex = musicIndex.coerceAtLeast(0),
+                    initialFirstVisibleItemScrollOffset = 0
                 )
+                // 每次打开列表都重新定位：把当前歌的上一项滚到视口顶部，当前歌落在第二行。
+                // initial 参数只在状态首次创建时生效（saveable 会恢复上次滚动位置），
+                // 所以每次进入组合必须显式 scrollToItem；只读定位，不改队列真实顺序。
+                // 当前歌不在队列（indexOf == -1）时不定位。
+                LaunchedEffect(Unit) {
+                    if (musicIndex >= 0) {
+                        state.scrollToItem(index = musicIndex)
+                    }
+                }
                 val density = LocalDensity.current
 
                 LaunchedEffect(queueKeys) {
@@ -1866,6 +1893,10 @@ private fun SmallMusicListItem(
 ) {
     val density = LocalDensity.current
     val floating = dragging && !hideWhenDragging
+    // 不可播（无版权/付费限制等）置灰：点击只提示原因，不进播放、不切歌
+    val availability = rememberSongAvailability(music)
+    val blocked = availability.isBlocked
+    val context = LocalContext.current
     val checkboxVisibility = remember {
         androidx.compose.animation.core.MutableTransitionState(editMode)
     }.apply { targetState = editMode }
@@ -1888,7 +1919,13 @@ private fun SmallMusicListItem(
         modifier = modifier
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(if (dragging && hideWhenDragging) 0f else 1f)
+            .alpha(
+                when {
+                    dragging && hideWhenDragging -> 0f
+                    blocked -> 0.4f
+                    else -> 1f
+                }
+            )
             .onSizeChanged { onRowMeasured(it.height) }
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer {
@@ -1904,7 +1941,10 @@ private fun SmallMusicListItem(
                 shape = RoundedCornerShape(12.dp)
             )
             .combinedClickable(
-                onClick = itemClick,
+                onClick = {
+                    if (blocked) showSongUnavailableToast(context, music, availability.reason)
+                    else itemClick()
+                },
                 onLongClick = if (editMode) null else onLongClick
             )
             .padding(horizontal = 30.dp),
@@ -2839,8 +2879,8 @@ private fun PlayingBar(
     albumUrlLambda: () -> Uri?,
     musicPlayingLambda: () -> YosMediaItem?,
     onAlbumClick: () -> Unit,
-    // 歌手名点击 → 艺人主页（名字与导航由调用方组装，外壳回调内过滤无效名）
-    onArtistClick: () -> Unit = {},
+    // 歌手名点击 → 艺人主页（ArtistsTapText 定位具体歌手，外壳回调内过滤无效名）
+    onArtistClick: (String) -> Unit = {},
     // 歌名/歌手列的共享元素 modifier（由调用方传 sharedElement），空则无 morph
     titleModifier: Modifier = Modifier,
     // 收藏/更多按钮行的共享元素 modifier，同上
@@ -2891,9 +2931,9 @@ private fun PlayingBar(
                 fontWeight = FontWeight.Medium,
                 lineHeight = 16.5.sp
             )
-            Text(
-                text = musicPlayingLambda()?.artistsName
-                    ?: defaultArtistsName,
+            ArtistsTapText(
+                artistsName = musicPlayingLambda()?.artistsName,
+                placeholder = defaultArtistsName,
                 fontSize = 15.sp,
                 modifier = Modifier
                     .graphicsLayer {
@@ -2901,16 +2941,8 @@ private fun PlayingBar(
                         scaleX = s
                         scaleY = s
                         transformOrigin = TransformOrigin(0f, 0.5f)
-                    }
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onArtistClick
-                    )
-                    .overlayEffect(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = Color.White.copy(alpha = 0.35f)
+                    },
+                onArtistClick = onArtistClick
             )
         }
 
@@ -3010,10 +3042,14 @@ fun RowScope.AirPlay(fill: Boolean = true) {
 
         if (fill) {
             // 竖屏：图标在上、设备名在下（原样式）
+            // 列高 = 导航条 inset + 48dp，与旧 accompanist navigationBarsHeight 的意图一致。
+            // 不用 accompanist/foundation 的派发 insets（HyperOS 下恒 0），用 raw 读数。
+            // inset ≥ 5dp 时高度与旧版完全相同，小白条用户的观感不变。
+            val navBarBottomPadding = rawNavigationBarsBottomDp()
             Column(
                 modifier = Modifier
                     .heightIn(min = 53.dp)
-                    .navigationBarsHeight(48.dp)
+                    .height(48.dp + navBarBottomPadding)
                     .weight(1f)
                     .then(clickModifier),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -3120,6 +3156,7 @@ private fun BluetoothDevice.isConnected(): Boolean {
 
 // 顶部小把手（横竖屏共用）；topOverride 非空时不再吃状态栏 padding，
 // 直接距屏顶该距离（手机横屏状态栏在侧边，沿用竖屏的 top 基准会把把手压低）。
+// 竖屏基准：状态栏下 26dp、墨迹 40×4.5dp（原 20dp/32dp，用户反馈无小白条时过高过短）。
 @Composable
 private fun NowPlayingHandle(topOverride: Dp? = null) {
     Column(Modifier.fillMaxWidth()) {
@@ -3128,14 +3165,14 @@ private fun NowPlayingHandle(topOverride: Dp? = null) {
                 .fillMaxWidth()
                 .then(
                     if (topOverride != null) Modifier.padding(top = topOverride)
-                    else Modifier.statusBarsPadding().padding(top = 20.dp)
+                    else Modifier.statusBarsPadding().padding(top = 26.dp)
                 ), contentAlignment = Alignment.Center
         ) {
             Box(
                 Modifier
                     .overlayEffect()
                     .size(
-                        width = 32.dp,
+                        width = 40.dp,
                         height = 4.5.dp
                     )
                     .background(Color(0x4DFFFFFF), RoundedCornerShape(2.25.dp))

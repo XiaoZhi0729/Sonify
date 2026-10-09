@@ -54,14 +54,33 @@ import yos.music.player.data.repositories.NetworkObserver
  */
 object YosDiagnostics {
 
-    /** 导出报告里单独汇总的关键事件前缀：肉眼扫几 MB 文件不现实，先把这些挑出来。 */
+    /**
+     * 导出报告里单独汇总的关键事件前缀：肉眼扫几 MB 文件不现实，先把这些挑出来。
+     * 匹配规则见 [isKeyEvent]：以 `_` 结尾的条目（`LYRIC_`）是**前缀型**，命中它旗下全部事件。
+     */
     private val KEY_EVENTS = setOf(
         "APP_CREATE", "SVC_CREATE", "SVC_DESTROY", "PLAY_ERROR", "SKIP_TO_NEXT", "SKIP_LIMIT",
+        "SKIP_HOLD", "SKIP_REARM", "AUTH_INVALID",
         "RESOLVE_FAIL", "RESOLVE_SLOW", "OPEN_FAIL", "OPEN_SLOW", "STATE", "ISPLAYING", "SUPPRESSION",
         "GAP", "STALL", "STATE_LIE", "SCREEN_ON", "SCREEN_OFF", "DOZE", "SAVER",
         "SLEEP_START", "SLEEP_STOP", "SLEEP_FIRED", "PREPARE", "TRANSITION", "CRASH", "HEADSET", "EXPORT",
-        "SVC_CMD", "TLMUT", "SRC"
+        "SVC_CMD", "TLMUT", "SRC", "LYRIC_"
     )
+
+    /** 行格式固定是 `… pid=<数字> <事件名> k=v …`，事件名就取 pid 后第一个 token。 */
+    private val eventRegex = Regex("\\spid=\\d+\\s([A-Za-z_][A-Za-z0-9_]*)")
+
+    private fun eventOf(line: String): String? = eventRegex.find(line)?.groupValues?.get(1)
+
+    /**
+     * 关键事件判定。旧实现是 `line.contains(" $prefix ")`：事件名与后续字段之间没有空格
+     * 分隔，前缀型条目（`LYRIC_`）永远配不上任何一行——写了等于没写，
+     * 歌词链路只能去 TAIL 全量里翻。
+     */
+    private fun isKeyEvent(line: String): Boolean {
+        val ev = eventOf(line) ?: return false
+        return KEY_EVENTS.any { if (it.endsWith("_")) ev.startsWith(it) else ev == it }
+    }
 
     private const val MEM_RING_LIMIT = 3000
     private const val FILE_MAX_BYTES = 2L * 1024 * 1024
@@ -180,6 +199,8 @@ object YosDiagnostics {
     /** MMKV 就绪后由 Application 调一次，把持久化的开关值取进内存。 */
     fun syncEnabledFromSettings() {
         loggingEnabled = runCatching { SettingsLibrary.DiagLogEnabled }.getOrDefault(true)
+        colorOsLyricDiag =
+            runCatching { SettingsLibrary.ColorOsLyricDiagEnabled }.getOrDefault(false)
     }
 
     /** 设置页切换开关时同步（避免等到下次启动才生效）。 */
@@ -187,7 +208,15 @@ object YosDiagnostics {
         loggingEnabled = value
     }
 
-    private fun enabled(): Boolean = loggingEnabled
+    /** ColorOS 歌词诊断开关同步：独立于总开关，开着即整体落盘。 */
+    fun setColorOsLyricDiagEnabled(value: Boolean) {
+        colorOsLyricDiag = value
+    }
+
+    @Volatile
+    private var colorOsLyricDiag = false
+
+    private fun enabled(): Boolean = loggingEnabled || colorOsLyricDiag
 
     private fun logsDir(context: Context): File {
         val base = context.getExternalFilesDir("logs")
@@ -465,7 +494,7 @@ object YosDiagnostics {
             BufferedWriter(OutputStreamWriter(FileOutputStream(out), "UTF-8")).use { w ->
                 w.write(header(app))
                 w.write("\n== KEY EVENTS ==\n")
-                lines.filter { l -> KEY_EVENTS.any { l.contains(" $it ") } }.takeLast(600)
+                lines.filter { l -> isKeyEvent(l) }.takeLast(600)
                     .forEach { w.write(it); w.write("\n") }
                 w.write("\n== TAIL ${REPORT_TAIL_LINES} ==\n")
                 lines.takeLast(REPORT_TAIL_LINES).forEach { w.write(it); w.write("\n") }
@@ -473,6 +502,8 @@ object YosDiagnostics {
                 w.write("up=/el= 两个单调钟（up 不含深睡）；相邻两行的 up_d/el_d 分别指向‘进程被冻’与‘设备深睡’\n")
                 w.write("HB/GAP/STALL/STATE_LIE：引擎真态与 ForwardingPlayer 上报态不一致时出 STATE_LIE；main_d 为回主线程往返延迟\n")
                 w.write("STATE.s: 1=IDLE 2=BUFFERING 3=READY 4=ENDED（本版本直译）；TRANSITION.reason 为 media3 原值\n")
+                w.write("SRC fn=ui_next/ui_prev: 手动切歌入口（按下即记，带 idx/q/state，用于分辨“没发出/被吞/被打回”）\n")
+                w.write("SKIP_HOLD/SKIP_REARM: 连续失败达阈值后不再逐首跳，挂退避重试；AUTH_INVALID: 上游鉴权失效（illegal_key）\n")
                 w.write("\n== 系统侧对照（本机 adb 执行，用来验证本报告的 pos 推进是否等于真出声）==\n")
                 w.write("dumpsys media.audio_flinger | grep -A2 'yos.music'\n")
                 w.write("  每行 sessions/actual_seconds 是真出声时长；frozen-while-active 计数=播放中被冻结次数\n")
@@ -492,6 +523,72 @@ object YosDiagnostics {
             runCatching { Thread.sleep(20) }
         }
     }
+
+    /**
+     * ColorOS 锁屏歌词专用报告：只挑歌词链路事件（LYRIC_* 系列 / 切歌 / 开播 / 屏亮灭 /
+     * 外部命令），头部加 ColorOS ROM 版本与歌词开关快照，尾部附测试者自查步骤。
+     * 主报告 export() 的轻量分卷——反馈"锁屏不出歌词"时让用户只发这一份。
+     */
+    fun exportColorOsLyric(context: Context): File? {
+        val app = context.applicationContext
+        init(app)
+        log("EXPORT", "kind" to "coloros_lyric", "dropped" to dropped.get())
+        awaitDrain()
+        val reportDir = File(logsDir(app), "reports").also { it.mkdirs() }
+        val out = File(reportDir, "coloros-lyric-report-${System.currentTimeMillis()}.txt")
+        val lines = tailLines(app)
+        runCatching {
+            BufferedWriter(OutputStreamWriter(FileOutputStream(out), "UTF-8")).use { w ->
+                w.write(header(app))
+                w.write("lyric_switch=")
+                w.write(runCatching { SettingsLibrary.SuperIslandLyricEnabled }.getOrDefault("?").toString())
+                w.write(" lyric_diag=" + colorOsLyricDiag + "\n")
+                w.write("rom_props=" + romProps() + "\n")
+                w.write("\n== LYRIC EVENTS ==\n")
+                lines.filter { l -> l.contains(" LYRIC_") || l.contains(" TRANSITION ") }
+                    .takeLast(1200)
+                    .forEach { w.write(it); w.write("\n") }
+                w.write("\n== CONTEXT (prepare/external commands/screen) ==\n")
+                lines.filter { l ->
+                    l.contains(" PREPARE ") || l.contains(" SVC_CMD ") ||
+                        l.contains(" SCREEN_ON") || l.contains(" SCREEN_OFF")
+                }.takeLast(400)
+                    .forEach { w.write(it); w.write("\n") }
+                w.write("\n== TAIL 200 ==\n")
+                lines.takeLast(200).forEach { w.write(it); w.write("\n") }
+                w.write("\n== 字段图例 ==\n")
+                w.write("LYRIC_REQ: 歌词就绪待发(id/lines 行数/raw 是否逐字/delay 首发延迟)\n")
+                w.write("LYRIC_SKIP: 目标与已发布内容相同,无需提交; LYRIC_CLEAR: 先清空 extras 一帧(下轮补写)\n")
+                w.write("LYRIC_ADD: 单次 replaceMediaItem 写入 lyricInfo(len=JSON 字节数, gen=会话代次)\n")
+                w.write("LYRIC_VERIFY: 提交后回读条目 extras,确认 app 侧已带歌词(ok=1 即应用侧链路完整)\n")
+                w.write("LYRIC_NOREADY: 当前条目与目标不符仍在重试; LYRIC_ERR: 提交抛异常\n")
+                w.write("LYRIC_DISABLED: 总开关(锁屏/超级岛歌词)未开——歌词被开关拦下,先去打开\n")
+                w.write("\n== 测试步骤（反馈前请完整走一遍）==\n")
+                w.write("1. 设置>其他>ColorOS 歌词诊断 打开后,播放一首歌等 10 秒\n")
+                w.write("2. 熄屏锁屏,等 10 秒看锁屏是否出现歌词,再亮屏解锁\n")
+                w.write("3. 切 2-3 首歌重复锁屏观察,然后回到本页点\"导出 ColorOS 歌词诊断日志\"\n")
+                w.write("4. 本报告 LYRIC_VERIFY 全为 ok=1 而锁屏仍无歌词 → 系统侧拦截,请连同手机型号/系统版本一起反馈\n")
+                w.write("\n== 系统侧对照（可让反馈者执行）==\n")
+                w.write("adb shell dumpsys media_session  → 找本应用的 session,看 description/metadata 是否更新\n")
+                w.flush()
+            }
+        }.onFailure { return null }
+        return if (out.exists() && out.length() > 0) out else null
+    }
+
+    /** ColorOS/OPPO ROM 版本号（系统隐藏属性，反射取，取不到不碍事）。 */
+    private fun romProps(): String = runCatching {
+        val sp = Class.forName("android.os.SystemProperties")
+        val get = sp.getMethod("get", String::class.java, String::class.java)
+        listOf(
+            "ro.build.version.oplusrom",
+            "ro.vendor.oplus.version",
+            "ro.oplus.version",
+            "ro.build.display.id"
+        ).joinToString(" ") { key ->
+            "$key=" + (get.invoke(null, key, "?") as? String ?: "?")
+        }
+    }.getOrDefault("?")
 
     /**
      * 把报告换成可临时授权的 content:// uri（系统分享面板用）。

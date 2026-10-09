@@ -45,7 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.google.accompanist.insets.LocalWindowInsets
+import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomDp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -143,9 +143,7 @@ fun ArtistIntroSheet(
             val rootHeightPx = with(density) { maxHeight.toPx() }
             val isWideMiniBar = LocalConfiguration.current.screenWidthDp >= 600
             val miniPlayerHeight = if (isWideMiniBar) 62.dp else 43.dp
-            val navigationBarHeight = with(density) {
-                LocalWindowInsets.current.navigationBars.bottom.toDp()
-            }
+            val navigationBarHeight = rawNavigationBarsBottomDp()
             val bottomBarHeight = 58.dp
             // MainActivity 横屏时底栏与迷你条并排；竖屏（包括平板）上下堆叠。
             val isSplitMode = maxWidth > maxHeight

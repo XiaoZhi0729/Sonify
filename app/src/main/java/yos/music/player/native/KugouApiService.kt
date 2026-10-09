@@ -12,6 +12,8 @@ import org.json.JSONObject
 import java.io.IOException
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouVipState
+import yos.music.player.data.repositories.KugouAuthInvalidException
+import yos.music.player.data.repositories.KugouUpstreamError
 
 /**
  * Kotlin HTTP client wrapper around md3Music's Rust HTTP server.
@@ -329,7 +331,13 @@ class KugouApiService private constructor() {
                 }
 
                 if (code !in 200..299) {
-                    return@withContext Result.failure(IOException("/song/url HTTP $code: ${body.take(300)}"))
+                    // 鉴权失效单独开一类：它不是这一首的问题（逐首逐档重试只会把 502 刷成屏），
+                    // 也不是网络抖动（不值得退避重试）。判据见 [KugouUpstreamError.isAuthInvalid]。
+                    val authInvalid = KugouUpstreamError.isAuthInvalid(code, body)
+                    return@withContext Result.failure(
+                        if (authInvalid) KugouAuthInvalidException("/song/url HTTP $code: ${body.take(300)}")
+                        else IOException("/song/url HTTP $code: ${body.take(300)}")
+                    )
                 }
                 if (body.isEmpty()) {
                     return@withContext Result.failure(IOException("Empty response body"))
@@ -524,7 +532,8 @@ class KugouApiService private constructor() {
                     "pagesize" to pageSize.toString()
                 )
                 userid?.let { params["userid"] = it }
-                val (code, body) = httpGetWithRetry("/playlist/track/all/new", params)
+                // 必须绕 apicache：收藏/加删歌后重拉「我喜欢」或歌单，2 分钟缓存会返回旧列表
+                val (code, body) = httpGetWithRetry("/playlist/track/all/new", params, VIP_NO_CACHE_HEADERS)
                 Log.d(TAG, "/playlist/track/all/new -> HTTP $code, body length=${body.length}")
                 body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/playlist/track/all/new body[$i]: $c") }
                 if (code !in 200..299) return@withContext Result.failure(IOException("/playlist/track/all/new HTTP $code: ${body.take(200)}"))
@@ -567,7 +576,8 @@ class KugouApiService private constructor() {
                 if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
                 val (code, body) = httpGetWithRetry(
                     "/playlist/track/all",
-                    mapOf("global_collection_id" to globalCollectionId, "page" to page.toString(), "pagesize" to pageSize.toString())
+                    mapOf("global_collection_id" to globalCollectionId, "page" to page.toString(), "pagesize" to pageSize.toString()),
+                    VIP_NO_CACHE_HEADERS
                 )
                 Log.d(TAG, "/playlist/track/all -> HTTP $code, body length=${body.length}")
                 if (code !in 200..299) return@withContext Result.failure(IOException("/playlist/track/all HTTP $code: ${body.take(200)}"))
@@ -626,7 +636,7 @@ class KugouApiService private constructor() {
     suspend fun getAlbumDetail(albumId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
             if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-            val (code, body) = httpGetWithRetry("/album/detail", mapOf("album_id" to albumId))
+            val (code, body) = httpGetWithRetry("/album/detail", mapOf("album_id" to albumId), VIP_NO_CACHE_HEADERS)
             Log.d(TAG, "/album/detail -> HTTP $code, body length=${body.length}")
             body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/album/detail body[$i]: $c") }
             if (code !in 200..299) return@withContext Result.failure(IOException("/album/detail HTTP $code: ${body.take(200)}"))
@@ -687,7 +697,8 @@ class KugouApiService private constructor() {
                 if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
                 val (code, body) = httpGetWithRetry(
                     "/album/songs",
-                    mapOf("album_id" to albumId, "page" to page.toString(), "pagesize" to pageSize.toString())
+                    mapOf("album_id" to albumId, "page" to page.toString(), "pagesize" to pageSize.toString()),
+                    VIP_NO_CACHE_HEADERS
                 )
                 Log.d(TAG, "/album/songs -> HTTP $code, body length=${body.length}")
                 if (code !in 200..299) return@withContext Result.failure(IOException("/album/songs HTTP $code: ${body.take(200)}"))
@@ -748,7 +759,7 @@ class KugouApiService private constructor() {
     suspend fun getArtistDetail(artistId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
             if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-            val (code, body) = httpGetWithRetry("/artist/detail", mapOf("id" to artistId))
+            val (code, body) = httpGetWithRetry("/artist/detail", mapOf("id" to artistId), VIP_NO_CACHE_HEADERS)
             Log.d(TAG, "/artist/detail -> HTTP $code, body length=${body.length}")
             body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/artist/detail body[$i]: $c") }
             if (code !in 200..299) return@withContext Result.failure(IOException("/artist/detail HTTP $code: ${body.take(200)}"))
@@ -842,7 +853,7 @@ class KugouApiService private constructor() {
                 put("pagesize", pageSize.toString())
                 if (sort.isNotEmpty()) put("sort", sort)
             }
-            val (code, body) = httpGetWithRetry("/artist/albums", params)
+            val (code, body) = httpGetWithRetry("/artist/albums", params, VIP_NO_CACHE_HEADERS)
             Log.d(TAG, "/artist/albums -> HTTP $code, body length=${body.length}")
             if (code !in 200..299) return@withContext Result.failure(IOException("/artist/albums HTTP $code: ${body.take(200)}"))
             Result.success(JSONObject(body))
@@ -871,7 +882,7 @@ class KugouApiService private constructor() {
                     put("pagesize", pageSize.toString())
                     if (sort.isNotEmpty()) put("sort", sort)
                 }
-                val (code, body) = httpGetWithRetry("/artist/audios", params)
+                val (code, body) = httpGetWithRetry("/artist/audios", params, VIP_NO_CACHE_HEADERS)
                 Log.d(TAG, "/artist/audios -> HTTP $code, body length=${body.length}")
                 if (code !in 200..299) return@withContext Result.failure(IOException("/artist/audios HTTP $code: ${body.take(200)}"))
                 Result.success(JSONObject(body))
@@ -994,7 +1005,7 @@ class KugouApiService private constructor() {
             if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
             val params = mutableMapOf("ids" to ids)
             userid?.let { params["userid"] = it }
-            val (code, body) = httpGetWithRetry("/playlist/detail", params)
+            val (code, body) = httpGetWithRetry("/playlist/detail", params, VIP_NO_CACHE_HEADERS)
             Log.d(TAG, "/playlist/detail -> HTTP $code, body length=${body.length}")
             body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/playlist/detail body[$i]: $c") }
             if (code !in 200..299) return@withContext Result.failure(IOException("/playlist/detail HTTP $code: ${body.take(200)}"))
@@ -1164,6 +1175,50 @@ class KugouApiService private constructor() {
             Result.failure(e)
         }
     }
+
+    /**
+     * 听歌等级查询/听歌时长上报（对齐 Dart getGradeInfo，kugou_api_client.dart:2826）：
+     * GET /user/grade/info。查询模式不带参（返回服务器累计秒数 data.d_sec）；
+     * 上报模式带 d_sec（本地累计总秒数）+ diff_sec（本次增量秒数），服务器按 diff_sec 记账。
+     * 成功判定须 status==1 && error_code==0（由调用方 ListeningGradeTracker 校验）。
+     */
+    suspend fun getUserGradeInfo(dSec: Long? = null, diffSec: Long? = null): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+                val params = buildMap {
+                    if (dSec != null) put("d_sec", dSec.toString())
+                    if (diffSec != null) put("diff_sec", diffSec.toString())
+                }
+                httpGetVipBusiness("/user/grade/info", params)
+            } catch (e: Exception) {
+                Log.e(TAG, "getUserGradeInfo exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /**
+     * 真实播放历史上报（对齐 Dart uploadPlayHistory，kugou_api_client.dart:3039）：
+     * GET /playhistory/upload?mxid=&ot=&pc= → 上游 /playhistory/v1/upload_songs。
+     * mxid 即 MixSongID（album_audio_id），ot 为秒级时间戳，pc 为播放次数。
+     */
+    suspend fun uploadPlayHistory(mxid: Long, ot: Long, playCount: Int = 1): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+                httpGetVipBusiness(
+                    "/playhistory/upload",
+                    mapOf(
+                        "mxid" to mxid.toString(),
+                        "ot" to ot.toString(),
+                        "pc" to playCount.toString()
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "uploadPlayHistory exception", e)
+                Result.failure(e)
+            }
+        }
 
     /** 查询验证码格式（对齐 Dart getVerifyInfo L3595）：GET /get/verify/info?eventid=。20028 时返回 v_type/txappid。 */
     suspend fun getVerifyInfo(eventid: String): Result<JSONObject> = withContext(Dispatchers.IO) {

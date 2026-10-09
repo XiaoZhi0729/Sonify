@@ -37,6 +37,7 @@ import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
+import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.repositories.KugouPlaylist
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.PendingPlaylistStore
@@ -256,6 +257,7 @@ fun OnlinePlaylists(
                         isDef = 0
                     )
                     scheduleReconcile()
+                    KugouSyncCoordinator.notifyPlaylistsChanged()
                 }
                 .onFailure { e ->
                     // 失败保留弹层与输入，便于改名词典重试；错误经 status 不适合弹层场景，直接对话框文案
@@ -283,6 +285,7 @@ fun OnlinePlaylists(
                         writePendingDeletes(pendingDel.value.first, pendingDel.value.second)
                         playlists.value = playlists.value.filter { it !== pl }
                         scheduleReconcile()
+                        KugouSyncCoordinator.notifyPlaylistsChanged()
                     }
                     .onFailure { e ->
                         status.value = "error:${e.message}"
@@ -293,7 +296,7 @@ fun OnlinePlaylists(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(KugouSyncCoordinator.playlistsRevision.value) {
         status.value = "idle"
         load()
     }
@@ -305,6 +308,11 @@ fun OnlinePlaylists(
             createError.value = null
             showCreateDialog.value = true
         },
+        onRefresh = {
+            status.value = "idle"
+            load()
+        },
+        refreshing = status.value == "loading",
         onBack = {
             navController.popBackStack()
         }

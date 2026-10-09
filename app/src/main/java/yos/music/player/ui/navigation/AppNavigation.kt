@@ -142,8 +142,9 @@ enum class HouseId(
     val tabIndex: Int
 ) {
     Home(UI.HomePage, 0),
-    Library(UI.Library, 1),
-    Search(UI.Search, 2)
+    Favorites(UI.Favorites, 1),
+    Library(UI.Library, 2),
+    Search(UI.Search, 3)
 }
 
 fun houseForTabIndex(index: Int): HouseId? = HouseId.entries.firstOrNull { it.tabIndex == index }

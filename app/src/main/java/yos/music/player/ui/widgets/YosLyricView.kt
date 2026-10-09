@@ -68,6 +68,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.lerp
+import coil.imageLoader
+import coil.request.ImageRequest
+import android.graphics.drawable.BitmapDrawable
+import androidx.palette.graphics.Palette
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -106,8 +112,130 @@ import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.ui.widgets.basic.YosWrapper
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import kotlin.math.sqrt
 
 val yosEasing = CubicBezierEasing(0.75f, 0.0f, 0.25f, 1.0f)
+
+// ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
+// 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由 YosLyricView 顶层按当前封面更新。
+private const val LyricSungCoverMix = 0.3f
+
+private object LyricCoverTint {
+    val color = mutableStateOf(Color.White)
+}
+
+// ===== 长音辉光参数 =====
+// 对齐 MD3Music/AMLL：单峰海浪包络 + 字芯镂空外圈发光
+// 时长门控：短于 MinNoteMs 的普通吐字不发光，MinNoteMs~FullNoteMs 间线性渐强
+private const val LyricGlowMinNoteMs = 700f      // 最短发光词时长
+private const val LyricGlowFullNoteMs = 1500f    // 完全发光词时长
+private const val LyricGlowMaxAlpha = 1.0f       // 峰值辉光不透明度（最大100%）
+private const val LyricGlowBlurRadius = 12f      // 辉光模糊半径（dp）收紧到12
+private const val LyricGlowDuFloorMs = 1000f     // 包络最短持续时间
+private const val LyricGlowReanchorToleranceMs = 150f  // 时钟重锚容差
+
+// 海浪包络曲线控制点（cubic-bezier）
+private const val LyricGlowBezInP1 = 0.2f
+private const val LyricGlowBezInP2 = 0.4f
+private const val LyricGlowBezOutP1 = 0.3f
+private const val LyricGlowBezOutP2 = 0.0f
+
+/** CSS cubic-bezier 前两控制点版（P0=0、P3=1） */
+private fun glowCubicBezier(t: Float, p1: Float, p2: Float): Float {
+    val u = 1f - t
+    return 3f * u * u * t * p1 + 3f * u * t * t * p2 + t * t * t
+}
+
+private const val SmartWbwFallbackMsPerChar = 280f
+private const val SmartWbwMaxLineMs = 12_000f
+
+private fun isCjkChar(c: Char): Boolean {
+    val block = Character.UnicodeBlock.of(c)
+    return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+        block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+        block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION ||
+        block == Character.UnicodeBlock.HIRAGANA ||
+        block == Character.UnicodeBlock.KATAKANA ||
+        block == Character.UnicodeBlock.HANGUL_SYLLABLES ||
+        block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS
+}
+
+/**
+ * 非逐字行 → 合成词级时间轴：按字符数线性均摊行时长。CJK 逐字成词，拉丁词组按空白切分（空白并入前一词）。
+ * 输出形状与 KRC 逐词一致：首元素 (行起点, "")，其后为 (词结束时间, 词文本)。
+ * [nextStartMs] 为下一行起点，≤ 行起点（末行）时按每字 280ms 估算，并封顶 12s。
+ */
+private fun synthesizeSmartWbw(
+    lines: List<Pair<Float, String>>,
+    nextStartMs: Float
+): List<Pair<Float, String>> {
+    val start = lines.firstOrNull()?.first ?: return lines
+    val text = lines.joinToString("") { it.second }
+    if (text.isBlank()) return lines
+
+    val units = ArrayList<String>()
+    val sb = StringBuilder()
+    fun flush() {
+        if (sb.isNotEmpty()) {
+            units += sb.toString()
+            sb.clear()
+        }
+    }
+    for (c in text) {
+        when {
+            isCjkChar(c) -> {
+                flush()
+                units += c.toString()
+            }
+            c.isWhitespace() -> {
+                if (sb.isNotEmpty()) sb.append(c)
+                else if (units.isNotEmpty()) units[units.lastIndex] = units.last() + c
+                else sb.append(c)
+            }
+            else -> {
+                if (sb.isNotEmpty() && sb.last().isWhitespace()) flush()
+                sb.append(c)
+            }
+        }
+    }
+    flush()
+    if (units.isEmpty()) return lines
+
+    val totalChars = units.sumOf { it.length }
+    val rawDuration = nextStartMs - start
+    val duration = (if (rawDuration > 0f) rawDuration else totalChars * SmartWbwFallbackMsPerChar)
+        .coerceAtMost(SmartWbwMaxLineMs)
+
+    val result = ArrayList<Pair<Float, String>>(units.size + 1)
+    result += start to ""
+    var acc = 0
+    for (u in units) {
+        acc += u.length
+        result += (start + duration * acc / totalChars) to u
+    }
+    return result
+}
+
+// 滚动弹簧：mass 0.9 / damping 15 / stiffness 90。Compose 的 spring 固定 mass=1，
+// 需折算：ω = sqrt(k/m) = 10 rad/s → stiffness = ω² = 100；ζ = c / (2·sqrt(k·m)) = 15 / 18 ≈ 0.833。
+private val LyricScrollSpring: AnimationSpec<Float> =
+    spring(dampingRatio = 15f / 18f, stiffness = 100f)
+
+// ===== 行 alpha / 浮起 / 胶囊底参数（对齐 Flamingo 新版）=====
+private const val LyricNonCurrentLineAlpha = 0.4f
+private val LyricLineAlphaSpec: AnimationSpec<Float> =
+    tween(durationMillis = 260, easing = CubicBezierEasing(0.25f, 1f, 0.5f, 1f))
+private const val LyricContainerAlphaCurrent = 0.95f
+private const val LyricContainerAlphaOther = 0.82f
+private const val LyricRiseLeadMs = 180f      // 普通词浮起提前量
+private const val LyricRiseTailMs = 400f      // 普通词浮起窗口尾部
+private const val LyricRisePx = 4f            // 浮起幅度
 
 /**
  * 歌词滚动状态容器：由调用方在常驻层持有（如 NowPlaying）。
@@ -169,6 +297,34 @@ fun YosLyricView(
 ) {
     println("重组：YosLyricView")
     val context = LocalContext.current
+    val lyricCoverUri = MediaViewModelObject.bitmap.value
+    LaunchedEffect(lyricCoverUri) {
+        if (lyricCoverUri == null) {
+            LyricCoverTint.color.value = Color.White
+            return@LaunchedEffect
+        }
+        val tintArgb = runCatching {
+            val result = context.imageLoader.execute(
+                ImageRequest.Builder(context)
+                    .data(lyricCoverUri)
+                    .size(96)
+                    .allowHardware(false)
+                    .build()
+            )
+            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@runCatching null
+            withContext(Dispatchers.Default) {
+                val palette = Palette.from(bitmap).generate()
+                val fallback = 0
+                listOf(
+                    palette.getLightVibrantColor(fallback),
+                    palette.getVibrantColor(fallback),
+                    palette.getLightMutedColor(fallback),
+                    palette.getMutedColor(fallback)
+                ).firstOrNull { it != fallback }
+            }
+        }.getOrNull()
+        LyricCoverTint.color.value = if (tintArgb != null && tintArgb != 0) Color(tintArgb) else Color.White
+    }
     val mainTextBasicColor = Color(uiConfig.mainTextBasicColor)
     val subTextBasicColor = Color(uiConfig.subTextBasicColor)
     //Color(0xFF919191)
@@ -1022,8 +1178,11 @@ fun LazyItemScope.LyricItem(
 
     val viewAlign = if (otherSide) Alignment.End else Alignment.Start
 
-    val focusedColor = Color(0xFFFFFFFF)
-    val unfocusedColor = Color(0x2EFFFFFF)
+    val focusedColor = lerp(Color.White, LyricCoverTint.color.value, LyricSungCoverMix)
+    val unfocusedColor = Color(0x2EFFFFFF)  // 未唱字：保持原有颜色（勿改，用户要求）
+
+    // @Composable 样式在组合期取一次，供非组合的测量/draw lambda 捕获使用
+    val mainStyle = mainTextStyle()
     //Color(0x33FFFFFF)
 
     //val focusedSolidBrush = SolidColor(focusedColor)
@@ -1038,6 +1197,29 @@ fun LazyItemScope.LyricItem(
     }
 
     val liveTime = remember(mainLyric) { mutableIntStateOf(liveTimeLambda()) }
+
+// 自驱动辉光时钟（ms）：仅当前行逐帧推进，与播放位置解耦防抖动
+    val glowTime = remember(mainLyric) { mutableFloatStateOf(-1f) }
+
+    YosWrapper {
+        // 辉光时钟驱动：只在当前行且逐字模式下运行
+        val glowRunning = remember(mainLyric) {
+            derivedStateOf { !isNotOneByOne.value && isCurrentLambda() }
+        }
+        LaunchedEffect(glowRunning.value) {
+            if (!glowRunning.value) {
+                glowTime.value = -1f
+                return@LaunchedEffect
+            }
+            // 直接跟随播放位置：暂停时位置不变 → 辉光冻结稳定不闪；
+            // 播放时逐帧采样，无自驱动外推，消除偏差>150ms 时的锯齿重锚闪烁
+            while (true) {
+                withFrameNanos {
+                    glowTime.value = liveTimeLambda().toFloat()
+                }
+            }
+        }
+    }
 
     YosWrapper {
         val launch = remember(mainLyric) {
@@ -1221,8 +1403,8 @@ fun LazyItemScope.LyricItem(
                                 val alphaTweenSpecWithDelay: AnimationSpec<Float> =
                                     remember(mainLyric) {
                                         TweenSpec(
-                                            durationMillis = 350,
-                                            easing = yosEasing,
+                                            durationMillis = 260,
+                                            easing = CubicBezierEasing(0.25f, 1f, 0.5f, 1f),
                                             delay = 145
                                         )
                                     }
@@ -1230,25 +1412,22 @@ fun LazyItemScope.LyricItem(
                                 val alphaTweenSpecWithoutDelay: AnimationSpec<Float> =
                                     remember(mainLyric) {
                                         TweenSpec(
-                                            durationMillis = 350,
-                                            easing = yosEasing,
+                                            durationMillis = 260,
+                                            easing = CubicBezierEasing(0.25f, 1f, 0.5f, 1f),
                                             delay = 80
                                         )
                                     }
 
                                 YosWrapper {
                                     val thisAlphaAnimated = animateFloatAsState(
-                                        targetValue = if (isCurrentLambda()) /*0.78f*/ 1f else 0.14f,
+                                        // 对齐 Flamingo：当前 1.0 / 非当前 0.4（含逐字行）
+                                        targetValue = if (isCurrentLambda()) 1f else 0.4f,
                                         animationSpec = if (isCurrentLambda()) alphaTweenSpecWithDelay else alphaTweenSpecWithoutDelay
                                     )
 
                                     val thisAlpha = remember(mainLyric) {
                                         derivedStateOf {
-                                            if (isNotOneByOne.value) {
-                                                thisAlphaAnimated.value
-                                            } else {
-                                                1f
-                                            }
+                                            thisAlphaAnimated.value
                                         }
                                     }
 
@@ -1280,7 +1459,7 @@ fun LazyItemScope.LyricItem(
 
                                     Line(
                                         lines = mainLyric,
-                                        style = if (otherSide) MainTextStyle.copy(textAlign = TextAlign.End) else MainTextStyle,
+                                        style = if (otherSide) mainStyle.copy(textAlign = TextAlign.End) else mainStyle,
                                         measurer = measurer,
                                         modifier = Modifier
                                             .graphicsLayer {
@@ -1361,7 +1540,7 @@ fun LazyItemScope.LyricItem(
                                                         word = charWord,
                                                         layout = measurer.measure(
                                                             text = charWord,
-                                                            style = MainTextStyle,
+                                                            style = mainStyle,
                                                             constraints = measureResult.layoutInput.constraints,
                                                             layoutDirection = if (viewAlign.value == Alignment.End) LayoutDirection.Rtl else LayoutDirection.Ltr
                                                         ),
@@ -1396,22 +1575,20 @@ fun LazyItemScope.LyricItem(
                                             } else {
                                                 mainLyric[(wordIndex - 1)].first
                                             }
-                                            val groupPercent =
-                                                if ((word.first - thisWordGroupLastTime) == 0f) {
-                                                    0f
-                                                } else {
-                                                    ((liveTime.intValue - thisWordGroupLastTime).coerceAtLeast(
-                                                        0f
-                                                    ) / (word.first - thisWordGroupLastTime)).coerceIn(
-                                                        0f,
-                                                        1f
-                                                    )
-                                                }
-                                            val easedPercent = easing.transform(groupPercent.coerceIn(
-                                                0f,
-                                                1f
-                                            ))
-                                            val topLeftWeight = 4 * easedPercent
+                                            // 浮起（对齐 Flamingo）：提前 180ms 起坡，
+                                            // 窗口 = 180ms + 词时长 + 400ms，smoothstep 缓动
+                                            val wordDurationMs0 = word.first - thisWordGroupLastTime
+                                            val riseWindow = 180f + wordDurationMs0 + 400f
+                                            val riseT =
+                                                if (riseWindow <= 0f) 0f
+                                                else ((liveTime.intValue - (thisWordGroupLastTime - 180f)) / riseWindow).coerceIn(0f, 1f)
+                                            val riseSmooth = riseT * riseT * (3f - 2f * riseT)
+                                            val topLeftWeight = 4 * riseSmooth
+
+                                            val wordDurationMs = word.first - thisWordGroupLastTime
+                                            // 捕获词组时间参数供辉光lambda使用
+                                            val capturedWordGroupStartTime = thisWordGroupLastTime
+                                            val capturedWordDuration = wordDurationMs
 
                                             thisWord.forEach { char ->
 
@@ -1421,9 +1598,9 @@ fun LazyItemScope.LyricItem(
 
                                                 val layout = measurer.measure(
                                                     text = charWord,
-                                                    style = if (otherSide) MainTextStyle.copy(
+                                                    style = if (otherSide) mainStyle.copy(
                                                         textAlign = TextAlign.End
-                                                    ) else MainTextStyle,
+                                                    ) else mainStyle,
                                                     constraints = measureResult.layoutInput.constraints
                                                 )
 
@@ -1433,6 +1610,8 @@ fun LazyItemScope.LyricItem(
                                                 wordsToDraw += DrawWord(
                                                     time = lastTime + averageTime,
                                                     word = charWord,
+                                                    glowStart = thisWordLastTime,
+                                                    glowEnd = thisWordLastTime + thisWordAverageTime,
                                                     layout = layout,
                                                     topLeft = measureResult.getBoundingBox(sum.coerceAtMost(
                                                         mainLyric.sumOf { it.second.length } - 1)
@@ -1460,15 +1639,8 @@ fun LazyItemScope.LyricItem(
                                                         }
                                                         Brush.horizontalGradient(
                                                             0f to beforeColor,
-                                                            (percent - px).coerceIn(
-                                                                0f,
-                                                                1f
-                                                            ) to beforeColor,
-                                                            (percent + px).coerceIn(
-                                                                0f,
-                                                                1f
-                                                            ) to afterColor/*,
-                                                            1f to afterColor*/
+                                                            (percent - px).coerceIn(0f, 1f) to beforeColor,
+                                                            (percent + px).coerceIn(0f, 1f) to afterColor
                                                         )
                                                     },
                                                     percent = {
@@ -1478,6 +1650,38 @@ fun LazyItemScope.LyricItem(
 
                                                         ((liveTime.intValue - thisWordLastTime) / thisWordAverageTime)
 
+                                                    },
+glow = {
+                                                        // 逐字窗口：本字只在自己的时间区间内发光
+                                                        // （修复同词多字时首、尾字错峰长音同时发光）
+                                                        val currentGlowTime = glowTime.value
+                                                        if (currentGlowTime < 0f) {
+                                                            return@DrawWord 0f
+                                                        }
+
+                                                        val charDuration = thisWordAverageTime
+                                                        if (charDuration < LyricGlowMinNoteMs) {
+                                                            return@DrawWord 0f
+                                                        }
+
+                                                        val charEnd = thisWordLastTime + charDuration
+                                                        if (currentGlowTime < thisWordLastTime || currentGlowTime > charEnd) {
+                                                            return@DrawWord 0f
+                                                        }
+
+                                                        val t = ((currentGlowTime - thisWordLastTime) / charDuration).coerceIn(0f, 1f)
+
+                                                        // 单峰海浪包络：前半段 bezIn 升峰、后半段 bezOut 衰减
+                                                        val envelope = if (t < 0.5f) {
+                                                            glowCubicBezier(t * 2f, LyricGlowBezInP1, LyricGlowBezInP2)
+                                                        } else {
+                                                            1f - glowCubicBezier((t - 0.5f) * 2f, LyricGlowBezOutP1, LyricGlowBezOutP2)
+                                                        }
+
+                                                        // 强度按本字时长缩放：短音更淡、长音更亮
+                                                        val durationScale = ((charDuration - LyricGlowMinNoteMs) /
+                                                            (LyricGlowFullNoteMs - LyricGlowMinNoteMs)).coerceIn(0f, 1f)
+                                                        envelope * LyricGlowMaxAlpha * sqrt(durationScale)
                                                     }
                                                 ).also {
                                                     sum += charWord.length
@@ -1487,7 +1691,71 @@ fun LazyItemScope.LyricItem(
                                         }
 
                                         onDrawBehind {
-                                            wordsToDraw.fastForEach { l ->
+                                            // 每帧全行只放行一个字发光：重复字（同词内同形字）各自窗口重叠时
+                                            // 也只亮当前这一字，杜绝“念一个字两个同形字一起亮”。
+                                            val glowNow = glowTime.value
+                                            var activeGlowIdx = -1
+                                            if (glowNow >= 0f) {
+                                                for (i in wordsToDraw.indices) {
+                                                    val w = wordsToDraw[i]
+                                                    if (glowNow >= w.glowStart && glowNow < w.glowEnd) {
+                                                        activeGlowIdx = i
+                                                        break
+                                                    }
+                                                }
+                                            }
+                                            wordsToDraw.fastForEachIndexed { i, l ->
+                                                val glowStrength = if (i == activeGlowIdx) l.glow() else 0f
+
+                                                // ==== 临时诊断：打印每帧命中辉光窗口的所有字 ====
+                                                if (glowNow >= 0f && i == activeGlowIdx) {
+                                                    val dbg = StringBuilder()
+                                                    wordsToDraw.fastForEachIndexed { j, w2 ->
+                                                        if (glowNow >= w2.glowStart && glowNow < w2.glowEnd) {
+                                                            dbg.append(" #").append(j).append("'").append(w2.word)
+                                                                .append("'w[${w2.glowStart.toInt()},${w2.glowEnd.toInt()})x=${w2.topLeft.x.toInt()}")
+                                                        }
+                                                    }
+                                                    println("GLOWDBG t=${glowNow.toInt()} active=$activeGlowIdx hit=$dbg")
+                                                }
+                                                
+                                                // 绘制辉光层（如果有辉光强度）
+                                                if (glowStrength > 0.01f) {
+                                                    drawIntoCanvas { canvas ->
+                                                        val blurRadius = LyricGlowBlurRadius * density
+                                                        
+                                                        // saveLayer用于隔离模糊效果
+                                                        canvas.nativeCanvas.saveLayer(
+                                                            l.topLeft.x - blurRadius,
+                                                            l.topLeft.y - blurRadius,
+                                                            l.topLeft.x + l.layout.size.width + blurRadius,
+                                                            l.topLeft.y + l.layout.size.height + blurRadius,
+                                                            null
+                                                        )
+                                                        
+                                                        // 绘制模糊的白色文字（辉光底层）
+                                                        drawText(
+                                                            textLayoutResult = l.layout,
+                                                            topLeft = l.topLeft,
+                                                            color = Color.White.copy(alpha = glowStrength),
+                                                            shadow = Shadow(
+                                                                color = Color.White.copy(alpha = glowStrength),
+                                                                offset = Offset.Zero,
+                                                                blurRadius = blurRadius
+                                                            )
+                                                        )
+                                                        
+                                                        // 镂空字芯：用Clear模式擦除中间部分
+                                                        drawText(
+                                                            textLayoutResult = l.layout,
+                                                            topLeft = l.topLeft,
+                                                            color = Color.White,
+                                                            blendMode = BlendMode.Clear
+                                                        )
+                                                        
+                                                        canvas.nativeCanvas.restore()
+                                                    }
+                                                }
                                                 drawText(
                                                     textLayoutResult = l.layout,
                                                     topLeft = l.topLeft,
@@ -1635,33 +1903,39 @@ fun CountdownAnimation(progress: () -> Float, colorLambda: () -> Color) {
 }
 
 
-val MainTextStyle = TextStyle(
-    fontSize = 30.5.sp,
-    lineHeight = 40.5.sp,
-    fontWeight =
-    when (SettingsLibrary.LyricFontWeight) {
-        "Thin" -> FontWeight.Thin
-        "ExtraLight" -> FontWeight.ExtraLight
-        "Light" -> FontWeight.Light
-        "Regular" -> FontWeight.Normal
-        "Medium" -> FontWeight.Medium
-        "SemiBold" -> FontWeight.SemiBold
-        "Bold" -> FontWeight.Bold
-        "ExtraBold" -> FontWeight.ExtraBold
-        "Black" -> FontWeight.Black
-        else -> FontWeight.ExtraBold
-    },
-    letterSpacing = 0.05.sp,
-    lineHeightStyle = LineHeightStyle(
-        alignment = LineHeightStyle.Alignment.Center,
-        trim = LineHeightStyle.Trim.None
-    ),
-    lineBreak = LineBreak(
-        strategy = if (SettingsLibrary.LyricLineBalance) LineBreak.Strategy.Balanced else LineBreak.Strategy.Simple,
-        LineBreak.Strictness.Default,
-        LineBreak.WordBreak.Default
+/** 主行样式（对齐 Flamingo：37.5/47.5sp）。@Composable 使字号缩放/字重/行平衡设置变化即时生效。 */
+@Composable
+fun mainTextStyle(): TextStyle {
+    // LyricFontScale 即字号百分比（设置页 80~120），与 fontScale 全局 clamp 同义
+    val scale = SettingsLibrary.LyricFontScale.coerceIn(0.8f, 1.2f)
+    return TextStyle(
+        fontSize = (37.5f * scale).sp,
+        lineHeight = (47.5f * scale).sp,
+        fontWeight =
+        when (SettingsLibrary.LyricFontWeight) {
+            "Thin" -> FontWeight.Thin
+            "ExtraLight" -> FontWeight.ExtraLight
+            "Light" -> FontWeight.Light
+            "Regular" -> FontWeight.Normal
+            "Medium" -> FontWeight.Medium
+            "SemiBold" -> FontWeight.SemiBold
+            "Bold" -> FontWeight.Bold
+            "ExtraBold" -> FontWeight.ExtraBold
+            "Black" -> FontWeight.Black
+            else -> FontWeight.ExtraBold
+        },
+        letterSpacing = 0.05.sp,
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.None
+        ),
+        lineBreak = LineBreak(
+            strategy = if (SettingsLibrary.LyricLineBalance) LineBreak.Strategy.Balanced else LineBreak.Strategy.Simple,
+            LineBreak.Strictness.Default,
+            LineBreak.WordBreak.Default
+        )
     )
-)
+}
 
 /*val BackgroundTextStyle = TextStyle(
     fontSize = 34.sp,
@@ -1681,7 +1955,12 @@ private data class DrawWord(
     val layout: TextLayoutResult,
     val topLeft: Offset,
     val brush: (px: Float, percent: Float) -> Brush,
-    val percent: () -> Float
+    val percent: () -> Float,
+    /** 当前字的长音辉光不透明度（0 = 不画辉光） */
+    val glow: () -> Float = { 0f },
+    /** 本字辉光窗口 [glowStart, glowEnd)，用于每帧只放行一个发光字 */
+    val glowStart: Float = 0f,
+    val glowEnd: Float = 0f
 )
 
 /*

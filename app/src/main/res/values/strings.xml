@@ -79,10 +79,14 @@
     <string name="kugou_vip_not_signed_today">Not checked in today</string>
     <string name="kugou_vip_auto_receive">Auto claim VIP</string>
     <string name="kugou_vip_auto_receive_desc">Sign in automatically when the app starts</string>
+    <string name="settings_upload_listening_duration_title">Upload listening duration</string>
+    <string name="settings_upload_listening_duration_desc">Sync online listening time to your Kugou account to build up your listening level, and report play history when an online song starts</string>
     <string name="page_settings_title">Settings</string>
     <string name="page_library_title">Library</string>
     <string name="page_discovery_title">New</string>
     <string name="page_search_title">Search</string>
+    <string name="page_favorites_title">Favorites</string>
+    <string name="favorites_not_found">Liked Songs not found. Please sign in to your Kugou account.</string>
     <string name="discovery_coming_soon">New releases, charts and curated playlists are coming soon…</string>
     <string name="discovery_rank_title">Top Charts</string>
     <string name="discovery_rank_empty">No chart data available</string>
@@ -269,6 +273,11 @@
     <string name="settings_performance_ui_screen_corner_desc">Reopen the dialog to adjust the screen corners.</string>
     <string name="settings_performance_lyric_line_balance">Line Balance Mode</string>
     <string name="settings_performance_lyric_line_balance_desc">Balance the number of characters per line in the lyrics to make the layout more neat. There may be side effects for lyrics in certain languages.</string>
+    <string name="settings_performance_lyric_style_font_size">Font Size</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric">Smart Word-by-Word Lyrics</string>
+    <string name="settings_performance_lyric_smart_wbw_lyric_desc">Display non-word-by-word lyrics with linear gradient speed for a similar word-by-word effect.</string>
+    <string name="settings_performance_lyric_timing_offset">Lyric Timing Offset</string>
+    <string name="settings_performance_lyric_timing_offset_desc">Positive values show lyrics earlier, negative values show them later.</string>
     <string name="settings_others_about_contact_us">Contact Us</string>
     <string name="settings_others_about_contact_us_desc">Visit our Telegram channel.</string>
     <string name="settings_others_about_developer_coolapk">Visit the developer\'s CoolApk profile.</string>
@@ -279,6 +288,10 @@
     <string name="settings_others_diag_title">Diagnostics Log</string>
     <string name="settings_others_diag_desc">Writes playback events to app storage. Screen-off silence, auto-skip storms and buffering stalls can only be located afterwards with it.</string>
     <string name="settings_others_diag_export">Export Diagnostics</string>
+    <string name="settings_others_coloros_diag_title">ColorOS Lyrics Diagnostics</string>
+    <string name="settings_others_coloros_diag_desc">If lyrics do not show on the ColorOS lock screen, turn this on. It keeps recording the whole lyric delivery pipeline into the diagnostics log. Play a few songs, check the lock screen, then export the report below and send it back.</string>
+    <string name="settings_others_coloros_diag_export">Export ColorOS Lyrics Report</string>
+    <string name="settings_others_coloros_diag_export_desc">Builds a lyric-only report with ROM version and test steps, then opens the share sheet.</string>
     <string name="settings_others_diag_hint">The report bundles a policy snapshot, key events and the log tail. It can also be pulled with adb from Android/data/&lt;package&gt;/files/logs.</string>
     <string name="settings_others_reset">Reset All Settings</string>
     <string name="settings_others_reset_confirm">All settings will be restored to their defaults. This cannot be undone. Your login session and library data are not affected.</string>

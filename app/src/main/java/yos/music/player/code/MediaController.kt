@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import coil.imageLoader
 import coil.request.ImageRequest
@@ -72,6 +73,9 @@ import yos.music.player.code.utils.player.CrossfadeExo
 import yos.music.player.code.utils.player.FadeExo
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
+import yos.music.player.code.utils.player.OnlineFailureKind
+import yos.music.player.code.utils.player.OnlineSkipPolicy
+import yos.music.player.code.utils.player.OnlineSkipState
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.coverCacheKey
 import yos.music.player.data.libraries.MusicLibrary
@@ -85,12 +89,16 @@ import yos.music.player.data.libraries.uri
 import yos.music.player.data.objects.MainViewModelObject
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.data.repositories.IntentSource
+import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.data.repositories.ListeningGradeTracker
+import yos.music.player.data.repositories.SongPlayabilityStore
 import yos.music.player.data.repositories.PerSongQualityIntent
 import yos.music.player.data.repositories.QualityIntentResolver
 import yos.music.player.data.repositories.QualitySwitchPolicy
 import yos.music.player.data.repositories.QualityTrace
+import yos.music.player.native.KugouApiService
 
 @Stable
 object MediaController {
@@ -328,8 +336,12 @@ object MediaController {
         runCatching { controller.addListener(listener) }
     }
 
-    /** 注销"播完当前曲再暂停"的一次性监听（触发后、或重设/手动取消定时器时调用）。 */
-    private fun stopSleepEndWatcher() {
+    /**
+     * 注销"播完当前曲再暂停"的一次性监听（触发后、或重设/手动取消定时器时调用）。
+     * internal：播放服务在重备（[OnlineSkipState] 的退避重试）前也要作废它——
+     * `prepare()` 会产生一次 REPEAT 过渡，不作废就会把刚自愈成功的歌误判成"播完了"而暂停。
+     */
+    internal fun stopSleepEndWatcher() {
         val listener = sleepEndListener ?: return
         runCatching { mediaControl?.removeListener(listener) }
         sleepEndListener = null
@@ -357,9 +369,13 @@ object MediaController {
     private suspend fun syncQueueSnapshot() = withContext(Dispatchers.Main) {
         val controller = mediaControl ?: return@withContext
         val timeline = controller.currentTimeline
+        // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem），timeline 读回的
+        // 重建值缺时长等字段：按 mediaId 与编辑前的队列快照合并取完整条目
+        val known = playingMusicList.value.orEmpty().associateBy { it.mediaId }
         val newList = if (timeline.isEmpty) emptyList()
         else (0 until timeline.windowCount).map { i ->
-            timeline.getWindow(i, Timeline.Window()).mediaItem.toYosMediaItem()
+            val rebuilt = timeline.getWindow(i, Timeline.Window()).mediaItem.toYosMediaItem()
+            known[rebuilt.mediaId] ?: rebuilt
         }
         playingMusicList.value = newList
         MusicLibrary.updatePlayList(PlayListV1(mainMusicList, newList))
@@ -412,6 +428,64 @@ object MediaController {
             syncQueueSnapshot()
         }
 
+    // ---------- 手动切歌（唯一入口） ----------
+
+    /**
+     * 播放页/迷你条/横屏「上一首」「下一首」的唯一入口。两件事一起解决：
+     *
+     *  ① 埋点：按下即记 `SRC fn=ui_next`（带当时索引/队列长度/播放态）。此前手动传输命令在日志
+     *     里完全隐形（只探得到 session 侧的外部命令），“切歌没反应”只能靠“PREPARE 之外的
+     *     reason=2”间接反推，永远分不清“没发出 / 被吞 / 发出后被打回”。
+     *  ② 恢复：source error 后播放器停在 IDLE，此时 `seekToNextMediaItem()` 只移动索引、不触发
+     *     加载——用户视角就是“按了完全没反应”（真机日志实证：SKIP_LIMIT 锁死后按区间无任何
+     *     TRANSITION）。IDLE 下必须补 `prepare()+play()`，与错误跳歌兜底同一套三行。
+     *
+     * 耳机/通知栏的 NEXT 由 MediaSession 内部直接打到底层 player，进不了本入口，
+     * 靠 `TRANSITION` 行区分来源。
+     */
+    fun userSkipNext() = skipInternal(forward = true)
+
+    /** 见 [userSkipNext]。 */
+    fun userSkipPrevious() = skipInternal(forward = false)
+
+    private fun skipInternal(forward: Boolean) {
+        val fn = if (forward) "ui_next" else "ui_prev"
+        if (Looper.myLooper() == Looper.getMainLooper()) skipOnMain(fn, forward) else
+            CoroutineScope(Dispatchers.Main).launch { skipOnMain(fn, forward) }
+    }
+
+    /** media3 的 MediaController 禁止跨线程访问（verifyApplicationThread 直接抛），统一回主线程。 */
+    private fun skipOnMain(fn: String, forward: Boolean) {
+        val controller = mediaControl
+        if (controller == null) {
+            // 控制器没连上时什么都不做也要留痕：这就是“没发出”那一档
+            YosDiagnostics.log("SRC", "fn" to fn, "why" to "no_controller")
+            return
+        }
+        val state = runCatching { controller.playbackState }.getOrDefault(-1)
+        YosDiagnostics.log(
+            "SRC",
+            "fn" to fn,
+            "idx" to runCatching { controller.currentMediaItemIndex }.getOrDefault(-1),
+            "q" to runCatching { controller.mediaItemCount }.getOrDefault(-1),
+            "state" to YosDiagnostics.stateLabel(state)
+        )
+        // 手动切歌是显式意图：作废上一轮的失败锁存（否则新队列第一首一失败就"达上限"）
+        OnlineSkipState.reset(fn)
+        val rearm = state == Player.STATE_IDLE
+        runCatching {
+            if (forward) controller.seekToNextMediaItem() else controller.seekToPreviousMediaItem()
+            if (rearm) {
+                controller.prepare()
+                controller.fadePlay()
+            }
+        }.onFailure { e ->
+            YosDiagnostics.log("SRC_ERR", "fn" to fn, "why" to e.toString())
+        }
+        // 重备是“不是自然播完”的推进：副 player 里备着的可能正是那首坏曲
+        if (rearm) CrossfadeExo.abort("user_skip_rearm")
+    }
+
     fun onServiceRunning() {
         val handler by lazy { Handler(Looper.getMainLooper()) }
         val lyricAPI by lazy { API() }
@@ -442,7 +516,8 @@ object MediaController {
                             currentLyricIndex = MainViewModelObject.syncLyricIndex.intValue
 
                             if (isPlaying == true) {
-                                liveTime = mediaControl?.currentPosition ?: 0
+                                liveTime = (mediaControl?.currentPosition ?: 0) +
+                                    SettingsLibrary.LyricTimingOffset
 
                                 val lrcEntries = MediaViewModelObject.lrcEntries.value
 
@@ -532,6 +607,9 @@ object MediaController {
         // 用户主动开播（点任意一首歌、恢复上次播放）：一切在途的平滑过渡作废——本功能
         // 只服务"自然播完自动进下一首"，手动路径一律硬切
         CrossfadeExo.abort("prepare")
+        // 用户显式意图同样作废跳歌锁存：不清就会把"上一轮整队列失败"的计数算到新队列上，
+        // 新队列第一首一失败就直接落进"达上限"分支（真机：用户重新点歌也救不回来）
+        OnlineSkipState.reset("user_prepare")
         if (thisMusicList != playingMusicList.value) {
 
             var index = 0
@@ -674,6 +752,12 @@ object MediaController {
         mediaId?.startsWith("kugou-online-") == true
 
     /**
+     * 歌词帧与切歌元数据提交的最小间隔：OPlus 锁屏的防抖会丢弃同曲紧邻的第二次提交，
+     * 缓存命中等场景下歌词就绪可能贴着切歌提交，统一延后再发（对锁定窗口的保守估计）。
+     */
+    private const val LYRIC_PUBLISH_INITIAL_DELAY_MS = 700L
+
+    /**
      * 把歌词以 LyricInfo 协议写入当前媒体条目的元数据 extras，随 MediaSession 发布给系统，
      * 供 HyperLyric（小米超级岛）与 ColorOS 锁屏歌词等组件读取。
      *
@@ -682,13 +766,22 @@ object MediaController {
      * （对齐 MD3Music 的"推送先于首次元数据发布不得丢弃"兜底）。
      */
     fun publishSuperIslandLyric(mediaId: String?, entries: List<LyricEntry>) {
-        if (!SettingsLibrary.SuperIslandLyricEnabled) return
+        if (!SettingsLibrary.SuperIslandLyricEnabled) {
+            YosDiagnostics.log("LYRIC_DISABLED", "id" to mediaId)
+            return
+        }
         if (mediaId == null) return
-        requestLyricPublish(mediaId, entries)
+        YosDiagnostics.log(
+            "LYRIC_REQ", "id" to mediaId, "lines" to entries.size,
+            "raw" to entries.any { it.mainLyric.size >= 3 },
+            "delay" to LYRIC_PUBLISH_INITIAL_DELAY_MS
+        )
+        requestLyricPublish(mediaId, entries, delayMs = LYRIC_PUBLISH_INITIAL_DELAY_MS)
     }
 
     /** 无视开关直接移除当前条目的歌词元数据，供关闭开关时清理。 */
     fun removeSuperIslandLyric() {
+        YosDiagnostics.log("LYRIC_REMOVE_REQ")
         requestLyricPublish(mediaId = null, entries = null)
     }
 
@@ -712,12 +805,18 @@ object MediaController {
         return lyricSessionGeneration
     }
 
-    private fun requestLyricPublish(mediaId: String?, entries: List<LyricEntry>?) {
+    private fun requestLyricPublish(mediaId: String?, entries: List<LyricEntry>?, delayMs: Long = 0L) {
         lyricHandler.post {
             lyricPublishRunnable?.let { lyricHandler.removeCallbacks(it) }
             lyricPublishTarget = mediaId to entries
             lyricPublishAttempts = 0
-            runLyricPublish()
+            if (delayMs > 0L) {
+                val run = Runnable { runLyricPublish() }
+                lyricPublishRunnable = run
+                lyricHandler.postDelayed(run, delayMs)
+            } else {
+                runLyricPublish()
+            }
         }
     }
 
@@ -726,14 +825,23 @@ object MediaController {
         val (mediaId, entries) = target
         // 歌曲已切走：放弃旧目标（新一轮请求会覆盖 pending），不做无意义重试。
         if (mediaId != null && musicPlaying.value?.mediaId != mediaId) {
+            YosDiagnostics.log(
+                "LYRIC_STALE", "target" to mediaId, "now" to musicPlaying.value?.mediaId
+            )
             lyricPublishTarget = null
             return
         }
         val generation = if (mediaId != null) lyricGenerationFor(mediaId) else 0
-        val settled = updateSuperIslandExtra(mediaId) { item ->
+        if (lyricPublishAttempts > 0) {
+            YosDiagnostics.log("LYRIC_RETRY", "id" to mediaId, "attempt" to lyricPublishAttempts)
+        }
+        val settled = updateSuperIslandExtra(mediaId, generation) { item ->
             if (entries == null) null else LyricInfoSerializer.encode(item, entries, generation)
         }
         if (settled || lyricPublishAttempts >= LYRIC_PUBLISH_MAX_RETRIES) {
+            if (!settled) {
+                YosDiagnostics.log("LYRIC_GIVEUP", "id" to mediaId, "attempts" to lyricPublishAttempts)
+            }
             lyricPublishTarget = null
             return
         }
@@ -746,44 +854,86 @@ object MediaController {
     /**
      * @return true 表示目标已终结（已发布/已清理/内容无变化），false 表示条目未就绪需重试。
      */
-    private fun updateSuperIslandExtra(mediaId: String?, encode: (MediaItem) -> String?): Boolean {
+    private fun updateSuperIslandExtra(
+        mediaId: String?,
+        generation: Int,
+        encode: (MediaItem) -> String?
+    ): Boolean {
         try {
-            val controller = mediaControl ?: return false
+            val controller = mediaControl ?: run {
+                YosDiagnostics.log("LYRIC_NOREADY", "why" to "no_controller", "id" to mediaId)
+                return false
+            }
             val index = controller.currentMediaItemIndex
-            if (index == C.INDEX_UNSET) return false
+            if (index == C.INDEX_UNSET) {
+                YosDiagnostics.log("LYRIC_NOREADY", "why" to "no_index", "id" to mediaId)
+                return false
+            }
             val item = controller.getMediaItemAt(index)
-            if (mediaId != null && item.mediaId != mediaId) return false
+            if (mediaId != null && item.mediaId != mediaId) {
+                YosDiagnostics.log(
+                    "LYRIC_NOREADY", "why" to "mismatch", "id" to mediaId, "item" to item.mediaId
+                )
+                return false
+            }
 
             val json = encode(item)
             val oldExtras = item.mediaMetadata.extras
             val oldValue = oldExtras?.getString(LyricInfoSerializer.EXTRAS_KEY)
             if (json == null) {
-                if (oldValue == null) return true
+                if (oldValue == null) {
+                    YosDiagnostics.log("LYRIC_SKIP", "id" to item.mediaId, "why" to "no_content")
+                    return true
+                }
             } else if (json == oldValue) {
+                YosDiagnostics.log("LYRIC_SKIP", "id" to item.mediaId, "why" to "same")
                 return true
             }
 
-            val extras = Bundle(oldExtras ?: Bundle.EMPTY)
-            if (json == null) {
-                extras.remove(LyricInfoSerializer.EXTRAS_KEY)
-            } else {
-                extras.putString(LyricInfoSerializer.EXTRAS_KEY, json)
-            }
-
-            // media3 的 MediaMetadata.equals 不比较 extras 内容（只比 null 与否，1.4.0 源码
-            // MediaMetadata.java equals 末行为 ((extras == null) == (that.extras == null))）。
-            // 旧 extras 为 null 时，null→非 null 一次提交即可触发框架元数据重发布；
-            // 旧 extras 非 null（本工程条目普遍自带 ArtistId/AlbumId 等 extras）时两次提交
-            // 的元数据按 equals 相等、不会重发布，必须先把 extras 置空发布一帧，再写入带
-            // 歌词的 extras，用两次"不相等"强制重发布。
+            // OPlus 锁屏对同曲紧邻两次元数据提交会丢弃第二次（防抖，MD3Music 真机实证
+            // "within debounce period, ignore"），而 media3 的 MediaMetadata.equals 对
+            // extras 只比 null 与非 null、不比内容（1.4.0 起如此）——所以每次向锁屏
+            // 发布只允许一次 replaceMediaItem，且 extras 必须走 null→非 null 才能触发
+            // framework 重发布（发布条目的自有 extras 已剥离，见 MusicLibrary.toMediaItem）。
+            // 旧 extras 非空（残留 lyricInfo）时先清空一帧：清理目标到此终结；写入目标
+            // 交给重试循环在 800ms 后以 null→非 null 单帧补写，避开防抖窗口。
             if (oldExtras != null) {
                 val clearedMetadata = item.mediaMetadata.buildUpon().setExtras(null).build()
                 controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(clearedMetadata).build())
+                YosDiagnostics.log(
+                    "LYRIC_CLEAR", "id" to item.mediaId, "rewrite" to (json != null),
+                    "oldLen" to oldValue?.length
+                )
+                return json == null
             }
-            val updatedMetadata = item.mediaMetadata.buildUpon().setExtras(extras).build()
+
+            val updatedMetadata = item.mediaMetadata.buildUpon()
+                .setExtras(Bundle().apply { putString(LyricInfoSerializer.EXTRAS_KEY, json) })
+                .build()
             controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(updatedMetadata).build())
+            YosDiagnostics.log(
+                "LYRIC_ADD", "id" to item.mediaId, "gen" to generation,
+                "len" to json?.length, "title" to item.mediaMetadata.title,
+                "artist" to item.mediaMetadata.artist
+            )
+            // 500ms 后回读条目 extras：确认 app 侧链路完整（锁屏仍无词时区分
+            // "应用没发"与"系统侧拦截"的关键证据）
+            val verifyId = item.mediaId
+            lyricHandler.postDelayed({
+                runCatching {
+                    val c = mediaControl ?: return@postDelayed
+                    val cur = c.currentMediaItem ?: return@postDelayed
+                    val ex = cur.mediaMetadata.extras
+                    val v = ex?.getString(LyricInfoSerializer.EXTRAS_KEY)
+                    YosDiagnostics.log(
+                        "LYRIC_VERIFY", "id" to cur.mediaId, "match" to (cur.mediaId == verifyId),
+                        "ok" to (v != null), "len" to (v?.length ?: 0), "extrasKeys" to ex?.keySet()?.size
+                    )
+                }
+            }, 500)
             return true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            YosDiagnostics.log("LYRIC_ERR", "id" to mediaId, "why" to e.toString())
             return false
         }
     }
@@ -923,6 +1073,12 @@ class YosPlaybackService : MediaSessionService() {
 
     /** 应用侧大监听器：onCreate 里创建并挂到外壳上，扶正时随外壳迁移到新 player。 */
     private var playbackListener: Player.Listener? = null
+
+    /** 播放历史上报去重：服务生命周期内已报过的 mediaId 集合（同一首不重复报）。 */
+    private val playHistoryUploaded = mutableSetOf<String>()
+
+    /** 听歌时长心跳循环：随服务生命周期启停（防重建叠加导致计时翻倍）。 */
+    private var gradeHeartbeatJob: Job? = null
 
     private val shuffleMode = "shuffle_mode"
     private val repeatMode = "repeat_mode"
@@ -1116,9 +1272,9 @@ class YosPlaybackService : MediaSessionService() {
         }
 
         forwardingPlayer = makeForwardingPlayer(player)
+        // 在线跳歌的计数/退避不在这里：挂在 listener 字段上会在 Crossfade 扶正时被连带迁移，
+        // 且"只在 READY 清零"使其在 IDLE 错误态下永远回不了零（详见 OnlineSkipState）
         val listener = object : Player.Listener {
-                // 在线歌曲解析/加载失败的连续跳过计数（成功播放后归零）
-                var consecutiveOnlineFailures = 0
 
                 override fun onTracksChanged(tracks: Tracks) {
                     // 抽到 handleTracksChanged：扶正后副 player 不会再有 tracks 事件，
@@ -1144,7 +1300,8 @@ class YosPlaybackService : MediaSessionService() {
                         "buf" to p?.bufferedPosition
                     )
                     if (playbackState == Player.STATE_READY) {
-                        consecutiveOnlineFailures = 0
+                        // 真开播了：上一轮的失败不再相关
+                        OnlineSkipState.reset("ready")
                     }
                 }
 
@@ -1162,8 +1319,8 @@ class YosPlaybackService : MediaSessionService() {
                         "chain" to errorCause,
                         "buf" to p.bufferedPosition
                     )
-                    // 在线歌曲 URL 解析/加载失败：自动跳下一首，不崩溃、不清空队列；
-                    // 连续失败达上限则停下，避免全队列失效时无限循环。
+                    // 在线歌曲 URL 解析/加载失败：按失败**类型**分别处理——逐首拦截时
+                    // 跳下一首是对的，整账号鉴权失效时跳多少首都一样，应挂起退避而不是数满 10 首。
                     val failedItem = p.currentMediaItem
                     if (failedItem?.mediaId?.startsWith("kugou-online-") == true) {
                         // 错误态下 hasNextMediaItem() 恒 false，改用队列索引判断是否还有下一首
@@ -1172,41 +1329,25 @@ class YosPlaybackService : MediaSessionService() {
                         } else {
                             p.currentMediaItemIndex < p.mediaItemCount - 1
                         }
-                        if (consecutiveOnlineFailures < 10 && hasNext) {
-                            consecutiveOnlineFailures++
-                            YosDiagnostics.log("SKIP_TO_NEXT", "attempt" to consecutiveOnlineFailures)
-                            // 失败跳歌属于"不是自然播完"：副 player 里备着的可能正是这首坏曲
-                            CrossfadeExo.abort("error_skip")
-                            println("在线播放失败，跳下一首（第${consecutiveOnlineFailures}次）: ${error.message}")
-                            // 非阻塞告知用户：歌名 + 失败原因（上游拒播时原因依实际字段判定，
-                            // 完整诊断字段已在 KugouRepository 日志记录）
-                            val blockedReason = generateSequence(error as Throwable) { it.cause }
-                                .filterIsInstance<yos.music.player.data.repositories.KugouRepository.KugouPlayBlockedException>()
-                                .firstOrNull()?.userReason
-                            val reason = blockedReason ?: "播放失败"
-                            val title = failedItem.mediaMetadata.title?.toString()
-                                ?.takeIf { it.isNotEmpty() }
-                            val toastMsg = if (title != null) {
-                                "《$title》$reason，已跳到下一首"
-                            } else {
-                                "$reason，已跳到下一首"
-                            }
-                            Toast.makeText(this@YosPlaybackService, toastMsg, Toast.LENGTH_SHORT).show()
-                            // Source error 后播放器处于 STATE_IDLE 错误态，hasNextMediaItem() 恒 false，
-                            // 必须重新 prepare 才能清除错误态并加载新曲目
-                            forwardingPlayer?.seekToNextMediaItem()
-                            forwardingPlayer?.prepare()
-                            forwardingPlayer?.play()
-                        } else {
-                            // 打满上限：此处只弹 Toast、不重试也不自愈——息屏时用户看不见，
-                            // 整晚就是这么静默停掉的，必须单独一条关键事件
-                            YosDiagnostics.log("SKIP_LIMIT", "attempt" to consecutiveOnlineFailures)
-                            println("在线播放连续失败达上限，停止自动跳过: ${error.message}")
-                            Toast.makeText(
-                                this@YosPlaybackService,
-                                "连续多首无法播放，已停止自动跳过",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                        val kind = classifyOnlineFailure(error)
+                        val reason = userReasonOf(error, kind)
+                        // 确凿拒播（版权/付费拦截）：把结论写进可播性表，返回列表时该行置灰。
+                        // 鉴权/网络/超时不写——它们不是“这首歌不可播”的证据。
+                        if (kind == OnlineFailureKind.BLOCKED) {
+                            SongPlayabilityStore.markBlocked(
+                                failedItem.mediaId?.removePrefix("kugou-online-"),
+                                reason
+                            )
+                        }
+                        when (OnlineSkipState.decide(kind, hasNext, KugouRepository.isAuthInvalidWindow())) {
+                            OnlineSkipPolicy.Decision.SKIP_NEXT ->
+                                skipPastUnplayable(failedItem, reason)
+
+                            OnlineSkipPolicy.Decision.HOLD_AND_RETRY ->
+                                holdForRetry(reason)
+
+                            OnlineSkipPolicy.Decision.STOP ->
+                                stopAutoSkip(reason)
                         }
                     }
                 }
@@ -1284,6 +1425,27 @@ class YosPlaybackService : MediaSessionService() {
             }
         playbackListener = listener
         forwardingPlayer!!.addListener(listener)
+
+        // ---------- 听歌时长心跳上报（对照 md3Music） ----------
+        // 每 30s 喂一次 ListeningGradeTracker，只有「正在播在线歌」才累计。
+        // 刻意不跨线程摸 currentPlayer，改用主线程 Listener 回流的状态镜像
+        // （MediaViewModelObject.isPlaying + musicPlaying）判定在线播放态。
+        // 循环挂服务生命周期：服务销毁必须停，否则系统回收重建后会叠加第二个
+        // 循环，同一秒被计两次、时长翻倍多报。
+        gradeHeartbeatJob?.cancel()
+        gradeHeartbeatJob = CoroutineScope(Dispatchers.IO).launch {
+            while (true) {
+                delay(30_000L)
+                runCatching {
+                    val online =
+                        musicPlaying.value?.mediaId?.startsWith("kugou-online-") == true
+                    ListeningGradeTracker.onHeartbeat(
+                        intervalSec = 30,
+                        onlinePlaying = online && MediaViewModelObject.isPlaying.value
+                    )
+                }
+            }
+        }
 
         /*val repeatButton = CommandButton.Builder()
             .setIconResId(android.R.drawable.ic_media_rew)
@@ -1469,7 +1631,107 @@ class YosPlaybackService : MediaSessionService() {
         // FadeExo.targetStatus != 0，拿它做心跳会把"谎报的在播"当成事实
         YosDiagnostics.attachPlayback(this, player)
 
+        // ---------- 在线失败的退避重备动作 ----------
+        // 锁存（HOLD_AND_RETRY）到点只做一件事：把当前条目重新 prepare。不改索引、不改队列，
+        // 所以用户看到的还是同一首歌；上游恢复（真机那次 illegal_key 持续 5 分钟后自愈）即自动续播，
+        // 不需要用户杀进程重开或回列表重新点歌。
+        OnlineSkipState.attach {
+            val fp = forwardingPlayer
+            when {
+                fp == null -> YosDiagnostics.log("SKIP_REARM_SKIP", "why" to "no_player")
+                // 已经自己在播了（用户动过、或上一轮重试已成功）：什么都不做
+                fp.playbackState == Player.STATE_READY && fp.isPlaying ->
+                    YosDiagnostics.log("SKIP_REARM_SKIP", "why" to "already_playing")
+
+                else -> {
+                    CrossfadeExo.abort("skip_rearm")
+                    runCatching {
+                        fp.prepare()
+                        fp.play()
+                    }
+                }
+            }
+        }
+
         onServiceRunning()
+    }
+
+    /**
+     * 把一次播放失败归到 [OnlineFailureKind]。顺序有意为之：
+     *  1. 鉴权失效优先——它是整账号层面的，误判成"网络抖动"就会退避重试、把同一个 502 刷成屏；
+     *  2. 取消/中断排在网络之前——切歌时 ExoPlayer 会中断 Loader 线程，那层 IOException 不是
+     *     失败证据（KugouResolvingDataSource 对此已专门区分，这里不能又把它算回来）。
+     */
+    private fun classifyOnlineFailure(error: PlaybackException): OnlineFailureKind {
+        val chain = generateSequence<Throwable>(error) { it.cause }.toList()
+        return when {
+            chain.any { it is KugouAuthInvalidException } -> OnlineFailureKind.AUTH_INVALID
+            chain.any { it is KugouRepository.KugouPlayBlockedException } -> OnlineFailureKind.BLOCKED
+            chain.any {
+                it is InterruptedException ||
+                    (it is kotlinx.coroutines.CancellationException &&
+                            it !is kotlinx.coroutines.TimeoutCancellationException)
+            } -> OnlineFailureKind.OTHER
+            chain.any {
+                it is java.net.SocketTimeoutException ||
+                    it is java.io.InterruptedIOException ||
+                    it is kotlinx.coroutines.TimeoutCancellationException
+            } -> OnlineFailureKind.TIMEOUT
+            chain.any { it is java.io.IOException } -> OnlineFailureKind.NETWORK
+            else -> OnlineFailureKind.OTHER
+        }
+    }
+
+    /** 用户可见原因：鉴权失效必须点名"重新登录"，不能泛化成"播放失败"。 */
+    private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String =
+        if (kind == OnlineFailureKind.AUTH_INVALID) {
+            "登录态失效，请重新登录账号"
+        } else {
+            generateSequence<Throwable>(error) { it.cause }
+                .filterIsInstance<KugouRepository.KugouPlayBlockedException>()
+                .firstOrNull()?.userReason ?: "播放失败"
+        }
+
+    /** 跳下一首：非阻塞告知歌名与原因；错误态下光 seek 不触发加载，必须 prepare+play。 */
+    private fun skipPastUnplayable(failedItem: MediaItem, reason: String) {
+        YosDiagnostics.log("SKIP_TO_NEXT", "attempt" to OnlineSkipState.failureCount())
+        // 失败跳歌属于"不是自然播完"：副 player 里备着的可能正是这首坏曲
+        CrossfadeExo.abort("error_skip")
+        val title = failedItem.mediaMetadata.title?.toString()?.takeIf { it.isNotEmpty() }
+        val toastMsg =
+            if (title != null) "《$title》$reason，已跳到下一首" else "$reason，已跳到下一首"
+        Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show()
+        forwardingPlayer?.seekToNextMediaItem()
+        forwardingPlayer?.prepare()
+        forwardingPlayer?.play()
+    }
+
+    /**
+     * 挂起等退避：不改索引、不改队列（重备由 [OnlineSkipState.attach] 注入的回调执行）。
+     * 同时作废"播完再暂停"检查点——重备的 prepare() 会产生一次 REPEAT 过渡，而那个检查点
+     * 正是按 AUTO/REPEAT 判"播完了"的，不作废就会把刚自愈回来的歌暂停掉。
+     */
+    private fun holdForRetry(reason: String) {
+        runCatching { YosControllerObject.stopSleepEndWatcher() }
+        Toast.makeText(this, "连续无法播放：$reason，稍后自动重试", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 彻底停住（没有可跳目标，或退避轮次用尽）。事件名沿用 SKIP_LIMIT：它与"静默停一整晚"
+     * 是同一个用户可感知现象，历史报告全部靠它检索，改名等于把检索面抹掉。
+     */
+    private fun stopAutoSkip(reason: String) {
+        YosDiagnostics.log(
+            "SKIP_LIMIT",
+            "attempt" to OnlineSkipState.failureCount(),
+            "round" to OnlineSkipState.retryRounds(),
+            "why" to reason
+        )
+        Toast.makeText(
+            this,
+            "连续多首无法播放（$reason），已停止自动跳过",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /**
@@ -1501,9 +1763,16 @@ class YosPlaybackService : MediaSessionService() {
                 p.fadePause()
             }
 
-            override fun isPlaying(): Boolean {
-                return FadeExo.targetStatus != 0
-            }
+            /**
+             * 200ms 淡入淡出期间 p.isPlaying() 会先假 false，通知栏/系统亮度图标跟着抖，
+             * 所以这里拿 FadeExo 的目标态顶着。
+             *
+             * 但引擎进了 IDLE（source error、被 stop）就必须报真实态：否则界面一直显示"在播"
+             * 而实际无声，用户完全看不出已经停了——真机那次锁死就是靠 STATE_LIE
+             * real=false reported=true 连报几十分钟才看出来，而用户只能杀进程重开。
+             */
+            override fun isPlaying(): Boolean =
+                FadeExo.targetStatus != 0 && p.playbackState != Player.STATE_IDLE
         }
 
     /**
@@ -1569,10 +1838,47 @@ class YosPlaybackService : MediaSessionService() {
         // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
         MediaViewModelObject.bitrate.intValue = 0
         MediaViewModelObject.samplingRate.intValue = 0
-        mediaItem?.let {
-            val yosItem = it.toYosMediaItem()
+        mediaItem?.let { item ->
+            // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem）：当前曲的完整
+            // YosMediaItem（时长/日期等）按 mediaId 从队列快照取，快照缺失才退回重建值
+            val yosItem = yos.music.player.code.MediaController.playingMusicList.value
+                ?.firstOrNull { it.mediaId == item.mediaId }
+                ?: item.toYosMediaItem()
             yos.music.player.code.MediaController.onCase(yosItem)
             MusicLibrary.recordRecentlyPlayed(yosItem)
+
+            // 播放历史上报（对照 md3Music _maybeUploadPlayHistory）：在线歌开播即报一次，
+            // mxid 取解析时登记的身份表（songIdentityFor），查不到就静默跳过；
+            // best-effort，任何失败不影响播放。受「上传听歌时长」开关统一管。
+            val switchedMediaId = item.mediaId
+            if (switchedMediaId?.startsWith("kugou-online-") == true &&
+                !playHistoryUploaded.contains(switchedMediaId) &&
+                SettingsLibrary.UploadListeningDuration &&
+                KugouApiService.isLoggedIn()
+            ) {
+                playHistoryUploaded.add(switchedMediaId)
+                CoroutineScope(Dispatchers.IO).launch {
+                    val hash = switchedMediaId.removePrefix("kugou-online-")
+                    val mxid = KugouRepository.songIdentityFor(hash)?.mixsongId ?: 0L
+                    if (mxid <= 0) {
+                        Log.d("PLAYHIST_UPLOAD", "skip: no mxid for $hash")
+                        return@launch
+                    }
+                    KugouApiService.getInstance()
+                        .uploadPlayHistory(mxid, ot = System.currentTimeMillis() / 1000L)
+                        .fold(
+                            onSuccess = { json ->
+                                Log.d(
+                                    "PLAYHIST_UPLOAD",
+                                    "mxid=$mxid status=${json.optInt("status")} error_code=${json.optInt("error_code")}"
+                                )
+                            },
+                            onFailure = { e ->
+                                Log.w("PLAYHIST_UPLOAD", "mxid=$mxid failed: ${e.message}")
+                            }
+                        )
+                }
+            }
         }
         currentPlayer?.let { yos.music.player.code.MediaController.preloadNextCover(it, applicationContext) }
 
@@ -1691,6 +1997,11 @@ class YosPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         YosDiagnostics.log("SVC_DESTROY")
         YosDiagnostics.attachPlayback(this, null)
+        gradeHeartbeatJob?.cancel()
+        gradeHeartbeatJob = null
+        // 先拆跳歌退避：它往主线程 Handler 上挂了重备任务，回调里要碰 player，
+        // 放在 session 释放之后执行就会打到已 release 的播放器
+        OnlineSkipState.detach()
         // 先退过渡：它持有副 player（独立于会话），放在 session 释放前后都会漏，显式收尾
         CrossfadeExo.release()
         mediaSession?.run {
