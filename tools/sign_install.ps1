@@ -60,7 +60,8 @@ if (-not $Adb) {
 if ($Adb -match 'Windows\\System(32|WOW64)') { throw "refusing the system-dir adb; use the platform-tools copy on PATH" }
 Write-Host "adb: $Adb"
 if (-not $Serial) {
-    $ids = @((& $adb devices) | Out-String -split "`n" | Select-Object -Skip 1 |
+    # NB: `Out-String -split ...` binds -split to Out-String as a parameter name and dies.
+    $ids = @(((& $adb devices) | Out-String).Split("`n") | Select-Object -Skip 1 |
         Where-Object { $_ -match '\t(device|emulator)' } | ForEach-Object { ($_ -split '\t')[0] })
     if ($ids.Count -eq 0) { throw "no device attached" }
     if ($ids.Count -gt 1) { throw "several devices ($($ids -join ', ')); pass -Serial" }

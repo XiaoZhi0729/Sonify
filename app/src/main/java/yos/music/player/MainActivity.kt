@@ -656,17 +656,21 @@ class MainActivity : BaseActivity() {
                             val shellHorizontalInsetPx: Float
                                 get() = shellLeftInsetPx + shellRightInsetPx
 
-                            // shellRadius：动画期间始终保留圆角，避免最后几帧变成直角。
-                            // 完全展开后的静止态由独立的落位状态切换为矩形铺满屏幕。
+                            // shellRadius：动画全程从胶囊半径长到"屏幕圆角"，动画结束落位后才切
+                            // 直角（真全屏）。落位判据见 shellRadiusPx：不能只押"动画结束"信号，
+                            // 否则信号一卡住，全屏就永久停在屏幕圆角上（真机截图：四角白色楔形 150px）。
                             val shellRadius: Float
                                 get() = with(density) {
-                                    val targetCorner = screenCornerPx.value
-                                    val collapsedRadius = miniPlayerHeightPx / 2f - 0.5f.dp.toPx()
-                                    val settledExpanded = !dragActive.value &&
-                                            playerMotionJob.value == null &&
-                                            progress > 0.5f
-                                    val target = if (settledExpanded) 0f
-                                        else lerp(collapsedRadius, targetCorner, progress)
+                                    val target = shellRadiusPx(
+                                        progress = progress,
+                                        collapsedRadiusPx = miniPlayerHeightPx / 2f - 0.5f.dp.toPx(),
+                                        screenCornerPx = screenCornerPx.value,
+                                        dragActive = dragActive.value,
+                                        motionJobActive = playerMotionJob.value != null,
+                                        offsetPx = offsetY.value,
+                                        anchorPx = expandedAnchorPxSnapshot.floatValue,
+                                    )
+                                    // 壳很矮（收起态）时半径不能超过一半高度/宽度，否则圆角退化。
                                     val heightClamp = shellHeightPx / 2f - 0.5f.dp.toPx()
                                     val widthClamp = shellWidthPx / 2f - 0.5f.dp.toPx()
                                     minOf(target, heightClamp, widthClamp).coerceAtLeast(0f)
@@ -799,16 +803,14 @@ class MainActivity : BaseActivity() {
                         val pageScale = remember("MainActivity_pageScale") {
                             derivedStateOf { yosBottomSheetConfig.pageScale }
                         }
-                        // 页面卡片圆角生命周期：仅在播放壳形变动画进行中（拖拽占用或运动
-                        // Job 存活）启用"屏幕圆角"设定值；动画完全结束立即回 RectangleShape
-                        // 直角，不常驻裁剪页面（这就是此前任何页面截图四角露黑的根因层）。
-                        // 静止落在展开位时页面被壳完全盖住，维持设定值保证收起起步时圆角连续；
-                        // 信号全部来自动画生命周期（dragActive / playerMotionJob），无 delay。
+                        // 页面卡片圆角生命周期：只在播放壳**形变进行中**（拖拽占用或运动 Job
+                        // 存活）启用"屏幕圆角"设定值，配合推远缩放做卡片后退；两端静止态（收起、
+                        // 全屏落位）一律直角——全屏播放页四周不再被圆角裁掉（截图验证的就是这条）。
+                        // 展开落位时页面被壳完全盖住，切回直角不产生可见跳变；收起落位时页面已
+                        // 回到 scale=1 铺满，与直角一致。信号全部来自动画生命周期，无 delay。
                         val pageCorner = remember("MainActivity_pageCorner") {
                             derivedStateOf {
-                                val playerAnimating = dragActive.value ||
-                                        playerMotionJob.value != null
-                                if (playerAnimating || yosBottomSheetConfig.progress > 0.5f) {
+                                if (dragActive.value || playerMotionJob.value != null) {
                                     screenCorner.value
                                 } else {
                                     0.dp
@@ -1203,7 +1205,14 @@ class MainActivity : BaseActivity() {
 
                                     fun settleFromDrag(releaseVelocity: Float?) {
                                         val anchor = yosBottomSheetConfig.expandedAnchorPx
-                                        if (anchor <= 0f) return
+                                        if (anchor <= 0f) {
+                                            // 几何未就绪时也必须交还拖拽占用：dragActive 只在
+                                            // 本函数的两条路径里清零，这里早退不清就会永久卡在
+                                            // true，而 shellRadius 的落位判据把 !dragActive 当作
+                                            // 必要条件——卡住就等于全屏永远不切直角。
+                                            dragActive.value = false
+                                            return
+                                        }
                                         val finalOffset = dragOffsetY.floatValue.coerceIn(0f, anchor)
                                         val target = when {
                                             releaseVelocity != null && releaseVelocity > velocityThreshold -> 1f
@@ -2746,10 +2755,64 @@ private fun DrawScope.drawCoverShadow(
 
 // 平滑阶梯：把 0..1 进度映射为 edge0..edge1 之间的 Hermite 平滑值。
 // 用于 miniAlpha / insetProgress / playerAlpha / opticFade / edgeFade 的统一时间轴。
-private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
+internal fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
     if (edge1 <= edge0) return if (x >= edge1) 1f else 0f
     val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
     return t * t * (3f - 2f * t)
+}
+
+/**
+ * 落位（展开端点静止）判据：动画全程壳保持圆角，只有动画结束后才切直角。
+ *
+ * 主判据是动画生命周期（拖拽已交还 + 运动 Job 已清空）；但这条信号会卡住：
+ * 落位 Job 尾部的 waitForMorphHandoff 靠 withFrameNanos 推进，窗口停止出帧（息屏/
+ * 切后台）时协程永不返回，playerMotionJob 就永久非 null。所以叠加一个几何兑底：
+ * offsetY 已经贴在展开端点 [endpointTolerancePx] 内，即认为落位——主曲线是
+ * 临界阻尼弹簧（不过冲），最后 1px 内视觉上已经不动，提前一帧切直角不可辨。
+ *
+ * 拖拽中（dragActive）一律不算落位：手指拖到顶时仍保持屏幕圆角，松手落位后才直角。
+ */
+internal fun isShellSettledExpanded(
+    progress: Float,
+    dragActive: Boolean,
+    motionJobActive: Boolean,
+    offsetPx: Float,
+    anchorPx: Float,
+    endpointTolerancePx: Float = 1f
+): Boolean {
+    if (dragActive || progress <= 0.5f) return false
+    if (!motionJobActive) return true
+    return anchorPx > 0f && offsetPx >= anchorPx - endpointTolerancePx
+}
+
+/**
+ * 播放壳圆角时间轴（px）：progress=0 是迷你条的胶囊半径，progress=1 是"屏幕圆角"；
+ * 动画结束落位后返回 0（矩形铺满屏幕，即真全屏直角）。
+ *
+ * 两条约束：
+ *  - 行程内半径单调增大（胶囊 → 屏幕圆角），与壳体“长回全屏”同一条时间线；
+ *  - 切直角发生在壳体静止之后，而不是动画途中；backdrop 的形状蒙版只在节点尺寸
+ *    变化时重录，所以壳面在 radius==0 时改走 background 分支、摘掉 backdrop 节点
+ *    （见 PlayerShell 的 shellRadiusDp != 0.dp 门禁），否则弧角会永久残留。
+ * 高/宽一半的 clamp 留在调用方（需要 Density），本函数保持纯数值、可直接单测。
+ */
+internal fun shellRadiusPx(
+    progress: Float,
+    collapsedRadiusPx: Float,
+    screenCornerPx: Float,
+    dragActive: Boolean,
+    motionJobActive: Boolean,
+    offsetPx: Float,
+    anchorPx: Float,
+): Float {
+    val settled = isShellSettledExpanded(
+        progress = progress,
+        dragActive = dragActive,
+        motionJobActive = motionJobActive,
+        offsetPx = offsetPx,
+        anchorPx = anchorPx
+    )
+    return if (settled) 0f else lerp(collapsedRadiusPx, screenCornerPx, progress)
 }
 
 // 迷你播放条高度（顶层常量，便于 TabletMiniContent / PlayPauseButton / TransportIconButton 直接引用）

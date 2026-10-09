@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Fixed the full-screen player page being clipped by rounded corners: the shell's corner radius now runs from the mini player's pill shape to the screen corner during the morph, and only switches to a square (true full screen) after the animation settles.",
+    "Fixed a case where the full-screen player could get stuck showing rounded corners when the settle animation's frame signal stalled.",
+    "The player no longer switches to square corners prematurely while the shell is still being dragged."
+  ],
+  "zh-CN": [
+    "修复真全屏播放页被四角圆角裁切的问题：展开动画全程由迷你条的胶囊半径长到屏幕圆角，动画结束落位之后才切成直角（真全屏）。",
+    "修复落位动画信号卡住时，全屏播放页可能永久停留圆角的问题。",
+    "手指仍按在播放壳上拖拽时不再提前切成直角。"
+  ],
+  "zh-TW": [
+    "修正真全螢幕播放頁被四角圓角裁切的問題：展開動畫全程由迷你列的膠囊半徑長到螢幕圓角，動畫結束落位之後才切成直角（真全螢幕）。",
+    "修正落位動畫訊號卡住時，全螢幕播放頁可能永久停留圓角的問題。",
+    "手指仍按在播放殼上拖曳時不再提前切成直角。"
+  ],
+  "ja": [
+    "全画面の再生ページが角丸でクリップされる問題を修正：展開アニメーション中はミニプレーヤーのピル形状から画面の角丸まで変化し、アニメーションが落ち着いた後にのみ直角（真の全画面）に切り替わるように。",
+    "落ち着きアニメーションのフレーム信号が止まったときに、全画面の再生ページが角丸のまま固まることがある問題を修正。",
+    "再生シェルをドラッグしている間は、早すぎるタイミングで直角に切り替わらないように修正。"
+  ]
+}
