@@ -1,18 +1,26 @@
 {
   "en": [
+    "New \"Data & Storage\" settings page: view app data size and clear the online audio byte cache.",
     "Fixed a crash on the Favorites tab: tapping an artist name on the player page could crash because that tab's navigation graph did not register the artist pages.",
-    "Fixed the mini player keeping its landscape height after rotating back to portrait."
+    "Fixed the mini player keeping its landscape height after rotating back to portrait.",
+    "Fixed the lyrics translation button being unresponsive right after a cold start."
   ],
   "zh-CN": [
+    "设置页新增「数据与储存」：可查看应用数据占用并清空在线音频字节缓存。",
     "修复「喜爱」Tab 的崩溃：在该 Tab 下点播放页里的歌手名时，因该 Tab 的导航图未注册艺人页而崩溃。",
-    "修复从横屏切回竖屏后，迷你播放器高度仍停留在横屏档的问题。"
+    "修复从横屏切回竖屏后，迷你播放器高度仍停留在横屏档的问题。",
+    "修复冷启动后歌词翻译按钮点不动的问题。"
   ],
   "zh-TW": [
+    "設定頁新增「資料與儲存」：可檢視應用程式資料佔用並清空線上音訊位元組快取。",
     "修正「喜愛」Tab 的當機：在該 Tab 下點播放頁裡的歌手名時，因該 Tab 的導覽圖未註冊藝人頁而當機。",
-    "修正從橫向切回直向後，迷你播放器高度仍停留在橫向設定的問題。"
+    "修正從橫向切回直向後，迷你播放器高度仍停留在橫向設定的問題。",
+    "修正冷啟動後歌詞翻譯按鈕點不動的問題。"
   ],
   "ja": [
+    "設定ページに「データとストレージ」を追加：アプリデータの使用量を確認し、オンライン音声のバイトキャッシュを消去できます。",
     "「お気に入り」タブでのクラッシュを修正：そのタブで再生ページのアーティスト名をタップすると、タブのナビゲーショングラフにアーティストページが未登録のためクラッシュしていました。",
-    "横画面から縦画面に戻した後、ミニプレーヤーの高さが横画面のままになる問題を修正。"
+    "横画面から縦画面に戻した後、ミニプレーヤーの高さが横画面のままになる問題を修正。",
+    "コールドスタート直後に歌詞の翻訳ボタンが反応しない問題を修正。"
   ]
 }
