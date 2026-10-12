@@ -1,38 +1,42 @@
 {
     "schemaVersion":  1,
     "applicationId":  "com.sonify.music",
-    "versionCode":  5,
-    "versionName":  "0.1.4",
-    "publishedAt":  "2026-10-09T14:24:50.1307036+00:00",
+    "versionCode":  6,
+    "versionName":  "0.1.5",
+    "publishedAt":  "2026-10-12T14:26:08.9952200+00:00",
     "minSdk":  23,
     "abis":  [
                  "arm64-v8a",
                  "armeabi-v7a"
              ],
-    "apkUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.4/Sonify-v0.1.4.apk",
-    "apkSize":  11496099,
-    "sha256":  "a9d7301d072a3e1c0f23d389827f1929f53aa6c998fef7f7d8251b8959e64041",
-    "releasePageUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.4",
+    "apkUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.1.5/Sonify-v0.1.5.apk",
+    "apkSize":  11537283,
+    "sha256":  "1de1b2a0d7364b6c4ab4b1161c5e97371a13e330ca9bd0145e52e2cef805d7fc",
+    "releasePageUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.5",
     "releaseNotes":  {
                          "en":  [
-                                    "Fixed the full-screen player page being clipped by rounded corners: the shell\u0027s corner radius now runs from the mini player\u0027s pill shape to the screen corner during the morph, and only switches to a square (true full screen) after the animation settles.",
-                                    "Fixed a case where the full-screen player could get stuck showing rounded corners when the settle animation\u0027s frame signal stalled.",
-                                    "The player no longer switches to square corners prematurely while the shell is still being dragged."
+                                    "New \"Data \u0026 Storage\" settings page: view app data size and clear the online audio byte cache.",
+                                    "Fixed a crash on the Favorites tab: tapping an artist name on the player page could crash because that tab\u0027s navigation graph did not register the artist pages.",
+                                    "Fixed the mini player keeping its landscape height after rotating back to portrait.",
+                                    "Fixed the lyrics translation button being unresponsive right after a cold start."
                                 ],
                          "zh-CN":  [
-                                       "修复真全屏播放页被四角圆角裁切的问题：展开动画全程由迷你条的胶囊半径长到屏幕圆角，动画结束落位之后才切成直角（真全屏）。",
-                                       "修复落位动画信号卡住时，全屏播放页可能永久停留圆角的问题。",
-                                       "手指仍按在播放壳上拖拽时不再提前切成直角。"
+                                       "设置页新增「数据与储存」：可查看应用数据占用并清空在线音频字节缓存。",
+                                       "修复「喜爱」Tab 的崩溃：在该 Tab 下点播放页里的歌手名时，因该 Tab 的导航图未注册艺人页而崩溃。",
+                                       "修复从横屏切回竖屏后，迷你播放器高度仍停留在横屏档的问题。",
+                                       "修复冷启动后歌词翻译按钮点不动的问题。"
                                    ],
                          "zh-TW":  [
-                                       "修正真全螢幕播放頁被四角圓角裁切的問題：展開動畫全程由迷你列的膠囊半徑長到螢幕圓角，動畫結束落位之後才切成直角（真全螢幕）。",
-                                       "修正落位動畫訊號卡住時，全螢幕播放頁可能永久停留圓角的問題。",
-                                       "手指仍按在播放殼上拖曳時不再提前切成直角。"
+                                       "設定頁新增「資料與儲存」：可檢視應用程式資料佔用並清空線上音訊位元組快取。",
+                                       "修正「喜愛」Tab 的當機：在該 Tab 下點播放頁裡的歌手名時，因該 Tab 的導覽圖未註冊藝人頁而當機。",
+                                       "修正從橫向切回直向後，迷你播放器高度仍停留在橫向設定的問題。",
+                                       "修正冷啟動後歌詞翻譯按鈕點不動的問題。"
                                    ],
                          "ja":  [
-                                    "全画面の再生ページが角丸でクリップされる問題を修正：展開アニメーション中はミニプレーヤーのピル形状から画面の角丸まで変化し、アニメーションが落ち着いた後にのみ直角（真の全画面）に切り替わるように。",
-                                    "落ち着きアニメーションのフレーム信号が止まったときに、全画面の再生ページが角丸のまま固まることがある問題を修正。",
-                                    "再生シェルをドラッグしている間は、早すぎるタイミングで直角に切り替わらないように修正。"
+                                    "設定ページに「データとストレージ」を追加：アプリデータの使用量を確認し、オンライン音声のバイトキャッシュを消去できます。",
+                                    "「お気に入り」タブでのクラッシュを修正：そのタブで再生ページのアーティスト名をタップすると、タブのナビゲーショングラフにアーティストページが未登録のためクラッシュしていました。",
+                                    "横画面から縦画面に戻した後、ミニプレーヤーの高さが横画面のままになる問題を修正。",
+                                    "コールドスタート直後に歌詞の翻訳ボタンが反応しない問題を修正。"
                                 ]
                      }
 }
