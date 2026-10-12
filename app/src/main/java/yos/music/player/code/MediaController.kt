@@ -34,6 +34,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
@@ -1234,11 +1235,27 @@ class YosPlaybackService : MediaSessionService() {
                         else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                     }
                 )
+        // 主/副 player 各持一份（LoadControl 不能跨 player 共享实例）。
+        // 两个目标必须一起抬：只抬时间没用——media3 还有一层"字节预算"，音频默认约 12.5MB，
+        // 无损曲目约 12.5MB 只够 60~105 秒，会先卡住。故时间 50s→90s、字节 12.5MB→32MB，
+        // 双管齐下把前向储备真正做深，扛住更长的网络/代理断流；起播/断点阈值保持默认，
+        // 避免"停了更久才恢复"。副 player（crossfade 预取下一首）吃到同一份红利。
+        fun loadControl(): DefaultLoadControl =
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    /* minBufferMs = */ 50_000,
+                    /* maxBufferMs = */ 90_000,
+                    /* bufferForPlaybackMs = */ 2_500,
+                    /* bufferForPlaybackAfterRebufferMs = */ 5_000
+                )
+                .setTargetBufferBytes(32 * 1024 * 1024)
+                .build()
         val player = ExoPlayer.Builder(this, renderFactory())
             .setAudioAttributes(
                 audioAttributes,
                 SettingsLibrary.AudioAttributes
             )
+            .setLoadControl(loadControl())
             .setHandleAudioBecomingNoisy(true)
             // 在线歌曲惰性 URL 解析：占位符 URI 在播放前才解析真实 CDN URL（本地歌曲透传不变）
             .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
@@ -1256,6 +1273,7 @@ class YosPlaybackService : MediaSessionService() {
             secondaryBuilder = {
                 ExoPlayer.Builder(this, renderFactory())
                     .setAudioAttributes(audioAttributes, false)
+                    .setLoadControl(loadControl())
                     // handleAudioBecomingNoisy 是 builder-only 配置，出生就设 true：过渡期拔
                     // 耳机两个 player 一起暂停，crossfade 正常 abort，行为与单 player 一致
                     .setHandleAudioBecomingNoisy(true)
@@ -1682,15 +1700,19 @@ class YosPlaybackService : MediaSessionService() {
         }
     }
 
-    /** 用户可见原因：鉴权失效必须点名"重新登录"，不能泛化成"播放失败"。 */
-    private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String =
-        if (kind == OnlineFailureKind.AUTH_INVALID) {
-            "登录态失效，请重新登录账号"
-        } else {
-            generateSequence<Throwable>(error) { it.cause }
-                .filterIsInstance<KugouRepository.KugouPlayBlockedException>()
-                .firstOrNull()?.userReason ?: "播放失败"
-        }
+    /**
+     * 用户可见原因：鉴权失效点名"重新登录"；网络/超时给一句人话——绝不把内部报错串
+     * （如 "Timed out waiting for 10000 ms"）漏给用户；确凿拒播用上游给的字段级原因。
+     */
+    private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String = when (kind) {
+        OnlineFailureKind.AUTH_INVALID -> "登录态失效，请重新登录账号"
+        OnlineFailureKind.TIMEOUT -> "网络超时"
+        OnlineFailureKind.NETWORK -> "网络异常"
+        OnlineFailureKind.BLOCKED -> generateSequence<Throwable>(error) { it.cause }
+            .filterIsInstance<KugouRepository.KugouPlayBlockedException>()
+            .firstOrNull()?.userReason ?: "暂无可用音源"
+        OnlineFailureKind.OTHER -> "播放失败"
+    }
 
     /** 跳下一首：非阻塞告知歌名与原因；错误态下光 seek 不触发加载，必须 prepare+play。 */
     private fun skipPastUnplayable(failedItem: MediaItem, reason: String) {

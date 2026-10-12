@@ -1694,7 +1694,8 @@ object KugouRepository {
      * [QualityIntentResolver.resolve] 产出（与 UI 同一源头）。
      * 运行周期内内存缓存命中直接复用，避免重播/回跳同一首时重复请求 /song/url；
      * 解析失败抛 [KugouPlayBlockedException]/[IOException]，由播放器的失败跳过逻辑接管；
-     * 失败 hash 进入负缓存（缓存用户可见原因）。
+     * **只有确凿拒播**（[KugouPlayBlockedException]）的 hash 进入负缓存，超时/网络等瞬时
+     * 失败不写（缓存它会把可播的歌关 30 秒禁闭，见下方失败分支注释）。
      * 结果写进 [factOf]：意图与**实际**档位分开存，实际档位取服务端回写值，
      * 可能低于请求档（上游对不可用高档常静默发放低档链接）。
      *
@@ -1806,12 +1807,21 @@ object KugouRepository {
                 throw KugouAuthInvalidException("整账号鉴权失效 hash=$hash: ${cause?.message}")
             }
             val blocked = cause as? KugouPlayBlockedException
-            val userReason = blocked?.userReason ?: (cause?.message ?: "未知原因")
-            failedCache[key] = FailedResolve(System.currentTimeMillis(), userReason)
-            // 确凿拒播（版权/付费拦截）写进可播性表：列表里的行下次可见即置灰。
-            // 其余失败（网络/超时/鉴权）不算证据，不写，避免误灰可播歌曲。
-            if (blocked != null) SongPlayabilityStore.markBlocked(hash, blocked.userReason)
-            QualityTrace.log("RESOLVE", "path" to "failed", "hash" to lower, "reason" to userReason)
+            // 只有"确凿拒播"才进负缓存：这类 hash 短期内必然继续失败（版权/付费拦截），
+            // 缓存它才能在跳歌段里快速穿过。**超时/网络/其它瞬时失败绝不缓存**——
+            // 缓存它等于把一首本来能播的歌关 30 秒禁闭：真机一次 10s 解析超时后，点同一首
+            // 连续"秒失败"并弹"已跳到下一首"（原因里还漏着 Timed out waiting for 10000 ms），
+            // 30 秒 TTL 到期才自愈。与上面的取消分支、下面的鉴权分支同一原则：瞬时失败不写证据。
+            if (blocked != null) {
+                failedCache[key] = FailedResolve(System.currentTimeMillis(), blocked.userReason)
+                // 确凿拒播（版权/付费拦截）写进可播性表：列表里的行下次可见即置灰。
+                // 其余失败（网络/超时/鉴权）不算证据，不写，避免误灰可播歌曲。
+                SongPlayabilityStore.markBlocked(hash, blocked.userReason)
+            }
+            QualityTrace.log(
+                "RESOLVE", "path" to "failed", "hash" to lower,
+                "reason" to (blocked?.userReason ?: cause?.message)
+            )
             throw blocked ?: IOException("在线歌曲 URL 解析失败 hash=$hash: ${cause?.message}", cause)
         }
         val resolved = result.getOrThrow()
@@ -2163,7 +2173,10 @@ object KugouRepository {
                                     "暂无可用音源（付费或权限限制）"
                                 status == 3 ->
                                     "暂无可用音源（上游限制）"
-                                else -> "未返回播放 URL (status=$status)"
+                                // 认不出的响应形态：用户可见原因只说人话，status/私钥等
+                                // 诊断字段留在 fullDetail 与 Log.w，绝不漏进 toast（漏了就是上一版
+                                // "Timed out waiting for 10000 ms" 那条看不懂的提示）
+                                else -> "暂无可用音源"
                             }
                             Result.failure(KugouPlayBlockedException(reason, detail))
                         }

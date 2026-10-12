@@ -12,12 +12,15 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.Loader
+import okhttp3.OkHttpClient
 import yos.music.player.R
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.SettingsLibrary
@@ -28,6 +31,10 @@ import yos.music.player.data.repositories.QualityVerdict
 import yos.music.player.data.repositories.KugouRepository
 import java.io.File
 import java.io.IOException
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.URI
+import java.util.concurrent.TimeUnit
 
 /**
  * 在线歌曲惰性 URL 解析数据源（整列表播放的核心插桩点）。
@@ -45,15 +52,22 @@ class KugouResolvingDataSource(
     private val upstream: DataSource,
     /** 在线流专用的磁盘缓存通道；缓存层不可用时为 null，播放回退为直连。 */
     private val cachedUpstream: DataSource?,
+    /** 绕过系统代理的直连通道（http(s) 专用）；系统代理不可用时兜底，见 [OnlineProxyHealth]。 */
+    private val directUpstream: DataSource,
+    /** 直连通道的磁盘缓存版本（与代理通道共用同一份 SimpleCache 与 cacheKey）。 */
+    private val directCachedUpstream: DataSource?,
     private val appContext: Context
 ) : DataSource {
 
     /**
-     * open() 实际选用的数据源。read/close/getUri 必须跟着它走——upstream 与
-     * cachedUpstream 是两个独立实例，open 走 A、read 走 B 会直接 NPE
-     * （DefaultDataSource 在未 open 的实例上 read，内部 mDataSource 为 null）。
+     * open() 实际选用的数据源。read/close/getUri 必须跟着它走——四个通道是彼此独立的实例，
+     * open 走 A、read 走 B 会直接 NPE（DefaultDataSource 在未 open 的实例上 read，
+     * 内部 mDataSource 为 null）。
      */
     private var active: DataSource = upstream
+
+    /** active 是否为"绕过系统代理的直连"通道：read 中途断流时据此判断要不要标记代理故障。 */
+    private var activeIsDirect = false
 
     override fun open(dataSpec: DataSpec): Long {
         val openedAt = SystemClock.elapsedRealtime()
@@ -99,30 +113,68 @@ class KugouResolvingDataSource(
         }
         // 只有走了解析路径（设置了稳定 key）的 http(s) 流才进缓存通道；本地文件与
         // 其它直链 scheme 原样透传，不引入"把本地文件再抄一遍进缓存"的磁盘浪费。
-        active = if (cacheKey != null && isHttpOrHttps(spec)) cachedUpstream ?: upstream else upstream
+        val online = cacheKey != null && isHttpOrHttps(spec)
+        // 代理最近刚失败 → 冷却窗内直接走直连，别为同一处故障反复付满超时。
+        val preferDirect = online && OnlineProxyHealth.isBypassed()
+        selectChannel(online, preferDirect)
         // 解析成功不等于听得到声：真正卡住的是随后连 CDN。这两段必须分别计时，
         // 否则"熄屏后无声"永远分不清是酷狗 API 不放 URL、还是后台网络被限流。
-        val read = try {
-            active.open(spec)
+        try {
+            return openedStep(spec, resolveHash, openedAt)
         } catch (e: IOException) {
-            YosDiagnostics.log(
-                "OPEN_FAIL",
-                "hash" to resolveHash,
-                "host" to (spec.uri.host ?: "-"),
-                "cost" to (SystemClock.elapsedRealtime() - openedAt),
-                "why" to e.toString()
-            )
-            throw e
+            logOpenFail(spec, resolveHash, openedAt, e)
+            // 走系统代理失败、且系统确实为该 URL 配了代理 → 记冷却窗并立刻用直连重试。
+            // 酷狗 CDN 直连可用，代理被后台冻结/断流时这条路能把歌救回来。
+            val canFallback = online && !preferDirect && OnlineProxyHealth.usesSystemProxy(spec.uri)
+            if (!canFallback) throw e
+            OnlineProxyHealth.markProxyFailed()
+            // media3 契约未定义"open 失败后 close"，但失败时无连接可泄，兜住异常即可。
+            runCatching { active.close() }
+            selectChannel(online, preferDirect = true)
+            try {
+                return openedStep(spec, resolveHash, openedAt)
+            } catch (e2: IOException) {
+                logOpenFail(spec, resolveHash, openedAt, e2)
+                throw e2
+            }
         }
-        val cost = SystemClock.elapsedRealtime() - openedAt
+    }
+
+    /** 选通道：本地/非 http 走原 upstream；在线 http(s) 在代理与直连间二选一（各带缓存版本）。 */
+    private fun selectChannel(online: Boolean, preferDirect: Boolean) {
+        activeIsDirect = online && preferDirect
+        active = when {
+            !online -> upstream
+            preferDirect -> directCachedUpstream ?: directUpstream
+            else -> cachedUpstream ?: upstream
+        }
+    }
+
+    /** 真正 open + OPEN_SLOW 计时；失败原样抛出，由 [open] 决定是否回退直连。 */
+    private fun openedStep(spec: DataSpec, hash: String?, startedAt: Long): Long {
+        val read = active.open(spec)
+        val cost = SystemClock.elapsedRealtime() - startedAt
         if (cost > OPEN_SLOW_MS) {
             YosDiagnostics.log(
-                "OPEN_SLOW", "hash" to resolveHash, "cost" to cost,
-                "online" to (resolveHash != null)
+                "OPEN_SLOW", "hash" to hash, "cost" to cost,
+                "online" to (hash != null), "via" to viaLabel()
             )
         }
         return read
     }
+
+    private fun logOpenFail(spec: DataSpec, hash: String?, startedAt: Long, e: IOException) {
+        YosDiagnostics.log(
+            "OPEN_FAIL",
+            "via" to viaLabel(),
+            "hash" to hash,
+            "host" to (spec.uri.host ?: "-"),
+            "cost" to (SystemClock.elapsedRealtime() - startedAt),
+            "why" to e.toString()
+        )
+    }
+
+    private fun viaLabel(): String = if (activeIsDirect) "direct" else "proxy"
 
     /** 事实档位（服务端实际发放，可能低于请求档）优先；无事实时才落回请求档。 */
     private fun effectiveTierOf(hash: String, requestedTier: String): String =
@@ -190,20 +242,29 @@ class KugouResolvingDataSource(
         }
     }
 
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+    // 流中途断（读到一半代理挂了）：立刻标记代理故障，让紧随其后的下一次 open 直接走直连，
+    // 不必再白等一轮连接超时。异常照旧上抛，由 ExoPlayer 的退避重试重新 open。
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = try {
         active.read(buffer, offset, length)
+    } catch (e: IOException) {
+        if (!activeIsDirect) OnlineProxyHealth.markProxyFailed()
+        throw e
+    }
 
     override fun close() {
         active.close()
         active = upstream
+        activeIsDirect = false
     }
 
     override fun getUri(): android.net.Uri? = active.uri
 
     override fun addTransferListener(transferListener: TransferListener) {
-        // open 前不知道会走哪个通道，两个都得挂上（CacheDataSource 会转发给内部实例）
+        // open 前不知道会走哪个通道，四个都得挂上（CacheDataSource 会转发给内部实例）
         upstream.addTransferListener(transferListener)
         cachedUpstream?.addTransferListener(transferListener)
+        directUpstream.addTransferListener(transferListener)
+        directCachedUpstream?.addTransferListener(transferListener)
     }
 
     companion object {
@@ -218,6 +279,35 @@ class KugouResolvingDataSource(
     }
 }
 
+/**
+ * 系统代理健康记忆：在线流经系统代理（典型是本地 VPN/Clash 的 127.0.0.1:7890）拉流时，
+ * 代理进程被后台冻结或断流会让每一次 open/read 都白等满超时。这里记住"代理最近一次失败"，
+ * 在冷却窗内优先直连，避免为同一处故障反复付超时代价；窗口到期自动回试代理（可能已恢复）。
+ *
+ * 只在 [usesSystemProxy] 为真（系统确实为该 URL 配了代理）时才起作用：没配代理的环境
+ * 不存在"回退直连"这回事，行为与改动前完全一致。
+ */
+internal object OnlineProxyHealth {
+    private const val BYPASS_WINDOW_MS = 60_000L
+
+    @Volatile
+    private var bypassUntilMs = 0L
+
+    fun isBypassed(): Boolean = SystemClock.elapsedRealtime() < bypassUntilMs
+
+    fun markProxyFailed() {
+        bypassUntilMs = SystemClock.elapsedRealtime() + BYPASS_WINDOW_MS
+    }
+
+    /** 系统是否为这个 URL 配了真代理（DIRECT 不算）。 */
+    fun usesSystemProxy(uri: android.net.Uri): Boolean {
+        val selector = runCatching { ProxySelector.getDefault() }.getOrNull() ?: return false
+        return runCatching {
+            selector.select(URI(uri.toString())).any { it.type() != Proxy.Type.DIRECT }
+        }.getOrDefault(false)
+    }
+}
+
 /** 数据源工厂：占位符 scheme 走惰性解析，其余委托给上游（本地文件/http 等）。 */
 @OptIn(UnstableApi::class)
 class KugouResolvingDataSourceFactory(
@@ -226,14 +316,32 @@ class KugouResolvingDataSourceFactory(
 ) : DataSource.Factory {
     private val appContext = appContext.applicationContext
 
+    /**
+     * 绕过系统代理的直连上游：http(s) 交给 OkHttp(NO_PROXY)，其余 scheme 仍由
+     * DefaultDataSource 处理。只有当系统确实配了代理、且代理通道失败时才会被用到
+     * （见 [OnlineProxyHealth] 与 [KugouResolvingDataSource.open]）。
+     */
+    private val directFactory: DataSource.Factory = DefaultDataSource.Factory(
+        appContext,
+        OkHttpDataSource.Factory(
+            OkHttpClient.Builder()
+                .proxy(Proxy.NO_PROXY)
+                // 直连是救火路径，超时给得比主通道宽松，避免"慢网也被判死"
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+        // 与主通道（HttpURLConnection 默认 UA）同源，避免 CDN 因 UA 不同而行为分叉
+        ).setUserAgent(System.getProperty("http.agent"))
+    )
+
     override fun createDataSource(): DataSource {
-        // upstream 是单会话对象，直连与缓存通道各要一个独立实例
-        val direct = upstream.createDataSource()
+        // 四个通道（代理/直连 × 裸/缓存）是彼此独立的会话对象，各要独立实例
         val cache = OnlineAudioCache.get(appContext)
-        val cached: DataSource? = cache?.let {
+        fun cached(factory: DataSource.Factory): DataSource? = cache?.let {
             CacheDataSource.Factory()
                 .setCache(it)
-                .setUpstreamDataSourceFactory(upstream)
+                .setUpstreamDataSourceFactory(factory)
                 // key 已由 open() 写进 DataSpec.key（"hash:实际档位"）；这里只是兜底
                 // 直链 scheme 走默认语义（key 缺省用 uri）
                 .setCacheKeyFactory { spec -> spec.key ?: spec.uri.toString() }
@@ -244,7 +352,13 @@ class KugouResolvingDataSourceFactory(
                 )
                 .createDataSource()
         }
-        return KugouResolvingDataSource(direct, cached, appContext)
+        return KugouResolvingDataSource(
+            upstream.createDataSource(),
+            cached(upstream),
+            directFactory.createDataSource(),
+            cached(directFactory),
+            appContext
+        )
     }
 }
 
@@ -299,7 +413,16 @@ object OnlineAudioCache {
 @OptIn(UnstableApi::class)
 fun buildKugouMediaSourceFactory(context: Context): DefaultMediaSourceFactory =
     DefaultMediaSourceFactory(context).setDataSourceFactory(
-        KugouResolvingDataSourceFactory(DefaultDataSource.Factory(context), context)
+        KugouResolvingDataSourceFactory(
+            // 主通道（默认走系统代理，与改动前同一 HttpURLConnection）：连接超时 8s→5s，
+            // 代理被后台冻结/断流时更快暴露、更快回退直连；read 超时保持默认，
+            // 避免把"慢但活着"的网络误判成断流。
+            DefaultDataSource.Factory(
+                context,
+                DefaultHttpDataSource.Factory().setConnectTimeoutMs(5_000)
+            ),
+            context
+        )
     )
 
 /**
