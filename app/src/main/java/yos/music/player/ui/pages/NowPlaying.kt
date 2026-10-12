@@ -250,6 +250,10 @@ import yos.music.player.ui.widgets.liquid.YosSwitch
 import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.overlayEffect
+import yos.music.player.ui.widgets.effects.CoverArtworkState
+import yos.music.player.ui.widgets.effects.coverArtworkEffect
+import yos.music.player.ui.widgets.effects.coverArtworkGesture
+import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 
 
 @Stable
@@ -568,6 +572,14 @@ fun NowPlaying(
             derivedStateOf { buttonEnabled.value && alpha.value != 0f }
         }*/
 
+            // 封面交互动效状态：在竖屏常驻层建立并驱动，供**两个渲染面**共用——
+            // 大封面（按下当下）与顶栏小封面（转场交接后 morph 画的就是它那一层）。
+            // 驱动放在这里而不是渲染节点里，否则换层时动效会跟着一起消失。
+            // 触感给在按下那一刻，不跟着立即生效的点击走。
+            val coverState = rememberCoverArtworkState(
+                feedback = { Vibrator.click(context) }
+            )
+
             val scope = rememberCoroutineScope()
 
             val alphaAnim = remember { Animatable(0f) }
@@ -743,6 +755,23 @@ fun NowPlaying(
                                                 isPlaying = isPlayingStatusLambda,
                                                 phonePortraitExtraInset = if (isPhonePortrait) 5.dp else 0.dp,
                                                 phonePortraitBouncyScale = isPhonePortrait,
+                                                // 单击大封面 = 开/关歌词（与底部歌词按钮同一个 lambda）
+                                                onCoverClick = onLyricsAction,
+                                                coverState = coverState,
+                                                // 小封面态与外壳封面 morph 期间：动效与点击都不发生。
+                                                // 只判"当前在大封面页"——**不判外壳封面 morph**：那是个
+                                                // 300~500ms 的瞬时窗口（点开播放页后马上点封面就会落进去），
+                                                // 一旦按下那刻被挡、抬手时窗口已过而放行，就会出现
+                                                // "点击生效（进歌词）但动效整段没播"的怪象。
+                                                coverEnabled = {
+                                                    val onAlbum = nowPageLambda() == Album
+                                                    android.util.Log.d(
+                                                        "CoverFx",
+                                                        "gate：onAlbum=$onAlbum" +
+                                                            " suppressed=${albumCoverSuppressed()}"
+                                                    )
+                                                    onAlbum
+                                                },
                                                 coordsOnChanged = albumCoverCoordsOnChanged,
                                                 suppressed = albumCoverSuppressed
                                             )
@@ -945,6 +974,8 @@ fun NowPlaying(
                                     visible = barVisible,
                                     boundsTransform = MorphBoundsSpec
                                 ),
+                                // 转场飞行画的就是本条的封面层：接上大封面的按下动效
+                                coverState = coverState,
                                 albumUrlLambda = {
                                     thisMusicPlaying.value?.thumb
                                 },
@@ -1137,6 +1168,14 @@ private fun ColumnScope.Album(
     phonePortraitExtraInset: Dp = 0.dp,
     // 手机竖屏专用：缩放动画用欠阻尼弹簧（先冲过目标尺寸再回弹）；平板竖屏保持原动画。
     phonePortraitBouncyScale: Boolean = false,
+    // 单击封面 = 开/关歌词（与左下歌词按钮同一套切换逻辑）。
+    onCoverClick: () -> Unit = {},
+    // 封面交互动效的共享状态：手势节点写，大封面与顶栏小封面两个渲染面读。
+    coverState: CoverArtworkState,
+    // 封面交互动效与点击的总闸门：小封面态（歌词/播放列表页的顶栏封面）与外壳封面
+    // morph 期间必须为 false——那时封面要么不存在、要么是透明的，动效与点击都不该发生。
+    // 传 lambda：闸门在按压/点击那一刻求值，不参与组合，也不怕调用点重组换实例。
+    coverEnabled: () -> Boolean = { true },
     // 外壳封面 morph：本封面节点的坐标上报；suppressed 为 true 时不绘制，
     // 由外壳单封面层接管，避免两张图叠加。
     coordsOnChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
@@ -1172,6 +1211,9 @@ private fun ColumnScope.Album(
         visibilityThreshold = 0.001f
     )
 
+    // 单击封面 = 开/关歌词：手势节点（外框）写共享状态，见调用点的 coverState。
+    val context = LocalContext.current
+
     YosWrapper {
         // 播放态 scale→0 内缩 7dp，暂停态 scale→1 内缩 34dp；手机竖屏再叠加额外内缩。
         val dp = (7 + (27 * scale.value)).dp + phonePortraitExtraInset
@@ -1197,7 +1239,14 @@ private fun ColumnScope.Album(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .onGloballyPositioned { coordsOnChanged(it) },
+                            .onGloballyPositioned { coordsOnChanged(it) }
+                            // 点击面严格等于封面正方形：歌名/歌手/收藏/四周留白都不受影响。
+                            // 点击会等按下动效跑满再发（轻点也看得到完整动画），触感见下方 feedback。
+                            .coverArtworkGesture(
+                                state = coverState,
+                                enabled = coverEnabled,
+                                onClick = onCoverClick
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         ShadowImageWithCache(
@@ -1215,7 +1264,11 @@ private fun ColumnScope.Album(
                                 }
                                 // shared-element 继续包住真实图片，但不参与 morph
                                 // 的坐标回调，避免其变换污染终点几何。
-                                .then(modifier),
+                                .then(modifier)
+                                // 交互动效层必须落在 sharedElement **之内**：morph 的落点读的是
+                                // 节点的布局坐标，变换层若挂在外层，按压尚未回位就切页时会把
+                                // 倾斜/缩放渗进 morph 源矩形。
+                                .coverArtworkEffect(state = coverState),
                             imageQuality = ImageQuality.RAW,
                             shadowOverlay = true
                         )
@@ -2876,6 +2929,9 @@ private fun SleepTimerSliderRow(
 @Composable
 private fun PlayingBar(
     modifier: Modifier,
+    // 封面交互动效的共享状态：转场时被 morph 画的就是本条的封面层，
+    // 大封面的按下动效要在这一层接着画完。
+    coverState: CoverArtworkState,
     albumUrlLambda: () -> Uri?,
     musicPlayingLambda: () -> YosMediaItem?,
     onAlbumClick: () -> Unit,
@@ -2905,8 +2961,14 @@ private fun PlayingBar(
                     interactionSource = remember { MutableInteractionSource() },
                     onClick = {
                         onAlbumClick()
-                    }), cornerRadius = 5.dp,
-            imageQuality = ImageQuality.LOW,
+                    })
+                // 转场飞行画的是这一层：大封面按下的倾斜/涟漪/描边在这里接着画完。
+                // 圆角用本条自身的 5dp（映射后与飞行中的裁剪一致）。
+                .coverArtworkEffect(coverState, cornerRadius = 5.dp),
+            cornerRadius = 5.dp,
+            // 这一层本身就是飞行图层：LOW(128px) 被拉到全屏封面(≈928px) 是 7 倍放大，
+            // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
+            imageQuality = ImageQuality.HIGH,
             shadowType = ShadowType.Small,
             shadowOverlay = true
         )

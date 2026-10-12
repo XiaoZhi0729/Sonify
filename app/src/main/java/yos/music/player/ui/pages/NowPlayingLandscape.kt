@@ -78,6 +78,9 @@ import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.effects.overlayEffect
+import yos.music.player.ui.widgets.effects.coverArtworkEffect
+import yos.music.player.ui.widgets.effects.coverArtworkGesture
+import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 
 /**
  * 播放页横屏适配入口：手机与平板是两套结构，在函数内按 smallestScreenWidthDp 分流。
@@ -263,6 +266,8 @@ internal fun NowPlayingLandscape(
                     onControlGesture = onControlGesture,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                     albumCoverSuppressed = albumCoverSuppressed,
+                    // 单击左列封面 = 开/关歌词（与右下歌词入口同一个 lambda）
+                    onCoverClick = onLyrics,
                     onOpenArtist = onOpenArtist
                 )
             }
@@ -424,6 +429,8 @@ private fun LandscapeMediaColumn(
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
     // 外壳封面 morph 进行中时为 true：本节点在图层面隐藏，由外壳单封面层接管。
     albumCoverSuppressed: () -> Boolean = { false },
+    // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
+    onCoverClick: () -> Unit = {},
     // 歌手名点击 → 艺人主页
     onOpenArtist: (String) -> Unit = {}
 ) {
@@ -439,7 +446,8 @@ private fun LandscapeMediaColumn(
             isPlayingStatusLambda = isPlayingStatusLambda,
             thisMusicPlayingLambda = thisMusicPlayingLambda,
             albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-            albumCoverSuppressed = albumCoverSuppressed
+            albumCoverSuppressed = albumCoverSuppressed,
+            onCoverClick = onCoverClick
         )
 
         // 标题/歌手 + 收藏等（与进度条左右缘对齐：补偿 PlayerControl 内部 25dp padding）
@@ -505,7 +513,9 @@ private fun LandscapeAlbumCover(
     thisMusicPlayingLambda: () -> YosMediaItem?,
     topPadding: Dp = 8.dp,
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
-    albumCoverSuppressed: () -> Boolean = { false }
+    albumCoverSuppressed: () -> Boolean = { false },
+    // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
+    onCoverClick: () -> Unit = {}
 ) {
     YosWrapper {
         val springSpec: AnimationSpec<Float> = remember("LandscapeAlbum_springSpec") {
@@ -521,6 +531,17 @@ private fun LandscapeAlbumCover(
             animationSpec = if (isPlayingStatusLambda()) springSpec else tweenSpec,
             visibilityThreshold = 0.001f
         )
+
+        val context = LocalContext.current
+        // 单击封面 = 开/关歌词：手势节点（外框）写状态，渲染面（图片）读状态。
+        // 触感给在按下那一刻，不跟着立即生效的点击走。
+        val coverState = rememberCoverArtworkState(
+            feedback = { Vibrator.click(context) }
+        )
+        // 闸门：横屏左列封面在所有子页面都是同一张大封面，没有"小封面态"，所以恒为 true。
+        // 外壳封面 morph 期间不再作为闸门（那是 300~500ms 瞬时窗口，会把按下那一刻的动效
+        // 整段挡掉；此刻真封面虽透明，但把动效挡掉只会让"点了没反应"，不做这件事）。
+        val coverEnabled: () -> Boolean = { true }
 
         // 播放态收到 breathInsetMin，暂停态线性放大到 breathInsetMax
         val dp = breathInsetMin + (breathInsetMax - breathInsetMin) * scale.value
@@ -542,7 +563,13 @@ private fun LandscapeAlbumCover(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .onGloballyPositioned { albumCoverCoordsOnChanged(it) },
+                        .onGloballyPositioned { albumCoverCoordsOnChanged(it) }
+                        // 点击面严格等于封面正方形（点击会等按下动效跑满再发）
+                        .coverArtworkGesture(
+                            state = coverState,
+                            enabled = coverEnabled,
+                            onClick = onCoverClick
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     ShadowImageWithCache(
@@ -555,7 +582,10 @@ private fun LandscapeAlbumCover(
                                 // morph 期间由外壳单封面层接管，本节点在图层面隐藏；
                                 // 读 State 只失效图层，不触发重组、不改布局占位。
                                 alpha = if (albumCoverSuppressed()) 0f else 1f
-                            },
+                            }
+                            // 交互动效层（3D 倾斜/缩放 + 涟漪 + 描边高光）：变换不动上报给外壳
+                            // morph 的那个外层 aspectRatio 节点，几何端点不受影响。
+                            .coverArtworkEffect(state = coverState),
                         imageQuality = ImageQuality.RAW,
                         shadowOverlay = true
                     )
@@ -706,7 +736,9 @@ private fun NowPlayingLandscapePhone(
                     isPlayingStatusLambda = isPlayingStatusLambda,
                     thisMusicPlayingLambda = thisMusicPlayingLambda,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-                    albumCoverSuppressed = albumCoverSuppressed
+                    albumCoverSuppressed = albumCoverSuppressed,
+                    // 单击封面 = 开/关歌词
+                    onCoverClick = onLyrics
                 )
             }
 

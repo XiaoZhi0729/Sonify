@@ -16,3 +16,15 @@ The complete glasense-ui module is not included. CrestoDialogStyle.kt includes
 its Blue500/Red500 tokens; their Tailwind MIT notice is retained in
 cresto-THIRD_PARTY_NOTICES.md. CrestoDialogEffects.kt adapts GlasenseHighlight,
 GlasenseDialog shadow drawing and glasense-ui DimIndication.
+CoverArtworkEffect.kt adapts the about-page card interactions from
+app/ui/modifier/TiltModifier.kt (tiltOnPress) and app/ui/modifier/RippleModifier.kt
+(shaderRipple / RIPPLE_SHADER): 3D tilt-on-press plus the expanding ring ripple and
+the outline highlight, with the same angles, springs, timing, ring geometry and
+opacity curve.
+
+Modified for Sonify: the press state is driven by the tap node's InteractionSource
+(no hand-rolled pointerInput, so the shell's vertical collapse drag and the
+accessibility semantics are untouched), the ripple is drawn as a Compose radial
+gradient instead of the AGSL runtime shader (no API 33 requirement), the tilt is
+taken from the press point only, and all animation values are read in the
+layer/draw phase. The chromatic press-indent shader (SuperGraphic.kt) is not ported.
