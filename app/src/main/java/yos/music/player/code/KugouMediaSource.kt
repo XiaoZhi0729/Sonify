@@ -371,12 +371,12 @@ class KugouResolvingDataSourceFactory(
  * 不再回源，近瞬时恢复；重播/复听也顺带省流量。
  *
  * 约束：同一文件夹进程内只允许一个 SimpleCache 实例（二次构造抛异常），故全局单例；
- * 256MB LRU 由 LeastRecentlyUsedCacheEvictor 淘汰，磁盘满不需要业务层操心。
+ * 1GB LRU 由 LeastRecentlyUsedCacheEvictor 淘汰，磁盘满不需要业务层操心。
  */
 @OptIn(UnstableApi::class)
 object OnlineAudioCache {
     private const val DIR_NAME = "kugou_audio_cache"
-    private const val MAX_BYTES = 256L * 1024 * 1024
+    private const val MAX_BYTES = 1024L * 1024 * 1024
 
     private val lock = Any()
 
@@ -393,13 +393,17 @@ object OnlineAudioCache {
             if (created) return instance
             instance = try {
                 SimpleCache(
-                    File(context.cacheDir, DIR_NAME),
+                    // 落在 filesDir 而非 cacheDir：系统"清除缓存"/存储紧张不会连锅端，
+                    // 已播过的歌重启/清缓存后仍可命中字节，不再回 CDN。
+                    File(context.filesDir, DIR_NAME),
                     LeastRecentlyUsedCacheEvictor(MAX_BYTES),
                     StandaloneDatabaseProvider(context)
                 )
             } catch (e: Exception) {
                 null
             }
+            // 旧版本音频缓存落在 cacheDir，搬家后一次性清掉回收空间（best-effort）
+            runCatching { File(context.cacheDir, DIR_NAME).deleteRecursively() }
             created = true
             return instance
         }

@@ -6,7 +6,11 @@ import com.tencent.mmkv.MMKV
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -1621,6 +1625,83 @@ object KugouRepository {
     private fun putCached(hash: String, requested: String, resolved: KugouResolvedPlayUrl) {
         urlCache["${hash.lowercase()}:$requested"] =
             CachedUrl(resolved.url, resolved.quality, System.currentTimeMillis())
+        scheduleUrlCachePersist()
+    }
+
+    // ---------- URL 缓存持久化（跨重启） ----------
+    // 内存 urlCache 重启即失忆，导致重启后第一首仍要走一次 /song/url。这里把仍在 TTL 内
+    // 的条目落 MMKV：30 分钟内重启可直接复用地址；即便地址偶有失效，音频字节缓存命中时
+    // 根本不会回源（双保险）。失败/认证冷却等瞬态态不落盘。
+
+    private const val URL_CACHE_PERSIST_KEY = "entries"
+    private const val MAX_PERSIST_ENTRIES = 300
+
+    private val urlCacheStore by lazy {
+        runCatching { MMKV.mmkvWithID("kugou_url_cache") }.getOrNull()
+    }
+
+    private val urlCachePersistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var urlCachePersistScheduled = false
+
+    @Volatile
+    private var urlCachePreloaded = false
+
+    /** 合并落盘：高频繁跳歌时最多 1.5s 写一次，避免每次解析都阻塞写 MMKV。 */
+    private fun scheduleUrlCachePersist() {
+        if (urlCachePersistScheduled) return
+        urlCachePersistScheduled = true
+        urlCachePersistScope.launch {
+            delay(1500)
+            urlCachePersistScheduled = false
+            persistUrlCacheNow()
+        }
+    }
+
+    private fun persistUrlCacheNow() {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val live = urlCache.entries
+                .asSequence()
+                .filter { now - it.value.resolvedAt < URL_CACHE_TTL_MS }
+                .sortedByDescending { it.value.resolvedAt }
+                .take(MAX_PERSIST_ENTRIES)
+            val arr = JSONArray()
+            live.forEach { (key, v) ->
+                arr.put(
+                    JSONObject()
+                        .put("k", key)
+                        .put("u", v.url)
+                        .put("s", v.stamped ?: "")
+                        .put("t", v.resolvedAt)
+                )
+            }
+            urlCacheStore?.encode(URL_CACHE_PERSIST_KEY, arr.toString())
+        }
+    }
+
+    /**
+     * 冷启动预热：把上次进程仍在 TTL 内的解析地址读回内存（过期条目直接丢弃），
+     * 由 [yos.music.player.YosBasicApplication.onCreate] 在主线程、任何组合之前调用。
+     */
+    fun preloadUrlCache() {
+        if (urlCachePreloaded) return
+        urlCachePreloaded = true
+        runCatching {
+            val raw = urlCacheStore?.decodeString(URL_CACHE_PERSIST_KEY)?.takeIf { it.isNotEmpty() } ?: return
+            val arr = JSONArray(raw)
+            val now = System.currentTimeMillis()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val key = o.optString("k")
+                val url = o.optString("u")
+                val at = o.optLong("t")
+                if (key.isEmpty() || url.isEmpty()) continue
+                if (now - at >= URL_CACHE_TTL_MS) continue
+                urlCache[key] = CachedUrl(url, o.optString("s").takeIf { it.isNotEmpty() }, at)
+            }
+        }
     }
 
     /**

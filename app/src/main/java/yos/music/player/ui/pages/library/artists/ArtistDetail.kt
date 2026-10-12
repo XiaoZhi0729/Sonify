@@ -75,6 +75,7 @@ import yos.music.player.ui.navigation.ArtistBackdrop
 import yos.music.player.ui.widgets.effects.overlayEffect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import yos.music.player.code.utils.artist.HeroBakeCache
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
@@ -242,7 +243,11 @@ fun ArtistDetail(
         else -> screenWidthDp / (screenHeightDp * HeroPhoneHeightFraction).coerceAtLeast(200f)
     }
     val avatarUrl = detail.value?.avatarUrl?.takeIf { it.isNotBlank() }
+    // 取色键优先由头像 URL 派生；详情缓存未命中（avatarUrl 未知）时回落到持久化的
+    // "artistId#aspect → paletteKey" 索引，保证首帧就能读到缓存色，不再接近白底再渐变。
     val paletteKey = avatarUrl?.let { "$it#bottom-weighted-v2-128-$heroAspect" }
+        ?: resolvedId.value.takeIf { it.isNotBlank() }
+            ?.let { ArtistPresentationCache.paletteKeyFor(it, heroAspect) }
     val paletteState = remember(paletteKey) { paletteKey?.let(ArtistPresentationCache::palette) }
     val originalRgb = paletteState?.value
     val artworkColors = remember(originalRgb, isDark) { ArtistArtworkColors.fromRgb(originalRgb, isDark) }
@@ -393,7 +398,11 @@ fun ArtistDetail(
     // 出现来源。统一键 + allowHardware(false) 后：hero 上屏命中同一内存缓存（零解码），
     // 取色与烘焙复用同一张位图对象。
     val heroBitmap = remember(avatarUrl) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    val heroRevealed = remember(avatarUrl) { mutableStateOf(false) }
+    // 单向闩锁：有缓存取色（或已有详情缓存）时首帧即揭示，不再等 1024px 异步解码落地——
+    // 这是「白一下」的主因。之后只由解码 effect 单向置 true，绝不回退。
+    val heroRevealed = remember(avatarUrl) {
+        mutableStateOf(hasResolvedArtwork || cachedDetail != null)
+    }
     LaunchedEffect(avatarUrl, heroAspect) {
         val url = avatarUrl ?: return@LaunchedEffect
         val cacheKey = paletteKey ?: return@LaunchedEffect
@@ -422,6 +431,10 @@ fun ArtistDetail(
                     sampleArtistBottomColor(sampleSrc, heroAspect)
                 }
             }
+        }
+        // 登记 artistId#aspect → paletteKey，供下次（含详情缓存未命中）首帧反查取色
+        resolvedId.value.takeIf { it.isNotBlank() }?.let {
+            ArtistPresentationCache.rememberArtistPalette(it, heroAspect, cacheKey)
         }
         heroRevealed.value = true
     }
@@ -604,11 +617,7 @@ fun ArtistDetail(
             // 大片白/浅色，调色板未就绪就烘焙会烘出错误着色的带（用户时序判断:过渡带不能用兜底色显示）。
             // 先让上屏照片顶住,调色板到位后本 effect 因 key 变化自动重烘焙。
             if (portraitTablet && originalRgb == null) return@LaunchedEffect
-            // 与上屏/取色共用同一张软件位图（单次解码），不再各自解码。
-            val src = heroBitmap.value ?: return@LaunchedEffect
-            // 烘焙分辨率封顶到源图（≤1024px）：源图本就只有 1024px，全宽烘焙（平板 ~2000px）
-            // 等于把源图放大 2 倍塞进 ~21MB 位图，零画质收益却极易 OOM/超时 → 概率性烘焙失败
-            // → 倒影缺失的硬衔接。这里按比例缩小几何与模糊半径一起烘焙，绘制时再放大回整盒。
+            // 几何只依赖盒尺寸（不依赖源位图），故缓存命中无需先等 1024px 解码。
             val bakeScale = (HeroBakeMaxWidthPx / bakeWidthPx).coerceAtMost(1f)
             val bakeW = (bakeWidthPx * bakeScale).roundToInt().coerceAtLeast(1)
             val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
@@ -618,6 +627,19 @@ fun ArtistDetail(
             // 方形 hero 的镜像会把下半张人脸翻转贴上来，观感像第二张脸。手机竖屏保留原镜像倒影。
             // 横屏（手机+平板）统一方形头像，因此统一用延伸模式。
             val edgeReflection = portraitTablet || isLandscape
+            val bakeCacheKey =
+                "$avatarUrl|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}"
+            // 缓存命中（内存→磁盘）：直接落位、跳过重烘焙——这是「回访时倒影立刻在」的关键。
+            HeroBakeCache.memoryGet(bakeCacheKey)?.let {
+                bakedHero = it
+                return@LaunchedEffect
+            }
+            withContext(Dispatchers.IO) { HeroBakeCache.load(context, bakeCacheKey) }?.let {
+                bakedHero = it
+                return@LaunchedEffect
+            }
+            // 与上屏/取色共用同一张软件位图（单次解码），不再各自解码。
+            val src = heroBitmap.value ?: return@LaunchedEffect
             val shader = newArtistHeroReflectionShader(
                 bakeW, bakePhotoH, bakeBandH, bakeBlurPx, edgeReflection
             )
@@ -628,6 +650,7 @@ fun ArtistDetail(
                     // 烘焙失败会退回「锐利照片 + 提取色」硬衔接，必须留痕（debug 包看 logcat）
                     .onFailure { android.util.Log.w("ArtistDetail", "hero reflection bake failed (${bakeW}x${bakePhotoH + bakeBandH})", it) }
                     .getOrNull()
+                    ?.also { HeroBakeCache.put(context, bakeCacheKey, it) }
             }?.asImageBitmap()
             pendingHeroBake?.let {
                 android.util.Log.d(
@@ -653,9 +676,8 @@ fun ArtistDetail(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(detail.value?.avatarUrl)
-                    .error(R.drawable.songcredits_monogram_person)
-                    .placeholder(R.drawable.songcredits_monogram_person)
-                    .fallback(R.drawable.songcredits_monogram_person)
+                    // 不设占位/兜底图：解码期间保持透明，透出页面底色（缓存命中即取色），
+                    // 避免白色人形图标在解码窗口里闪一下。
                     .allowHardware(false)
                     .size(1024)
                     // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
@@ -751,12 +773,9 @@ fun ArtistDetail(
                             // 烘焙完成（bakedHero != null）后由背景层接管照片区——渐进模糊的路径
                             // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
                             if (!heroRevealed.value) {
-                                Image(
-                                    painter = painterResource(R.drawable.songcredits_monogram_person),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
+                                // 占位用当前页面底色（缓存命中即歌手提取色），替换掉白色人形图标——
+                                // 消除「白一下」；首次访问无缓存色时退化为主题兜底色，属物理必然。
+                                Box(Modifier.fillMaxSize().background(bg))
                             } else if (bakedHero == null) {
                                 HeroPhoto(Modifier.fillMaxSize())
                             }

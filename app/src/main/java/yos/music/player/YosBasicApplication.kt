@@ -52,6 +52,14 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                     .maxSizePercent(0.35)
                     .build()
             }
+            // 磁盘缓存显式落 filesDir（系统"清除缓存"/存储紧张不会清），容量提到 512MB。
+            // 未显式配置时 Coil 用 cacheDir/image_cache（2% 存储、钳制 ≤250MB），会被系统回收。
+            .diskCache {
+                coil.disk.DiskCache.Builder()
+                    .directory(java.io.File(filesDir, "image_cache"))
+                    .maxSizeBytes(512L * 1024 * 1024)
+                    .build()
+            }
             .respectCacheHeaders(false)
             .build()
 
@@ -112,8 +120,13 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             yos.music.player.data.repositories.KugouRepository.actualQualityVersion.intValue
             // 本曲覆盖表现在跨重启保留了：在主线程把它读进内存，避免首帧组合时才去碰磁盘
             yos.music.player.data.repositories.PerSongQualityIntent.preload()
+            // 解析地址缓存同样跨重启保留：30 分钟内重启可免去第一首的 /song/url 解析
+            yos.music.player.data.repositories.KugouRepository.preloadUrlCache()
             yos.music.player.data.objects.ArtistPresentationCache.preload()
         }
+
+        // 图片磁盘缓存旧位置在 cacheDir/image_cache，搬到 filesDir 后一次性清理回收空间。
+        runCatching { java.io.File(cacheDir, "image_cache").deleteRecursively() }
 
         // 音质切换要读偏好与网络形态：主进程侧提前注入应用级 Context（服务侧也会注入一次）
         yos.music.player.code.MediaController.appContext = applicationContext

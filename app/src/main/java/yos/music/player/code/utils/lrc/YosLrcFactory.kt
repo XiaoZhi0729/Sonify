@@ -88,6 +88,9 @@ class YosLrcFactory(private val formatText: Boolean = true) {
 
     fun formatKrcEntries(krcText: String, translationText: String? = null): List<LyricEntry> {
         val embeddedTranslations = extractEmbeddedTranslations(krcText)
+        // 罗马音：KRC [language:] 载荷里 language != 0 的条目（翻译走 language=0）。
+        // 与 md3Music 同源：不单独发请求，数据本就在已拉取的 KRC 明文里。
+        val embeddedRomanizations = extractEmbeddedRomanizations(krcText)
         val explicitTranslations = translationText?.let {
             runCatching { parseLrcRows(it) }.getOrDefault(emptyList())
         }.orEmpty()
@@ -121,7 +124,11 @@ class YosLrcFactory(private val formatText: Boolean = true) {
                 timedWords += (start + duration) to ""
                 val translation = nearestText(explicitTranslations, start)
                     ?: embeddedTranslations.getOrNull(embeddedOrdinal)
-                entries += LyricEntry(timedWords, translation?.takeIf { it.isNotBlank() })
+                entries += LyricEntry(
+                    mainLyric = timedWords,
+                    translation = translation?.takeIf { it.isNotBlank() },
+                    romanization = embeddedRomanizations.getOrNull(embeddedOrdinal)?.takeIf { it.isNotBlank() }
+                )
             }
         }
         return processOtherSide(entries)
@@ -276,6 +283,48 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             }
         }
         return emptyList()
+    }
+
+    /**
+     * 罗马音行：KRC [language:] 载荷里 language != 0 的条目（language=0 是翻译）。
+     * 每行可能是单元素数组（整行）或多元素数组（按音节拆分），统一用空格拼接——
+     * 与 Kugou 数据标注一致，对齐 md3Music `_extractTranslationFromKrc` 的处理。
+     * 数据本就随已拉取的 KRC 明文而来，无需额外请求。
+     */
+    private fun extractEmbeddedRomanizations(krcText: String): List<String?> {
+        val encoded = krcText.lineSequence()
+            .mapNotNull { Regex("^\\[language:([^]]+)]$").find(it.trim())?.groupValues?.get(1) }
+            .firstOrNull() ?: return emptyList()
+        val decoded = Base64Codec.decode(encoded)?.toString(Charsets.UTF_8) ?: return emptyList()
+        extractJsonObjects(decoded).forEach { objectText ->
+            // 必须有 language 字段（排除最外层 content 容器），且不是 language=0（那是翻译）
+            if (!objectText.contains("\"language\"")) return@forEach
+            if (Regex("\"language\"\\s*:\\s*(?:0|\"0\")").containsMatchIn(objectText)) return@forEach
+            val rows = lyricContentElementRows(objectText) ?: return@forEach
+            return rows.map { elements -> elements.joinToString(" ").takeIf { it.isNotBlank() } }
+        }
+        return emptyList()
+    }
+
+    /** 取一个 language 对象 lyricContent 每行的字符串元素（已 normalize、去空元素）。 */
+    private fun lyricContentElementRows(objectText: String): List<List<String>>? {
+        val contentKey = objectText.indexOf("\"lyricContent\"")
+        if (contentKey == -1) return null
+        val arrayStart = objectText.indexOf('[', contentKey)
+        if (arrayStart == -1) return null
+        val arrayEnd = findMatchingBracket(objectText, arrayStart, '[', ']')
+        if (arrayEnd == -1) return null
+        val rows = splitJsonArrayElements(objectText.substring(arrayStart + 1, arrayEnd))
+        return rows.map { row ->
+            val innerStart = row.indexOf('[')
+            val innerEnd = row.lastIndexOf(']')
+            if (innerStart == -1 || innerEnd <= innerStart) return@map emptyList<String>()
+            splitJsonArrayElements(row.substring(innerStart + 1, innerEnd)).mapNotNull { element ->
+                val match = Regex("^\\s*\"((?:\\\\.|[^\"\\\\])*)\"\\s*$").find(element)
+                    ?: return@mapNotNull null
+                normalize(decodeJsonString(match.groupValues[1])).takeIf { it.isNotBlank() }
+            }
+        }
     }
 
     private fun splitJsonArrayElements(arrayBody: String): List<String> {

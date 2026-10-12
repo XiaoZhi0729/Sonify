@@ -120,6 +120,36 @@ class YosLrcFactoryTest {
     }
 
     @Test
+    fun krcLanguagePayloadProvidesRomanization() {
+        val languageJson = """
+            {"content":[
+              {"language":0,"lyricContent":[["你好"]]},
+              {"language":1,"lyricContent":[["ni","hao"]]}
+            ]}
+        """.trimIndent()
+        val encoded = Base64.getEncoder().encodeToString(languageJson.toByteArray())
+        val entry = factory.formatKrcEntries(
+            "[language:$encoded]\n[1000,2000]<0,500,0>H<500,500,0>i"
+        ).single()
+
+        assertEquals("你好", entry.translation)
+        assertEquals("ni hao", entry.romanization)
+    }
+
+    @Test
+    fun singleElementRomanizationRowIsNotTreatedAsTranslation() {
+        // language=1 即便整行只有一段文本，也归罗马音、不得当翻译（守住既有语义）
+        val languageJson = """{"content":[{"language":1,"lyricContent":[["若你"]]}]}"""
+        val encoded = Base64.getEncoder().encodeToString(languageJson.toByteArray())
+        val entry = factory.formatKrcEntries(
+            "[language:$encoded]\n[1000,2000]<0,500,0>H"
+        ).single()
+
+        assertNull(entry.translation)
+        assertEquals("若你", entry.romanization)
+    }
+
+    @Test
     fun krcLanguagePayloadAllowsFieldsAfterLyricContent() {
         val languageJson = """
             {"content":[{"language":0,"lyricContent":[["你好"]],"extra":true}]}

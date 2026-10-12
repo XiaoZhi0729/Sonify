@@ -60,6 +60,7 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.OnlinePlaylistCache
 import yos.music.player.data.repositories.KugouPlaylistTrack
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.KugouSearchSong
@@ -143,6 +144,9 @@ fun OnlinePlaylistDetail(
     // 下拉刷新指示器状态（独立于 status，避免刷新时全屏 loading 闪烁）
     val refreshing = remember("OnlinePlaylistDetail_refreshing") { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // 首屏缓存键：来源 + 歌单 id（自有/推荐/挂起 id 命名空间不同）
+    val pageCacheKey = "${source?.name.orEmpty()}:${playlistId.orEmpty()}"
 
     // ---- 挂起歌单（创建中/创建失败）：selection.id 是 PendingPlaylistStore 的 localId ----
     val pendingEntry = remember("OnlinePlaylistDetail_pending") {
@@ -175,10 +179,10 @@ fun OnlinePlaylistDetail(
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
 
-    fun loadTracks(pullRefresh: Boolean = false) {
+    fun loadTracks(pullRefresh: Boolean = false, silent: Boolean = false) {
         if (pullRefresh) {
             refreshing.value = true
-        } else {
+        } else if (!silent) {
             status.value = "loading"
             loadProgress.value = ""
         }
@@ -208,10 +212,14 @@ fun OnlinePlaylistDetail(
                 .onSuccess { list ->
                     tracks.value = list
                     status.value = if (list.isEmpty()) "empty" else "ok"
+                    // 服务器曲目列表落盘（挂起歌单不缓存）
+                    if (list.isNotEmpty() && !isPendingPlaylist) {
+                        OnlinePlaylistCache.write(context, pageCacheKey, list)
+                    }
                 }
                 .onFailure { e ->
-                    // 下拉刷新失败：保留现有列表，只收起指示器，不把页面打成错误态
-                    if (!pullRefresh) {
+                    // 下拉刷新/静默失败：保留现有（含缓存）列表，只收起指示器，不打成错误态
+                    if (!pullRefresh && !silent) {
                         tracks.value = emptyList()
                         status.value = "error:${e.message}"
                     }
@@ -236,7 +244,16 @@ fun OnlinePlaylistDetail(
     }
 
     LaunchedEffect(source, playlistId, KugouSyncCoordinator.playlistsRevision.value) {
-        loadTracks()
+        // 首屏优先：TTL 内的磁盘缓存先渲染（零网络），随后静默 revalidate。挂起歌单不读缓存。
+        if (tracks.value.isEmpty() && !isPendingPlaylist) {
+            OnlinePlaylistCache.read(context, pageCacheKey)?.let { cached ->
+                if (cached.isNotEmpty()) {
+                    tracks.value = cached
+                    status.value = "ok"
+                }
+            }
+        }
+        loadTracks(silent = tracks.value.isNotEmpty())
     }
 
     // 挂起歌单对账轮询：绑定真实 listid（含创建失败后的重试）→ 等 ops 补发完 → 拉真实歌曲
@@ -489,6 +506,10 @@ fun OnlinePlaylistDetail(
                             else {
                                 tracks.value = tracks.value.filter { it.hash != t.hash }
                                 status.value = if (tracks.value.isEmpty()) "empty" else "ok"
+                                // 删歌后覆写首屏缓存，避免 12h 内读到旧列表
+                                if (tracks.value.isNotEmpty()) {
+                                    OnlinePlaylistCache.write(context, pageCacheKey, tracks.value)
+                                }
                             }
                             KugouSyncCoordinator.notifyPlaylistsChanged()
                         }

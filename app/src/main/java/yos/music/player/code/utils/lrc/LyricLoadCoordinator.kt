@@ -27,7 +27,15 @@ class LyricLoadCoordinator {
     }
 
     private val nextGeneration = AtomicLong(0L)
-    private val cache = ConcurrentHashMap<String, Payload>()
+
+    /**
+     * 进程级歌词内存缓存：访问序 LinkedHashMap + 上限淘汰，避免听一整天后无界增长。
+     * 磁盘层（[LyricDiskCache]）负责持久，这里只做当前会话的热命中。
+     */
+    private val cache = object : LinkedHashMap<String, Payload>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Payload>): Boolean =
+            size > MAX_ENTRIES
+    }
     private val inFlight = ConcurrentHashMap<String, Request>()
 
     @Volatile
@@ -59,12 +67,14 @@ class LyricLoadCoordinator {
      * so returning to that song can reuse the completed request. The boolean
      * tells the caller whether it is still safe to publish to the UI.
      */
+    @Synchronized
     fun complete(request: Request, payload: Payload): Boolean {
         inFlight.remove(request.mediaId, request)
         cache[request.mediaId] = payload
         return currentRequest == request
     }
 
+    @Synchronized
     fun fail(request: Request): Boolean {
         inFlight.remove(request.mediaId, request)
         return currentRequest == request
@@ -72,5 +82,11 @@ class LyricLoadCoordinator {
 
     fun isCurrent(request: Request): Boolean = currentRequest == request
 
+    @Synchronized
     fun cached(mediaId: String): Payload? = cache[mediaId]
+
+    private companion object {
+        /** 内存热缓存上限：LRU 淘汰，磁盘层负责更长久的持久化。 */
+        const val MAX_ENTRIES = 300
+    }
 }

@@ -66,6 +66,8 @@ import yos.music.player.code.MediaController.musicPlaying
 import yos.music.player.code.MediaController.onServiceRunning
 import yos.music.player.code.utils.lrc.YosLrcFactory
 import yos.music.player.code.utils.others.YosDiagnostics
+import yos.music.player.code.utils.lrc.LyricDiskCache
+import yos.music.player.code.utils.lrc.LocalLyricCache
 import yos.music.player.code.utils.lrc.LyricLoadCoordinator
 import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.lrc.LyricInfoSerializer
@@ -974,60 +976,86 @@ object MediaController {
 
             is LyricLoadCoordinator.Selection.Load -> {
                 clearLyricFor(mediaId)
+                val hash = mediaId.removePrefix("kugou-online-")
                 CoroutineScope(Dispatchers.IO).launch {
                     val request = selection.request
-                        val result = runCatching {
-                            yos.music.player.data.repositories.KugouRepository.getLyrics(
-                                mediaId.removePrefix("kugou-online-")
-                            ).getOrThrow()
-                        }
-                        result.onSuccess { lyrics ->
-                                    val parsed = synchronized(lyricParseLock) {
-                                        val krcResult = lyrics.krc?.let { krc ->
-                                            runCatching {
-                                                YosLrcFactory().formatKrcEntries(krc, lyrics.translation)
-                                            }
-                                        }
-                                        val krcEntries = krcResult?.getOrNull()
-                                        if (krcEntries != null && krcEntries.isNotEmpty()) {
-                                            println("在线歌词使用 KRC 逐字 mediaId=$mediaId lines=${krcEntries.size}")
-                                            LyricLoadCoordinator.Payload(
-                                                entries = krcEntries,
-                                                otherSideForLines = MediaViewModelObject.otherSideForLines.toList()
-                                            )
-                                        } else {
-                                            val reason = when {
-                                                lyrics.krc == null -> "krc_missing"
-                                                krcResult?.exceptionOrNull() != null ->
-                                                    "krc_parse_error=${krcResult.exceptionOrNull()?.javaClass?.simpleName}"
-                                                else -> "krc_empty"
-                                            }
-                                            println("在线歌词回退 LRC mediaId=$mediaId reason=$reason")
-                                            val lrcEntries = YosLrcFactory().formatLrcEntries(
-                                                lyrics.lrc,
-                                                lyrics.translation
-                                            )
-                                            LyricLoadCoordinator.Payload(
-                                                entries = lrcEntries,
-                                                otherSideForLines = MediaViewModelObject.otherSideForLines.toList()
-                                            )
-                                        }
-                                    }
-                            val current = lyricCoordinator.complete(request, parsed)
-                            if (current && musicPlaying.value?.mediaId == mediaId) {
-                                publishLyricPayload(mediaId, parsed)
-                                MainViewModelObject.syncLyricIndex.intValue = -1
+                    // 三级加载：磁盘命中直接上屏（零网络）；未命中走网络，成功后异步写盘。
+                    val context = appContext
+                    val cached = context?.let { LyricDiskCache.read(it, hash) }
+                    val result: Result<LyricDiskCache.CachedLyrics> = if (cached != null) {
+                        Result.success(cached)
+                    } else {
+                        runCatching {
+                            val lyrics = KugouRepository.getLyrics(hash).getOrThrow()
+                            LyricDiskCache.CachedLyrics(
+                                lrc = lyrics.lrc,
+                                krc = lyrics.krc,
+                                translation = lyrics.translation,
+                                romanization = lyrics.romanization
+                            ).also { dto ->
+                                context?.let {
+                                    LyricDiskCache.write(
+                                        it, hash, dto.lrc, dto.krc, dto.translation, dto.romanization
+                                    )
+                                }
                             }
-                            println("在线歌词加载完成 mediaId=$mediaId lines=${parsed.entries.size} current=$current")
-                        }.onFailure { error ->
-                            val current = lyricCoordinator.fail(request)
-                            if (current && musicPlaying.value?.mediaId == mediaId) {
-                                MediaViewModelObject.lyricLoading.value = false
-                            }
-                            println("在线歌词加载失败 mediaId=$mediaId current=$current: ${error.message}")
                         }
+                    }
+                    result.onSuccess { lyrics ->
+                        val parsed = parseOnlineLyrics(mediaId, lyrics)
+                        val current = lyricCoordinator.complete(request, parsed)
+                        if (current && musicPlaying.value?.mediaId == mediaId) {
+                            publishLyricPayload(mediaId, parsed)
+                            MainViewModelObject.syncLyricIndex.intValue = -1
+                        }
+                        if (cached != null) YosDiagnostics.log("LYRIC_DISK_HIT", "id" to mediaId)
+                        println(
+                            "在线歌词加载完成 mediaId=$mediaId lines=${parsed.entries.size} " +
+                                "disk=${cached != null} current=$current"
+                        )
+                    }.onFailure { error ->
+                        val current = lyricCoordinator.fail(request)
+                        if (current && musicPlaying.value?.mediaId == mediaId) {
+                            MediaViewModelObject.lyricLoading.value = false
+                        }
+                        println("在线歌词加载失败 mediaId=$mediaId current=$current: ${error.message}")
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * 在线歌词解析唯一入口：网络与磁盘两条路径共用，保证响应一致性（同输入逐位同输出）。
+     * 注意 [YosLrcFactory] 解析时会把 otherSideForLines 写入全局，须在解析后立即回读。
+     */
+    private fun parseOnlineLyrics(
+        mediaId: String,
+        lyrics: LyricDiskCache.CachedLyrics
+    ): LyricLoadCoordinator.Payload = synchronized(lyricParseLock) {
+        val krcResult = lyrics.krc?.let { krc ->
+            runCatching { YosLrcFactory().formatKrcEntries(krc, lyrics.translation) }
+        }
+        val krcEntries = krcResult?.getOrNull()
+        if (krcEntries != null && krcEntries.isNotEmpty()) {
+            println("在线歌词使用 KRC 逐字 mediaId=$mediaId lines=${krcEntries.size}")
+            LyricLoadCoordinator.Payload(
+                entries = krcEntries,
+                otherSideForLines = MediaViewModelObject.otherSideForLines.toList()
+            )
+        } else {
+            val reason = when {
+                lyrics.krc == null -> "krc_missing"
+                krcResult?.exceptionOrNull() != null ->
+                    "krc_parse_error=${krcResult.exceptionOrNull()?.javaClass?.simpleName}"
+                else -> "krc_empty"
+            }
+            println("在线歌词回退 LRC mediaId=$mediaId reason=$reason")
+            val lrcEntries = YosLrcFactory().formatLrcEntries(lyrics.lrc, lyrics.translation)
+            LyricLoadCoordinator.Payload(
+                entries = lrcEntries,
+                otherSideForLines = MediaViewModelObject.otherSideForLines.toList()
+            )
         }
     }
 
@@ -1945,6 +1973,18 @@ class YosPlaybackService : MediaSessionService() {
             }
 
             if (!mediaId.orEmpty().startsWith("kugou-online-")) {
+                // 本地歌词内存缓存：key = 路径@mtime，命中则零 IO 直接上屏。
+                val localKey = thisPath?.let { fp ->
+                    val mtime = runCatching { java.io.File(fp).lastModified() }.getOrDefault(0L)
+                    "$fp@$mtime"
+                }
+                val cachedLocal = localKey?.let { LocalLyricCache.get(it) }
+                if (cachedLocal != null) {
+                    MediaViewModelObject.lrcEntries.value = cachedLocal
+                    MediaViewModelObject.lyricMediaId.value = mediaId
+                    MediaViewModelObject.lyricLoading.value = false
+                    YosControllerObject.publishSuperIslandLyric(mediaId, cachedLocal)
+                } else {
                 // 本地歌词：同名 .lrc 优先，读不到再取音频内嵌歌词（M4A ©lyr / MP3 USLT / FLAC）。
                 // TagLib 解析是磁盘 IO，放 IO 线程；发布前回主线程校验 mediaId 防串歌。
                 val durationMs = p.duration.takeIf { it > 0 } ?: 0L
@@ -1973,6 +2013,8 @@ class YosPlaybackService : MediaSessionService() {
                     val lrcEntries = YosLrcFactory()
                         .formatLrcEntriesWithFallback(lrcContent, totalDurationMs)
 
+                    localKey?.let { LocalLyricCache.put(it, lrcEntries) }
+
                     withContext(Dispatchers.Main) {
                         if (p.currentMediaItem?.mediaId == mediaId) {
                             MediaViewModelObject.lrcEntries.value = lrcEntries
@@ -1981,6 +2023,7 @@ class YosPlaybackService : MediaSessionService() {
                             YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)
                         }
                     }
+                }
                 }
             }
 

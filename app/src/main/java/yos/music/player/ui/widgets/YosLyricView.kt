@@ -642,7 +642,9 @@ fun YosLyricView(
                     }
 
                     key("lyric_content_$index") {
-                            val translation = lines.translation
+                            // 副行文本：优先翻译，无翻译时回落罗马音（KRC [language:] 载荷解析而来），
+                            // 复用同一「翻译」开关与渲染通道；两者皆有则显示翻译。
+                            val translation = lines.translation ?: lines.romanization
 
                         val blur = remember(index) {
                             derivedStateOf {

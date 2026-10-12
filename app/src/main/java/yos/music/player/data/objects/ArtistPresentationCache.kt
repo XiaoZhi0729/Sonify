@@ -25,7 +25,9 @@ internal data class ArtistCacheSnapshot(
     val details: List<ArtistCachedDetail> = emptyList(),
     val aliases: Map<String, String> = emptyMap(),
     val palettes: List<ArtistCachedPalette> = emptyList(),
-    val albumSongCounts: Map<String, Int> = emptyMap()
+    val albumSongCounts: Map<String, Int> = emptyMap(),
+    /** "artistId#heroAspect" → paletteKey：详情缓存未命中、avatarUrl 未知时仍能首帧取到缓存色。 */
+    val artistPaletteKeys: Map<String, String> = emptyMap()
 )
 
 internal class ArtistPresentationStore(
@@ -41,6 +43,7 @@ internal class ArtistPresentationStore(
     private val aliases = linkedMapOf<String, String>()
     private val palettes = linkedMapOf<String, State<Int?>>()
     private val albumSongCounts = linkedMapOf<String, Int>()
+    private val artistPaletteKeys = linkedMapOf<String, String>()
     private val follows = mutableMapOf<Pair<String, String>, Follow>()
     private val revisions = mutableMapOf<Pair<String, String>, Int>()
     private val detailRequests = mutableMapOf<Pair<String, String>, CompletableDeferred<KugouArtistDetailData>>()
@@ -64,6 +67,9 @@ internal class ArtistPresentationStore(
                 if (details.containsKey(id)) aliases[name] = id
             }
             snapshot.palettes.orEmpty().takeLast(128).forEach { palettes[it.key] = mutableStateOf(it.rgb) }
+            snapshot.artistPaletteKeys.orEmpty().entries.toList().takeLast(128).forEach {
+                artistPaletteKeys[it.key] = it.value
+            }
             snapshot.albumSongCounts.orEmpty().entries.toList().takeLast(128).forEach {
                 if (it.value > 0) albumSongCounts[it.key] = it.value
             }
@@ -199,7 +205,8 @@ internal class ArtistPresentationStore(
         val snapshot = ArtistCacheSnapshot(
             details.values.toList(), aliases.toMap(),
             palettes.mapNotNull { (key, state) -> state.value?.let { ArtistCachedPalette(key, it) } },
-            albumSongCounts.toMap()
+            albumSongCounts.toMap(),
+            artistPaletteKeys.toMap()
         )
         write(gson.toJson(snapshot))
     }
@@ -223,6 +230,29 @@ internal class ArtistPresentationStore(
         albumSongCounts.remove(albumId)
         albumSongCounts[albumId] = count
         while (albumSongCounts.size > 128) albumSongCounts.remove(albumSongCounts.keys.first())
+        persist()
+    }
+
+    /**
+     * 取色键索引：详情缓存未命中（avatarUrl 未知）时，用 artistId + 当前 heroAspect
+     * 反查上次算好的 paletteKey，使首帧就能读到缓存色。heroAspect 必须参与键——不同
+     * 朝向的取色采样窗口不同、颜色可能不同（H3）。
+     */
+    @Synchronized
+    fun paletteKeyFor(artistId: String, heroAspect: Float): String? {
+        if (artistId.isBlank()) return null
+        preload()
+        return artistPaletteKeys["$artistId#$heroAspect"]
+    }
+
+    @Synchronized
+    fun rememberArtistPalette(artistId: String, heroAspect: Float, paletteKey: String) {
+        if (artistId.isBlank() || paletteKey.isBlank()) return
+        preload()
+        val key = "$artistId#$heroAspect"
+        artistPaletteKeys.remove(key)
+        artistPaletteKeys[key] = paletteKey
+        while (artistPaletteKeys.size > 128) artistPaletteKeys.remove(artistPaletteKeys.keys.first())
         persist()
     }
 
@@ -258,4 +288,7 @@ object ArtistPresentationCache {
     fun ensurePalette(key: String, compute: suspend () -> Int?) = store.ensurePalette(key, compute)
     fun albumSongCount(albumId: String): Int? = store.albumSongCount(albumId)
     fun rememberAlbumSongCount(albumId: String, count: Int) = store.rememberAlbumSongCount(albumId, count)
+    fun paletteKeyFor(artistId: String, heroAspect: Float): String? = store.paletteKeyFor(artistId, heroAspect)
+    fun rememberArtistPalette(artistId: String, heroAspect: Float, paletteKey: String) =
+        store.rememberArtistPalette(artistId, heroAspect, paletteKey)
 }

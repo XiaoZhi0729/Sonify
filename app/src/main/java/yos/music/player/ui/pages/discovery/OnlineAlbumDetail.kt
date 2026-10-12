@@ -54,6 +54,7 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.OnlineAlbumObject
+import yos.music.player.data.objects.OnlineAlbumCache
 import yos.music.player.data.repositories.AlbumArtist
 import yos.music.player.data.repositories.KugouAlbumDetail
 import yos.music.player.ui.UI
@@ -140,9 +141,10 @@ fun OnlineAlbumDetail(
     // "loading" | "ok" | "empty" | "error:<msg>"
     val status = remember("OnlineAlbumDetail_status") { mutableStateOf("loading") }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
-    fun load() {
-        status.value = "loading"
+    fun load(silent: Boolean = false) {
+        if (!silent) status.value = "loading"
         scope.launch {
             // 头部元数据失败不影响歌曲列表展示（封面/名称兜底用选中专辑字段）
             KugouRepository.getAlbumDetail(album.albumId)
@@ -156,15 +158,19 @@ fun OnlineAlbumDetail(
                     tracks.value = list
                     queue.value = list.map { KugouRepository.toQueueMediaItem(it) }
                     status.value = if (list.isEmpty()) "empty" else "ok"
+                    if (list.isNotEmpty()) OnlineAlbumCache.write(context, album.albumId, list)
                     android.util.Log.d(
                         "OnlineAlbumDetail",
                         "albumId=${album.albumId} albumName=${album.name} parsed=${list.size}"
                     )
                 }
                 .onFailure { e ->
-                    tracks.value = emptyList()
-                    queue.value = emptyList()
-                    status.value = "error:${e.message}"
+                    // 静默 revalidate 失败时保留缓存首屏，不打成错误态
+                    if (!silent) {
+                        tracks.value = emptyList()
+                        queue.value = emptyList()
+                        status.value = "error:${e.message}"
+                    }
                 }
         }
     }
@@ -179,7 +185,15 @@ fun OnlineAlbumDetail(
     }
 
     LaunchedEffect(Unit) {
-        load()
+        // 首屏优先：TTL 内的磁盘缓存先渲染（零网络），随后静默 revalidate
+        OnlineAlbumCache.read(context, album.albumId)?.let { cached ->
+            if (cached.isNotEmpty()) {
+                tracks.value = cached
+                queue.value = cached.map { KugouRepository.toQueueMediaItem(it) }
+                status.value = "ok"
+            }
+        }
+        load(silent = tracks.value.isNotEmpty())
     }
 
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
