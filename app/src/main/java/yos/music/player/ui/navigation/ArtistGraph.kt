@@ -15,9 +15,14 @@ import yos.music.player.ui.pages.library.artists.ArtistSongsDetail
 
 /**
  * 艺人域路由：歌手详情 + 三个子页 + 在线专辑详情。
- * 四个 house 各自持图，而播放页歌手名 / 搜索结果 / 专辑作者 / 关注歌手等入口
- * 都在**用户当前所在的房子**内 push，因此每个 house NavHost 都必须注册本图；
- * 漏注册即抛 "Navigation destination ... cannot be found"。
+ *
+ * 不变式：全局播放器 overlay 与 AppNavigator 的目标路由，是经
+ * `activeHouseController`（=用户当前所在 house）push 出去的，所以**任何会被 overlay
+ * 触达的路由，都必须在全部四张 house 图里注册**。歌手名（玩家页）与设置入口
+ * （settingsGraph 的 `Settings.Main`）都属此类；当前仅这两条。
+ * 四个 house 各自持图，漏注册任一即抛 "Navigation destination ... cannot be found"
+ * ——「喜爱」Tab 点歌手名崩溃（Favorites 漏注册本图）即此。
+ * [HouseGraphParityTest] 是这条不变式的回归守卫。
  */
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
 fun NavGraphBuilder.artistGraph(

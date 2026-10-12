@@ -17,6 +17,7 @@ import yos.music.player.ui.pages.settings.others.Acknowledgements
 import yos.music.player.ui.pages.settings.performance.LyricSetting
 import yos.music.player.ui.pages.settings.performance.NotificationSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.UserInterfaceSetting
+import yos.music.player.ui.pages.settings.storage.DataStorage
 
 fun NavGraphBuilder.settingsGraph(
     navController: NavHostController,
@@ -37,5 +38,6 @@ fun NavGraphBuilder.settingsGraph(
     composable(UI.Settings.NotificationSetting) { NotificationSetting(navController) }
     composable(UI.Settings.KugouLogin) { KugouLogin(navController) }
     composable(UI.Settings.KugouVipSignIn) { KugouVipSignIn(navController) }
+    composable(UI.Settings.DataStorage) { DataStorage(navController) }
     composable("poc_debug") { }
 }
