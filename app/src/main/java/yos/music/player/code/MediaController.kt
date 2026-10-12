@@ -769,10 +769,6 @@ object MediaController {
      * （对齐 MD3Music 的"推送先于首次元数据发布不得丢弃"兜底）。
      */
     fun publishSuperIslandLyric(mediaId: String?, entries: List<LyricEntry>) {
-        if (!SettingsLibrary.SuperIslandLyricEnabled) {
-            YosDiagnostics.log("LYRIC_DISABLED", "id" to mediaId)
-            return
-        }
         if (mediaId == null) return
         YosDiagnostics.log(
             "LYRIC_REQ", "id" to mediaId, "lines" to entries.size,
@@ -780,12 +776,6 @@ object MediaController {
             "delay" to LYRIC_PUBLISH_INITIAL_DELAY_MS
         )
         requestLyricPublish(mediaId, entries, delayMs = LYRIC_PUBLISH_INITIAL_DELAY_MS)
-    }
-
-    /** 无视开关直接移除当前条目的歌词元数据，供关闭开关时清理。 */
-    fun removeSuperIslandLyric() {
-        YosDiagnostics.log("LYRIC_REMOVE_REQ")
-        requestLyricPublish(mediaId = null, entries = null)
     }
 
     /** 待发布目标：mediaId 为 null 表示清理当前条目；entries 为 null 表示移除歌词键。 */

@@ -32,7 +32,6 @@ import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.utils.player.CrossfadePolicy
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
-import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.data.repositories.KugouVipRepository
 import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
@@ -223,23 +222,6 @@ fun Settings(navController: NavController) =
                             ) {
                                 navController.toUI(UI.Settings.LyricGetter)
                             }
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_extend_superislandlyric),
-                                desc = stringResource(id = R.string.settings_extend_superislandlyric_desc),
-                                onClick = {
-                                    val newValue = !SettingsLibrary.SuperIslandLyricEnabled
-                                    SettingsLibrary.SuperIslandLyricEnabled = newValue
-                                    if (newValue) {
-                                        MediaController.publishSuperIslandLyric(
-                                            MediaViewModelObject.lyricMediaId.value,
-                                            MediaViewModelObject.lrcEntries.value
-                                        )
-                                    } else {
-                                        MediaController.removeSuperIslandLyric()
-                                    }
-                                },
-                                checkedLambda = { SettingsLibrary.SuperIslandLyricEnabled }
-                            )
                         }
 
                         GroupSpacer()

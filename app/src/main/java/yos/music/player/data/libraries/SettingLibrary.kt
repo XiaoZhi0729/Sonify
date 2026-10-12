@@ -246,16 +246,6 @@ object SettingsLibrary {
     )
 
     /**
-     * 超级岛歌词(LyricInfo 元数据,供 HyperLyric / ColorOS 锁屏歌词读取)
-     */
-    @Stable
-    var SuperIslandLyricEnabled by mutableDataSaverStateOf(
-        dataSaverInterface = SettingsSaver,
-        key = "settings_extend_super_island_lyric",
-        initialValue = true
-    )
-
-    /**
      * ExoPlayer行为 - 音频属性
      */
     @Stable
@@ -457,7 +447,6 @@ object SettingsLibrary {
         ListenHistory = true
         StatusBarLyricEnabled = false
         StatusBarLyricHooked = false
-        SuperIslandLyricEnabled = true
         AudioAttributes = true
         Codec = "Auto"
         HardwareAudioTrackPlayBackParams = false

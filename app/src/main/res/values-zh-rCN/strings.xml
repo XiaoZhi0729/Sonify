@@ -181,8 +181,6 @@
     <string name="settings_extend">扩展</string>
     <string name="settings_extend_statusbarlyric">状态栏歌词</string>
     <string name="settings_extend_statusbarlyric_desc">使用 Lyric Getter API 的状态栏歌词。</string>
-    <string name="settings_extend_superislandlyric">超级岛歌词</string>
-    <string name="settings_extend_superislandlyric_desc">通过 LyricInfo 协议将歌词写入媒体会话元数据；在 HyperLyric 中选择 LyricInfo 歌词源即可在小米超级岛显示，ColorOS 锁屏歌词亦可读取。</string>
     <string name="settings_others">其它</string>
     <string name="settings_others_about">关于</string>
     <string name="settings_others_about_desc">关于 Sonify。</string>

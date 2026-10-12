@@ -541,7 +541,7 @@ object YosDiagnostics {
             BufferedWriter(OutputStreamWriter(FileOutputStream(out), "UTF-8")).use { w ->
                 w.write(header(app))
                 w.write("lyric_switch=")
-                w.write(runCatching { SettingsLibrary.SuperIslandLyricEnabled }.getOrDefault("?").toString())
+                w.write("always_on")
                 w.write(" lyric_diag=" + colorOsLyricDiag + "\n")
                 w.write("rom_props=" + romProps() + "\n")
                 w.write("\n== LYRIC EVENTS ==\n")
