@@ -673,8 +673,13 @@ fun NowPlaying(
                 }
             }
 
-            val translationButtonEnabled = remember("NowPlaying_translationButtonEnabled") {
-                derivedStateOf { showControl.value && page == Lyric }
+            // 竖屏控制层顶部翻译按钮可点性。
+            // 反例（曾导致冷启动点不动）：remember("<常量键>"){ derivedStateOf { showControl.value && page == Lyric } }
+            // —— page 是普通 String（404 行 nowPageLambda() 返回值，非 State），常量键 remember
+            // 只执行一次，会把它永久冻结在冷启动时的值（Album），enabled 恒 false；横屏切回
+            // 竖屏时子树重建才恢复。derivedStateOf 内必须读实时状态：这里改读 nowPageLambda()。
+            val translationButtonEnabled = remember {
+                derivedStateOf { showControl.value && nowPageLambda() == Lyric }
             }
 
             // 这是小把手
