@@ -94,8 +94,34 @@ class OnlineSkipPolicyTest {
         val latched = 1_000_000L
         assertFalse(OnlineSkipPolicy.latchExpired(latched + 30_000L, latched))
         assertTrue(OnlineSkipPolicy.latchExpired(latched + OnlineSkipPolicy.LATCH_RESET_MS, latched))
-        // 没锁存过就永远算"过窗"（第一轮计数从 0 起）
-        assertTrue(OnlineSkipPolicy.latchExpired(latched, 0L))
+        // 没锁存过（latchedAtElapsed==0）不算过窗——否则 SKIP_NEXT 分支每轮都会把
+        // 连续失败计数清零，出现"一直自动切歌"。真机日志 SKIP_TO_NEXT attempt=1 即是此症。
+        assertFalse(OnlineSkipPolicy.latchExpired(latched, 0L))
+    }
+
+    @Test
+    fun consecutiveSkipsReachTheBudgetInsteadOfResettingEveryCall() {
+        // 复刻 OnlineSkipState.decide 的计数循环：修复前 latchExpired(_, 0L) 恒真，每次
+        // 都把 failures 清零再加回 1 → 计数钉死在 1、TRANSIENT_LIMIT 永不触发 → 无限跳。
+        var failures = 0
+        var latchedAt = 0L
+        var decision = Decision.SKIP_NEXT
+        var calls = 0
+        while (decision == Decision.SKIP_NEXT && calls < OnlineSkipPolicy.TRANSIENT_LIMIT + 2) {
+            calls++
+            if (OnlineSkipPolicy.latchExpired(1_000L, latchedAt)) {
+                failures = 0
+                latchedAt = 0L
+            }
+            decision = OnlineSkipPolicy.decide(
+                OnlineFailureKind.NETWORK, failures, hasNext = true,
+                authWindowActive = false, retryRound = 0
+            )
+            if (decision == Decision.SKIP_NEXT) failures++
+        }
+        // 跳满预算就该转挂起，而不是无限跳下去
+        assertEquals(Decision.HOLD_AND_RETRY, decision)
+        assertEquals(OnlineSkipPolicy.TRANSIENT_LIMIT - 1, failures)
     }
 
     @Test

@@ -2132,6 +2132,15 @@ object KugouRepository {
                             // 只认服务端回写的值；缺失/空/不可识别一律 null（未知），不默认等于请求档
                             val stampedRaw = data.optString("quality", "").ifEmpty { null }
                             Result.success(KugouResolvedPlayUrl(url, KugouQuality.parse(stampedRaw)))
+                        } else if (KugouUpstreamError.isNeedVerify(json.toString())) {
+                            // HTTP 200 但体里带 20028"本次请求需要验证"：账号级风控（设备身份/sign_key
+                            // 失效），不是"这一首被版权拦截"。若按 BLOCKED 处理会逐首跳，故交回账号级
+                            // 失效通道（开全局冷却窗、不逐首写负缓存、策略走挂起重试）。
+                            Result.failure(
+                                KugouAuthInvalidException(
+                                    "需要安全验证(20028): ${json.toString().take(300)}"
+                                )
+                            )
                         } else {
                             // 完整失败原因（证据级）：status 优先取顶层（实测拒播响应无 data 包裹），
                             // 其余字段双位置兼容；全量记录便于排查

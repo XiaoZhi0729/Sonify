@@ -53,6 +53,20 @@ class KugouApiService private constructor() {
             }
         }
 
+        /**
+         * 原生 server 的 dataDir：Rust 侧用它持久化 `device_info.json`（dfid/mid/guid/uuid，
+         * 见 [KugouNativeBridge.startServer] 的注释）。由 Application.onCreate 注入真实
+         * `filesDir`。
+         *
+         * 历史 bug（本次 20028 的根因）：这里曾写死 `/data/data/yos.music.player.oss/files`
+         * ——旧包名。包名改成 com.sonify.music 后该目录属于**别的应用沙箱，不可写**，
+         * 设备身份永远存不下来、每次进程重启都重新生成，酷狗于是把每次会话当成陌生设备，
+         * 风控直接回 `errcode:20028 "本次请求需要验证"`。与 md3Music server.rs:191-195
+         * 点名的风控诱因（per-launch 重生成身份）同源。
+         */
+        @Volatile
+        var appFilesDir: String? = null
+
         // ---------- 登录态持久化（MMKV；与 Dart kugou_api_client 的 prefs 语义一致） ----------
         private const val MMKV_UID = "kugou_auth"
         private const val K_TOKEN = "kugou_token"
@@ -177,11 +191,14 @@ class KugouApiService private constructor() {
     /** 保证 Rust server 在运行（幂等）。返回是否可用；启动瞬时失败最多重试 3 次。 */
     private suspend fun ensureServer(): Boolean = retryResult {
         try {
+            // 设备身份持久化目录：优先用 Application 注入的真实 filesDir（可写）；
+            // 回退值是当前包名，绝不能再用旧包名 yos.music.player.oss（见 appFilesDir 注释）。
+            val dataDir = appFilesDir ?: "/data/data/com.sonify.music/files"
             if (!KugouNativeBridge.isServerRunning()) {
-                val p = KugouNativeBridge.startServer(dataDir = "/data/data/yos.music.player.oss/files")
+                val p = KugouNativeBridge.startServer(dataDir = dataDir)
                 if (p <= 0) return@retryResult Result.failure<Boolean>(IOException("Failed to start server"))
             } else if (KugouNativeBridge.getServerPort() <= 0) {
-                KugouNativeBridge.startServer(dataDir = "/data/data/yos.music.player.oss/files")
+                KugouNativeBridge.startServer(dataDir = dataDir)
             }
             if (KugouNativeBridge.getServerPort() > 0) {
                 Result.success(true)
@@ -249,6 +266,28 @@ class KugouApiService private constructor() {
         response.close()
         return code to body
     }
+
+    /**
+     * 同 [httpGetWithRetry]，但**非 2xx 也把 (code, body) 原样返回**（不抛异常）。
+     *
+     * 播放路径专用：20028 / illegal key 的判据全在错误体里，而通用封装对非 2xx 直接
+     * 抛 `IOException("HTTP xxx: ...")`、把体丢掉——历史上 getSongUrl 因此从未真正
+     * 识别过鉴权失效（那段 `if (code !in 200..299)` 是不可达的死代码）。
+     * 只有传输层异常（连接失败/超时）才按 [maxRetries] 重试。
+     */
+    private suspend fun httpGetAllowNonOk(
+        path: String,
+        params: Map<String, String>,
+        maxRetries: Int = 1
+    ): Pair<Int, String> = retryResult(maxRetries) {
+        try {
+            Result.success(httpGetOnce(path, params))
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure<Pair<Int, String>>(error)
+        }
+    }.getOrElse { throw it }
 
     /**
      * Search for songs by keyword.
@@ -320,14 +359,34 @@ class KugouApiService private constructor() {
                 val params = mapOf("hash" to hash.lowercase(), "quality" to quality)
                 // 播放路径的重试降为 1 次：这条链跑在 ExoPlayer Loader 线程上且外层
                 // 有 10s 全局截止（resolvePlayUrlBlocking），3 次重试 × readTimeout 15s
-                // 只会把整段准备时间拖到分钟级；瞬时失败交给重试一次 + 失败跳歌兜底
-                val (code, body) = httpGetWithRetry("/song/url", params, maxRetries = 1)
+                // 只会把整段准备时间拖到分钟级；瞬时失败交给重试一次 + 失败跳歌兜底。
+                // 用 httpGetAllowNonOk：非 2xx 的响应体必须拿得到（20028/illegal key 在体里）。
+                val (code, body) = httpGetAllowNonOk("/song/url", params, maxRetries = 1)
 
                 Log.d(TAG, "/song/url -> HTTP $code, body length=${body.length}, loggedIn=${isLoggedIn()}")
                 if (body.isNotEmpty()) {
                     body.chunked(3500).forEachIndexed { idx, chunk ->
                         Log.d(TAG, "/song/url body[$idx]: $chunk")
                     }
+                }
+
+                // 上游风控"本次请求需要验证"(20028)：多为设备身份/sign_key 失效。对齐 md3Music
+                // kugou_api_client.dart:1112-1126：重注册设备后重试一次，有机会自愈（缺 dfid
+                // 的场景一次就好）；重试仍失败才当账号级失效处理（挂起而非逐首跳）。
+                // 注意两种 HTTP 形态都可能在体里带 20028，故先于状态码判断。
+                if (KugouUpstreamError.isNeedVerify(body)) {
+                    Log.w(TAG, "/song/url 需要验证(20028)，重注册设备后重试一次")
+                    registerDevice()
+                    val (code2, body2) = httpGetAllowNonOk("/song/url", params, maxRetries = 1)
+                    Log.d(TAG, "/song/url(重试) -> HTTP $code2, body length=${body2.length}")
+                    if (code2 in 200..299 && body2.isNotEmpty() &&
+                        !KugouUpstreamError.isNeedVerify(body2)
+                    ) {
+                        return@withContext Result.success(JSONObject(body2))
+                    }
+                    return@withContext Result.failure(
+                        KugouAuthInvalidException("/song/url 重试后仍需验证 HTTP $code2: ${body2.take(300)}")
+                    )
                 }
 
                 if (code !in 200..299) {

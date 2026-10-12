@@ -68,16 +68,18 @@ object OnlineSkipPolicy {
     fun roundsExhausted(round: Int): Boolean = round > RETRY_BACKOFF_MS.size
 
     /**
-     * 锁存是否已过复位窗。[latchedAtElapsed] 为 0 表示当前没锁存。
+     * 锁存是否已过复位窗。[latchedAtElapsed] 为 0 表示当前没锁存，此时**不算过窗**
+     * （返回 false）——否则 [OnlineSkipState.decide] 每次进来都会把连续失败计数清零：
+     * `SKIP_NEXT` 分支从不写 `latchedAtElapsed`，计数永远停在 1，`TRANSIENT_LIMIT` 的
+     * 跳歌预算形同虚设（真机：`SKIP_TO_NEXT attempt=1` 连出十几条，永不停）。
      *
-     * 这一条是本次修复的核心之一：旧实现把计数挂在匿名 `Player.Listener` 的字段上，
-     * 且**只在 `STATE_READY` 清零**。source error 后播放器停在 IDLE，永远等不到 READY，
-     * 计数就再也回不了零——于是每次错误都直接走"达上限"分支，而该分支既不跳也不重备，
-     * 用户看到的就是"按下一首完全没反应"（真机：`SKIP_LIMIT attempt=10` 连出 4 次，
-     * attempt 始终是 10，中间无任何 TRANSITION）。
+     * 另一层历史教训：旧实现把计数挂在匿名 `Player.Listener` 的字段上，且**只在
+     * `STATE_READY` 清零**。source error 后播放器停在 IDLE，永远等不到 READY，
+     * 计数就再也回不了零——于是每次错误都直接走"达上限"分支（`SKIP_LIMIT attempt=10`）。
+     * 所以这里保留"锁存过窗即当新一轮"的复位入口，只是它必须**真的锁存过**才生效。
      */
     fun latchExpired(nowElapsed: Long, latchedAtElapsed: Long): Boolean =
-        latchedAtElapsed == 0L || nowElapsed - latchedAtElapsed >= LATCH_RESET_MS
+        latchedAtElapsed != 0L && nowElapsed - latchedAtElapsed >= LATCH_RESET_MS
 
     /**
      * @param failures 本次之前的**连续失败数**（0 起，不含本次）

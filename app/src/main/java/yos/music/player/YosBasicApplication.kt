@@ -88,6 +88,11 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // 与 Rust Server 启动是两件独立的事——server 仍由 KugouApiService.ensureServer()
         // 在真正调用酷狗 API 时按需启动。此处保证任何页面组合前 isLoggedIn() 即可用。
         yos.music.player.native.KugouApiService.ensureAuthRestored()
+        // 原生 server 的 dataDir 必须是本应用真实的 filesDir：Rust 侧用它持久化
+        // device_info.json（dfid/mid/guid/uuid）。历史上这里没注入、且 KugouApiService
+        // 内写死了旧包名 yos.music.player.oss → 该目录不可写 → 设备身份每次进程重启
+        // 都重新生成 → 酷狗风控返回 errcode:20028"本次请求需要验证"（在线曲目全解析失败）。
+        yos.music.player.native.KugouApiService.appFilesDir = filesDir.absolutePath
 
         // 预热全局 Compose 状态 object：object 内的 mutableStateOf 若首次初始化发生在
         // 某次重组（如开屏 AnimatedContent 过渡）内部，该重组被放弃时 snapshot 未 apply，
@@ -115,6 +120,13 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         yos.music.player.data.repositories.NetworkObserver.init(this)
         yos.music.player.data.repositories.QualityTrace.strict =
             (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+        // 冷启动设备注册（对齐 md3Music _autoConnect → registerDevice，kugou_api_client.dart:284）：
+        // 保证 dfid 在首次播放前就落地并持久化。失败静默——真正解析时 /song/url 还有
+        // 20028"重注册设备 + 重试一次"的自愈兜底。
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { yos.music.player.native.KugouApiService.getInstance().registerDevice() }
+        }
 
         // 酷狗 VIP 自动签到（对齐 md3Music autoReceiveVipIfNeeded）：
         // 登录态 + 开关开启 + 本地今天未签才会发请求（本地已签则完全不拉起 Rust server）。

@@ -29,19 +29,44 @@ object KugouUpstreamError {
     /** 酷狗侧鉴权/签名失效的错误码（实测固定值）。 */
     const val AUTH_INVALID_CODE = 31833
 
+    /**
+     * 风控要求"本次请求需要验证"的业务码（实测固定 20028）。
+     * 注意字段名是 **errcode**（不是 error_code）：设备身份/sign_key 失效时上游返回
+     * `{"errcode":20028,"status":0,"error":"本次请求需要验证"}`。与 illegal_key 同类——
+     * 整账号都拿不到 URL，逐首跳只是把同一个 502 刷成屏。
+     */
+    const val NEED_VERIFY_CODE = 20028
+
     /** 响应体里的明文标记（与 error_code 二选一命中即可，服务端两处都会带）。 */
     private const val AUTH_INVALID_MARKER = "illegal key"
+
+    /** 需要安全验证的明文（与 errcode 二选一命中即可）。 */
+    private const val NEED_VERIFY_MARKER = "本次请求需要验证"
+
+    /**
+     * 是不是"需要安全验证"（风控 20028）。与 [isAuthInvalid] 分开暴露：调用方需要
+     * 先做"重注册设备 + 重试一次"的自愈（对齐 md3Music kugou_api_client.dart:1112-1126），
+     * 重试仍失败才当账号级失效处理。不区分 2xx/非 2xx——上游两种 HTTP 形态都会带这个体。
+     */
+    fun isNeedVerify(body: String?): Boolean {
+        if (body.isNullOrBlank()) return false
+        val compact = body.replace(" ", "")
+        return compact.contains("\"errcode\":$NEED_VERIFY_CODE") ||
+            body.contains(NEED_VERIFY_MARKER)
+    }
 
     /**
      * 是不是鉴权失效。只看非 2xx 的响应体：2xx 时同样的字段形状可能是别的意思，
      * 不猜。响应体空格不定（`{"error_code": 31833}` 也会出现），先压掉空格再匹配。
+     * 20028（需要验证）同样算账号级失效——重试过后仍失败就不该再逐首跳。
      */
     fun isAuthInvalid(httpCode: Int, body: String?): Boolean {
         if (httpCode in 200..299) return false
         if (body.isNullOrBlank()) return false
         val compact = body.replace(" ", "")
         return compact.contains("\"error_code\":$AUTH_INVALID_CODE") ||
-            body.contains(AUTH_INVALID_MARKER, ignoreCase = true)
+            body.contains(AUTH_INVALID_MARKER, ignoreCase = true) ||
+            isNeedVerify(body)
     }
 
     /** 沿因果链找鉴权失效：包装层（DataSource/Loader）会把它裹在 IOException 里。 */

@@ -53,6 +53,31 @@ class KugouUpstreamErrorTest {
         assertFalse(KugouUpstreamError.isAuthInvalid(200, illegalKeyBody))
     }
 
+    /** 真机原文：风控"本次请求需要验证"（HTTP 502，注意字段名是 errcode 不是 error_code）。 */
+    private val needVerifyBody =
+        """{"errcode":20028,"status":0,"error":"本次请求需要验证","edt":"hLnL98Qpft3bYZWh"}"""
+
+    @Test
+    fun detectsTheRealNeedVerifyBody() {
+        // 502 + 真机体：既算"需要验证"，也算账号级鉴权失效（重试后仍失败 → 挂起而非跳歌）
+        assertTrue(KugouUpstreamError.isNeedVerify(needVerifyBody))
+        assertTrue(KugouUpstreamError.isAuthInvalid(502, needVerifyBody))
+        // 字段/明文二选一，带空格也能认
+        assertTrue(KugouUpstreamError.isNeedVerify("""{"errcode": 20028}"""))
+        assertTrue(KugouUpstreamError.isNeedVerify("""{"error":"本次请求需要验证"}"""))
+    }
+
+    @Test
+    fun needVerifyDoesNotSwallowOtherFailures() {
+        // 版权/付费拦截不是"需要验证"
+        assertFalse(KugouUpstreamError.isNeedVerify("""{"status":3,"priv_status":0,"error_code":0}"""))
+        assertFalse(KugouUpstreamError.isNeedVerify("Gateway Timeout"))
+        assertFalse(KugouUpstreamError.isNeedVerify(""))
+        assertFalse(KugouUpstreamError.isNeedVerify(null))
+        // isNeedVerify 不看状态码：HTTP 200 形态（MD3 常态）也能认（resolvePlayUrl 的兜底）
+        assertTrue(KugouUpstreamError.isNeedVerify("""{"errcode":20028,"status":1}"""))
+    }
+
     @Test
     fun findsTheMarkerThroughWrapperLayers() {
         // DataSource/Loader 会一层层往外裹，分类必须能沿因果链认出来
