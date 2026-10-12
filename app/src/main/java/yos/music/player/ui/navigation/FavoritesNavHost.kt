@@ -50,6 +50,9 @@ fun FavoritesNavHost(
                     animatedVisibilityScope = this@composable
                 )
             }
+            // 艺人域路由（歌手详情 + 子页 + 在线专辑详情）：播放页歌手名等入口在
+            // 当前房子内 push，缺注册即抛 "destination cannot be found"。
+            artistGraph(navController, this@SharedTransitionLayout)
             settingsGraph(
                 navController = navController,
                 onOpenLibrarySongs = navigator::openLibrarySongs
