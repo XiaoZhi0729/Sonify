@@ -234,6 +234,10 @@ fun Settings(navController: NavController) =
                                 navController.toUI(UI.Settings.About)
                             }
                             Divider()
+                            LabelItem(title = stringResource(id = R.string.settings_storage_data_storage)) {
+                                navController.toUI(UI.Settings.DataStorage)
+                            }
+                            Divider()
                             DiagLogSwitchItem()
                             Divider()
                             DiagExportItem()

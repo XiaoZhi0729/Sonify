@@ -411,6 +411,16 @@ object OnlineAudioCache {
 
     fun keyOf(hash: String, effectiveTier: String): String =
         "kugou:${hash.lowercase()}:$effectiveTier"
+
+    /** 已用字节数（供设置页「数据与储存」展示）。 */
+    fun cacheSpace(context: Context): Long =
+        runCatching { get(context)?.cacheSpace ?: 0L }.getOrDefault(0L)
+
+    /** 清空字节缓存：走 SimpleCache 的 removeResource，避免直接删目录致缓存实例状态不一致。 */
+    fun clearCache(context: Context) {
+        val cache = get(context) ?: return
+        runCatching { cache.keys.toList().forEach { cache.removeResource(it) } }
+    }
 }
 
 /** 供 ExoPlayer.Builder 使用的媒体源工厂：默认媒体源 + 惰性解析数据源。 */

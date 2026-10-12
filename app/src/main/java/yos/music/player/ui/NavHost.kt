@@ -201,6 +201,7 @@ interface UI {
             const val NotificationSetting = "NotificationSetting"
             const val KugouLogin = "KugouLogin"
             const val KugouVipSignIn = "KugouVipSignIn"
+            const val DataStorage = "DataStorage"
         }
     }
 }
