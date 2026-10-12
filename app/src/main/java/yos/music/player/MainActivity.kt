@@ -1053,12 +1053,11 @@ class MainActivity : BaseActivity() {
                                 contentAlignment = Alignment.BottomCenter
                             ) {
                                 YosWrapper {
-                                    val miniPlayerHeightPx = remember("MainActivity_miniPlayerHeightPx") {
-                                        with(density) {
-                                            miniPlayerHeight.toPx()
-                                        }
-                                    }
-
+                                    // 迷你条高度直读外层 miniPlayerHeightPx（MainActivity.kt:342）：
+                                    // 它随 screenWidthDp 分档（宽屏 62dp / 手机竖屏 43dp），横竖屏切换时
+                                    // 由 LocalConfiguration 重组更新。此处曾用 remember("…") 常量键再存一份，
+                                    // 在 configChanges 不重建 Activity 的前提下会把首次组合的值（横屏 62dp）
+                                    // 永久钉死，导致切回竖屏后壳高度下限仍按横屏取值、迷你条厚度不回落。
                                     val color = Color.White withNight Color(0xFF1C1C1E)
                                     val hazeSurfaceAlpha = if (isFlamingoInDarkMode()) 0.55f else 0.85f
 
