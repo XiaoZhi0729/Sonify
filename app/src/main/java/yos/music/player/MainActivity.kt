@@ -149,6 +149,8 @@ import androidx.navigation.compose.rememberNavController
 import yos.music.player.ui.widgets.basic.ProvideRawWindowInsets
 import yos.music.player.ui.widgets.basic.navigationBarsPadding
 import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomPx
+import yos.music.player.ui.widgets.basic.kugouHash
+import yos.music.player.data.repositories.KugouRepository
 import androidx.navigation.compose.NavHost
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
@@ -778,8 +780,19 @@ class MainActivity : BaseActivity() {
                                     topEntry?.destination?.route == UI.ArtistDetailPattern &&
                                         topEntry.arguments?.getString(UI.ArtistDetailNameArg) == name
                                 if (!alreadyThere) NavGuard.run {
+                                    // 优先用歌曲自带的 singerid 直达艺人页（歌曲解析时已登记 hash→歌手表）。
+                                    // 只传歌手名会让 ArtistDetail 退化成按名搜索，而酷狗歌手搜索不做
+                                    // 繁简/译名归一化（「高橋洋子」搜不到、「高桥洋子」才命中），
+                                    // 于是「歌手明明在却报未找到」。查不到 id 时才回落按名搜索（原行为）。
+                                    val hash = MediaController.musicPlaying.value?.kugouHash()
+                                    val performerId = hash?.let {
+                                        KugouRepository.performerIdFor(it, name)
+                                    }
                                     activeHouseController.navigate(
-                                        UI.artistDetailRoute(artistId = null, artistName = name)
+                                        UI.artistDetailRoute(
+                                            artistId = performerId?.toString(),
+                                            artistName = name
+                                        )
                                     )
                                 }
                                 animatePlayerTo(0f)

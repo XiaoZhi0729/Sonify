@@ -113,6 +113,52 @@ private fun JSONObject.optionalValue(key: String): Any? =
 private fun JSONObject.toFieldMap(): Map<String, Any?> =
     keys().asSequence().associateWith { key -> optionalValue(key) }
 
+/**
+ * 歌曲自带的一位歌手（酷狗 singerinfo[]/authors[] 条目）。id 可精确直达艺人页，
+ * 无需按名搜歌手——按名搜索不做繁简/译名归一化，「高橋洋子」这类原名会稳定搜空。
+ */
+data class KugouPerformer(val name: String, val id: Long)
+
+/** 合并多个来源的 (name,id)：忽略空名/id≤0，按名去重（保序，首个优先）。 */
+internal fun mergePerformers(candidates: List<Pair<String, Long>>): List<KugouPerformer> {
+    val out = ArrayList<KugouPerformer>(candidates.size)
+    val seen = HashSet<String>()
+    for ((rawName, id) in candidates) {
+        val name = rawName.trim()
+        if (name.isEmpty() || id <= 0) continue
+        if (seen.add(name.lowercase())) out.add(KugouPerformer(name, id))
+    }
+    return out
+}
+
+/** 从 singerinfo/authors 数组提取歌手 id 列表（多 key 兜底，逐条目忽略坏数据）。 */
+internal fun parsePerformerArray(
+    array: JSONArray?,
+    nameKeys: List<String>,
+    idKeys: List<String>
+): List<KugouPerformer> {
+    if (array == null || array.length() == 0) return emptyList()
+    val candidates = ArrayList<Pair<String, Long>>(array.length())
+    for (i in 0 until array.length()) {
+        val obj = array.optJSONObject(i) ?: continue
+        val name = nameKeys.firstNotNullOfOrNull { obj.optString(it, "").takeIf { s -> s.isNotEmpty() } }
+            ?: continue
+        val id = idKeys.firstNotNullOfOrNull { obj.optLong(it, 0L).takeIf { v -> v > 0 } } ?: 0L
+        candidates.add(name to id)
+    }
+    return mergePerformers(candidates)
+}
+
+/**
+ * 按歌手名反查 id（忽略大小写/首尾空白）；无精确命中返回 null，
+ * 由调用方回落按名搜索（行为不劣化）。多歌手「点谁跳谁」即在此逐个匹配。
+ */
+internal fun matchPerformerId(performers: List<KugouPerformer>, name: String): Long? {
+    val target = name.trim()
+    if (target.isEmpty()) return null
+    return performers.firstOrNull { it.name.equals(target, ignoreCase = true) }?.id
+}
+
 internal fun parseRecommendPlaylist(
     fields: Map<String, Any?>,
     artworkResolver: (String?) -> String?
@@ -775,6 +821,17 @@ object KugouRepository {
                     .ifEmpty { audioInfo?.optString("hash") ?: "" }
                 if (hash.isEmpty()) return@runCatching null
                 // 歌手：author_name 优先（本接口实测顶层存在），SingerName/artist_name/singername 兑底
+                val performers = parsePerformerArray(
+                    s.optJSONArray("singerinfo"),
+                    nameKeys = listOf("name"),
+                    idKeys = listOf("id")
+                ).ifEmpty {
+                    parsePerformerArray(
+                        s.optJSONArray("authors"),
+                        nameKeys = listOf("author_name", "name"),
+                        idKeys = listOf("author_id", "id")
+                    )
+                }
                 var author = s.optString("author_name")
                     .ifEmpty { s.optString("SingerName") }
                     .ifEmpty { s.optString("artist_name") }
@@ -838,6 +895,17 @@ object KugouRepository {
                     .ifEmpty { transParam?.optString("union_cover") ?: "" }
                     .ifEmpty { albumInfo?.optString("sizable_cover") ?: "" }
                     .ifEmpty { albumInfo?.optString("cover") ?: "" }
+                // 榜单路径此前从不登记身份：播放历史上报按 hash 查 mixsongid 会查不到，
+                // 导致 mxid=0 静默跳过（听歌时长不记账）。与 KMR 段（:1303-1310）同款多字段兜底。
+                val mixsongId = sequenceOf(
+                    s.optLong("mixsongid", 0L),
+                    s.optLong("MixSongID", 0L),
+                    s.optLong("album_audio_id", 0L)
+                ).firstOrNull { it > 0 } ?: 0L
+                val albumId = albumInfo?.optLong("album_id", 0L)?.takeIf { it > 0 }
+                    ?: s.optLong("album_id", 0L)
+                registerSongIdentity(hash, albumId, mixsongId, 0)
+                registerPerformers(hash, performers)
                 KugouRankSong(
                     hash = hash,
                     name = title,
@@ -1044,6 +1112,17 @@ object KugouRepository {
                     .ifEmpty { audioInfo?.optString("hash") ?: "" }
                 if (hash.isEmpty()) return@runCatching null
 
+                val performers = parsePerformerArray(
+                    s.optJSONArray("singerinfo"),
+                    nameKeys = listOf("name"),
+                    idKeys = listOf("id")
+                ).ifEmpty {
+                    parsePerformerArray(
+                        s.optJSONArray("authors"),
+                        nameKeys = listOf("author_name", "name"),
+                        idKeys = listOf("author_id", "id")
+                    )
+                }
                 var author = s.optString("author_name")
                     .ifEmpty { s.optString("SingerName") }
                     .ifEmpty { s.optString("artist_name") }
@@ -1103,6 +1182,7 @@ object KugouRepository {
                     .ifEmpty { albumInfo?.optString("sizable_cover") ?: "" }
                     .ifEmpty { albumInfo?.optString("cover") ?: "" }
 
+                registerPerformers(hash, performers)
                 KugouNewSong(
                     hash = hash,
                     name = title,
@@ -1163,6 +1243,17 @@ object KugouRepository {
                 val hash = s.optString("hash").ifEmpty { s.optString("hash_128") }
                 if (hash.isEmpty()) return@runCatching null
 
+                val performers = parsePerformerArray(
+                    s.optJSONArray("singerinfo"),
+                    nameKeys = listOf("name"),
+                    idKeys = listOf("id")
+                ).ifEmpty {
+                    parsePerformerArray(
+                        s.optJSONArray("authors"),
+                        nameKeys = listOf("author_name", "name"),
+                        idKeys = listOf("author_id", "id")
+                    )
+                }
                 var author = s.optString("author_name", s.optString("singername", ""))
                 if (author.isEmpty()) {
                     val si = s.optJSONArray("singerinfo")
@@ -1192,6 +1283,7 @@ object KugouRepository {
                     .ifEmpty { s.optString("img") }
                     .ifEmpty { s.optString("pic") }
 
+                registerPerformers(hash, performers)
                 KugouNewSong(
                     hash = hash,
                     name = title,
@@ -1236,6 +1328,17 @@ object KugouRepository {
             .ifEmpty { audioInfo?.optString("hash") ?: "" }
         if (hash.isEmpty()) return null
 
+        val performers = parsePerformerArray(
+            s.optJSONArray("singerinfo"),
+            nameKeys = listOf("name"),
+            idKeys = listOf("id")
+        ).ifEmpty {
+            parsePerformerArray(
+                s.optJSONArray("authors"),
+                nameKeys = listOf("author_name", "name"),
+                idKeys = listOf("author_id", "id")
+            )
+        }
         var author = s.optString("author_name")
             .ifEmpty { s.optString("SingerName") }
             .ifEmpty { s.optString("artist_name") }
@@ -1308,6 +1411,7 @@ object KugouRepository {
         val kmrAlbumId = albumInfo?.optLong("album_id", 0L)
             ?.takeIf { it > 0 } ?: s.optLong("album_id", 0L)
         registerSongIdentity(hash, kmrAlbumId, kmrMixsongId, 0)
+        registerPerformers(hash, performers)
 
         return KugouNewSong(
             hash = hash,
@@ -1461,6 +1565,58 @@ object KugouRepository {
         if (identity.albumId <= 0 && identity.mixsongId <= 0 && identity.fileId <= 0) return null
         songIdentity[key] = identity
         return identity
+    }
+
+    // ---------- 歌手 id 侧表（播放页点歌手名 → 艺人页精确直达） ----------
+    // 与 songIdentity 同构：解析歌曲时把 hash → 自带的歌手列表落 MMKV，点击时按
+    // 「正在播放歌的 hash + 点中的歌手名」反查 id。这里绝不能再退化回按名搜索——酷狗
+    // 歌手搜索不做繁简/译名归一化，歌曲里存的原名（如「高橋洋子」）会稳定搜空，
+    // 造成「歌手明明在却报未找到」。key=hash 小写，值用 org.json 数组
+    // [{"n":name,"i":id},...]（多歌手全部登记，逐名可跳）。
+
+    private val performerTable = ConcurrentHashMap<String, List<KugouPerformer>>()
+
+    private val performerStore by lazy {
+        runCatching { MMKV.mmkvWithID("kugou_performer") }.getOrNull()
+    }
+
+    /** 解析时顺带登记歌曲自带歌手；空列表不写（避免后续空解析覆盖已有信息）。 */
+    fun registerPerformers(hash: String, performers: List<KugouPerformer>) {
+        if (hash.isEmpty() || performers.isEmpty()) return
+        val key = hash.lowercase()
+        performerTable[key] = performers
+        runCatching {
+            val arr = JSONArray()
+            performers.forEach { arr.put(JSONObject().put("n", it.name).put("i", it.id)) }
+            performerStore?.encode(key, arr.toString())
+        }
+    }
+
+    /** 按 hash + 歌手名反查 singerid；内存 miss 回源 MMKV。查不到返回 null（调用方回落按名搜索）。 */
+    fun performerIdFor(hash: String, artistName: String): Long? {
+        val performers = performersFor(hash) ?: return null
+        return matchPerformerId(performers, artistName)
+    }
+
+    private fun performersFor(hash: String): List<KugouPerformer>? {
+        if (hash.isEmpty()) return null
+        val key = hash.lowercase()
+        performerTable[key]?.let { return it }
+        val persisted = runCatching {
+            performerStore?.decodeString(key)?.takeIf { it.isNotEmpty() }
+        }.getOrNull() ?: return null
+        val parsed = runCatching {
+            val arr = JSONArray(persisted)
+            (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                val name = obj.optString("n", "")
+                val id = obj.optLong("i", 0L)
+                if (name.isEmpty() || id <= 0) null else KugouPerformer(name, id)
+            }
+        }.getOrNull() ?: return null
+        if (parsed.isEmpty()) return null
+        performerTable[key] = parsed
+        return parsed
     }
 
     private var myFavoritePlaylist: KugouPlaylist? = null
@@ -2845,7 +3001,13 @@ suspend fun getRecommendPlaylistSongCount(globalCollectionId: String): Result<In
                 val hash = s.optString("hash", s.optString("Hash", ""))
                 if (hash.isEmpty()) return@runCatching null
 
-                // 歌手：实测无 singername 字段，在 singerinfo[].name（对齐 Dart KugouSongDetail）
+                // 歌手：实测无 singername 字段，在 singerinfo[].name（对齐 Dart KugouSongDetail）；
+                // 顺带取出 singerinfo[].id 登记歌手侧表，供播放页点歌手名精确直达艺人页。
+                val performers = parsePerformerArray(
+                    s.optJSONArray("singerinfo"),
+                    nameKeys = listOf("name"),
+                    idKeys = listOf("id")
+                )
                 var artist = s.optString("singername", s.optString("SingerName", ""))
                 if (artist.isEmpty()) {
                     val si = s.optJSONArray("singerinfo")
@@ -2896,6 +3058,7 @@ suspend fun getRecommendPlaylistSongCount(globalCollectionId: String): Result<In
                 ).also {
                     // 顺带登记歌曲身份（收藏增删协议需要）
                     registerSongIdentity(hash, albumIdNum, mixsongId, fileId)
+                    registerPerformers(hash, performers)
                 }
             }.getOrNull()
         }
