@@ -332,6 +332,9 @@ fun NowPlaying(
     // 外壳封面 morph：上报全屏 Album 封面节点的 LayoutCoordinates，
     // 由外壳在绘制阶段换算到外壳坐标系，得到帧间不变量。
     albumCoverCoordsOnChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
+    // 外壳封面 morph：上报顶栏 PlayingBar 69dp 小封面节点的 LayoutCoordinates
+    // （歌词/播放列表页的页面封面端点）。该节点常驻组合，任何时候都可上报。
+    barCoverCoordsOnChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
     // 外壳封面 morph 进行中时为 true：本节点停止绘制，
     // 避免与外壳的单封面层同时画出两张图。
     albumCoverSuppressed: () -> Boolean = { false },
@@ -527,8 +530,8 @@ fun NowPlaying(
         YosWrapper {
             if (isLandscape) {
                 // 横屏把手按用户参考图（红椭圆）标定：墨迹中心≈ y33dp（把手高 4.5dp，
-                // 4.5/2 + top = 33 → top=30dp）；竖屏仍走状态栏 padding + 20dp。
-                YosWrapper { NowPlayingHandle(topOverride = 30.dp) }
+                // 4.5/2 + top = 33 → top=30dp）；现按需求整体上抬 5dp → top=25dp。
+                YosWrapper { NowPlayingHandle(topOverride = 25.dp) }
                 NowPlayingLandscape(
                     mainViewModel = mainViewModel,
                     mediaViewModel = mediaViewModel,
@@ -749,13 +752,11 @@ fun NowPlaying(
                                             val isVisible = page == Album
 
                                             Album(
-                                                modifier = Modifier.sharedElementWithCallerManagedVisibility(
-                                                    sharedContentState = rememberSharedContentState(
-                                                        key = ShareAlbumKey
-                                                    ),
-                                                    visible = isVisible,
-                                                boundsTransform = MorphBoundsSpec
-                                                ),
+                                                // 封面 morph 已收敛到外壳单封面层（CoverMorphLayer）：
+                                                // 大封面节点退役 sharedElement，改为普通节点，由
+                                                // suppressed（=外壳 coverLayerActive）在过渡期隐藏，
+                                                // 静止态自行绘制。标题/按钮仍是共享元素。
+                                                modifier = Modifier,
                                                 albumUrl = { thisMusicPlaying.value?.thumb },
                                                 isPlaying = isPlayingStatusLambda,
                                                 phonePortraitExtraInset = if (isPhonePortrait) 5.dp else 0.dp,
@@ -949,15 +950,21 @@ fun NowPlaying(
                     // 顶部 PlayingBar：全局单实例常驻（AnimatedContent 之外），任何页面
                     // 切换都是同一批节点——歌词↔播放列表切换时零交接零闪动。
                     YosWrapper {
-                        // 预配对（冷启动首转场修复）：caller-managed 共享元素首次转场缺少
-                        // 顶栏图层的已记录内容与匹配残留状态，morph 会退化为瞬换（内容先
-                        // 全消失再跳动画后半段）。**预热必须在完全收起态做**——进度 0 时
-                        // 播放页整体 alpha≡0，数学上不可见；此前放在展开沿上，展开很快
-                        // 越过 alpha≈0 窗口，匹配飞行与完成态渲染在可见区间被看到（闪一下
-                        // 完成后的样式，且只在打开时出现）。收起态进入即预热一次。
+                        // 外壳单封面层是否正在接管（= 过渡进行中）。读 albumCoverSuppressed
+                        // 这个 lambda 会订阅其内部读到的 State，故这里能实时跟随外壳动画生命周期。
+                        val coverLayerActiveNow = remember {
+                            derivedStateOf { albumCoverSuppressed() }
+                        }
+                        // 预配对（冷启动首转场修复）：caller-managed 共享元素（标题/按钮）
+                        // 首次转场缺少顶栏图层的已记录内容与匹配残留状态，morph 会退化为
+                        // 瞬换（内容先全消失再跳动画后半段）。**预热必须在完全收起静止态做**
+                        // ——进度 0 时播放页整体 alpha≡0，数学上不可见。此前判据是
+                        // showMiniPlayer（progress<0.16），会在收起途中就触发，此时页面
+                        // alpha≈0.29，顶栏元素会闪出一下（也是"两层封面"的来源之一）。
+                        // 故必须等外壳不再接管（coverLayerActive 落回 false）再预热。
                         var barWarm by remember { mutableStateOf(false) }
-                        LaunchedEffect(showMiniPlayer) {
-                            if (showMiniPlayer) {
+                        LaunchedEffect(showMiniPlayer, coverLayerActiveNow.value) {
+                            if (showMiniPlayer && !coverLayerActiveNow.value) {
                                 withFrameNanos { }
                                 barWarm = true
                                 repeat(4) { withFrameNanos { } }
@@ -972,13 +979,14 @@ fun NowPlaying(
                                 .padding(top = 22.dp)
                         ) {
                             PlayingBar(
-                                modifier = Modifier.sharedElementWithCallerManagedVisibility(
-                                    sharedContentState = rememberSharedContentState(
-                                        key = ShareAlbumKey
-                                    ),
-                                    visible = barVisible,
-                                    boundsTransform = MorphBoundsSpec
-                                ),
+                                // 封面退役 sharedElement（封面 morph 已收敛到外壳单封面层）：
+                                // 过渡期由外壳层绘制本封面，本节点隐藏；静止态在歌词/播放
+                                // 列表页自行绘制。坐标上报给外壳作 bar 端点。
+                                modifier = Modifier,
+                                coverSuppressed = {
+                                    coverLayerActiveNow.value || page == Album
+                                },
+                                coverCoordsOnChanged = barCoverCoordsOnChanged,
                                 // 转场飞行画的就是本条的封面层：接上大封面的按下动效
                                 coverState = coverState,
                                 albumUrlLambda = {
@@ -2935,6 +2943,12 @@ private fun SleepTimerSliderRow(
 @Composable
 private fun PlayingBar(
     modifier: Modifier,
+    // 外壳单封面层接管期间（过渡中）或当前页不是歌词/播放列表时为 true：
+    // 本封面节点停止绘制（过渡期由外壳层绘制），并禁用点击（避免隐藏节点仍可命中）。
+    // 静止态在歌词/播放列表页自行绘制。
+    coverSuppressed: () -> Boolean = { false },
+    // 封面节点坐标上报（外壳封面 morph 的 bar 端点）。
+    coverCoordsOnChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
     // 封面交互动效的共享状态：转场时被 morph 画的就是本条的封面层，
     // 大封面的按下动效要在这一层接着画完。
     coverState: CoverArtworkState,
@@ -2962,9 +2976,16 @@ private fun PlayingBar(
         ShadowImageWithCache(
             dataLambda = albumUrlLambda, contentDescription = null, modifier = modifier
                 .size(69.dp)
+                .onGloballyPositioned { coverCoordsOnChanged(it) }
+                .graphicsLayer {
+                    // 过渡期由外壳单封面层绘制本封面，本节点在图层面隐藏
+                    // （读 State 只失效图层，不触发重组、不改布局占位）。
+                    alpha = if (coverSuppressed()) 0f else 1f
+                }
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
+                    enabled = !coverSuppressed(),
                     onClick = {
                         onAlbumClick()
                     })
@@ -3224,7 +3245,7 @@ private fun BluetoothDevice.isConnected(): Boolean {
 
 // 顶部小把手（横竖屏共用）；topOverride 非空时不再吃状态栏 padding，
 // 直接距屏顶该距离（手机横屏状态栏在侧边，沿用竖屏的 top 基准会把把手压低）。
-// 竖屏基准：状态栏下 26dp、墨迹 40×4.5dp（原 20dp/32dp，用户反馈无小白条时过高过短）。
+// 竖屏基准：状态栏下 21dp、墨迹 60×4.5dp（长度 40→60dp ×1.5，位置较 26dp 上抬 5dp）。
 @Composable
 private fun NowPlayingHandle(topOverride: Dp? = null) {
     Column(Modifier.fillMaxWidth()) {
@@ -3233,14 +3254,14 @@ private fun NowPlayingHandle(topOverride: Dp? = null) {
                 .fillMaxWidth()
                 .then(
                     if (topOverride != null) Modifier.padding(top = topOverride)
-                    else Modifier.statusBarsPadding().padding(top = 26.dp)
+                    else Modifier.statusBarsPadding().padding(top = 21.dp)
                 ), contentAlignment = Alignment.Center
         ) {
             Box(
                 Modifier
                     .overlayEffect()
                     .size(
-                        width = 40.dp,
+                        width = 60.dp,
                         height = 4.5.dp
                     )
                     .background(Color(0x4DFFFFFF), RoundedCornerShape(2.25.dp))

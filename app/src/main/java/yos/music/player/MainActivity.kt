@@ -685,7 +685,11 @@ class MainActivity : BaseActivity() {
                             var stableFrames = 0
                             val endpointRect = {
                                 if (target >= 0.5f) {
+                                    // 展开落点 = 当前页的真实封面。Album 页的大封面节点可用；
+                                    // 歌词/播放列表页它随页面离开组合而不可用，退化为顶栏 69dp
+                                    // 小封面（bar）。故按可用性择取即可，无需读当前页。
                                     localRect(coverGeometry.hero, coverGeometry.album)
+                                        ?: localRect(coverGeometry.hero, coverGeometry.bar)
                                 } else {
                                     localRect(coverGeometry.hero, coverGeometry.mini)
                                 }
@@ -836,13 +840,15 @@ class MainActivity : BaseActivity() {
                                 mutableStateOf(Album)
                             }
 
-                        // 封面 morph 是否接管绘制。
+                        // 封面单层接管绘制（唯一封面权威）。
                         //
-                        // 关键：本状态是"隐藏原封面"与"hero 层绘制"的**唯一**依据。
-                        // 三个消费点（迷你封面 alpha、Album 封面 alpha、hero 层）读的都是
-                        // 这一个值，因此不可能出现"原封面已隐藏、hero 又没画"的空窗。
+                        // 关键：本状态是"隐藏所有真实封面节点"与"封面层绘制"的**唯一**依据。
+                        // 所有消费点（大封面 alpha、顶栏 69dp 封面 alpha、迷你封面 alpha、
+                        // 封面层 active）读的都是这一个值，因此不可能出现"原封面已隐藏、
+                        // 封面层又没画"的空窗，也不可能同帧画两张。
                         //
-                        // 判据只取**动画生命周期**：拖拽占用中，或展开/收起运动 Job 存活。
+                        // 判据取**过渡生命周期**：外壳拖拽/展开收起运动 Job 存活，
+                        // 或页面封面进度 q 正在动画（大封面 ↔ 顶栏 69dp 小封面切换）。
                         //   · 运动 Job 在 finally 里清空（与 pageCorner 用的是同一个信号，
                         //     那个已经在真机验证过），所以落位后一定翻回 false，
                         //     封面随即交回真实的静态节点。
@@ -850,31 +856,60 @@ class MainActivity : BaseActivity() {
                         // 绝不能再叠加 progress 区间判断（曾经的写法）：
                         // progress 落位后停在 0.9999911（anchor 会漂），永远进不了
                         // "progress < 0.98" 这个退出条件，于是布尔值永久卡在 true——
-                        // 大封面被永久隐藏、morph 层永久在上层画，表现就是
+                        // 大封面被永久隐藏、封面层永久在上层画，表现就是
                         // 封面停在运动态、播放/暂停时下方真实封面缩放看不见（手机实测）。
                         // 这也印证了项目既有经验：落位判断不能用 progress==1 这类数值阈值。
                         //
-                        // 其余门禁：
-                        //  - 竖屏当前页是 Album：歌词/队列页的目标是 69dp 顶栏封面，不在本版范围；
-                        //    横屏左列封面在所有子页面均常驻（Lyric/PlayingList 也在左列显示同一封面），
-                        //    几何端点始终相同，故横屏不限制当前页。
-                        //  - 几何已就绪，避免首帧用错落点。
-                        // 注意横竖判定直接读 parentWidth/parentHeight，不读外层缓存的
-                        // isSplitMode：那是普通 Boolean，在 derivedStateOf 里会变成常量。
-                        val coverMorphActive = remember("MainActivity_coverMorphActive") {
+                        // 竖屏不再限制当前页：歌词/队列页的封面端点就是顶栏 69dp 小封面
+                        // （geometry.bar），由同一层按 q 在 bar↔album 间插值；横屏左列封面
+                        // 在所有子页面均常驻，几何端点相同，故横屏不限制当前页。
+                        // 几何已就绪，避免首帧用错落点。
+
+                        // 页面封面进度 q：0=顶栏 69dp 小封面（歌词/播放列表页），
+                        // 1=大封面（Album 页）。与标题/按钮共享元素同款 spring，保证封面
+                        // 与文字同拍。由 nowPageNowPlaying 驱动，纯绘制期读取。
+                        val coverPageProgress = remember("MainActivity_coverPageProgress") {
+                            Animatable(if (nowPageNowPlaying.value == Album) 1f else 0f)
+                        }
+                        LaunchedEffect(nowPageNowPlaying.value) {
+                            coverPageProgress.animateTo(
+                                targetValue = if (nowPageNowPlaying.value == Album) 1f else 0f,
+                                animationSpec = coverMorphSpring
+                            )
+                        }
+
+                        val coverLayerActive = remember("MainActivity_coverLayerActive") {
                             derivedStateOf {
-                                val split = parentWidth.intValue > 0 &&
-                                        parentHeight.intValue > 0 &&
-                                        parentWidth.intValue > parentHeight.intValue
-                                // 竖屏仅在 Album 页触发 morph（歌词/队列页目标是顶栏小封面）；
-                                // 横屏左列封面在所有子页面均常驻，几何端点相同，故横屏不限制当前页。
-                                if (!split && nowPageNowPlaying.value != Album) return@derivedStateOf false
-                                (dragActive.value || playerMotionJob.value != null) &&
-                                        coverGeometry.ready.value
+                                val shellBusy = dragActive.value || playerMotionJob.value != null
+                                // 页面切换：动画在跑，或 q 尚未落到目标值。后者专门覆盖
+                                // LaunchedEffect 启动前的那一帧——此时 isRunning 还没翻 true，
+                                // 若不接管，真实封面节点会闪出一帧（切到歌词时顶栏 69dp 小封面
+                                // 直接在顶部冒出，下一帧又被封面层拉到 Album 位，表现为"抽动/闪现"）。
+                                val pageTarget = if (nowPageNowPlaying.value == Album) 1f else 0f
+                                val pageBusy = coverPageProgress.isRunning ||
+                                        kotlin.math.abs(coverPageProgress.value - pageTarget) > 0.001f
+                                (shellBusy || pageBusy) && coverGeometry.ready.value
                             }
                         }
 
                         val navBackdropBackground = MaterialTheme.colorScheme.background
+                        // 页面底衬色：NavHost 交叉淡化时两页都半透明，底衬会以 p(1-p) 的
+                        // 权重透出（p=进场页进度）。艺人域两页底色是提取色，底衬若仍是主题色
+                        // 就会被「闪一下」（浅色泛白、深色泛黑）。故仅当转场两端都是艺人域页面
+                        // 时，底衬才铺提取色（见 ArtistPageAppearance.transitioningBackdropColor）；
+                        // 只要有一端是普通页就回退主题底——普通页自身不铺底色、直接透出底衬，
+                        // 染色会让普通页整块变成提取色（艺人页 pop 回列表页时可见）。
+                        // activeId 取当前 house 的活跃 entry（与底栏遮罩同源）。绘制期读取
+                        // （drawBehind），转场每帧只重绘不重组。
+                        val defaultPageBackground = rememberUpdatedState(navBackdropBackground)
+                        val pageBackgroundActiveId = rememberUpdatedState(activeEntry.value?.id)
+                        val pageBackgroundProvider: () -> Color = remember {
+                            {
+                                ArtistPageAppearance.transitioningBackdropColor(
+                                    activeId = pageBackgroundActiveId.value
+                                ) ?: defaultPageBackground.value
+                            }
+                        }
                         val navBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
                             GlassDiagnostics.tick(
                                 "nav_backdrop_producer",
@@ -965,7 +1000,7 @@ class MainActivity : BaseActivity() {
                                     navBackdrop = navBackdrop,
                                     pageScale = pageScale,
                                     pageCorner = pageCorner,
-                                    pageBackground = navBackdropBackground,
+                                    pageBackground = pageBackgroundProvider,
                                     scrimColorProvider = scrimColorProvider,
                                     bottomScrimHeight = bottomScrimHeight,
                                     // 渐隐段 = 迷你条自身高度：屏幕底到迷你条底边是
@@ -1775,8 +1810,12 @@ class MainActivity : BaseActivity() {
                                                     coverGeometry.album = coords
                                                     coverGeometry.refreshReady()
                                                 },
+                                                barCoverCoordsOnChanged = { coords ->
+                                                    coverGeometry.bar = coords
+                                                    coverGeometry.refreshReady()
+                                                },
                                                 albumCoverSuppressed = {
-                                                    coverMorphActive.value
+                                                    coverLayerActive.value
                                                 }
                                             )
                                         }
@@ -1835,7 +1874,7 @@ class MainActivity : BaseActivity() {
                                                         coverGeometry.mini = coords
                                                         coverGeometry.refreshReady()
                                                     },
-                                                    coverSuppressed = { coverMorphActive.value }
+                                                    coverSuppressed = { coverLayerActive.value }
                                                 )
                                             } else {
                                                 // 手机/竖屏：紧凑迷你条（43dp），尺寸按参考图实测值定。
@@ -1870,7 +1909,7 @@ class MainActivity : BaseActivity() {
                                                                         // morph 期间由外壳单封面层绘制，本节点在图层面隐藏；
                                                                         // 读 State 只失效图层，不触发重组、不改布局。
                                                                         alpha =
-                                                                            if (coverMorphActive.value) 0f else 1f
+                                                                            if (coverLayerActive.value) 0f else 1f
                                                                     }
                                                                     .onGloballyPositioned {
                                                                         coverGeometry.mini = it
@@ -1943,8 +1982,9 @@ class MainActivity : BaseActivity() {
                                         }
 
                                         // 外壳封面 morph：形变过程中由这一层单独绘制封面，
-                                        // 使迷你封面与全屏 Album 封面成为同一条 progress 上的
-                                        // 连续几何过渡，而不是两张图交叉淡入淡出。
+                                        // 使迷你封面与「当前页封面（大封面 / 顶栏 69dp 小封面）」
+                                        // 成为同一条 progress 上的连续几何过渡，而不是两张图
+                                        // 交叉淡入淡出。页面封面端点在 bar↔album 间按 q 插值。
                                         // 铺满外壳内容区（而非整屏）：这样它天然被壳裁剪，
                                         // 且局部坐标系与两个端点所在坐标系一致，
                                         // 变换量可直接使用，不必再做任何原点换算。
@@ -1954,7 +1994,8 @@ class MainActivity : BaseActivity() {
                                                 morphProgressOverride.value
                                                     ?: yosBottomSheetConfig.progress
                                             },
-                                            active = { coverMorphActive.value },
+                                            pageProgress = { coverPageProgress.value },
+                                            active = { coverLayerActive.value },
                                             geometry = coverGeometry,
                                             bitmap = { MediaViewModelObject.bitmap.value },
                                             handoffRect = morphHandoffRect.value,
@@ -1984,7 +2025,7 @@ class MainActivity : BaseActivity() {
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
         pageScale: State<Float>,
         pageCorner: State<androidx.compose.ui.unit.Dp>,
-        pageBackground: Color,
+        pageBackground: () -> Color,
         scrimColorProvider: () -> Color,
         bottomScrimHeight: Dp,
         bottomScrimFadeHeight: Dp,
@@ -2022,7 +2063,10 @@ class MainActivity : BaseActivity() {
                             shape = RoundedCornerShape(pageCorner.value)
                             clip = true
                         }
-                        .background(pageBackground)
+                        // 绘制期读取底衬色（等价于 .background(pageBackground)，但颜色随
+                        // 艺人页进出场逐帧变化，不进组合、不触发重组）。位置与 .background
+                        // 一致：在 clip 与 scale 之内、内容之下。
+                        .drawBehind { drawRect(pageBackground()) }
                 ) {
                     content()
                 }
@@ -2409,6 +2453,9 @@ private class CoverMorphGeometry {
     var page: LayoutCoordinates? = null
     var mini: LayoutCoordinates? = null
     var album: LayoutCoordinates? = null
+    // 顶栏 PlayingBar 69dp 小封面（歌词/播放列表页）。它常驻组合（在 AnimatedContent
+    // 之外），所以任何时候都能上报；页面封面端点按 q 在 bar 与 album 之间插值。
+    var bar: LayoutCoordinates? = null
     var hero: LayoutCoordinates? = null
 
     /**
@@ -2416,15 +2463,22 @@ private class CoverMorphGeometry {
      * 写进 MutableState 能正常触发失效；而 LayoutCoordinates 每次回调都是
      * 同一实例，写进 State 会被等值比较判为"没变"而不失效（此前动画
      * 时有时无的根因）。所以坐标放普通字段、就绪标志放 State。
+     *
+     * album 只在 Album 页组合时可用，bar 常驻；只要有一个页面封面端点可用即可
+     * 解算（缺 album 时退化为 bar，反之亦然）。
      */
     val ready = mutableStateOf(false)
 
     fun refreshReady() {
-        ready.value = shell != null && page != null && mini != null && album != null
+        ready.value = shell != null && page != null && mini != null &&
+                (album != null || bar != null)
     }
 
     // 迷你封面在外壳内容坐标系中的矩形（恒定：始终在壳顶下方 11dp）。
     fun miniInHero(hero: LayoutCoordinates?): Rect? = localRect(hero, mini)
+
+    // 顶栏 69dp 小封面在外壳内容坐标系中的矩形。
+    fun barInHero(hero: LayoutCoordinates?): Rect? = localRect(hero, bar)
 
     // 全屏 Album 封面在**外壳内容坐标系**中的矩形。
     //
@@ -2458,23 +2512,35 @@ private fun localRect(space: LayoutCoordinates?, child: LayoutCoordinates?): Rec
     }
 }
 
-// 视觉圆角：迷你封面 4dp → 全屏 Album 8dp，与 ShadowImageWithCache 的入参保持一致。
-// 两处迷你封面（手机 28dp / 平板 40dp）的 cornerRadius 必须与此同步，
-// 否则 morph 交接瞬间圆角会跳变。
+// 视觉圆角：迷你封面 4dp → 顶栏 69dp 小封面 5dp → 全屏 Album 8dp，与
+// ShadowImageWithCache 的入参保持一致。各处迷你/顶栏封面的 cornerRadius
+// 必须与此同步，否则 morph 交接瞬间圆角会跳变。
 private val morphCornerStartDp = 4f
+private val morphCornerBarDp = 5f
 private val morphCornerEndDp = 8f
+
+// 页面封面进度 q 的动画规格：与 NowPlaying 的标题/按钮共享元素 morph 同款
+// spring(1.2f, 800f, 0.001f)，保证封面与文字同曲线同拍。
+private val coverMorphSpring = spring<Float>(
+    dampingRatio = 1.2f,
+    stiffness = 800f,
+    visibilityThreshold = 0.001f
+)
 
 // 封面 morph 层的布局基准上限：与 NowPlaying 全屏封面的限宽一致。
 // 基准取"不小于两个端点"的尺寸，于是整个 morph 只缩小、不放大，
 // 图片始终以足够的分辨率绘制，不会出现先放大再缩小的糊边。
 private val morphBaseMaxWidth = 460.dp
 
-// 一次 morph 的解算结果：hero 层局部坐标下的目标矩形，以及相对基准的缩放。
+// 一次 morph 的解算结果：hero 层局部坐标下的目标矩形、相对基准的缩放，
+// 以及**实际生效的页面封面档位** pageT（0=顶栏 69dp 小封面，1=大封面）——
+// 用于圆角等样式的插值。横屏没有顶栏小封面（bar 不可用）时 pageT 恒为 1。
 private class MorphFrame(
     val left: Float,
     val top: Float,
     val size: Float,
-    val scale: Float
+    val scale: Float,
+    val pageT: Float
 )
 
 // 解算当前帧：两个端点都已在"外壳内容坐标系"中，直接按 progress 直线插值。
@@ -2492,11 +2558,29 @@ private fun resolveMorphFrame(
     geometry: CoverMorphGeometry,
     hero: LayoutCoordinates?,
     progress: Float,
+    pageProgress: Float,
     basePx: Float,
     handoffRect: Rect? = null
 ): MorphFrame? {
     val mini = geometry.miniInHero(hero) ?: return null
-    val album = handoffRect ?: geometry.albumInHero(hero) ?: return null
+    // 页面封面端点：q=0 顶栏 69dp 小封面、q=1 大封面。两个端点都在时按 q 直线插值；
+    // 只有一个可用时退化为该端点（Album 页 album 可用、歌词/播放列表页 album 随
+    // 页面离开组合而不可用，此时 q 也必然为 0，退化为 bar 与插值结果一致）。
+    val bar = geometry.barInHero(hero)
+    val album = geometry.albumInHero(hero)
+    val pageCover = handoffRect ?: when {
+        album != null && bar != null -> lerpRect(bar, album, pageProgress.coerceIn(0f, 1f))
+        album != null -> album
+        bar != null -> bar
+        else -> null
+    } ?: return null
+    // 实际生效的页面封面档位：两端都在时按 q 插值；只有一端时恒为那一端
+    // （横屏没有 bar → 恒为大封面档）。
+    val pageT = when {
+        album != null && bar != null -> pageProgress.coerceIn(0f, 1f)
+        album != null -> 1f
+        else -> 0f
+    }
     if (basePx <= 0f) return null
     val p = progress.coerceIn(0f, 1f)
     // 封面视觉上必须始终是正方形。真实图片节点由 fillMaxWidth()
@@ -2504,21 +2588,21 @@ private fun resolveMorphFrame(
     // 否则一个测量上的高度差会让 morph 最后一帧比静态封面小，交接时突然放大。
     // 高度只作为诊断意义上的布局信息，不参与正方形尺寸解算。
     val miniSize = mini.width
-    val albumSize = album.width
-    if (miniSize <= 0f || albumSize <= 0f) return null
-    var size = miniSize + (albumSize - miniSize) * p
+    val pageSize = pageCover.width
+    if (miniSize <= 0f || pageSize <= 0f) return null
+    var size = miniSize + (pageSize - miniSize) * p
     if (size <= 0f) return null
     val miniCenter = Offset(
         mini.left + miniSize / 2f,
         mini.top + miniSize / 2f
     )
-    val albumCenter = Offset(
-        album.left + albumSize / 2f,
-        album.top + albumSize / 2f
+    val pageCenter = Offset(
+        pageCover.left + pageSize / 2f,
+        pageCover.top + pageSize / 2f
     )
     val center = Offset(
-        miniCenter.x + (albumCenter.x - miniCenter.x) * p,
-        miniCenter.y + (albumCenter.y - miniCenter.y) * p
+        miniCenter.x + (pageCenter.x - miniCenter.x) * p,
+        miniCenter.y + (pageCenter.y - miniCenter.y) * p
     )
     var left = center.x - size / 2f
     var top = center.y - size / 2f
@@ -2535,8 +2619,16 @@ private fun resolveMorphFrame(
         left = left.coerceIn(0f, (heroW - size).coerceAtLeast(0f))
         top = top.coerceIn(0f, (heroH - size).coerceAtLeast(0f))
     }
-    return MorphFrame(left, top, size, size / basePx)
+    return MorphFrame(left, top, size, size / basePx, pageT)
 }
+
+// 两个矩形按 t 直线插值（逐分量）。
+private fun lerpRect(a: Rect, b: Rect, t: Float): Rect = Rect(
+    left = a.left + (b.left - a.left) * t,
+    top = a.top + (b.top - a.top) * t,
+    right = a.right + (b.right - a.right) * t,
+    bottom = a.bottom + (b.bottom - a.bottom) * t
+)
 
 /**
  * 外壳单封面层：在迷你封面矩形与全屏 Album 封面矩形之间，按同一条 progress
@@ -2559,6 +2651,7 @@ private fun resolveMorphFrame(
 @Composable
 private fun CoverMorphLayer(
     progress: () -> Float,
+    pageProgress: () -> Float,
     active: () -> Boolean,
     geometry: CoverMorphGeometry,
     bitmap: () -> Any?,
@@ -2623,6 +2716,7 @@ private fun CoverMorphLayer(
             geometry,
             geometry.hero,
             progress(),
+            pageProgress(),
             basePx,
             handoffRect = handoffRect
         )
@@ -2638,8 +2732,11 @@ private fun CoverMorphLayer(
         // 圆角用**和真实封面同一个形状类**（YosRoundedCornerShape，超椭圆连续圆角），
         // 不能图省事用 RoundRect：同为 6dp，超椭圆角与正圆弧角的观感不同，
         // 交接瞬间能看出角部形状跳变（真机实测）。
+        // 页面封面档圆角随 frame.pageT 在「顶栏 69dp 5dp ↔ 大封面 8dp」间插值，
+        // 再与迷你档 4dp 按 p 插值，保证三个静止端点交接时圆角都逐像素一致。
+        val pageCornerDp = morphCornerBarDp + (morphCornerEndDp - morphCornerBarDp) * frame.pageT
         val radiusDp = (morphCornerStartDp +
-                (morphCornerEndDp - morphCornerStartDp) * p).dp
+                (pageCornerDp - morphCornerStartDp) * p).dp
         val shape = YosRoundedCornerShape(radiusDp)
         val frameRect = Rect(Offset(frame.left, frame.top), Size(side, side))
         // createOutline 生成的轮廓永远位于坐标原点 (0,0)，而封面画在
@@ -2667,6 +2764,10 @@ private fun CoverMorphLayer(
                 alpha = shadowAlpha,
                 blurPx = shadowBlurPx,
                 shadowType = shadowType,
+                // 阴影垂直偏移随页面档位插值：pageT=0 对齐顶栏 69dp 封面的 Small(0.11)，
+                // pageT=1 对齐大封面的 Large(0.08)，交接瞬间阴影不跳。
+                offsetYOverride = morphShadowOffsetYBar +
+                        (morphShadowOffsetYAlbum - morphShadowOffsetYBar) * frame.pageT,
                 density = this,
                 maskFilter = shadowMaskFilter
             )
@@ -2694,6 +2795,11 @@ private fun CoverMorphLayer(
 
 // 封面阴影透明度上限，与 ShadowImageWithCache 的默认 shadowAlpha 一致。
 private const val morphShadowAlpha = 0.23f
+
+// 封面 morph 阴影的垂直偏移权重两端点：顶栏 69dp 封面档用 ShadowType.Small(0.11)、
+// 大封面档用 ShadowType.Large(0.08)。按 pageT 插值，交接瞬间阴影不跳。
+private val morphShadowOffsetYBar = ShadowType.Small.offsetY
+private val morphShadowOffsetYAlbum = ShadowType.Large.offsetY
 
 /**
  * 以 ContentScale.Crop 的语义把 Painter 画进 box。
@@ -2738,7 +2844,10 @@ private fun DrawScope.drawCoverShadow(
     shadowType: ShadowType,
     density: androidx.compose.ui.unit.Density,
     // 由调用方 remember 的模糊滤镜，避免每帧分配。
-    maskFilter: android.graphics.BlurMaskFilter? = null
+    maskFilter: android.graphics.BlurMaskFilter? = null,
+    // 覆盖 shadowType 的垂直偏移权重：封面 morph 需要随页面档位插值
+    // （顶栏 69dp 档=Small 0.11，大封面档=Large 0.08），否则交接瞬间阴影会跳 ~2dp。
+    offsetYOverride: Float? = null
 ) {
     val w = frameRect.width
     val h = frameRect.height
@@ -2751,7 +2860,8 @@ private fun DrawScope.drawCoverShadow(
         density
     )
     val offsetX = shadowType.offsetX * w + (w * (1f - weight)) / 2f
-    val offsetY = shadowType.offsetY * h + (h * (1f - weight)) / 2f
+    val offsetYWeight = offsetYOverride ?: shadowType.offsetY
+    val offsetY = offsetYWeight * h + (h * (1f - weight)) / 2f
 
     paint.color = Color(0xFF000000).copy(alpha = alpha)
     paint.blendMode = BlendMode.Overlay
