@@ -1715,6 +1715,23 @@ object KugouRepository {
         return list.firstOrNull { it.isDef == 2 }?.also { myFavoritePlaylist = it }
     }
 
+    private var systemPlaylistIds: Set<String>? = null
+
+    /**
+     * 定位所有系统歌单（is_def != 0：「默认收藏」=1、「我喜欢」=2）的归一化 id（listid 优先，空则 gid）。
+     * 仅按 is_def 判定，不按名称（酷狗可能返回同名普通歌单）。系统歌单服务端返回顺序与普通歌单不同，
+     * 取歌后需统一反转（见 [getPlaylistSongs]）；「默认收藏」对老资历用户也可能是其收藏歌单，故一并反转。
+     * 结果进程内缓存（系统歌单 id 恒为 1/2，跨账号亦稳定）；拉取失败返回空集且不缓存，不阻断正常加载。
+     */
+    suspend fun findSystemPlaylistIds(): Set<String> {
+        systemPlaylistIds?.let { return it }
+        val list = getMyPlaylists().getOrNull() ?: return emptySet()
+        return list.filter { it.isDef != 0 }
+            .map { it.listid.ifEmpty { it.gid } }
+            .toSet()
+            .also { systemPlaylistIds = it }
+    }
+
     /**
      * 同步云端收藏状态：定位「我喜欢」→ 分页拉全量歌曲 → hash 集合灌入 [favoriteHashes]。
      * App 启动/登录态恢复后调用一次；同步时会顺带登记 fileid 等身份（供后续删除使用）。
@@ -2779,9 +2796,9 @@ object KugouRepository {
      * 响应带 data.count 总数；单页请求会导致百首歌单只入队前 30 首，
      * 故按页拉全（pagesize=200，对齐 Dart playlist_page.dart 全量策略），
      * 上限 9999 首防异常响应无限翻页。
-     * 顺序：普通歌单服务端即存储顺序，原样返回；系统「我喜欢」（is_def==2）
-     * 服务端返回新收藏在最前，此处反转成收藏先后顺序（对齐 MD3 playlist_page
-     * 的显示语义），仅命中该列表，不影响其他歌单。
+     * 顺序：普通歌单服务端即存储顺序，原样返回；系统歌单（is_def != 0：「默认收藏」is_def==1、
+     * 「我喜欢」is_def==2）服务端返回顺序与普通歌单不同，统一反转成「最新添加在最前」
+     * （与「我喜欢」同一逻辑，对齐 MD3 playlist_page 的显示语义），仅命中系统歌单，不影响其他歌单。
      * 实测字段：timelen 单位毫秒；歌手在 singerinfo[].name；
      * name 可能为"歌手 - 歌名.mp3"形式，展示前去除扩展名与歌手前缀。
      */
@@ -2825,13 +2842,13 @@ object KugouRepository {
                     if (batch.size < pageSize || (total in 0..maxSongs && all.size >= total)) break
                     page++
                 }
-                // 仅当请求的就是系统「我喜欢」时反转（listid/gid 与 findMyFavoritePlaylist
-                // 同源归一化，PlaylistSelection.id 也是 listid.ifEmpty { gid }，可直接比对）。
-                // findMyFavoritePlaylist 失败返回 null，不阻断正常加载。
-                val favoriteListid = runCatching {
-                    findMyFavoritePlaylist()?.let { it.listid.ifEmpty { it.gid } }
-                }.getOrNull()
-                val ordered = if (favoriteListid != null && favoriteListid == listid) {
+                // 仅当请求的就是系统歌单（is_def != 0：「默认收藏」1、「我喜欢」2）时反转
+                // （listid/gid 与 findSystemPlaylistIds 同源归一化，PlaylistSelection.id 也是
+                // listid.ifEmpty { gid }，可直接比对）。老资历用户的收藏也可能落在「默认收藏」，
+                // 故两类系统歌单走同一反转逻辑，保证顺序一致（最新添加在最前）。
+                // findSystemPlaylistIds 失败返回空集，不阻断正常加载。
+                val systemIds = runCatching { findSystemPlaylistIds() }.getOrDefault(emptySet())
+                val ordered = if (listid in systemIds) {
                     all.asReversed()
                 } else {
                     all

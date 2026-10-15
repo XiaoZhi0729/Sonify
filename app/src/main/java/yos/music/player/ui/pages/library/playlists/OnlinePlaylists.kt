@@ -141,10 +141,15 @@ fun OnlinePlaylists(
         scope.launch {
             KugouRepository.getMyPlaylists()
                 .onSuccess { rawList ->
+                    // 空的系统「默认收藏」歌单（is_def==1 且 count==0）默认隐藏：它是酷狗
+                    // 账号级系统歌单（与「我喜欢」is_def==2 成对，注册时服务端自动创建），
+                    // 空壳显示出来只会造成困惑；一旦有歌（count>0）照常出现。
+                    // 只按 is_def 判定，勿用名字匹配（酷狗可能返回同名普通歌单）。
+                    val visibleRaw = rawList.filterNot { it.isDef == 1 && it.songCount == 0 }
                     // 先立即填充上次解析出的封面（MMKV 落盘）：「我喜欢」等系统歌单
                     // /user/playlist 不返回封面，进页瞬间行 coverUrl 为空会先闪兜底占位图，
                     // 种子数据消掉空窗；下方后台兜底仍会重跑，结果变化时行内热更新
-                    var list = rawList.map { pl ->
+                    var list = visibleRaw.map { pl ->
                         if (pl.coverUrl.isEmpty()) {
                             pl.copy(coverUrl = playlistCoverCache.decodeString(pl.listid.ifEmpty { pl.gid }).orEmpty())
                         } else pl
@@ -183,7 +188,7 @@ fun OnlinePlaylists(
                     // 详情接口也无封面时再降级取歌单内第一首有封面的歌（情况 C），
                     // 三级都无则保持空（占位图展示，不伪造 URL）
                     scope.launch {
-                        rawList.filter { it.coverUrl.isEmpty() }.forEach { pl ->
+                        visibleRaw.filter { it.coverUrl.isEmpty() }.forEach { pl ->
                             var cover = KugouRepository.resolvePlaylistCover(pl)
                             if (cover.isNullOrEmpty()) {
                                 cover = KugouRepository.resolvePlaylistCoverFromTracks(
