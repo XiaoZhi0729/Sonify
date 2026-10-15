@@ -2,8 +2,13 @@ package yos.music.player.ui.pages.library.artists
 
 import android.graphics.Color as AndroidColor
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -80,6 +85,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -132,6 +138,7 @@ import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.repositories.KugouArtistDetailData
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.navigation.ArtistArtworkColors
+import yos.music.player.ui.navigation.artistIdentityRgb
 import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.widgets.basic.circleEdgeLight
@@ -160,7 +167,9 @@ import yos.music.player.ui.widgets.basic.LiquidTopBarButton
  * 解析链不变：入参只有歌手名（本地歌手无在线 id）时先 /search/artist 解析出 singerid
  * （同名精确匹配优先），再拉 /artist/detail 头部 + /artist/audios 分页歌曲。
  * 歌曲分页状态与整页共享于 [ArtistSongsObject]（横排翻页追加、整页拉到完）。
- * 简介收进液态玻璃底部弹窗 [ArtistIntroSheet]；关注按钮需登录（乐观更新，失败回滚）。
+ * 简介点击「i」后在页内联展开（item "Intro"，位于头部信息与内容区之间），不再走弹窗；
+ * 正文复用「最新专辑」卡片的次级文字材质（取色明暗分流 + 暗底加色微光）。
+ * 关注按钮需登录（乐观更新，失败回滚）。
  */
 
 /** 手机 hero 高度占屏比例（旧公式，保护性保留，勿改）。 */
@@ -243,13 +252,37 @@ fun ArtistDetail(
         else -> screenWidthDp / (screenHeightDp * HeroPhoneHeightFraction).coerceAtLeast(200f)
     }
     val avatarUrl = detail.value?.avatarUrl?.takeIf { it.isNotBlank() }
-    // 取色键优先由头像 URL 派生；详情缓存未命中（avatarUrl 未知）时回落到持久化的
-    // "artistId#aspect → paletteKey" 索引，保证首帧就能读到缓存色，不再接近白底再渐变。
-    val paletteKey = avatarUrl?.let { "$it#bottom-weighted-v2-128-$heroAspect" }
+    // 无照片歌手（酷狗未上传头像 → avatarUrl 恒为 null）不能沿用「从照片取色」的链路：
+    // 该链路下整页背景退化为主题兜底 0xFFF2F2F4/0xFF1B1B1D，恰好等于页面底色，hero 与
+    // 内容区毫无分界，观感即「白板 + 没有背景色」。改由艺人标识派生身份色顶上。
+    // 两种"无可用头像"：① avatarUrl 为空（详情已定，避免加载中误判致有图歌手闪一帧）；
+    // ② 有 URL 但解码失败（heroDecodeFailed）或加载失败（heroImageFailed，Coil onError）。
+    // 这两个失败状态在此处提前声明——下方取色键与身份色判定都要读它们。
+    var heroImageFailed by remember(avatarUrl) { mutableStateOf(false) }
+    val heroDecodeFailed = remember(avatarUrl) { mutableStateOf(false) }
+    val avatarAbsent = detail.value != null && avatarUrl == null
+    val noUsableAvatar = avatarAbsent || heroImageFailed || heroDecodeFailed.value
+    // 身份标识：优先酷狗数值 artistId（跨语言稳定）；拿不到才退化为歌手名。
+    val identitySeed = resolvedId.value.takeIf { it.isNotBlank() }
+        ?: detail.value?.name?.takeIf { it.isNotBlank() }
+        ?: artistName.takeIf { it.isNotBlank() }
+    val identityPaletteKey = identitySeed?.let { "artist-identity:$it#$heroAspect" }
+    // 取色键优先由头像 URL 派生；无可用头像时改用身份派生键；详情缓存未命中（avatarUrl
+    // 未知）时回落到持久化的 "artistId#aspect → paletteKey" 索引，保证首帧就能读到缓存色，
+    // 不再接近白底再渐变。
+    val avatarPaletteKey = avatarUrl
+        ?.takeIf { !heroImageFailed && !heroDecodeFailed.value }
+        ?.let { "$it#bottom-weighted-v2-128-$heroAspect" }
+    val paletteKey = avatarPaletteKey
+        ?: (if (noUsableAvatar) identityPaletteKey else null)
         ?: resolvedId.value.takeIf { it.isNotBlank() }
             ?.let { ArtistPresentationCache.paletteKeyFor(it, heroAspect) }
     val paletteState = remember(paletteKey) { paletteKey?.let(ArtistPresentationCache::palette) }
-    val originalRgb = paletteState?.value
+    // 身份派生色：本地确定值，无需解码，首帧直接参与取色（paletteState 可能尚未落值）。
+    val identityRgb = remember(identitySeed, noUsableAvatar, isDark) {
+        identitySeed?.takeIf { noUsableAvatar }?.let { artistIdentityRgb(it, isDark) }
+    }
+    val originalRgb = paletteState?.value ?: identityRgb
     val artworkColors = remember(originalRgb, isDark) { ArtistArtworkColors.fromRgb(originalRgb, isDark) }
     val hasResolvedArtwork = originalRgb != null
     val bgColorState = animateColorAsState(
@@ -257,6 +290,9 @@ fun ArtistDetail(
         animationSpec = if (hasResolvedArtwork) tween(600) else tween(0),
         label = "artistPageBg"
     )
+    // 取色未解析（或无图歌手兜底）时页面实际铺的底色。揭示门未开期间页面透出的就是它，
+    // 故「当前显示底色」的插值起点必须用它，而不是最终提取色（见下方 scrimColorState）。
+    val placeholderAccent = remember(isDark) { ArtistArtworkColors.fromRgb(null, isDark).accent }
     // 页面背景色必须**组合期读取、捕获值进绘制 lambda**：此页绘制期的状态观察会断链
     // （调色板就绪后目标色已切、组合期读者全部更新，唯绘制期钉在进入前的主题兜底色
     // 浅 0xFFF2F2F4/深 0xFF1B1B1D，倒影淡出带半透明透出它 = 用户看到的「过渡带从上到下
@@ -270,11 +306,21 @@ fun ArtistDetail(
     }
     val contentColor = if (hasResolvedArtwork) artworkColors.content
     else if (isDark) Color.White else Color(0xFF161616)
-    DisposableEffect(entryId, bgColorState, scrimTransition) {
-        // 进度与页面 fadeIn/fadeOut 同帧同曲线（同一 AnimatedContent Transition），
-        // 底栏遮罩用它把默认色向本页背景色同步插值（见 ArtistPageAppearance）。
-        val registration = ArtistPageAppearance.register(entryId, bgColorState, scrimTransition)
-        onDispose { ArtistPageAppearance.unregister(entryId, registration) }
+    // 底栏渐隐遮罩（NavPageVisual 底部渐变）与本页共享同一个注册色，注册的是
+    // 「当前实际显示的页面底色」而非最终提取色——揭示门未开时页面还透着导航底衬，
+    // 遮罩必须跟着停在兜底色，否则会出现「页面仍是主题底、底栏那段渐变却已经变成歌手
+    // 提取色」的错位（它比照片/取色/倒影更早到场）。注册动作随揭示门 alpha 移到
+    // BoxWithConstraints 内（那里才算得出 backdropAlpha），见下方 scrimColorState。
+    // 把身份派生色落进调色板缓存：① 子页面/底栏遮罩经 palette(key) 读到同一色；
+    // ② 登记 artistId#aspect → key，令「二次进入且详情缓存未命中」也能首帧取到派生色。
+    // 用 LaunchedEffect（按 key 去重、只跑一次）而非 SideEffect（每次重组都跑），避免每帧触达缓存。
+    LaunchedEffect(identityPaletteKey, identityRgb, heroAspect) {
+        if (identityPaletteKey != null && identityRgb != null) {
+            ArtistPresentationCache.seedPalette(identityPaletteKey, identityRgb)
+            resolvedId.value.takeIf { it.isNotBlank() }?.let {
+                ArtistPresentationCache.rememberArtistPalette(it, heroAspect, identityPaletteKey)
+            }
+        }
     }
     // 登记本页 artistId → 调色板缓存键：子页面按来源读缓存 State 实时取色，
     // 与艺人页是否仍在组合无关（快速点进专辑也不怕调色板被取消）
@@ -322,9 +368,13 @@ fun ArtistDetail(
             if (id.isBlank()) {
                 val matches = KugouRepository.searchArtists(artistName).getOrThrow()
                 ensureActive()
-                val brief = matches.firstOrNull { it.name.equals(artistName, ignoreCase = true) }
+                val viaName = matches.firstOrNull { it.name.equals(artistName, ignoreCase = true) }
                     ?: matches.firstOrNull()
-                if (brief == null || brief.singerId.isBlank()) {
+                // /search/artist 不做繁简/译名归一化，对新歌手/外国艺人稳定零命中
+                // （实测 SIENNA SPIRO 返回 data:null）→ 改用歌曲搜索取歌曲自带的 singerid 兜底。
+                val brief = viaName?.takeIf { it.singerId.isNotBlank() }
+                    ?: KugouRepository.searchArtistBySongSearch(artistName)
+                if (brief == null) {
                     resolveError.value = context.getString(R.string.artist_detail_not_found)
                     return@LaunchedEffect
                 }
@@ -403,8 +453,15 @@ fun ArtistDetail(
     val heroRevealed = remember(avatarUrl) {
         mutableStateOf(hasResolvedArtwork || cachedDetail != null)
     }
-    LaunchedEffect(avatarUrl, heroAspect) {
-        val url = avatarUrl ?: return@LaunchedEffect
+    LaunchedEffect(avatarUrl, heroAspect, noUsableAvatar) {
+        // 无可用头像（无 url，或 url 加载/解码已失败）：无照片可取色，直接揭示，
+        // hero 交给身份派生色 + monogram 分支渲染。旧实现在此静默返回，揭示门永久关闭
+        // → 英雄区永久空白，正是本 bug 的机制。
+        if (avatarUrl == null || heroImageFailed || heroDecodeFailed.value) {
+            if (noUsableAvatar) heroRevealed.value = true
+            return@LaunchedEffect
+        }
+        val url = avatarUrl
         val cacheKey = paletteKey ?: return@LaunchedEffect
         val bitmap = runCatching {
             context.imageLoader.execute(
@@ -417,7 +474,11 @@ fun ArtistDetail(
                     .diskCacheKey(url)
                     .build()
             ).drawable?.toBitmap()
-        }.getOrNull() ?: return@LaunchedEffect
+        }.getOrNull() ?: run {
+            heroDecodeFailed.value = true
+            heroRevealed.value = true
+            return@LaunchedEffect
+        }
         heroBitmap.value = bitmap
         // 取色仍在缓存自身 scope 上算（不随本页销毁取消，子页面仍能读到）；这里 await 只为
         // 「照片与提取色同帧落位」—— 取色算完当帧才揭示照片，替换掉旧的两段式 fire-and-forget。
@@ -553,7 +614,7 @@ fun ArtistDetail(
     CompositionLocalProvider(LocalContentColor provides contentColor) {
     val bgDrawHolder = remember { longArrayOf(Long.MIN_VALUE) }
     BoxWithConstraints(
-        Modifier.fillMaxSize().background(bg)
+        Modifier.fillMaxSize()
     ) {
         // 平板竖屏内容整体上抬 40dp：方形 hero 让列表起始过低，直接减在 hero 高度上
         // （其余比例与此前的 SquareFullBleed 方案一致，hero 略小于正方，裁切可忽略）。
@@ -581,16 +642,88 @@ fun ArtistDetail(
         val bandHeightPx = with(density) { bandHeight.toPx() }
         val bakeWidthPx = with(density) { heroMaxWidth.toPx() }
         val maxBlurPx = with(density) { ArtistReflectionMaxBlurDp.dp.toPx() }
+        // 烘焙几何与缓存键提到组合期（原先在烘焙 effect 内算）：只有这样首帧才能同步探
+        // 内存缓存 [HeroBakeCache.memoryGet]，命中即首帧落位（回访「倒影秒出」）。几何只依赖
+        // 盒尺寸，不依赖源位图，故组合期可算；计算逐字与旧 effect 内一致。
+        val edgeReflection = portraitTablet || isLandscape
+        val bakeScale = (HeroBakeMaxWidthPx / bakeWidthPx).coerceAtMost(1f)
+        val bakeW = (bakeWidthPx * bakeScale).roundToInt().coerceAtLeast(1)
+        val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
+        val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
+        val bakeBlurPx = maxBlurPx * bakeScale
+        val bakeCacheKey = remember(avatarUrl, heroAspect, edgeReflection, bakeW, bakePhotoH, bakeBandH) {
+            avatarUrl?.let { "$it|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}" }
+        }
         // 烘焙位图按头像 URL 记忆（不含几何尺寸）：旋转等尺寸变化触发重烘焙期间保留旧图
         // 继续显示——回到同方向后旧图与新盒子几何一致，交换逐像素相同完全无感；烘焙失败也
         // 不丢图。此前按尺寸做 remember key 且 effect 开头先置空，旋转后合成图立刻消失、
         // 只剩 item 里一张无倒影的锐利 1:1 原图，直到重烘焙落地（有几率长达数秒甚至永久）。
+        // 初值同步探内存缓存（主线程安全）：命中则首帧即非空，揭示门首帧即开、不加渐入。
         var bakedHero by remember(avatarUrl) {
-            mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+            mutableStateOf(bakeCacheKey?.let(HeroBakeCache::memoryGet))
         }
         var pendingHeroBake by remember(avatarUrl) {
             mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
         }
+        // 烘焙「落地」兜底：成功时只在 [pendingHeroBake] 提升门（视口静止）放行后才算落地，
+        // 故成功分支不置此位；仅烘焙失败（或解码失败）时置真，避免揭示门干等一个永不到来的
+        // 倒影——退化为「锐利照片 + 提取色」硬衔接（与旧行为一致）。
+        var backdropBakeSettled by remember(avatarUrl) { mutableStateOf(false) }
+        // 背景「整体揭示」门：hero 照片 + 提取色底 + 倒影/渐变模糊三者加载时序不同，
+        // 各自就绪各自上屏 → 冷启动「空白底→照片→取色渐变→倒影突现」四段式。这里把它们
+        // 绑到同一条 [backdropAlpha] 上：门未开前英雄区不显示背景（透出导航底衬），门开后
+        // 三者同帧渐入。文字/圆钮/列表不参与，照常先出。判据收敛到可单测的纯函数。
+        val backdropReady = artistBackdropReady(
+            immersiveBackdrop = !isLandscape,
+            // 必须「详情已定且无头像」：冷启动首帧详情未返回，裸判 avatarUrl==null 会让门
+            // 先开后关（alpha 1→0→1 闪一下）。无头像即无背景元素可等，直接放行。
+            // 加载/解码失败同样无照片可等（回落到身份派生色 + monogram），一并放行。
+            avatarAbsent = noUsableAvatar,
+            contentResolved = heroRevealed.value,
+            // 烘焙产物就绪即算落地，不必等「视口静止」的提升门（该门只影响何时把合成图
+            // 从 pending 换到 baked，且同几何交换逐像素相同、晚几步无观感差异）。若把门
+            // 绑死在提升门，用户在烘焙落地前把英雄区滑出视口会让提升门永远等不到，
+            // 全屏底色随之永不显示。失败/解码失败仍由另外两位兜底，不让门干等。
+            bakeSettled = bakedHero != null || pendingHeroBake != null ||
+                backdropBakeSettled || heroDecodeFailed.value
+        )
+        // 首帧初值 = target：内存烘焙缓存命中（或已有缓存取色）时首帧即 1f、不产生任何动画，
+        // 满足回访「秒出」。单向保持（不回转）由门自身的单向性保证。
+        // 组合期读成普通 Float 再进绘制/图层 lambda（同 bg 的处理）：本页绘制期状态观察会
+        // 断链，不能依赖绘制期读 State 触发重绘，必须走「重组 → 捕获值进 modifier → diff」。
+        // State 本体保留给 scrimColorState（底栏遮罩在绘制期读它，见下）。
+        val backdropAlphaState = animateFloatAsState(
+            targetValue = if (backdropReady) 1f else 0f,
+            animationSpec = if (backdropReady) tween(400) else tween(0),
+            label = "artistBackdropReveal"
+        )
+        val backdropAlpha = backdropAlphaState.value
+        // 注册给底栏遮罩的颜色 = 「当前实际显示的页面底色」：门未开时停在兜底色，
+        // 门开后与照片/取色/倒影同一条 400ms 曲线滑到提取色，消除「底栏那段底部渐变
+        // 抢先变成歌手色」的错位。derivedStateOf 让 NavPageVisual 在绘制期读到时
+        // 拿到当帧值，不额外触发本页重组。
+        val scrimColorState = remember(placeholderAccent) {
+            derivedStateOf { lerp(placeholderAccent, bgColorState.value, backdropAlphaState.value) }
+        }
+        DisposableEffect(entryId, scrimColorState, scrimTransition) {
+            // 进度与页面 fadeIn/fadeOut 同帧同曲线（同一 AnimatedContent Transition），
+            // 底栏遮罩用它把默认色向本页背景色同步插值（见 ArtistPageAppearance）。
+            val registration = ArtistPageAppearance.register(entryId, scrimColorState, scrimTransition)
+            onDispose { ArtistPageAppearance.unregister(entryId, registration) }
+        }
+        // 全屏底色随背景揭示门渐入：门未开前整页不铺提取色/兜底色，透出 NavPageVisual 底衬
+        // （从普通页进入=主题色，与今天「空白底」同色；艺人页互转=上一个歌手的提取色）。
+        // 颜色与 alpha 在组合期捕获为普通值，绘制期只读捕获值（此页绘制期状态观察会断链，见上）。
+        // BoxWithConstraints 的子项按声明序叠放，本层作为第一个子项铺在内容之下。
+        // （不能写成容器自身的 .background(bg)：gate 依赖 bakedHero，而 bakedHero 依赖
+        //  maxWidth 派生的烘焙几何，只能在 BoxWithConstraints 作用域内求值。）
+        val backdropFill = bg
+        val backdropFillAlpha = backdropAlpha
+        Box(
+            Modifier
+                .fillMaxSize()
+                .drawBehind { drawRect(color = backdropFill, alpha = backdropFillAlpha) }
+        )
         // Hero item 视口偏移：横竖屏切换的全树重测会让「绘制期 lambda 直接读
         // derivedStateOf(layoutInfo)」的观察链断链——层冻结在失效前一帧（列表已滚走、
         // 合成图钉在屏幕上，而同一 layoutInfo 的组合期读者如小标题仍正常）。改为协程层
@@ -613,28 +746,21 @@ fun ArtistDetail(
         LaunchedEffect(avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
             // 横屏（平板+手机）走横向头部（照片在左、无「照片底边向下」区域），不烘焙倒影。
             if (isLandscape) return@LaunchedEffect
+            // 加载/解码失败：无源位图可烘，直接返回（否则会拿 url 键做无意义磁盘查询）。
+            if (avatarUrl == null || heroImageFailed || heroDecodeFailed.value) return@LaunchedEffect
             // 延展模式（方形 hero：平板竖屏）的带内要随深度溶入提取色——照片底部区域常是
             // 大片白/浅色，调色板未就绪就烘焙会烘出错误着色的带（用户时序判断:过渡带不能用兜底色显示）。
             // 先让上屏照片顶住,调色板到位后本 effect 因 key 变化自动重烘焙。
             if (portraitTablet && originalRgb == null) return@LaunchedEffect
-            // 几何只依赖盒尺寸（不依赖源位图），故缓存命中无需先等 1024px 解码。
-            val bakeScale = (HeroBakeMaxWidthPx / bakeWidthPx).coerceAtMost(1f)
-            val bakeW = (bakeWidthPx * bakeScale).roundToInt().coerceAtLeast(1)
-            val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
-            val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
-            val bakeBlurPx = maxBlurPx * bakeScale
-            // 方形 hero 用「边缘延展」（照片底边纵向延展 + 渐进模糊溶入提取色），不做镜像——
-            // 方形 hero 的镜像会把下半张人脸翻转贴上来，观感像第二张脸。手机竖屏保留原镜像倒影。
-            // 横屏（手机+平板）统一方形头像，因此统一用延伸模式。
-            val edgeReflection = portraitTablet || isLandscape
-            val bakeCacheKey =
-                "$avatarUrl|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}"
+            // 几何与缓存键已在组合期算好（见上方 bakeCacheKey）；这里不再重算。
+            // 无头像（bakeCacheKey 为 null）时无倒影可烘。
+            val cacheKey = bakeCacheKey ?: return@LaunchedEffect
             // 缓存命中（内存→磁盘）：直接落位、跳过重烘焙——这是「回访时倒影立刻在」的关键。
-            HeroBakeCache.memoryGet(bakeCacheKey)?.let {
+            HeroBakeCache.memoryGet(cacheKey)?.let {
                 bakedHero = it
                 return@LaunchedEffect
             }
-            withContext(Dispatchers.IO) { HeroBakeCache.load(context, bakeCacheKey) }?.let {
+            withContext(Dispatchers.IO) { HeroBakeCache.load(context, cacheKey) }?.let {
                 bakedHero = it
                 return@LaunchedEffect
             }
@@ -643,22 +769,26 @@ fun ArtistDetail(
             val shader = newArtistHeroReflectionShader(
                 bakeW, bakePhotoH, bakeBandH, bakeBlurPx, edgeReflection
             )
-            pendingHeroBake = withContext(Dispatchers.Default) {
+            val bakedBitmap = withContext(Dispatchers.Default) {
                 runCatching {
                     bakeHeroReflection(src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader, edgeReflection)
                 }
                     // 烘焙失败会退回「锐利照片 + 提取色」硬衔接，必须留痕（debug 包看 logcat）
                     .onFailure { android.util.Log.w("ArtistDetail", "hero reflection bake failed (${bakeW}x${bakePhotoH + bakeBandH})", it) }
                     .getOrNull()
-                    ?.also { HeroBakeCache.put(context, bakeCacheKey, it) }
-            }?.asImageBitmap()
-            pendingHeroBake?.let {
-                android.util.Log.d(
-                    "HeroTrack",
-                    "bake done ${bakeW}x${bakePhotoH + bakeBandH} edge=$edgeReflection " +
-                        "geo w=$bakeWidthPx hero=$heroHeightPx band=$bandHeightPx aspect=$heroAspect rgb=$originalRgb dark=$isDark"
-                )
+                    ?.also { HeroBakeCache.put(context, cacheKey, it) }
             }
+            if (bakedBitmap == null) {
+                // 烘焙失败：宣告「倒影不会来了」，揭示门立即放行、退化为锐利照片（不让门干等）。
+                backdropBakeSettled = true
+                return@LaunchedEffect
+            }
+            pendingHeroBake = bakedBitmap.asImageBitmap()
+            android.util.Log.d(
+                "HeroTrack",
+                "bake done ${bakeW}x${bakePhotoH + bakeBandH} edge=$edgeReflection " +
+                    "geo w=$bakeWidthPx hero=$heroHeightPx band=$bandHeightPx aspect=$heroAspect rgb=$originalRgb dark=$isDark"
+            )
         }
         // 接管落位门禁：重烘焙结果等「Hero item 仍在视口内且滚动静止」才提升为 bakedHero。
         // 滚动中途直接换上，会在照片半出屏的位置以 <1 的 alpha 让整张合成图突然叠在提取色
@@ -677,7 +807,8 @@ fun ArtistDetail(
                 model = ImageRequest.Builder(context)
                     .data(detail.value?.avatarUrl)
                     // 不设占位/兜底图：解码期间保持透明，透出页面底色（缓存命中即取色），
-                    // 避免白色人形图标在解码窗口里闪一下。
+                    // 避免白色人形图标在解码窗口里闪一下。加载失败（onError）另行回落到
+                    // 身份派生色 + monogram，仍不落白色人形。
                     .allowHardware(false)
                     .size(1024)
                     // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
@@ -686,8 +817,34 @@ fun ArtistDetail(
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = modifier
+                modifier = modifier,
+                // 网络/解码失败：置位回落派生色 + monogram，不再让英雄区空白。
+                onError = { heroImageFailed = true }
             )
+        }
+
+        /**
+         * 无可用头像时的 hero：身份派生色实底 + 名字首字母。取代原先「一块与页面同色的
+         * 空 Box」——那正是用户看到的白板。颜色由派生色承载，故 hero 与内容区有明确分界，
+         * 且底栏遮罩/子页面沿用同一色（见 seedPalette）。
+         */
+        @Composable fun ArtistMonogramHero(name: String, background: Color, content: Color) {
+            val initial = remember(name) { name.trim().take(1).uppercase() }
+            Box(
+                Modifier.fillMaxSize().background(background),
+                contentAlignment = Alignment.Center
+            ) {
+                if (initial.isNotEmpty()) {
+                    Text(
+                        text = initial,
+                        fontSize = 132.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = content.copy(alpha = 0.88f),
+                        // 上移：避开底部居中的歌手名，避免两者视觉重叠
+                        modifier = Modifier.offset(y = (-24).dp)
+                    )
+                }
+            }
         }
 
         Box(
@@ -708,8 +865,10 @@ fun ArtistDetail(
                         .height(heroHeight + bandHeight)
                         .graphicsLayer {
                             val o = heroViewportTop.value
-                            val a = if (o == null) 0f
+                            val scrollA = if (o == null) 0f
                             else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
+                            // 再乘背景揭示门 alpha：倒影随照片/提取色同帧渐入，不再突然叠上来。
+                            val a = scrollA * backdropAlpha
                             alpha = a
                             val last = lastLoggedAlpha[0]
                             if (last.isNaN() || a - last > 0.05f || last - a > 0.05f) {
@@ -750,7 +909,8 @@ fun ArtistDetail(
                             avatarUrl = detail.value?.avatarUrl,
                             avatarRevealed = heroRevealed.value,
                             hasIntro = !detail.value?.intro.isNullOrBlank(),
-                            onIntro = { introOpen.value = true },
+                            introOpen = introOpen.value,
+                            onIntro = { introOpen.value = !introOpen.value },
                             songsEnabled = songs.isNotEmpty(),
                             onPlay = { playAt(songs, 0) },
                             showFollow = resolvedId.value.isNotBlank(),
@@ -761,21 +921,28 @@ fun ArtistDetail(
                                 stringResource(R.string.artist_detail_songs, it.songCount) +
                                     " · " + stringResource(R.string.artist_detail_albums, it.albumCount)
                             } else null,
-                            intro = detail.value?.intro,
                             loading = headerLoading.value,
                             error = resolveError.value,
                             onRetry = { retry.value += 1 }
                         )
                     } else {
-                        Box(Modifier.fillMaxWidth().height(heroHeight)) {
-                            // 与提取色同帧揭示：调色板就绪（heroRevealed）前只显示中性人像占位，
-                            // 就绪当帧照片与背景色一起落位，不再「照片先出、颜色后到」。
-                            // 烘焙完成（bakedHero != null）后由背景层接管照片区——渐进模糊的路径
+                        // 英雄区（照片 + 名字）随背景揭示门整体渐入：门未开前全透明，透出底衬；
+                        // 门开后照片、提取色、倒影同帧落位——不再「照片先出、颜色后到」。
+                        // 名字一并被 alpha 覆盖：它硬编码白色 + 黑投影，本就画在 hero 图上，
+                        // 底衬为浅色时不可读，随图淡入与现状等价且避免「照片没来名字先飘着」。
+                        Box(
+                            Modifier.fillMaxWidth().height(heroHeight)
+                                .graphicsLayer { alpha = backdropAlpha }
+                        ) {
+                            // 优先：无可用头像（无 url / 加载失败 / 解码失败）→ 身份派生色 + 首字母。
+                            // 其次：烘焙完成（bakedHero != null）由背景层接管照片区——渐进模糊的路径
                             // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
-                            if (!heroRevealed.value) {
-                                // 占位用当前页面底色（缓存命中即歌手提取色），替换掉白色人形图标——
-                                // 消除「白一下」；首次访问无缓存色时退化为主题兜底色，属物理必然。
-                                Box(Modifier.fillMaxSize().background(bg))
+                            if (noUsableAvatar) {
+                                ArtistMonogramHero(
+                                    name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
+                                    background = bg,
+                                    content = contentColor
+                                )
                             } else if (bakedHero == null) {
                                 HeroPhoto(Modifier.fillMaxSize())
                             }
@@ -783,7 +950,9 @@ fun ArtistDetail(
                                 text = detail.value?.name?.ifEmpty { artistName } ?: artistName,
                                 fontSize = 30.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                // 照片 hero：白名 + 黑投影（画在照片上）。无照片 hero：背景已是
+                                // 派生实色，改用与整页一致的 contentColor，避免白名在浅色派生底上隐形。
+                                color = if (noUsableAvatar) contentColor else Color.White,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 textAlign = TextAlign.Center,
@@ -819,7 +988,7 @@ fun ArtistDetail(
                                 iconTint = if (introOpen.value) Color.White else Color.Unspecified,
                                 highlighted = introOpen.value,
                                 iconSize = 32.dp,
-                                onClick = { introOpen.value = true }
+                                onClick = { introOpen.value = !introOpen.value }
                             )
                             Spacer(Modifier.width(26.dp))
                         }
@@ -877,6 +1046,38 @@ fun ArtistDetail(
                         }
                     }
                 }
+                }
+                // 简介内联展开项：位于头部信息（Hero/Actions/HeaderStatus）与内容区之间，
+                // 与参考排版一致。点击「i」切换显隐，展/收走 expand/shrink + 淡入淡出。
+                item("Intro") {
+                    AnimatedVisibility(
+                        visible = introOpen.value,
+                        enter = expandVertically(tween(260)) + fadeIn(tween(200)),
+                        exit = shrinkVertically(tween(220)) + fadeOut(tween(160))
+                    ) {
+                        val intro = detail.value?.intro
+                        if (!intro.isNullOrBlank()) {
+                            Column(Modifier.fillMaxWidth()) {
+                                ArtistSectionHeader(stringResource(R.string.artist_detail_intro_title))
+                                // 正文材质 = 最新专辑卡片「发行日期 / 歌曲数量」同款：
+                                // 取色底明暗分流（暗 = 白 + Plus 加色微光；亮 = 深色弱化），
+                                // 阈值 0.179 与 ArtistArtworkColors.content 一致。
+                                val lightBackdrop = bgColorState.value.luminance() > 0.179f
+                                Text(
+                                    text = intro,
+                                    fontSize = 14.sp,
+                                    lineHeight = 22.sp,
+                                    color = if (lightBackdrop) Color(0xFF161616).copy(alpha = 0.55f)
+                                            else Color.White.copy(alpha = 0.45f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 20.dp)
+                                        .padding(bottom = 6.dp)
+                                        .then(if (lightBackdrop) Modifier else Modifier.overlayEffect())
+                                )
+                            }
+                        }
+                    }
                 }
                 if (songsState != null) {
                     latestAlbum?.let { album ->
@@ -1073,14 +1274,6 @@ fun ArtistDetail(
                 }
             }
         }
-
-        ArtistIntroSheet(
-            visible = introOpen.value,
-            title = stringResource(id = R.string.artist_detail_intro_title),
-            content = detail.value?.intro.orEmpty(),
-            backdrop = pageBackdrop,
-            onDismiss = { introOpen.value = false }
-        )
     }
     }
 }
@@ -1193,6 +1386,7 @@ private fun ArtistTabletLandscapeHeader(
     avatarUrl: String?,
     avatarRevealed: Boolean,
     hasIntro: Boolean,
+    introOpen: Boolean,
     onIntro: () -> Unit,
     songsEnabled: Boolean,
     onPlay: () -> Unit,
@@ -1201,7 +1395,6 @@ private fun ArtistTabletLandscapeHeader(
     followEnabled: Boolean,
     onFollow: () -> Unit,
     countsLine: String?,
-    intro: String?,
     loading: Boolean,
     error: String?,
     onRetry: () -> Unit
@@ -1259,8 +1452,8 @@ private fun ArtistTabletLandscapeHeader(
                         ArtistRoundActionButton(
                             icon = R.drawable.ic_mini_info,
                             contentDescription = stringResource(id = R.string.artist_detail_intro_title),
-                            iconTint = Color.Unspecified,
-                            highlighted = false,
+                            iconTint = if (introOpen) Color.White else Color.Unspecified,
+                            highlighted = introOpen,
                             iconSize = 24.dp,
                             onClick = onIntro
                         )
@@ -1297,17 +1490,6 @@ private fun ArtistTabletLandscapeHeader(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (!intro.isNullOrBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = intro,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                        color = LocalContentColor.current.copy(alpha = 0.5f),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
                 if (loading) {
                     Spacer(Modifier.height(10.dp))
                     ArtistHeaderSkeleton()
@@ -1320,6 +1502,26 @@ private fun ArtistTabletLandscapeHeader(
         }
     }
 }
+
+/**
+ * 艺人页背景「整体揭示」门的判据。
+ *
+ * 背景 = hero 照片 + 提取色底 + 倒影/渐变模糊，三者加载时序不同；门未开前英雄区不显示
+ * 背景（透出导航底衬），门开后三者用同一条 alpha 同帧渐入，消除「空白底 → 照片 →
+ * 取色渐变 → 倒影突现」的分批闪现。抽成纯函数以便单测锁定各反例（见 ArtistBackdropRevealTest）。
+ *
+ * - [immersiveBackdrop]：false = 横屏，走 54dp 顶 padding 的横向头部、无倒影，不介入。
+ * - [avatarAbsent]：无头像歌手没有背景元素可等，直接放行（否则英雄区永久空白）。
+ *   调用方须以「详情已定且无头像」判定，避免冷启动首帧详情未返回时门先开后关。
+ * - [contentResolved]：照片解码 + 取色都已完成（照片与颜色必须同帧落位）。
+ * - [bakeSettled]：倒影已落地或已确认不会到来（烘焙/解码失败兜底），否则门会干等。
+ */
+internal fun artistBackdropReady(
+    immersiveBackdrop: Boolean,
+    avatarAbsent: Boolean,
+    contentResolved: Boolean,
+    bakeSettled: Boolean
+): Boolean = !immersiveBackdrop || avatarAbsent || (contentResolved && bakeSettled)
 
 /** Match ContentScale.Crop and average the bottom 28%, weighted toward the lower edge. */
 internal fun sampleArtistBottomColor(bitmap: android.graphics.Bitmap, heroAspect: Float): Int? {
