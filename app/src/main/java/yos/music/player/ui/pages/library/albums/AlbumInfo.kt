@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,7 +44,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -58,13 +56,13 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.ui.pages.library.AlbumTrackRow
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.artistsName
 import yos.music.player.data.libraries.defaultArtists
 import yos.music.player.data.libraries.defaultArtistsName
-import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -336,8 +334,9 @@ fun AlbumInfo(
                                 }
                             }
                         } else {
-                            AlbumSongsItem(
+                            AlbumTrackRow(
                                 music = music,
+                                trackNumber = music.trackNumber,
                                 mainArtists = mainArtists.value
                             ) {
                                 scope.launch(Dispatchers.IO) {
@@ -445,62 +444,3 @@ private fun AlbumDivider(modifier: Modifier = Modifier) =
             .height(0.5.dp)
             .background(Color.Black withNight Color.White)
     )
-
-@Composable
-private fun AlbumSongsItem(
-    modifier: Modifier = Modifier,
-    music: YosMediaItem,
-    mainArtists: List<String>,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            contentAlignment = Alignment.TopCenter, modifier = Modifier
-                .width(24.dp)
-                /*.height(21.dp)*/
-                .fillMaxHeight()
-        ) {
-            Text(
-                text = "${music.trackNumber?:"-"}",
-                fontSize = 16.sp,
-                modifier = Modifier.alpha(0.4f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-
-        Column(Modifier.padding(vertical = 10.dp)) {
-            Text(
-                text = music.title ?: defaultTitle,
-                fontSize = 16.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 20.sp
-            )
-            YosWrapper {
-                val needShowArtists = remember(music) {
-                    derivedStateOf {
-                        !mainArtists.containsAll(music.artistsList ?: defaultArtists)
-                    }
-                }
-                if (needShowArtists.value) {
-                    Text(
-                        text = music.artistsName ?: defaultArtistsName,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 16.sp,
-                        modifier = Modifier.alpha(0.4f)
-                    )
-                }
-            }
-        }
-    }
-}

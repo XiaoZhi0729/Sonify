@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -35,7 +37,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.R
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.artistsName
+import yos.music.player.data.libraries.defaultArtists
 import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.pages.library.albums.NormalButton
@@ -293,5 +297,160 @@ fun formatDurationMs(durationMs: Long): String {
         "%d:%02d:%02d".format(hours, minutes, seconds)
     } else {
         "%d:%02d".format(minutes, seconds)
+    }
+}
+
+/**
+ * 专辑歌曲行（窄屏 <600dp，无封面）：行首为曲目序号，视觉对齐本地专辑页 AlbumSongsItem
+ * （24dp 序号框 + 歌名 + 仅当与专辑歌手不同时才显示的歌手行；无固定行高）。
+ *
+ * 不可播置灰 + 点击「先复核再决定」（与共享 [MusicList] 一致）；本地歌曲 kugouHash() 为
+ * null → stateOf/ensureChecked 均为 no-op，故本行对本地专辑零影响。
+ */
+@Composable
+fun AlbumTrackRow(
+    music: YosMediaItem,
+    trackNumber: Int?,
+    mainArtists: List<String>,
+    modifier: Modifier = Modifier,
+    itemClick: () -> Unit
+) {
+    val availability = rememberSongAvailability(music)
+    val blocked = availability.isBlocked
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .alpha(if (blocked) 0.4f else 1f)
+            .clickable {
+                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+                else itemClick()
+            }
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            contentAlignment = Alignment.TopCenter, modifier = Modifier
+                .width(24.dp)
+                .fillMaxHeight()
+        ) {
+            Text(
+                text = "${trackNumber ?: "-"}",
+                fontSize = 16.sp,
+                modifier = Modifier.alpha(0.4f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+
+        Column(Modifier.padding(vertical = 10.dp)) {
+            Text(
+                text = music.title ?: defaultTitle,
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 20.sp
+            )
+            YosWrapper {
+                val needShowArtists = remember(music) {
+                    derivedStateOf {
+                        !mainArtists.containsAll(music.artistsList ?: defaultArtists)
+                    }
+                }
+                if (needShowArtists.value) {
+                    Text(
+                        text = music.artistsName ?: defaultArtistsName,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.alpha(0.4f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 专辑歌曲行（宽屏 ≥600dp，无封面）：由 [DetailSongRowWide] 派生，把 52dp 封面列换成
+ * 曲目序号列，其余不变（歌名占左半 / 歌手自屏幕中央起左对齐 / 时长贴最右）。
+ * 同样保留不可播置灰 + 点击复核。
+ */
+@Composable
+fun AlbumTrackRowWide(
+    music: YosMediaItem,
+    trackNumber: Int?,
+    itemClick: () -> Unit
+) {
+    val availability = rememberSongAvailability(music)
+    val blocked = availability.isBlocked
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Row(
+        modifier = Modifier
+            .height(64.dp)
+            .fillMaxWidth()
+            .alpha(if (blocked) 0.4f else 1f)
+            .clickable {
+                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+                else itemClick()
+            }
+            .padding(horizontal = 22.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左半：序号 + 歌名
+        Row(
+            modifier = Modifier.fillMaxWidth(0.5f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.width(24.dp)
+            ) {
+                Text(
+                    text = "${trackNumber ?: "-"}",
+                    fontSize = 16.sp,
+                    modifier = Modifier.alpha(0.4f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Text(
+                text = music.title ?: defaultTitle,
+                modifier = Modifier.padding(start = 16.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 16.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        // 歌手列：自屏幕正中央起左对齐
+        Box(Modifier.weight(1f)) {
+            Text(
+                text = music.artistsName ?: defaultArtistsName,
+                modifier = Modifier.alpha(0.5f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 13.sp,
+                lineHeight = 13.sp
+            )
+        }
+
+        // 时长：最右；无时长数据时不占位
+        if (music.duration > 0) {
+            Text(
+                text = formatDurationMs(music.duration),
+                modifier = Modifier
+                    .alpha(0.5f)
+                    .padding(start = 12.dp),
+                fontSize = 13.sp,
+                lineHeight = 13.sp
+            )
+        }
     }
 }

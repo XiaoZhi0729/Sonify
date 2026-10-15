@@ -62,9 +62,9 @@ import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.pages.library.AlbumTrackRow
+import yos.music.player.ui.pages.library.AlbumTrackRowWide
 import yos.music.player.ui.pages.library.DetailPageHeader
-import yos.music.player.ui.pages.library.DetailSongRowWide
-import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
@@ -90,7 +90,7 @@ import yos.music.player.ui.widgets.effects.ShadowType
  *
  * 说明：本地 AlbumInfo 以「本地专辑名 → MusicLibrary.Album[albumName]」为数据源，
  * 无法直接承载「albumId → /album/songs」的在线专辑；故按 OnlinePlaylistDetail 同款
- * 既有模式新建本页，并完整复用 AlbumInfo 的视觉组件（ShadowImage/NormalButton/MusicList/分割线）。
+ * 既有模式新建本页，并完整复用 AlbumInfo 的视觉组件（ShadowImage/NormalButton/AlbumTrackRow/分割线）。
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -198,6 +198,10 @@ fun OnlineAlbumDetail(
 
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
+    // 专辑作者名：窄屏行仅当某首歌的歌手与专辑作者不同时才显示该行歌手（与本地专辑一致）
+    val albumArtistNames = remember(detail.value, album) {
+        albumArtists(detail.value, album.singerName).map { it.name }
+    }
     // 目标封面 key：跟随入口点击时按本专辑 id 记录的来源 key（多层堆叠时各自正确）；
     // 记录缺失或与本专辑不符时回退默认 key。
     val recordedCoverKey = OnlineAlbumObject.coverKeyFor(album.albumId)
@@ -432,15 +436,19 @@ fun OnlineAlbumDetail(
                 key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
             ) { index, song ->
                 key(songKeys.getOrElse(index) { "oob_$index" }) {
-                    // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放
+                    // 专辑歌曲行（无封面）：行首显示专辑内序号；
+                    // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
                     if (isWideScreen) {
-                        DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
-                            playAt(index)
-                        }
+                        AlbumTrackRowWide(
+                            music = KugouRepository.toDisplayMediaItem(song),
+                            trackNumber = index + 1
+                        ) { playAt(index) }
                     } else {
-                        MusicList(KugouRepository.toDisplayMediaItem(song)) {
-                            playAt(index)
-                        }
+                        AlbumTrackRow(
+                            music = KugouRepository.toDisplayMediaItem(song),
+                            trackNumber = index + 1,
+                            mainArtists = albumArtistNames
+                        ) { playAt(index) }
                     }
                 }
 
@@ -449,9 +457,13 @@ fun OnlineAlbumDetail(
                         Spacer(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                // 右侧与首末分割线一致留 18dp，任何屏幕都不顶到边缘
-                                .padding(start = 88.dp, end = 16.dp)
-                                .alpha(0.15f)
+                                // 缩进对齐行首序号列（宽屏标题起点 62dp / 窄屏 50dp，
+                                // 与本地专辑页一致）；右侧留 18dp 不顶边
+                                .padding(
+                                    start = if (isWideScreen) 62.dp else 50.dp,
+                                    end = 16.dp
+                                )
+                                .alpha(if (isWideScreen) 0.15f else 0.25f)
                                 .height(0.5.dp)
                                 .background(Color.Black withNight Color.White)
                         )
@@ -461,6 +473,24 @@ fun OnlineAlbumDetail(
 
             item {
                 OnlineAlbumDivider()
+            }
+
+            // 末尾统计行（与本地专辑页 AlbumInfo 的「N 首歌曲, 约 M 分钟」一致）
+            if (trackItems.isNotEmpty()) {
+                item("AlbumOthers") {
+                    Text(
+                        text = stringResource(
+                            id = R.string.page_library_album_info_others,
+                            trackItems.size,
+                            (trackItems.sumOf { it.durationMs } / 60000).toInt()
+                        ),
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .alpha(0.4f)
+                            .padding(horizontal = 18.dp)
+                            .padding(top = 18.dp)
+                    )
+                }
             }
 
             item("navbar") {
