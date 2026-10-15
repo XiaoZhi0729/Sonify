@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,7 +45,7 @@ import yos.music.player.ui.widgets.basic.isBlocked
 import yos.music.player.ui.widgets.basic.rememberSongAvailability
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
-import yos.music.player.ui.widgets.basic.showSongUnavailableToast
+import yos.music.player.ui.widgets.basic.handleBlockedClick
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.effects.ShadowType
 
@@ -212,17 +214,18 @@ fun DetailSongRowWide(
     music: YosMediaItem,
     itemClick: () -> Unit
 ) {
-    // 不可播（无版权/付费限制等）置灰：点击只提示原因，不进播放、不切歌
+    // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
     val availability = rememberSongAvailability(music)
     val blocked = availability.isBlocked
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
             .alpha(if (blocked) 0.4f else 1f)
             .clickable {
-                if (blocked) showSongUnavailableToast(context, music, availability.reason)
+                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
                 else itemClick()
             }
             .padding(horizontal = 22.dp),

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -27,7 +29,7 @@ import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.isBlocked
 import yos.music.player.ui.widgets.basic.rememberSongAvailability
-import yos.music.player.ui.widgets.basic.showSongUnavailableToast
+import yos.music.player.ui.widgets.basic.handleBlockedClick
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -103,10 +105,11 @@ LaunchedEffect(Unit) {
         )
     )
     val alpha by animateFloatAsState(if (music() == musicPlaying.value) 0.3F else 1F)*/
-    // 不可播（无版权/付费限制等）置灰：点击只提示原因，不进播放、不切歌
+    // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
     val availability = rememberSongAvailability(music)
     val blocked = availability.isBlocked
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Row(
         modifier = Modifier
             /*.animateItem(fadeInSpec = null, fadeOutSpec = null)*/
@@ -116,7 +119,7 @@ LaunchedEffect(Unit) {
             .then(
                 when {
                     blocked -> Modifier.combinedClickable(
-                        onClick = { showSongUnavailableToast(context, music, availability.reason) },
+                        onClick = { scope.launch { handleBlockedClick(context, music) { itemClick() } } },
                         onLongClick = onLongClick
                     )
 

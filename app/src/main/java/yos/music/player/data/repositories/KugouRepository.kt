@@ -2,6 +2,7 @@ package yos.music.player.data.repositories
 
 import android.net.Uri
 import android.util.Log
+import com.google.gson.annotations.SerializedName
 import com.tencent.mmkv.MMKV
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableIntStateOf
@@ -20,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.native.KugouApiService
+import yos.music.player.native.toPlainAny
 
 /**
  * 酷狗在线音乐仓库（第一阶段最小实现）。
@@ -60,10 +62,14 @@ data class KugouLyricSearchResult(
     val lyricFragment: String?
 )
 
-/** 歌单搜索结果（specialid/gcid 双 id：详情打开优先 gcid，对齐上游 KugouPlaylistBrief）。 */
+/** 歌单搜索结果（specialid/gcid 双 id：详情打开优先 gcid，对齐上游 KugouPlaylistBrief）。
+ *  globalCollectionId 是**字符串**集合串（`collection_3_<uid>_<listid>_<ver>`，真机样本见
+ *  /user/playlist 原文），不能声明为 Long：optLong 对不可解析串退回 0 → 恒为 null →
+ *  调用点落到数字 specialid → 详情页拿 specialid 请求 /playlist/track/all
+ *  得到 502 `{"error_code":20010,"errmsg":"get other listfile fail"}`。 */
 data class KugouPlaylistBrief(
     val specialId: Long,
-    val globalCollectionId: Long?,
+    val globalCollectionId: String?,
     val name: String,
     val cover: String?,
     val songCount: Int
@@ -131,18 +137,26 @@ internal fun mergePerformers(candidates: List<Pair<String, Long>>): List<KugouPe
     return out
 }
 
-/** 从 singerinfo/authors 数组提取歌手 id 列表（多 key 兜底，逐条目忽略坏数据）。 */
+/**
+ * 从 singerinfo/authors 数组提取歌手 id 列表（多 key 兜底，逐条目忽略坏数据）。
+ *
+ * [nameTransform] 在进 [mergePerformers] 之前整形名字，默认恒等。搜索接口会给命中关键词
+ * 注入 `<em>` 高亮（见 [stripSearchHighlight]），调用方需传剥离器——否则登记进侧表的是
+ * `"<em>Sienna Spiro</em>"`，而 [matchPerformerId] 是 trim 后精确相等，反向查找会静默落空。
+ */
 internal fun parsePerformerArray(
     array: JSONArray?,
     nameKeys: List<String>,
-    idKeys: List<String>
+    idKeys: List<String>,
+    nameTransform: (String) -> String = { it }
 ): List<KugouPerformer> {
     if (array == null || array.length() == 0) return emptyList()
     val candidates = ArrayList<Pair<String, Long>>(array.length())
     for (i in 0 until array.length()) {
         val obj = array.optJSONObject(i) ?: continue
-        val name = nameKeys.firstNotNullOfOrNull { obj.optString(it, "").takeIf { s -> s.isNotEmpty() } }
-            ?: continue
+        val name = nameKeys.firstNotNullOfOrNull {
+            obj.optString(it, "").takeIf { s -> s.isNotEmpty() }?.let(nameTransform)
+        } ?: continue
         val id = idKeys.firstNotNullOfOrNull { obj.optLong(it, 0L).takeIf { v -> v > 0 } } ?: 0L
         candidates.add(name to id)
     }
@@ -158,6 +172,15 @@ internal fun matchPerformerId(performers: List<KugouPerformer>, name: String): L
     if (target.isEmpty()) return null
     return performers.firstOrNull { it.name.equals(target, ignoreCase = true) }?.id
 }
+
+/**
+ * 逐候选歌曲的歌手列表，返回**首个**精确命中 [name] 的 id（保序，靠前的歌曲优先）。
+ * 供「歌曲搜索反查 singerid」的兜底路径使用；匹配规则复用 [matchPerformerId]。
+ */
+internal fun selectArtistIdForName(
+    performerLists: List<List<KugouPerformer>>,
+    name: String
+): Long? = performerLists.firstNotNullOfOrNull { matchPerformerId(it, name) }
 
 internal fun parseRecommendPlaylist(
     fields: Map<String, Any?>,
@@ -192,20 +215,79 @@ internal fun parseRecommendPlaylists(
     }
 }
 
+/** /search/special 响应里承载歌单数组的字段（多形态兜底）；无则返回 null。 */
+internal fun specialPlaylistListArray(json: JSONObject): JSONArray? {
+    val data = json.optJSONObject("data") ?: json
+    return data.optJSONArray("info")
+        ?: data.optJSONArray("list")
+        ?: data.optJSONArray("specials")
+}
+
+/**
+ * 单条歌单搜索结果解析（纯函数，Map 入参——对齐 [parseRecommendPlaylist] 的 JVM 可测约定；
+ * org.json 在单元测试里是 android.jar 桩，无法直接构造，故拆出本函数专供单测）。
+ *
+ * 关键：`global_collection_id` 是**字符串**集合串（`collection_3_<uid>_<listid>_<ver>`），
+ * 必须按字符串原样取——历史上它被声明为 Long 并用 optLong 解析，非数字串退化成 0 →
+ * 恒为 null，调用点落到数字 specialid，详情页于是拿 specialid 请求 /playlist/track/all
+ * → 502 `20010 "get other listfile fail"`。
+ */
+internal fun parseSpecialPlaylist(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String?
+): KugouPlaylistBrief? {
+    fun text(key: String): String = fields[key]?.toString().orEmpty()
+    val specialId = (fields["specialid"] as? Number)?.toLong()
+        ?: text("specialid").toLongOrNull()
+        ?: (fields["id"] as? Number)?.toLong()
+        ?: text("id").toLongOrNull()
+        ?: 0L
+    if (specialId == 0L) return null
+    val name = text("specialname").ifEmpty { text("name") }
+    val gcid = text("global_collection_id").ifEmpty { text("gid") }.takeIf { it.isNotEmpty() }
+    return KugouPlaylistBrief(
+        specialId = specialId,
+        globalCollectionId = gcid,
+        name = name,
+        cover = artworkResolver(
+            text("imgurl").ifEmpty { text("sizable_cover").ifEmpty { text("img") } }
+        ),
+        songCount = parseOptionalInt(fields, "songcount", "song_count", "count") ?: 0
+    )
+}
+
+/**
+ * 歌单搜索结果解析（`/search/special`）。落地在 [parseSpecialPlaylist] 上，
+ * 逐条目忽略坏数据；响应缺列表字段时回空列表（由调用方判「缺列表」）。
+ */
+internal fun parseSpecialPlaylists(
+    json: JSONObject,
+    artworkResolver: (String?) -> String?
+): List<KugouPlaylistBrief> {
+    val list = specialPlaylistListArray(json) ?: return emptyList()
+    return (0 until list.length()).mapNotNull { i ->
+        runCatching {
+            parseSpecialPlaylist(list.getJSONObject(i).toFieldMap(), artworkResolver)
+        }.getOrNull()
+    }
+}
+
 /** 歌单内歌曲（领域模型）。字段按 /playlist/track/all/new 真机实测：
  *  hash、name（可能为"歌手 - 歌名.mp3"形式）、singerinfo[].name、timelen（毫秒）、
  *  album 系双写、封面在 trans_param.union_cover（含 {size} 占位符）。
  *  fileId/mixsongId/albumId 真机实测存在，供收藏增删协议使用（fileid 删除优先，hash 兜底）。 */
+// @SerializedName 冻结缓存 JSON 键名：Gson 反射用运行时字段名，release 混淆后写成 a/b/c，
+// 与 debug（原名）及跨版本互相读不出，字段整体为 null（2026-10-13 启动崩溃循环根因之一）
 data class KugouPlaylistTrack(
-    val hash: String,
-    val name: String,
-    val artist: String,
-    val album: String?,
-    val durationMs: Long,
-    val coverUrl: String?,
-    val fileId: Long = 0,
-    val mixsongId: Long = 0,
-    val albumId: Long = 0
+    @SerializedName("hash") val hash: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("artist") val artist: String,
+    @SerializedName("album") val album: String?,
+    @SerializedName("durationMs") val durationMs: Long,
+    @SerializedName("coverUrl") val coverUrl: String?,
+    @SerializedName("fileId") val fileId: Long = 0,
+    @SerializedName("mixsongId") val mixsongId: Long = 0,
+    @SerializedName("albumId") val albumId: Long = 0
 )
 
 /** 在线歌词结果：LRC（行级）+ KRC（逐字，可能为 null）+ 翻译/音译。 */
@@ -273,13 +355,14 @@ data class KugouRankSong(
 /** 新歌（/top/song 实测：data 为 KMR 原始歌曲数组，顶层 hash/songname/author_name/
  * album_name/timelength(ms)/album_sizable_cover，与 /rank/audio 同构但字段位置不同）。
  * durationMs 已归一化为毫秒；artworkUrl 已替换 {size} 占位符。 */
+// @SerializedName 冻结缓存 JSON 键名（同 KugouPlaylistTrack，防混淆键名跨版本漂移）
 data class KugouNewSong(
-    val hash: String,
-    val name: String,
-    val author: String,
-    val albumName: String?,
-    val durationMs: Long,
-    val artworkUrl: String?
+    @SerializedName("hash") val hash: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("author") val author: String,
+    @SerializedName("albumName") val albumName: String?,
+    @SerializedName("durationMs") val durationMs: Long,
+    @SerializedName("artworkUrl") val artworkUrl: String?
 )
 
 /** 艺人歌曲单页：rawCount 是原始数组长度，包含被解析过滤的条目和重复歌曲。 */
@@ -358,6 +441,16 @@ object KugouRepository {
      * 异常 message 携带完整诊断字段（status/priv_status/pay_block_tpl/cpy_map），供日志记录。
      */
     class KugouPlayBlockedException(val userReason: String, fullDetail: String) : IOException(fullDetail)
+
+    /**
+     * **某一档**拿不到音源（不是"整曲被封"）。
+     *
+     * 与 [KugouPlayBlockedException] 分开，因为它决定两件用户可见的事：
+     *  1. 降档链继续往下试（[resolvePlayUrlWithFallback] 视其为普通失败）；
+     *  2. **不写负缓存、不写可播性表、不置灰**——只有确凿拒播才允许产生结论。
+     * 判读见 [interpretSongUrlBody]。
+     */
+    class KugouTierUnavailableException(detail: String) : IOException(detail)
 
     /** 队列占位符 URI scheme：入队时无真实 URL，由 KugouResolvingDataSource 在播放前惰性解析。 */
     const val PLACEHOLDER_SCHEME = "kugou"
@@ -441,6 +534,19 @@ object KugouRepository {
         )
         // 顺带登记歌曲身份（收藏添加协议需 albumId/mixsongid）
         registerSongIdentity(hash, albumId, searchSong.mid.toLongOrNull() ?: 0, 0)
+        // 歌曲自带歌手（Singers[]，真机样本见 LunaYaba/.fetch/poc_search.json）：搜索路径此前
+        // 不登记，导致从搜索页播放的歌点歌手名只能退化到 /search/artist 按名搜索，而该接口对
+        // 译名/新歌手稳定零命中（如 SIENNA SPIRO 返回 data:null）→ 误报「未找到该歌手」。
+        // 名字先剥 <em> 高亮，否则登记的是 "<em>xxx</em>"，反查会精确相等落空。
+        registerPerformers(
+            hash,
+            parsePerformerArray(
+                song.optJSONArray("Singers"),
+                nameKeys = listOf("name"),
+                idKeys = listOf("id"),
+                nameTransform = { stripSearchHighlight(it) }
+            )
+        )
         return searchSong
     }
 
@@ -690,34 +796,15 @@ object KugouRepository {
             try {
                 KugouApiService.getInstance().searchSpecial(keyword, page, pageSize).fold(
                     onSuccess = { json ->
-                        val data = json.optJSONObject("data") ?: json
-                        val list = data.optJSONArray("info")
-                            ?: data.optJSONArray("list")
-                            ?: data.optJSONArray("specials")
-                        if (list == null) {
+                        val playlists = parseSpecialPlaylists(json, ::resolveArtworkUrl)
+                        if (playlists.isEmpty() && specialPlaylistListArray(json) == null) {
                             return@fold Result.failure<List<KugouPlaylistBrief>>(
                                 IllegalStateException("歌单搜索响应缺少列表")
                             )
                         }
-                        val playlists = (0 until list.length()).mapNotNull { i ->
-                            runCatching {
-                                val e = list.getJSONObject(i)
-                                val specialId = e.optLong("specialid", e.optLong("id", 0))
-                                if (specialId == 0L) return@runCatching null
-                                KugouPlaylistBrief(
-                                    specialId = specialId,
-                                    globalCollectionId = e.optLong("global_collection_id", e.optLong("gid", 0))
-                                        .takeIf { it > 0 },
-                                    name = e.optString("specialname").ifEmpty { e.optString("name") },
-                                    cover = resolveArtworkUrl(
-                                        e.optString("imgurl").ifEmpty {
-                                            e.optString("sizable_cover").ifEmpty { e.optString("img") }
-                                        }
-                                    ),
-                                    songCount = e.optInt("songcount", e.optInt("song_count", e.optInt("count", 0)))
-                                )
-                            }.getOrNull()
-                        }
+                        // 证据链：gcid 是否为 collection_ 串决定了详情页 /playlist/track/all
+                        // 会不会回 502/20010；下次复现可直接从 logcat 自证。
+                        Log.d(TAG, "/search/special gcid sample: ${playlists.firstOrNull()?.globalCollectionId}")
                         Result.success(playlists)
                     },
                     onFailure = { e -> Result.failure(e) }
@@ -2360,66 +2447,70 @@ object KugouRepository {
     }
 
     /**
-     * 解析真实播放 URL。对应 Rust GET /song/url?hash&quality。
-     * 实测：url 字段可能是字符串或数组（兼容 play_url）；非 2xx 视为失败。
-     * data.quality 为服务端回写的实际音质（按码率反推）；旧版后端缺该字段时按请求档处理。
+     * 解析真实播放 URL。
+     *
+     * 会员账号**先走会员协议** `GET /song/url/new`（上游 v6/priv_url：会把 vip_token 作为
+     * tracker_param.viptoken 上传、并把 vip 置成会员档），没拿到才回落 `GET /song/url`
+     * （v5/url）兜底——与 md3Music Dart 侧同一策略（kugou_api_client.dart:964-977）。
+     * 付费/VIP 歌只有会员协议这条路拿得到链接；而 v5/url 自带的 ppage_id 兜底对
+     * **已收藏的无版权歌**仍然有效，所以两条都要试。非会员账号不发会员协议请求。
+     *
+     * 判读全部交给 [interpretSongUrlBody]：只有版权/付费硬拦才抛
+     * [KugouPlayBlockedException]；登录态失效（20017/20018/20028）改判
+     * [KugouAuthInvalidException]——它从来不是"这首歌没音源"，历史上正是这一条被误判，
+     * 才把整份歌单写成了 24 小时置灰。认不出的空响应当 [KugouTierUnavailableException]，
+     * 交给降档链与上层重试，不产生任何"不可播"结论。
      */
     suspend fun resolvePlayUrl(hash: String, quality: String): Result<KugouResolvedPlayUrl> =
         withContext(Dispatchers.IO) {
             try {
-                KugouApiService.getInstance().getSongUrl(hash, quality).fold(
-                    onSuccess = { json ->
-                        val data = json.optJSONObject("data") ?: json
-                        var url = ""
-                        when (val raw = data.opt("url") ?: data.opt("play_url")) {
-                            is String -> url = raw
-                            is org.json.JSONArray -> if (raw.length() > 0) url = raw.optString(0, "")
-                        }
-                        if (url.isNotEmpty()) {
-                            // 只认服务端回写的值；缺失/空/不可识别一律 null（未知），不默认等于请求档
-                            val stampedRaw = data.optString("quality", "").ifEmpty { null }
-                            Result.success(KugouResolvedPlayUrl(url, KugouQuality.parse(stampedRaw)))
-                        } else if (KugouUpstreamError.isNeedVerify(json.toString())) {
-                            // HTTP 200 但体里带 20028"本次请求需要验证"：账号级风控（设备身份/sign_key
-                            // 失效），不是"这一首被版权拦截"。若按 BLOCKED 处理会逐首跳，故交回账号级
-                            // 失效通道（开全局冷却窗、不逐首写负缓存、策略走挂起重试）。
-                            Result.failure(
-                                KugouAuthInvalidException(
-                                    "需要安全验证(20028): ${json.toString().take(300)}"
-                                )
-                            )
-                        } else {
-                            // 完整失败原因（证据级）：status 优先取顶层（实测拒播响应无 data 包裹），
-                            // 其余字段双位置兼容；全量记录便于排查
-                            val status = data.optInt("status", json.optInt("status", -1))
-                            val errCode = json.optInt("error_code", data.optInt("error_code", 0))
-                            val privStatus = data.optInt("priv_status", json.optInt("priv_status", -1))
-                            val trans = data.optJSONObject("trans_param")
-                            val payBlockTpl = trans?.optInt("pay_block_tpl", 0) ?: 0
-                            val cpyMap = trans?.optString("cpy_map", "0")?.toIntOrNull() ?: 0
-                            val detail =
-                                "status=$status priv_status=$privStatus pay_block_tpl=$payBlockTpl cpy_map=$cpyMap err_code=$errCode"
-                            Log.w(TAG, "播放 URL 解析被拒 hash=$hash quality=$quality $detail")
-                            // 用户可见原因：依据真实字段判定，不把所有拒播都当作 VIP 限制
-                            val reason = when {
-                                status == 3 && cpyMap != 0 && payBlockTpl == 1 ->
-                                    "暂无可用音源（版权与付费限制）"
-                                status == 3 && cpyMap != 0 ->
-                                    "暂无可用音源（版权限制）"
-                                status == 3 && payBlockTpl == 1 ->
-                                    "暂无可用音源（付费或权限限制）"
-                                status == 3 ->
-                                    "暂无可用音源（上游限制）"
-                                // 认不出的响应形态：用户可见原因只说人话，status/私钥等
-                                // 诊断字段留在 fullDetail 与 Log.w，绝不漏进 toast（漏了就是上一版
-                                // "Timed out waiting for 10000 ms" 那条看不懂的提示）
-                                else -> "暂无可用音源"
-                            }
-                            Result.failure(KugouPlayBlockedException(reason, detail))
-                        }
-                    },
-                    onFailure = { e -> Result.failure(e) }
-                )
+                val primary = if (KugouApiService.hasVipToken()) {
+                    attemptSongUrl(hash, quality, useVipPath = true)
+                } else null
+                val primaryOutcome = primary?.getOrNull()
+                // 只有"拿到链接"才算会员协议成功；其余（试听/需购买/未认会员/账号级之外）
+                // 一律回落 v5/url，让 ppage_id 收藏解锁与降档链继续有机会。
+                val needFallback = primaryOutcome !is SongUrlOutcome.Ok &&
+                    primaryOutcome !is SongUrlOutcome.AccountInvalid
+                val secondary = if (needFallback) attemptSongUrl(hash, quality, useVipPath = false) else null
+
+                val outcome = secondary?.getOrNull() ?: primaryOutcome
+                if (outcome == null) {
+                    // 两条都是传输层失败：原样返回（取消保传播、鉴权交上层开冷却窗）
+                    return@withContext Result.failure(
+                        secondary?.exceptionOrNull() ?: primary?.exceptionOrNull()
+                        ?: IOException("在线歌曲 URL 解析失败 hash=$hash quality=$quality")
+                    )
+                }
+                when (outcome) {
+                    is SongUrlOutcome.Ok ->
+                        Result.success(KugouResolvedPlayUrl(outcome.url, outcome.quality))
+
+                    SongUrlOutcome.AccountInvalid -> {
+                        QualityTrace.log(
+                            "RESOLVE", "path" to "account_invalid",
+                            "hash" to hash.lowercase(), "quality" to quality
+                        )
+                        Result.failure(
+                            KugouAuthInvalidException("song/url 登录态失效 hash=$hash quality=$quality")
+                        )
+                    }
+
+                    is SongUrlOutcome.Blocked -> {
+                        Log.w(TAG, "播放 URL 解析被拒 hash=$hash quality=$quality ${outcome.detail}")
+                        Result.failure(KugouPlayBlockedException(outcome.reason, outcome.detail))
+                    }
+
+                    SongUrlOutcome.TierUnavailable -> {
+                        QualityTrace.log(
+                            "RESOLVE", "path" to "tier_unavailable",
+                            "hash" to hash.lowercase(), "quality" to quality
+                        )
+                        Result.failure(
+                            KugouTierUnavailableException("本档无音源 hash=$hash quality=$quality")
+                        )
+                    }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // 取消不是解析失败：吞掉它会把"切歌取消"伪装成网络失败，
                 // 在 resolvePlayUrlBlocking 里污染 30s 负缓存（快速切回同一首直接跳歌）
@@ -2429,6 +2520,30 @@ object KugouRepository {
                 Result.failure(e)
             }
         }
+
+    /**
+     * 走一条 song/url 协议并把响应判读成 [SongUrlOutcome]。
+     * [useVipPath] 为 true 时走会员协议 /song/url/new（priv_url）。
+     * 传输层失败（网络/超时/鉴权）原样包在 Result 里返回，由调用方决定要不要回落另一条路。
+     */
+    private suspend fun attemptSongUrl(
+        hash: String,
+        quality: String,
+        useVipPath: Boolean
+    ): Result<SongUrlOutcome> {
+        val json = if (useVipPath) {
+            KugouApiService.getInstance().getSongUrlNew(hash, quality)
+        } else {
+            KugouApiService.getInstance().getSongUrl(hash, quality)
+        }
+        val body = json.getOrNull()
+            ?: return Result.failure(
+                json.exceptionOrNull() ?: IOException("song/url 空响应 hash=$hash quality=$quality")
+            )
+        val plain = toPlainAny(body) as? Map<*, *>
+            ?: return Result.failure(IOException("song/url 响应无法解析 hash=$hash quality=$quality"))
+        return Result.success(interpretSongUrlBody(plain, quality))
+    }
 
     /** 搜索结果 → [YosMediaItem]（字段对齐 MusicLibrary.kt 定义；uri 为在线流地址，thumb 为封面 URL）。 */
     fun toMediaItem(song: KugouSearchSong, playUrl: String): YosMediaItem = YosMediaItem(
@@ -2778,6 +2893,24 @@ object KugouRepository {
             Result.failure(e)
         }
     }
+
+    /**
+     * 按歌手名经「歌曲搜索」反查 singerid：兜底 /search/artist 零命中的场景
+     * （该接口不做繁简/译名归一化，且对新歌手/外国艺人稳定返回 data:null，如 SIENNA SPIRO）。
+     *
+     * 歌曲搜索结果自带歌手 id（`Singers[]`，实测 `song_search_v2` / `complexsearch/v4` 同形态），
+     * 由 [parseSearchSong] 解析时登记进侧表，这里按「命中歌曲的 hash → 歌手列表」逐个精确匹配。
+     * 依赖上述登记动作，二者须同版本发布。
+     */
+    suspend fun searchArtistBySongSearch(keyword: String, pageSize: Int = 20): KugouArtistBrief? =
+        withContext(Dispatchers.IO) {
+            val songs = searchSongs(keyword, 1, pageSize).getOrNull().orEmpty()
+            val id = selectArtistIdForName(songs.mapNotNull { performersFor(it.hash) }, keyword)
+                ?: return@withContext null
+            // name 用原始 keyword（干净显示名）：上游命中项可能带 <em>，且它会进
+            // ArtistPresentationCache 的别名表与 Hero 标题回退。
+            KugouArtistBrief(singerId = id.toString(), name = keyword, avatarUrl = null)
+        }
 
     /**
      * 歌手详情（对齐 Dart getArtistDetail / KugouArtistDetail.fromJson）。

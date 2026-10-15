@@ -149,6 +149,14 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             runCatching { yos.music.player.data.repositories.KugouVipRepository.autoSignInIfNeeded() }
         }
 
+        // 会员凭据补齐：登录响应可能不带 vip_token（付费歌因此被上游按 priv_status=0 拒绝），
+        // 这里在冷启动后补一次刷新（对齐 md3Music refreshLogin）。仅"已登录且当前没有会员凭据"
+        // 时才发请求，不会给每次冷启动都加一次上游调用；失败静默（登录态不受影响）。
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { delay(3000) }
+            runCatching { yos.music.player.native.KugouApiService.refreshLoginIfMissingVip() }
+        }
+
         val gson =
             GsonBuilder()
             //.registerTypeAdapter(Uri::class.java, UriSerializer())
