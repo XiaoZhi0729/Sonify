@@ -189,6 +189,8 @@ fun AlbumInfo(
                                 )
                             },
                             onPlayAll = {
+                                // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                                MediaController.mediaControl?.shuffleModeEnabled = false
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
                                         songs.first(),
@@ -286,6 +288,7 @@ fun AlbumInfo(
                                     label = stringResource(id = R.string.normal_button_play),
                                     modifier = Modifier.weight(1f)
                                 ) {
+                                    MediaController.mediaControl?.shuffleModeEnabled = false
                                     scope.launch(Dispatchers.IO) {
                                         MediaController.prepare(
                                             songs.first(),

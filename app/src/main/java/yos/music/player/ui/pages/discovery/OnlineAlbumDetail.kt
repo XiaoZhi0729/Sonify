@@ -266,7 +266,11 @@ fun OnlineAlbumDetail(
                                 )
                             }
                         },
-                        onPlayAll = { playAt(0) },
+                        onPlayAll = {
+                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                            MediaController.mediaControl?.shuffleModeEnabled = false
+                            playAt(0)
+                        },
                         onShuffle = {
                             val list = queue.value
                             if (list.isNotEmpty()) {
@@ -383,12 +387,13 @@ fun OnlineAlbumDetail(
                                 .fillMaxWidth()
                                 .padding(top = 12.dp, bottom = 15.dp)
                         ) {
-                            // 播放：全部歌曲进队列，从第一首开始（URL 惰性解析，入队零等待）
+                            // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
                             NormalButton(
                                 icon = painterResource(id = R.drawable.button_icon_play),
                                 label = stringResource(id = R.string.normal_button_play),
                                 modifier = Modifier.weight(1f)
                             ) {
+                                MediaController.mediaControl?.shuffleModeEnabled = false
                                 playAt(0)
                             }
                             Spacer(modifier = Modifier.width(15.dp))

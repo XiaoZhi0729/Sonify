@@ -320,7 +320,11 @@ fun OnlinePlaylistDetail(
                         countText = "${if (tracks.value.isNotEmpty()) tracks.value.size else songCount} " +
                             stringResource(id = R.string.online_playlists_song_unit),
                         intro = playlistIntro,
-                        onPlayAll = { playAt(0) },
+                        onPlayAll = {
+                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                            MediaController.mediaControl?.shuffleModeEnabled = false
+                            playAt(0)
+                        },
                         onShuffle = {
                             val list = currentQueue()
                             if (list.isNotEmpty()) {
@@ -338,7 +342,11 @@ fun OnlinePlaylistDetail(
                             coverSharedElementKey = sharedPlaylistCoverKey(source, playlistId),
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
-                        onPlayAll = { playAt(0) },
+                        onPlayAll = {
+                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                            MediaController.mediaControl?.shuffleModeEnabled = false
+                            playAt(0)
+                        },
                         onShuffle = {
                             val list = currentQueue()
                             if (list.isNotEmpty()) {

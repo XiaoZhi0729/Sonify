@@ -221,6 +221,8 @@ fun NormalMusic(navController: NavController) {
                             ) {
                                 val currentList = list.value
                                 if (currentList.isEmpty()) return@NormalButton
+                                // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                                MediaController.mediaControl?.shuffleModeEnabled = false
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
                                         currentList.first(),
