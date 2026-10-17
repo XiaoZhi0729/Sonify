@@ -32,6 +32,9 @@ object KugouSyncCoordinator {
     /** 关注歌手变化。 */
     val artistsRevision = mutableStateOf(0)
 
+    /** 收藏专辑变化（资料库›专辑）。 */
+    val albumsRevision = mutableStateOf(0)
+
     /** 首页发现流（排行榜/新歌/新专辑/精选歌单）需重拉。 */
     val discoveryRevision = mutableStateOf(0)
 
@@ -51,6 +54,10 @@ object KugouSyncCoordinator {
         artistsRevision.value++
     }
 
+    fun notifyAlbumsChanged() {
+        albumsRevision.value++
+    }
+
     fun notifyDiscoveryChanged() {
         discoveryRevision.value++
     }
@@ -66,11 +73,13 @@ object KugouSyncCoordinator {
         return KugouRepository.favoriteHashes.value != before
     }
 
-    /** 回到前台 / 登录后 / 手动刷新：强制重拉收藏与关注歌手。 */
+    /** 回到前台 / 登录后 / 手动刷新：强制重拉收藏、关注歌手与收藏专辑。 */
     suspend fun refreshAll() {
         if (resyncFavoritesIfChanged()) notifyFavoritesChanged()
         FollowedArtistsObject.ensureLoaded(force = true)
         notifyArtistsChanged()
+        CollectedAlbumsObject.ensureLoaded(force = true)
+        notifyAlbumsChanged()
     }
 
     fun refreshAllAsync() {

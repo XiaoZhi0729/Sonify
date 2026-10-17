@@ -16,6 +16,7 @@ import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
 import yos.music.player.ui.pages.library.albums.AlbumInfo
+import yos.music.player.ui.pages.library.albums.CollectedAlbums
 import yos.music.player.ui.pages.library.albums.LocalAlbums
 import yos.music.player.ui.pages.library.artists.LocalArtists
 import yos.music.player.ui.pages.library.artists.OnlineArtists
@@ -68,6 +69,13 @@ fun LibraryNavHost(
         }
         composable(UI.LocalArtists) { LocalArtists(navController) }
         composable(UI.OnlineArtists) { OnlineArtists(navController) }
+        composable(UI.CollectedAlbums) {
+            CollectedAlbums(
+                navController = navController,
+                sharedTransitionScope = this@SharedTransitionLayout,
+                animatedVisibilityScope = this@composable
+            )
+        }
         // 艺人域路由：与各 house 共享同一张图（漏注册即 "destination cannot be found"）
         artistGraph(navController, this@SharedTransitionLayout)
         composable(UI.AlbumInfo) {
@@ -85,7 +93,9 @@ fun LibraryNavHost(
                 navController = navController,
                 selection = entry.playlistSelection(),
                 sharedTransitionScope = this@SharedTransitionLayout,
-                animatedVisibilityScope = this@composable
+                animatedVisibilityScope = this@composable,
+                entryId = entry.id,
+                scrimTransition = scrimTransition()
             )
         }
         settingsGraph(

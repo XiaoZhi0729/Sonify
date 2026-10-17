@@ -76,14 +76,22 @@ data class KugouPlaylistBrief(
 )
 
 /** 我的在线歌单（领域模型）。字段按 /user/playlist 真机实测：name/count/pic/listid/global_collection_id。
- * isDef 真机实测：1=默认收藏，2=系统「我喜欢」（定位收藏歌单的唯一可靠标识，不按名称判断）。 */
+ * isDef 真机实测：1=默认收藏，2=系统「我喜欢」（定位收藏歌单的唯一可靠标识，不按名称判断）。
+ * [source] 是「来源」标记：2=收藏的专辑（由 /playlist/add type=1&source=2 创建），
+ * 这类条目归「资料库›专辑」页，不进「我的在线歌单」。
+ * [listCreateListid] 创建时传入的 list_create_listid（收藏专辑时=albumId），是 albumId 的首选来源。 */
 data class KugouPlaylist(
     val listid: String,
     val gid: String,
     val name: String,
     val coverUrl: String,
     val songCount: Int,
-    val isDef: Int = 0
+    val isDef: Int = 0,
+    val type: Int = 0,
+    val source: Int = 0,
+    val listCreateListid: String = "",
+    /** /user/playlist 的 specialid：收藏专辑条目在缺少 list_create_listid 时用它取 albumId。 */
+    val specialId: String = ""
 )
 
 /** 精选歌单（/top/playlist 实测：data.special_list[]；封面 imgurl/flexible_cover 含 {size}）。
@@ -2632,49 +2640,27 @@ object KugouRepository {
      * 获取当前登录账号的歌单列表。对应 Rust GET /user/playlist（KugouApiService.getMyPlaylists）。
      * 实测返回 data.info[]，字段：name/count/pic/listid/global_collection_id。
      * 封面 imgurl/pic 含 {size} 占位符，替换为 400。
+     *
+     * 已过滤 source=2 的「收藏的专辑」条目：它们归「资料库›专辑」页
+     * （见 [getCollectedAlbumEntries]），否则同一张专辑会在两个页面重复出现。
      */
-    suspend fun getMyPlaylists(): Result<List<KugouPlaylist>> = withContext(Dispatchers.IO) {
+    suspend fun getMyPlaylists(
+        page: Int = 1,
+        pageSize: Int = 30
+    ): Result<List<KugouPlaylist>> = withContext(Dispatchers.IO) {
         try {
             if (!KugouApiService.isLoggedIn()) {
                 return@withContext Result.failure<List<KugouPlaylist>>(
                     IllegalStateException("未登录酷狗账号")
                 )
             }
-            KugouApiService.getInstance().getMyPlaylists().fold(
+            KugouApiService.getInstance().getMyPlaylists(page, pageSize).fold(
                 onSuccess = { json ->
-                    val data = json.optJSONObject("data") ?: json
-                    val arr = data.optJSONArray("info")
-                        ?: data.optJSONArray("list")
-                        ?: data.optJSONArray("special_list")
-                    if (arr == null) {
-                        return@fold Result.failure<List<KugouPlaylist>>(
+                    val playlists = parsePlaylists(json)
+                        ?: return@fold Result.failure<List<KugouPlaylist>>(
                             IllegalStateException("歌单响应缺少列表字段")
                         )
-                    }
-                    val playlists = (0 until arr.length()).mapNotNull { i ->
-                        runCatching {
-                            val p = arr.getJSONObject(i)
-                            // 封面取链对齐 Dart KugouPlaylistBrief：sizable_cover/imgurl/img/pic/cover_url/cover；
-                            // 实测部分歌单（如默认“我喜欢”）这些字段均为空，
-                            // 由 resolvePlaylistCover 通过 /playlist/detail 兜底
-                            val rawCover = p.optString("sizable_cover", "")
-                                .ifEmpty { p.optString("imgurl", "") }
-                                .ifEmpty { p.optString("img", "") }
-                                .ifEmpty { p.optString("pic", "") }
-                                .ifEmpty { p.optString("cover_url", "") }
-                                .ifEmpty { p.optString("cover", "") }
-                            KugouPlaylist(
-                                listid = p.optString("listid", ""),
-                                gid = p.optString("global_collection_id", ""),
-                                name = p.optString("name", p.optString("specialname", "")),
-                                coverUrl = resolveArtworkUrl(rawCover) ?: "",
-                                songCount = p.optInt("count", p.optInt("songcount", 0)),
-                                // 真机实测：1=默认收藏，2=系统「我喜欢」（收藏歌单定位标识，不按名称）
-                                isDef = p.optInt("is_def", 0)
-                            )
-                        }.getOrNull()
-                    }.filter { it.listid.isNotEmpty() || it.gid.isNotEmpty() }
-                    Result.success(playlists)
+                    Result.success(playlists.filterNot { it.source == 2 })
                 },
                 onFailure = { e -> Result.failure(e) }
             )
@@ -2682,6 +2668,192 @@ object KugouRepository {
             Log.e(TAG, "getMyPlaylists exception", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * 解析 /user/playlist 响应为领域模型。缺少列表字段返回 null（与「空列表」区分）。
+     * 抽成独立函数是为了让「我的歌单」与「收藏的专辑」两条链路共用同一套字段解析，
+     * 但各自做不同的过滤——绝不能复用 [getMyPlaylists] 再过滤，那会把专辑条目先滤掉。
+     */
+    internal fun parsePlaylists(json: JSONObject): List<KugouPlaylist>? {
+        val data = json.optJSONObject("data") ?: json
+        val arr = data.optJSONArray("info")
+            ?: data.optJSONArray("list")
+            ?: data.optJSONArray("special_list")
+            ?: return null
+        return (0 until arr.length()).mapNotNull { i ->
+            runCatching {
+                val p = arr.getJSONObject(i)
+                // 封面取链对齐 Dart KugouPlaylistBrief：sizable_cover/imgurl/img/pic/cover_url/cover；
+                // 实测部分歌单（如默认“我喜欢”）这些字段均为空，
+                // 由 resolvePlaylistCover 通过 /playlist/detail 兜底
+                val rawCover = p.optString("sizable_cover", "")
+                    .ifEmpty { p.optString("imgurl", "") }
+                    .ifEmpty { p.optString("img", "") }
+                    .ifEmpty { p.optString("pic", "") }
+                    .ifEmpty { p.optString("cover_url", "") }
+                    .ifEmpty { p.optString("cover", "") }
+                KugouPlaylist(
+                    listid = p.optString("listid", ""),
+                    gid = p.optString("global_collection_id", ""),
+                    name = p.optString("name", p.optString("specialname", "")),
+                    coverUrl = resolveArtworkUrl(rawCover) ?: "",
+                    songCount = p.optInt("count", p.optInt("songcount", 0)),
+                    // 真机实测：1=默认收藏，2=系统「我喜欢」（收藏歌单定位标识，不按名称）
+                    isDef = p.optInt("is_def", 0),
+                    type = p.optInt("type", 0),
+                    // 2 = 收藏的专辑（/playlist/add type=1&source=2 创建）
+                    source = p.optInt("source", 0),
+                    listCreateListid = p.optString("list_create_listid", ""),
+                    specialId = p.optString("specialid", "")
+                )
+            }.getOrNull()
+        }.filter { it.listid.isNotEmpty() || it.gid.isNotEmpty() }
+    }
+
+    // ---------- 收藏的专辑（资料库›专辑） ----------
+
+    /**
+     * 拉取账号下「收藏的专辑」条目（/user/playlist 中 source=2 的项）。
+     *
+     * 直接调 API 层再自行解析：不能走 [getMyPlaylists]（那里已经把 source=2 过滤掉）。
+     * 分页拉取（每页 100，最多 3 页），避免专辑收藏排在歌单后面时被首页截断。
+     */
+    suspend fun getCollectedAlbumEntries(): Result<List<KugouPlaylist>> = withContext(Dispatchers.IO) {
+        try {
+            if (!KugouApiService.isLoggedIn()) {
+                return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+            }
+            val api = KugouApiService.getInstance()
+            val out = mutableListOf<KugouPlaylist>()
+            var page = 1
+            while (page <= 3) {
+                val json = api.getMyPlaylists(page = page, pageSize = 100).getOrElse {
+                    return@withContext if (out.isEmpty()) Result.failure(it) else Result.success(out)
+                }
+                val raw = parsePlaylists(json)
+                    ?: return@withContext if (out.isEmpty()) {
+                        Result.failure(IllegalStateException("歌单响应缺少列表字段"))
+                    } else {
+                        Result.success(out)
+                    }
+                out += raw.filter { it.source == 2 }
+                if (raw.size < 100) break
+                page++
+            }
+            Result.success(out)
+        } catch (e: Exception) {
+            Log.e(TAG, "getCollectedAlbumEntries exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 收藏专辑。GET /playlist/add（type=1&source=2）。
+     * 返回：响应里能解析到的新条目 id（data.id/listid/gid），解析不到为空串——
+     * 酷狗 cloudlist 有 5~8 秒传播延迟，调用方需延迟对账（见 CollectedAlbumsObject）。
+     */
+    suspend fun collectAlbum(
+        name: String,
+        artistId: String,
+        albumId: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            if (!KugouApiService.isLoggedIn()) {
+                return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+            }
+            if (albumId.isBlank()) {
+                return@withContext Result.failure(IllegalArgumentException("缺少专辑 id"))
+            }
+            KugouApiService.getInstance().collectAlbum(name, artistId, albumId).fold(
+                onSuccess = { json ->
+                    businessError(json)?.let { reason ->
+                        return@fold Result.failure(IOException("收藏专辑失败：$reason"))
+                    }
+                    val data = json.optJSONObject("data")
+                    val newId = data?.optString("id")?.takeIf { it.isNotEmpty() && it != "null" }
+                        ?: data?.optString("listid")?.takeIf { it.isNotEmpty() && it != "null" }
+                        ?: data?.optString("gid")?.takeIf { it.isNotEmpty() && it != "null" }
+                        ?: ""
+                    Result.success(newId)
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "collectAlbum exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 取消收藏专辑。GET /playlist/del?type=1（与创建时的 type 对应）；
+     * 上游对专辑收藏的 type 语义存在 0/1 两种写法，故业务失败时用 type=0 再试一次。
+     */
+    suspend fun uncollectAlbum(listid: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (!KugouApiService.isLoggedIn()) {
+                return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+            }
+            if (listid.isBlank()) {
+                return@withContext Result.failure(IllegalArgumentException("缺少 listid"))
+            }
+            val api = KugouApiService.getInstance()
+            var lastError = "unknown"
+            for (type in intArrayOf(1, 0)) {
+                val result = api.deletePlaylist(listid, type = type)
+                val json = result.getOrNull()
+                if (json != null) {
+                    val err = businessError(json)
+                    if (err == null) return@withContext Result.success(Unit)
+                    lastError = err
+                    continue
+                }
+                lastError = result.exceptionOrNull()?.message ?: "unknown"
+            }
+            Result.failure(IOException("取消收藏失败：$lastError"))
+        } catch (e: Exception) {
+            Log.e(TAG, "uncollectAlbum exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 重新拉列表，按 list_create_listid==albumId 或名称精确匹配，取收藏条目的 listid。 */
+    suspend fun resolveCollectedAlbumListId(albumId: String, name: String): Result<String?> =
+        getCollectedAlbumEntries().map { entries ->
+            entries.firstOrNull { albumId.isNotBlank() && it.listCreateListid == albumId }?.listid
+                ?: entries.firstOrNull { name.isNotBlank() && it.name == name }?.listid
+        }
+
+    /** 名称 → 数字 albumId 缓存（仅当列表条目给不出数字 id 时才用）。 */
+    private val albumIdByName = ConcurrentHashMap<String, String>()
+
+    /**
+     * 按专辑名反查数字 albumId（对齐 md3Music `_fetchAlbumGlobalIds`）。
+     * /user/playlist 里专辑收藏条目的 specialid/global_collection_id 可能不是
+     * /album/detail 能吃的数字 albumid，此时退回搜索按名精确匹配。
+     */
+    suspend fun searchAlbumIdByName(name: String): Result<String?> = withContext(Dispatchers.IO) {
+        if (name.isBlank()) return@withContext Result.success(null)
+        albumIdByName[name]?.let { return@withContext Result.success(it) }
+        searchAlbums(name).map { albums ->
+            val hit = albums.firstOrNull { it.name == name && it.albumId.isNotBlank() }
+                ?: albums.firstOrNull { it.name.contains(name) && it.albumId.isNotBlank() }
+            hit?.albumId?.also { albumIdByName[name] = it }
+        }
+    }
+
+    /** 业务成功判定：status==1 且 errcode==0（部分网关用 error_code）。失败返回原因。 */
+    private fun businessError(json: JSONObject): String? {
+        val status = json.optInt("status", 1)
+        val errcode = if (json.has("errcode")) {
+            json.optInt("errcode", 0)
+        } else {
+            json.optInt("error_code", 0)
+        }
+        if (status == 1 && errcode == 0) return null
+        return json.optString("error")
+            .ifEmpty { json.optString("errmsg") }
+            .ifEmpty { "status=$status errcode=$errcode" }
     }
 
     /**

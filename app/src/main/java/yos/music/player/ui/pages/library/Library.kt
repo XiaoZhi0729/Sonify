@@ -148,6 +148,17 @@ fun Library(
                         navController.toUI(UI.EverydayRecommendDetail)
                     }
 
+                    LibraryDivider()
+
+                    // 资料库›专辑：酷狗账号下收藏的在线专辑（样式对齐本地专辑网格）。
+                    // 收藏入口在在线专辑详情页操作行右侧的「+」（点后变「✓」）。
+                    SmallLabelItem(
+                        icon = painterResource(id = R.drawable.ic_library_link_icon_album),
+                        label = stringResource(id = R.string.page_library_albums)
+                    ) {
+                        navController.toUI(UI.CollectedAlbums)
+                    }
+
                     // 私人电台入口暂时隐藏（加载体验待优化）。恢复时取消注释即可，
                     // 分隔线需随入口一起回位，否则 EverydayRecommend 之后会留下悬空分隔线。
                     /*

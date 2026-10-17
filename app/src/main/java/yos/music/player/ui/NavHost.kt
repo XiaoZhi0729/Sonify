@@ -29,6 +29,8 @@ interface UI {
         const val LocalArtists = "LocalArtists"
         const val OnlineArtists = "OnlineArtists"
         const val LocalAlbums = "LocalAlbums"
+        // 资料库›专辑：酷狗账号下收藏的在线专辑（/user/playlist 过滤 source=2）
+        const val CollectedAlbums = "CollectedAlbums"
 
         // 在线歌单（酷狗 Rust 链路，第二阶段；入口在 Library）
         const val OnlinePlaylists = "OnlinePlaylists"
