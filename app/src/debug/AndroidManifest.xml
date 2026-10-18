@@ -1,4 +1,8 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 仅 debug：歌词效果对照实验引入的第三方库传递依赖 capsule 声明 minSdk 24。
+         release 不引入该库，故此处放行不影响正式包。 -->
+    <uses-sdk tools:overrideLibrary="com.mocharealm.gaze.capsule" />
     <application>
         <activity
             android:name=".debug.DiagnosticActivity"

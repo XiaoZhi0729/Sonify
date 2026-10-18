@@ -2,6 +2,7 @@ package yos.music.player.ui
 
 import androidx.compose.runtime.Stable
 import androidx.navigation.NavController
+import yos.music.player.ui.navigation.routeEncode
 
 /*object UI {
     const val HomePage = "HomePage"
@@ -28,6 +29,8 @@ interface UI {
         const val LocalArtists = "LocalArtists"
         const val OnlineArtists = "OnlineArtists"
         const val LocalAlbums = "LocalAlbums"
+        // 资料库›专辑：酷狗账号下收藏的在线专辑（/user/playlist 过滤 source=2）
+        const val CollectedAlbums = "CollectedAlbums"
 
         // 在线歌单（酷狗 Rust 链路，第二阶段；入口在 Library）
         const val OnlinePlaylists = "OnlinePlaylists"
@@ -56,17 +59,17 @@ interface UI {
         ): String = buildString {
             append(OnlinePlaylistDetail)
             append("?")
-            // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+            // routeEncode（%XX）与 Navigation Compose query 参数解码配对；
             // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌单名会变成 "A+B"
-            append(OnlinePlaylistSourceArg).append("=").append(android.net.Uri.encode(source))
-            append("&").append(OnlinePlaylistIdArg).append("=").append(android.net.Uri.encode(playlistId))
-            append("&").append(OnlinePlaylistNameArg).append("=").append(android.net.Uri.encode(name))
-            append("&").append(OnlinePlaylistCoverArg).append("=").append(android.net.Uri.encode(cover))
+            append(OnlinePlaylistSourceArg).append("=").append(routeEncode(source))
+            append("&").append(OnlinePlaylistIdArg).append("=").append(routeEncode(playlistId))
+            append("&").append(OnlinePlaylistNameArg).append("=").append(routeEncode(name))
+            append("&").append(OnlinePlaylistCoverArg).append("=").append(routeEncode(cover))
             count?.let {
                 append("&").append(OnlinePlaylistCountArg).append("=").append(it)
             }
             intro?.let {
-                append("&").append(OnlinePlaylistIntroArg).append("=").append(android.net.Uri.encode(it))
+                append("&").append(OnlinePlaylistIntroArg).append("=").append(routeEncode(it))
             }
         }
 
@@ -95,9 +98,9 @@ interface UI {
         fun onlineAlbumRoute(albumId: String, sourceArtistId: String? = null): String = buildString {
             append(OnlineAlbumDetail)
             append("?").append(OnlineAlbumIdArg).append("=")
-                .append(android.net.Uri.encode(albumId))
+                .append(routeEncode(albumId))
             append("&").append(OnlineAlbumSourceArtistArg).append("=")
-                .append(android.net.Uri.encode(sourceArtistId ?: ""))
+                .append(routeEncode(sourceArtistId ?: ""))
         }
 
         // 新歌精选完整列表（Discovery「新歌精选」查看全部；入口在主页 Tab）
@@ -105,6 +108,9 @@ interface UI {
 
         // 最近播放完整列表（主页「最近播放」查看全部；入口在主页 Tab）
         const val RecentPlayedDetail = "RecentPlayedDetail"
+
+        // 听歌识曲（搜索页搜索框右侧麦克风入口；只注册在 Search house 图里）
+        const val SongRecognition = "SongRecognition"
 
         // 每日推荐（主页顶部入口卡；登录可见，未登录走通用推荐）
         const val EverydayRecommendDetail = "EverydayRecommendDetail"
@@ -124,9 +130,9 @@ interface UI {
             append(ArtistDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                .append(android.net.Uri.encode(artistId ?: ""))
+                .append(routeEncode(artistId ?: ""))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(android.net.Uri.encode(artistName))
+                .append(routeEncode(artistName))
         }
 
         // 艺人全部歌曲整页列表（艺人详情页「歌曲」区块标题 → 查看全部；复用 artistId/artistName 参数）
@@ -139,11 +145,11 @@ interface UI {
             append(ArtistSongsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // routeEncode（%XX）与 Navigation Compose query 参数解码配对；
                 // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
-                .append(android.net.Uri.encode(artistId))
+                .append(routeEncode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(android.net.Uri.encode(artistName))
+                .append(routeEncode(artistName))
         }
 
         const val AlbumInfo = "AlbumInfo"
@@ -158,11 +164,11 @@ interface UI {
             append(ArtistHotSongsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // routeEncode（%XX）与 Navigation Compose query 参数解码配对；
                 // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
-                .append(android.net.Uri.encode(artistId))
+                .append(routeEncode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(android.net.Uri.encode(artistName))
+                .append(routeEncode(artistName))
         }
 
         // 艺人专辑整页网格列表（艺人详情页「专辑」区块标题 → 查看全部；复用 artistId/artistName）
@@ -175,11 +181,11 @@ interface UI {
             append(ArtistAlbumsDetail)
             append("?")
             append(ArtistDetailIdArg).append("=")
-                // Uri.encode（%XX）与 Navigation Compose query 参数解码配对；
+                // routeEncode（%XX）与 Navigation Compose query 参数解码配对；
                 // URLEncoder 的空格→"+" 不会被 NavController 还原，带空格的歌手名会变成 "A+B"
-                .append(android.net.Uri.encode(artistId))
+                .append(routeEncode(artistId))
             append("&").append(ArtistDetailNameArg).append("=")
-                .append(android.net.Uri.encode(artistName))
+                .append(routeEncode(artistName))
         }
     }
 
@@ -198,10 +204,19 @@ interface UI {
 
             const val LyricSetting = "LyricSetting"
             const val UserInterfaceSetting = "UserInterfaceSetting"
+            const val GlassEffectSetting = "GlassEffectSetting"
             const val NotificationSetting = "NotificationSetting"
             const val KugouLogin = "KugouLogin"
             const val KugouVipSignIn = "KugouVipSignIn"
             const val DataStorage = "DataStorage"
+
+            // 缓存分类详情（按歌曲挑选清理；category = audio / lyric）
+            const val CacheDetail = "CacheDetail"
+            const val CacheDetailArg = "category"
+            const val CacheDetailPattern = "$CacheDetail?$CacheDetailArg={$CacheDetailArg}"
+
+            fun cacheDetailRoute(category: String): String =
+                "$CacheDetail?$CacheDetailArg=${routeEncode(category)}"
         }
     }
 }

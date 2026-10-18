@@ -86,6 +86,10 @@ private fun navigationBarsBottomClampedPx(): Int =
 @Composable
 fun rawStatusBarsTopPx(): Int = currentRawInsets().top
 
+/** 状态栏顶 inset（dp）。 */
+@Composable
+fun rawStatusBarsTopDp(): Dp = with(LocalDensity.current) { currentRawInsets().top.toDp() }
+
 /** 导航条底 inset（px，带 20dp 基线，开关小白条不变）。 */
 @Composable
 fun rawNavigationBarsBottomPx(): Int = navigationBarsBottomClampedPx()

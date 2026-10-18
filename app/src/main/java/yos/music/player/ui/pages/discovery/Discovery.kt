@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.PagerDefaults
@@ -25,14 +26,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -66,6 +77,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.data.libraries.HomeLayoutLogic
+import yos.music.player.data.libraries.HomeLayoutStore
+import yos.music.player.data.libraries.HomeSectionConfig
+import yos.music.player.data.libraries.HomeSectionId
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.artistsName
@@ -95,6 +110,7 @@ import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
 
@@ -282,34 +298,71 @@ fun Discovery(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        Title(
-            title = stringResource(id = R.string.page_home_title),
-            topRightIcon = Icons.Filled.MoreVert,
-            onTopRightIcon = {
-                openSettings()
-            },
-            onRefresh = {
-                refreshing.value = true
-                refreshAll()
-            },
-            refreshing = refreshing.value,
-            extraTopPadding = 57.dp
-        ) {
-        item("TopDivider") {
-            // 顶部标题栏下方细分割线（对齐 Apple Music 标题区与内容的细分隔）
-            Spacer(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 16.dp)
-                    .alpha(0.2f)
-                    .height(0.5.dp)
-                    .background(Color.Black withNight Color.White)
-            )
-        }
+    // ---------- 主页自定义（Home Layout） ----------
+    val layout by HomeLayoutStore.sections // 顶层读取，规避 state-read-scope-trap
+    var editMode by remember { mutableStateOf(false) }
+    var showHomeMenu by remember { mutableStateOf(false) }
+    var showResetConfirm by remember { mutableStateOf(false) }
+    var showExitConfirm by remember { mutableStateOf(false) }
+    val resetAnimating = remember { mutableStateOf(false) }
+    val dragHolder = remember { HomeEditDragHolder() }
+    val listStateBrowse = rememberLazyListState()
+    val listStateEdit = rememberLazyListState()
+    val visibleSections = layout.filter { it.visible }
+    // 编辑草稿：编辑态内所有改动只改草稿；「完成并保存」/「保存」才落盘，否则丢弃
+    val draft = remember { mutableStateOf<List<HomeSectionConfig>>(emptyList()) }
+    val editLayout = draft.value
+    val editAllKeys = editLayout.map { homeEditKey(it.id) }
 
+    // 进入编辑态：同步取当前已保存布局为草稿（必须同步——否则首帧会渲染上次残留的草稿再跳变）
+    fun enterEdit() {
+        draft.value = HomeLayoutStore.sections.value
+        editMode = true
+    }
+    // 请求退出：未改动直接退出；有改动才弹保存询问
+    fun requestExit() {
+        if (draft.value == HomeLayoutStore.sections.value) editMode = false else showExitConfirm = true
+    }
+    // 保存草稿并退出（未改动则不写盘）
+    fun saveDraftAndExit() {
+        if (draft.value != HomeLayoutStore.sections.value) HomeLayoutStore.update(draft.value)
+        editMode = false
+    }
+
+    // 进入编辑态回顶
+    LaunchedEffect(editMode) {
+        if (editMode) listStateEdit.scrollToItem(0)
+    }
+    // 系统返回：未改动直接退出，有改动弹保存询问（拖拽期 / 恢复默认动画期 / 已有弹窗时不响应）
+    BackHandler(enabled = editMode && !dragHolder.active && !resetAnimating.value && !showExitConfirm) {
+        requestExit()
+    }
+    // 恢复默认：animateItem 无完成回调 → 固定兜底时长后结束并回顶
+    LaunchedEffect(resetAnimating.value) {
+        if (resetAnimating.value) {
+            kotlinx.coroutines.delay(30L * 5 + 320L)
+            resetAnimating.value = false
+            listStateEdit.scrollToItem(0)
+        }
+    }
+    // 拖拽松手后几何兜底清理（系统中断兜底）
+    LaunchedEffect(dragHolder.latched) {
+        if (!dragHolder.latched && dragHolder.geometry != null) {
+            kotlinx.coroutines.delay(800)
+            dragHolder.clear()
+        }
+    }
+
+    val renderSections: LazyListScope.() -> Unit = {
+                if (visibleSections.isEmpty()) {
+                    item("HomeEmpty") {
+                        HomeEmptyState(onEdit = { enterEdit() })
+                    }
+                } else {
+                    visibleSections.forEach { cfg ->
+                        when (HomeSectionId.fromKey(cfg.id)) {
         // ① 最近播放横向大卡列表（取色模糊背景，无数据则不渲染，无空状态）
-        item("RecentlyPlayed") {
+                            HomeSectionId.RecentlyPlayed -> item("RecentlyPlayed") {
             val songs = recentlyPlayed
             if (songs.isNotEmpty()) {
                 Column(
@@ -356,7 +409,7 @@ fun Discovery(
         }
 
         // ② 每日推荐（样式与「新歌精选」一致：横向分页多列歌曲行；无数据则整段隐藏）
-        item("EverydayRecommendSection") {
+                            HomeSectionId.EverydayRecommend -> item("EverydayRecommendSection") {
             if (everySongs.value.isNotEmpty()) {
                 Column(
                     Modifier
@@ -373,7 +426,7 @@ fun Discovery(
         }
 
         // ③ 精选歌单
-        item("RecommendPlaylistSection") {
+                            HomeSectionId.RecommendPlaylists -> item("RecommendPlaylistSection") {
             if (recommendPlaylists.value.isNotEmpty()) {
                 Column(
                     Modifier
@@ -437,7 +490,7 @@ fun Discovery(
             }
         }
 
-        item("NewSongsSection") {
+                            HomeSectionId.NewSongs -> item("NewSongsSection") {
             if (newSongs.value.isNotEmpty()) {
                 Column(
                     Modifier
@@ -455,7 +508,7 @@ fun Discovery(
             }
         }
 
-        item("NewAlbumsSection") {
+                            HomeSectionId.NewAlbums -> item("NewAlbumsSection") {
             if (newAlbums.value.isNotEmpty()) {
                 Column(
                     Modifier
@@ -504,7 +557,7 @@ fun Discovery(
             }
         }
 
-        item("RankSection") {
+                            HomeSectionId.Rank -> item("RankSection") {
             if (rankList.value.isNotEmpty()) {
                 Column(
                     Modifier
@@ -549,6 +602,144 @@ fun Discovery(
                     }
                 }
             }
+        }
+                            else -> Unit
+                        }
+                    }
+                }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .homeEditDragGesture(
+                enabled = editMode,
+                listState = listStateEdit,
+                dragHolder = dragHolder,
+                allKeys = editAllKeys,
+                onCommit = { from, to -> draft.value = HomeLayoutLogic.dragCommit(draft.value, from, to) }
+            )
+    ) {
+        if (showResetConfirm) {
+            SonifyDialog(
+                title = stringResource(id = R.string.home_edit_reset_title),
+                message = stringResource(id = R.string.home_edit_reset_message),
+                onDismissRequest = { showResetConfirm = false },
+                positiveContent = stringResource(id = R.string.home_edit_reset_confirm),
+                onPositive = {
+                    showResetConfirm = false
+                    resetAnimating.value = true
+                    draft.value = HomeLayoutLogic.default()
+                },
+                negativeContent = stringResource(id = R.string.common_cancel),
+                onNegative = { showResetConfirm = false },
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true
+            )
+        }
+        if (showExitConfirm) {
+            SonifyDialog(
+                title = stringResource(id = R.string.home_edit_exit_confirm_title),
+                onDismissRequest = { showExitConfirm = false },
+                positiveContent = stringResource(id = R.string.home_edit_save),
+                onPositive = {
+                    showExitConfirm = false
+                    saveDraftAndExit()
+                },
+                negativeContent = stringResource(id = R.string.home_edit_dont_save),
+                onNegative = {
+                    showExitConfirm = false
+                    editMode = false
+                },
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true
+            )
+        }
+        AnimatedContent(
+            targetState = editMode,
+            transitionSpec = {
+                fadeIn(tween(300, easing = FastOutSlowInEasing)) togetherWith
+                    fadeOut(tween(300, easing = FastOutSlowInEasing))
+            },
+            label = "homeEditFade"
+        ) { isEdit ->
+        Title(
+            title = if (isEdit) stringResource(id = R.string.home_edit_title)
+            else stringResource(id = R.string.page_home_title),
+            onBack = if (isEdit) ({ requestExit() }) else null,
+            rightBarIcon = if (isEdit) ({
+                val locked = dragHolder.active || resetAnimating.value
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(end = 12.dp)
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.home_edit_reset_short),
+                        color = if (locked) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp,
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .then(if (locked) Modifier else Modifier.clickable { showResetConfirm = true })
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(id = R.string.home_edit_done),
+                        color = if (locked) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        else MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp,
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .then(if (locked) Modifier else Modifier.clickable { saveDraftAndExit() })
+                    )
+                }
+            }) else ({
+                HomeMenuButton(
+                    expanded = showHomeMenu,
+                    onExpandChange = { showHomeMenu = it },
+                    onEditHome = {
+                        showHomeMenu = false
+                        enterEdit()
+                    },
+                    onSettings = {
+                        showHomeMenu = false
+                        openSettings()
+                    }
+                )
+            }),
+            topRightIcon = null,
+            onTopRightIcon = null,
+            onRefresh = if (isEdit) null else ({
+                refreshing.value = true
+                refreshAll()
+            }),
+            refreshing = refreshing.value,
+            extraTopPadding = 57.dp,
+            listState = if (isEdit) listStateEdit else listStateBrowse
+        ) {
+            if (isEdit) {
+                homeEditItems(
+                    layout = editLayout,
+                    listState = listStateEdit,
+                    dragHolder = dragHolder,
+                    resetAnimating = resetAnimating.value,
+                    onToggle = { draft.value = HomeLayoutLogic.toggle(draft.value, it) }
+                )
+            } else {
+        item("TopDivider") {
+            // 顶部标题栏下方细分割线（对齐 Apple Music 标题区与内容的细分隔）
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 16.dp)
+                    .alpha(0.2f)
+                    .height(0.5.dp)
+                    .background(Color.Black withNight Color.White)
+            )
+        }
+
+                renderSections()
+                }
         }
     }
     }
@@ -896,5 +1087,32 @@ internal fun RecommendPlaylistCard(
                 modifier = Modifier.alpha(0.6f)
             )
         }
+    }
+}
+
+/** 主页全部板块被隐藏时的空状态：提示 + 直接进入编辑态。 */
+@Composable
+private fun HomeEmptyState(onEdit: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp, vertical = 64.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = stringResource(id = R.string.home_empty_hint),
+            fontSize = 15.sp,
+            modifier = Modifier.alpha(0.5f)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = stringResource(id = R.string.home_empty_action),
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .clip(YosRoundedCornerShape(20.dp))
+                .clickable(onClick = onEdit)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        )
     }
 }

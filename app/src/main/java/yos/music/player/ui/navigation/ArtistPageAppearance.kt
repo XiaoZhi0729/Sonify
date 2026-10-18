@@ -72,6 +72,42 @@ object ArtistPageAppearance {
     }
 
     /**
+     * 页面底衬色（NavPageVisual 的全屏底色）：**仅当转场两端都是艺人域页面**时，才把
+     * 各进出场中的注册页按其进度加权平均后返回；其余一律 null，调用方回退主题底。
+     *
+     * 为什么需要：NavHost 用 fadeIn/fadeOut 交叉淡化，两页各按透明度叠在底衬之上，
+     * 中点处底衬会以 p(1-p) 的权重透出（p 为进场页进度）。艺人域两页底色都是提取色，
+     * 底衬若仍是主题色就会被透出成「闪一下主题色」（浅色泛白、深色泛黑），故转场中
+     * 底衬改铺提取色。
+     *
+     * 为什么必须两端都是艺人域：普通页（列表、搜索…）自身不铺底色，**直接透出本底衬**。
+     * 只要有一端是普通页（艺人页 ↔ 普通页，无论 push 还是 pop），把底衬染成提取色就会
+     * 让那一端的普通页整块变成提取色。普通页不注册，无从直接查询某条 entry 是不是普通页；
+     * 但**艺人域转场两端都在注册表里，普通页转场只有一端在**，故用「除目的页外还有注册页
+     * 正在进出场」作为「另一端同样是艺人域页」的判据。
+     *
+     * 加权平均而非「取进度最高者」：不同艺人两页互转时，取最高者会在进度交叉的瞬间让
+     * 底衬跳变；加权平均随进度连续滑移，无跳变。
+     */
+    fun transitioningBackdropColor(activeId: String?): Color? {
+        if (activeId == null || registrations[activeId] == null) return null
+        var result: Color? = null
+        var weight = 0f
+        var hasRegisteredCounterpart = false
+        for ((id, registration) in registrations) {
+            if (!registration.transition.transitioning.value) continue
+            val progress = registration.transition.progress.value
+            if (progress <= 0f) continue
+            if (id != activeId) hasRegisteredCounterpart = true
+            val color = registration.color.value
+            result = if (result == null) color
+            else lerp(result, color, progress / (weight + progress))
+            weight += progress
+        }
+        return if (hasRegisteredCounterpart) result else null
+    }
+
+    /**
      * 底栏 tint 通道：与 [blendedScrimColor] 同一批注册、同一条进度，但每个注册色先经
      * [tintOf] 整形成玻璃着色（源即提取色 State，无需页面侧另行注册）。
      *

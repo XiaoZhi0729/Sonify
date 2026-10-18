@@ -135,16 +135,29 @@ fun OnlinePlaylists(
     val deleteTarget = remember("OnlinePlaylists_delete") { mutableStateOf<KugouPlaylist?>(null) }
     val deleting = remember("OnlinePlaylists_deleting") { mutableStateOf(false) }
 
-    fun load(autoOpenIndex: Int? = null) {
-        if (status.value == "loading") return
-        status.value = "loading"
+    /**
+     * [silent] = true：静默刷新——不置 "loading"（不出现加载中）、不清空/闪动列表、
+     * 失败也不改状态；成功后仅在数据确有变化时原位更新列表内容（列表 State 走结构相等，
+     * 内容未变时赋值不会触发重组）。用于「返回本页时后台对账」，避免转场中途出现
+     * 「加载中」与列表整体消失/封面抖动。
+     */
+    fun load(autoOpenIndex: Int? = null, silent: Boolean = false) {
+        if (!silent) {
+            if (status.value == "loading") return
+            status.value = "loading"
+        }
         scope.launch {
             KugouRepository.getMyPlaylists()
                 .onSuccess { rawList ->
+                    // 空的系统「默认收藏」歌单（is_def==1 且 count==0）默认隐藏：它是酷狗
+                    // 账号级系统歌单（与「我喜欢」is_def==2 成对，注册时服务端自动创建），
+                    // 空壳显示出来只会造成困惑；一旦有歌（count>0）照常出现。
+                    // 只按 is_def 判定，勿用名字匹配（酷狗可能返回同名普通歌单）。
+                    val visibleRaw = rawList.filterNot { it.isDef == 1 && it.songCount == 0 }
                     // 先立即填充上次解析出的封面（MMKV 落盘）：「我喜欢」等系统歌单
                     // /user/playlist 不返回封面，进页瞬间行 coverUrl 为空会先闪兜底占位图，
                     // 种子数据消掉空窗；下方后台兜底仍会重跑，结果变化时行内热更新
-                    var list = rawList.map { pl ->
+                    var list = visibleRaw.map { pl ->
                         if (pl.coverUrl.isEmpty()) {
                             pl.copy(coverUrl = playlistCoverCache.decodeString(pl.listid.ifEmpty { pl.gid }).orEmpty())
                         } else pl
@@ -183,7 +196,7 @@ fun OnlinePlaylists(
                     // 详情接口也无封面时再降级取歌单内第一首有封面的歌（情况 C），
                     // 三级都无则保持空（占位图展示，不伪造 URL）
                     scope.launch {
-                        rawList.filter { it.coverUrl.isEmpty() }.forEach { pl ->
+                        visibleRaw.filter { it.coverUrl.isEmpty() }.forEach { pl ->
                             var cover = KugouRepository.resolvePlaylistCover(pl)
                             if (cover.isNullOrEmpty()) {
                                 cover = KugouRepository.resolvePlaylistCoverFromTracks(
@@ -218,7 +231,8 @@ fun OnlinePlaylists(
                     }
                 }
                 .onFailure { e ->
-                    status.value = "error:${e.message}"
+                    // 静默刷新失败保留现有内容与状态，不打断界面
+                    if (!silent) status.value = "error:${e.message}"
                 }
         }
     }
@@ -296,9 +310,16 @@ fun OnlinePlaylists(
         }
     }
 
+    // 歌单/收藏等云端变化（含返回本页时重新进入组合）触发对账：
+    // 已有数据 → 静默刷新（不置 loading、不清空列表，仅在有变化时原位更新内容，
+    // 避免返回时出现「加载中」与列表整体消失/封面抖动）；无数据（首次进入）→ 常规加载。
     LaunchedEffect(KugouSyncCoordinator.playlistsRevision.value) {
-        status.value = "idle"
-        load()
+        if (playlists.value.isEmpty()) {
+            status.value = "idle"
+            load()
+        } else {
+            load(silent = true)
+        }
     }
 
     Title(

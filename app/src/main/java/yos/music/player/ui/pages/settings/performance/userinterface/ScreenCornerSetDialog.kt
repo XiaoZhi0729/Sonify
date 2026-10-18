@@ -38,8 +38,7 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenCornerSetDialog(modifier: Modifier = Modifier, onDismiss: () -> Unit) {
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) return
-
+    // 系统报 0（ColorOS 平板）时 SDK>=31 也要能手动校准，见 ScreenCornerRadius.kt
     val cornerValue = remember("MainActivity_cornerValue") {
         mutableFloatStateOf(SettingsLibrary.ScreenCorner.toFloatOrNull()?.coerceIn(0f, 130f) ?: 30f)
     }

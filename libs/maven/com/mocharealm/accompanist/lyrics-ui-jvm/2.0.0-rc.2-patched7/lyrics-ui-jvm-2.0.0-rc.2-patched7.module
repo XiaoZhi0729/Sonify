@@ -1,0 +1,165 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../lyrics-ui/2.0.0-rc.2-patched7/lyrics-ui-2.0.0-rc.2-patched7.module",
+    "group": "com.mocharealm.accompanist",
+    "module": "lyrics-ui",
+    "version": "2.0.0-rc.2-patched7",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "jvmApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "src-jvm.jar",
+          "url": "lyrics-ui-jvm-2.0.0-rc.2-patched7.jar",
+          "size": 662147,
+          "sha512": "d5bf0938384a46702e166803baac3d0aaed3fb72bf4f3be649e55fb71f6aba550e9160c7026bd6889fd536e4eaa6b93a8b8236c8d7ded8d749c00e52229fea61",
+          "sha256": "c2392d0ce80412e20f0ef0c44add4b34e1f8ab453d2e33feeca4d16b7f29fe26",
+          "sha1": "35d87fc553712ed1331a84bf8fe17eac9ca49358",
+          "md5": "1f31dabd7e775cffeddda0a3c1b8d09d"
+        }
+      ]
+    },
+    {
+      "name": "jvmRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        },
+        {
+          "group": "com.ibm.icu",
+          "module": "icu4j",
+          "version": {
+            "requires": "78.3"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.runtime",
+          "module": "runtime",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.foundation",
+          "module": "foundation",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.material3",
+          "module": "material3",
+          "version": {
+            "requires": "1.9.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.ui",
+          "module": "ui",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.components",
+          "module": "components-ui-tooling-preview",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "com.mocharealm.gaze",
+          "module": "capsule",
+          "version": {
+            "requires": "2.1.1-patch2"
+          }
+        },
+        {
+          "group": "com.mocharealm.accompanist",
+          "module": "lyrics-core",
+          "version": {
+            "requires": "0.5.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.components",
+          "module": "components-resources",
+          "version": {
+            "requires": "1.12.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "src-jvm.jar",
+          "url": "lyrics-ui-jvm-2.0.0-rc.2-patched7.jar",
+          "size": 662147,
+          "sha512": "d5bf0938384a46702e166803baac3d0aaed3fb72bf4f3be649e55fb71f6aba550e9160c7026bd6889fd536e4eaa6b93a8b8236c8d7ded8d749c00e52229fea61",
+          "sha256": "c2392d0ce80412e20f0ef0c44add4b34e1f8ab453d2e33feeca4d16b7f29fe26",
+          "sha1": "35d87fc553712ed1331a84bf8fe17eac9ca49358",
+          "md5": "1f31dabd7e775cffeddda0a3c1b8d09d"
+        }
+      ]
+    },
+    {
+      "name": "jvmSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "files": [
+        {
+          "name": "src-jvm-sources.jar",
+          "url": "lyrics-ui-jvm-2.0.0-rc.2-patched7-sources.jar",
+          "size": 117720,
+          "sha512": "d4917f0630ac86776ac236d3a581a96208b0067d95eaf7e708ab70043cc9cb0173364d0272b7038a0207e58d63880af00f32cb76b5373fedc2b2c7c617fab329",
+          "sha256": "8dbe1a9d8700857cb6ae5f85411e6ea80979497d04294b95eabf7e8386488247",
+          "sha1": "e737cc7b5235cd074c86d10595e712a2a5450649",
+          "md5": "d42d2957a19b51ab2f6ec85ec6e022c7"
+        }
+      ]
+    }
+  ]
+}

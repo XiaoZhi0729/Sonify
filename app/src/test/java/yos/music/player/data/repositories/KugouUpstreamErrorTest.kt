@@ -90,4 +90,29 @@ class KugouUpstreamErrorTest {
         assertFalse(KugouUpstreamError.hasAuthInvalidCause(IOException("plain")))
         assertFalse(KugouUpstreamError.hasAuthInvalidCause(null))
     }
+
+    /** 真机原文：精选歌单 gcid 无效时 /playlist/track/all 的响应（HTTP 502）。 */
+    private val listFileMissingBody =
+        """{"error_code":20010,"errmsg":"get other listfile fail","data":{},"status":0}"""
+
+    @Test
+    fun detectsListFileMissing() {
+        assertTrue(KugouUpstreamError.isListFileMissing(listFileMissingBody))
+        // 只有错误码 / 只有明文 / 带空格的序列化都能认
+        assertTrue(KugouUpstreamError.isListFileMissing("""{"error_code":20010}"""))
+        assertTrue(KugouUpstreamError.isListFileMissing("""{"errmsg":"get other listfile fail"}"""))
+        assertTrue(KugouUpstreamError.isListFileMissing("""{"error_code": 20010}"""))
+    }
+
+    @Test
+    fun listFileMissingDoesNotSwallowOtherFailures() {
+        // 鉴权失效不是 listfile 缺失
+        assertFalse(KugouUpstreamError.isListFileMissing(illegalKeyBody))
+        assertFalse(KugouUpstreamError.isListFileMissing(needVerifyBody))
+        // 同族的 20017（specialid 当 listid）是另一个错误码，不在此列
+        assertFalse(KugouUpstreamError.isListFileMissing("""{"error_code":20017}"""))
+        // 空体/缺体：不猜
+        assertFalse(KugouUpstreamError.isListFileMissing(""))
+        assertFalse(KugouUpstreamError.isListFileMissing(null))
+    }
 }

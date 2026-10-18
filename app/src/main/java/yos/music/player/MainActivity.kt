@@ -109,6 +109,7 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
@@ -129,6 +130,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -149,6 +151,8 @@ import androidx.navigation.compose.rememberNavController
 import yos.music.player.ui.widgets.basic.ProvideRawWindowInsets
 import yos.music.player.ui.widgets.basic.navigationBarsPadding
 import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomPx
+import yos.music.player.ui.widgets.basic.kugouHash
+import yos.music.player.data.repositories.KugouRepository
 import androidx.navigation.compose.NavHost
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
@@ -234,6 +238,7 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.BottomNavigator
+import yos.music.player.ui.widgets.basic.LocalBottomOverlayHeight
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.NavItem
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
@@ -314,8 +319,45 @@ class MainActivity : BaseActivity() {
                     val dragActive = remember("MainActivity_dragActive") {
                         mutableStateOf(false)
                     }
+                    // TEMP A/B（验完删）：外部文件存在时，静止态也强制由外壳单封面层绘制
+                    // （静止态 progress 即 1 → 画在 album 端点）。用来像素级比对
+                    // "morph 端点渲染" 与 "真实封面节点渲染"，无需任何手势。
+                    // 文件：/sdcard/Android/data/com.sonify.music/files/morph_force
+                    val morphDiagForceEndpoint = remember("MainActivity_morphDiagForce") {
+                        mutableStateOf(false)
+                    }
+                    val morphDiagForceCtx = LocalContext.current
+                    LaunchedEffect("morphDiagForce") {
+                        val f = java.io.File(
+                            morphDiagForceCtx.getExternalFilesDir(null),
+                            "morph_force"
+                        )
+                        while (true) {
+                            morphDiagForceEndpoint.value = f.exists()
+                            kotlinx.coroutines.delay(300)
+                        }
+                    }
                     val dragOffsetY = remember("MainActivity_dragOffsetY") {
                         mutableFloatStateOf(0f)
+                    }
+                    // 拖拽起步时要丢掉的第一段 delta。
+                    //
+                    // Compose 的 draggable 在触摸 slop 被越过的那一刻才回调 onDragStarted，
+                    // 并把"越过 slop 的那一截过冲量"（overSlop）当作**第一段 delta** 递进来。
+                    // 那一段是手指在 slop 内已经走过的距离，壳此时还没开始跟手——把它算进
+                    // 壳位移，壳就在第一帧凭空跳 5–10dp。
+                    //
+                    // 为什么这个跳变在播放页特别刺眼：全屏静态封面的顶边**贴着屏幕顶边**
+                    // （静止态 coverTop=0，MorphGeo 实测），壳顶一帧下移多少，封面顶边就
+                    // 和屏幕上沿脱开多少，肉眼看到的就是"封面突然向下闪现"（两个方向都是
+                    // 同一个起步过冲，真机复现）。
+                    //
+                    // 修法：onDragStarted 置位，下一段 delta **只扣掉触摸 slop 那么多**（其余照常
+                    // 跟手）——过冲量不再驱动壳，壳与手指的固定偏差 = slop，不可见。
+                    // 注意不能整段丢弃：真机日志里单事件快速拖拽的首段可达 98px（30dp），
+                    // 整段丢掉会让壳在该手势里纹丝不动（已踩过）。
+                    val dragSkipFirstDelta = remember("MainActivity_dragSkipFirstDelta") {
+                        mutableStateOf(false)
                     }
                     // 本次拖拽手势中壳是否发生过**真实位移**。dragActive 只代表手势
                     // 被接管：按住不动、或朝已顶死的方向拉（如收起态向下拉）时它也是
@@ -683,7 +725,11 @@ class MainActivity : BaseActivity() {
                             var stableFrames = 0
                             val endpointRect = {
                                 if (target >= 0.5f) {
+                                    // 展开落点 = 当前页的真实封面。Album 页的大封面节点可用；
+                                    // 歌词/播放列表页它随页面离开组合而不可用，退化为顶栏 69dp
+                                    // 小封面（bar）。故按可用性择取即可，无需读当前页。
                                     localRect(coverGeometry.hero, coverGeometry.album)
+                                        ?: localRect(coverGeometry.hero, coverGeometry.bar)
                                 } else {
                                     localRect(coverGeometry.hero, coverGeometry.mini)
                                 }
@@ -729,6 +775,15 @@ class MainActivity : BaseActivity() {
                                 try {
                                     val anchor = yosBottomSheetConfig.expandedAnchorPx
                                     if (anchor <= 0f) return@launch
+                                    // TEMP 诊断：区分"拖拽起步"与"点按/返回键落位"两条路径。
+                                    android.util.Log.d(
+                                        "MorphGeo",
+                                        "ANIMATE_TO target=%.2f from=%.3f v=%.0f".format(
+                                            target,
+                                            (offsetY.value / anchor).coerceIn(0f, 1f),
+                                            initialVelocity
+                                        )
+                                    )
                                     offsetY.updateBounds(0f, anchor)
                                     expandedAnchorPxSnapshot.floatValue = anchor
                                     if (startOffset != null) {
@@ -764,6 +819,20 @@ class MainActivity : BaseActivity() {
                         }
 
 
+                        // TEMP A/B（验完删）：morph_force 文件存在时自动把播放页展开到 p=1，
+                        // 配合 morphDiagForceEndpoint 让静止态由外壳单封面层绘制，便于
+                        // 无手势地做像素级 A/B（文件在 = morph 端点渲染；文件删 = 真实封面节点）。
+                        LaunchedEffect("morphDiagForceOpen") {
+                            while (true) {
+                                if (morphDiagForceEndpoint.value &&
+                                    yosBottomSheetConfig.progress < 0.999f
+                                ) {
+                                    animatePlayerTo(1f)
+                                }
+                                kotlinx.coroutines.delay(800)
+                            }
+                        }
+
                         // 播放页歌手名 → 艺人主页：在**用户当前所在的房子**（Tab）内
                         // push ArtistDetail，再收回播放页——收回动画揭示的正是艺人页，
                         // 且系统返回自然逐层回退到打开播放页前的停留位置。
@@ -778,14 +847,34 @@ class MainActivity : BaseActivity() {
                                     topEntry?.destination?.route == UI.ArtistDetailPattern &&
                                         topEntry.arguments?.getString(UI.ArtistDetailNameArg) == name
                                 if (!alreadyThere) NavGuard.run {
+                                    // 优先用歌曲自带的 singerid 直达艺人页（歌曲解析时已登记 hash→歌手表）。
+                                    // 只传歌手名会让 ArtistDetail 退化成按名搜索，而酷狗歌手搜索不做
+                                    // 繁简/译名归一化（「高橋洋子」搜不到、「高桥洋子」才命中），
+                                    // 于是「歌手明明在却报未找到」。查不到 id 时才回落按名搜索（原行为）。
+                                    val hash = MediaController.musicPlaying.value?.kugouHash()
+                                    val performerId = hash?.let {
+                                        KugouRepository.performerIdFor(it, name)
+                                    }
                                     activeHouseController.navigate(
-                                        UI.artistDetailRoute(artistId = null, artistName = name)
+                                        UI.artistDetailRoute(
+                                            artistId = performerId?.toString(),
+                                            artistName = name
+                                        )
                                     )
                                 }
                                 animatePlayerTo(0f)
                             }
                         }
 
+
+                        // 播放页评论「去登录」：与 openArtistFromPlayer 同一套——
+                        // 在当前房子的栈内 push 登录页，再收回播放页，返回时自然回退到原位。
+                        val openLoginFromPlayer: () -> Unit = {
+                            NavGuard.run {
+                                activeHouseController.navigate(UI.Settings.KugouLogin)
+                            }
+                            animatePlayerTo(0f)
+                        }
 
                         val showNowPlaying = remember("MainActivity_showNowPlaying") {
                             derivedStateOf {
@@ -823,13 +912,15 @@ class MainActivity : BaseActivity() {
                                 mutableStateOf(Album)
                             }
 
-                        // 封面 morph 是否接管绘制。
+                        // 封面单层接管绘制（唯一封面权威）。
                         //
-                        // 关键：本状态是"隐藏原封面"与"hero 层绘制"的**唯一**依据。
-                        // 三个消费点（迷你封面 alpha、Album 封面 alpha、hero 层）读的都是
-                        // 这一个值，因此不可能出现"原封面已隐藏、hero 又没画"的空窗。
+                        // 关键：本状态是"隐藏所有真实封面节点"与"封面层绘制"的**唯一**依据。
+                        // 所有消费点（大封面 alpha、顶栏 69dp 封面 alpha、迷你封面 alpha、
+                        // 封面层 active）读的都是这一个值，因此不可能出现"原封面已隐藏、
+                        // 封面层又没画"的空窗，也不可能同帧画两张。
                         //
-                        // 判据只取**动画生命周期**：拖拽占用中，或展开/收起运动 Job 存活。
+                        // 判据取**过渡生命周期**：外壳拖拽/展开收起运动 Job 存活，
+                        // 或页面封面进度 q 正在动画（大封面 ↔ 顶栏 69dp 小封面切换）。
                         //   · 运动 Job 在 finally 里清空（与 pageCorner 用的是同一个信号，
                         //     那个已经在真机验证过），所以落位后一定翻回 false，
                         //     封面随即交回真实的静态节点。
@@ -837,31 +928,61 @@ class MainActivity : BaseActivity() {
                         // 绝不能再叠加 progress 区间判断（曾经的写法）：
                         // progress 落位后停在 0.9999911（anchor 会漂），永远进不了
                         // "progress < 0.98" 这个退出条件，于是布尔值永久卡在 true——
-                        // 大封面被永久隐藏、morph 层永久在上层画，表现就是
+                        // 大封面被永久隐藏、封面层永久在上层画，表现就是
                         // 封面停在运动态、播放/暂停时下方真实封面缩放看不见（手机实测）。
                         // 这也印证了项目既有经验：落位判断不能用 progress==1 这类数值阈值。
                         //
-                        // 其余门禁：
-                        //  - 竖屏当前页是 Album：歌词/队列页的目标是 69dp 顶栏封面，不在本版范围；
-                        //    横屏左列封面在所有子页面均常驻（Lyric/PlayingList 也在左列显示同一封面），
-                        //    几何端点始终相同，故横屏不限制当前页。
-                        //  - 几何已就绪，避免首帧用错落点。
-                        // 注意横竖判定直接读 parentWidth/parentHeight，不读外层缓存的
-                        // isSplitMode：那是普通 Boolean，在 derivedStateOf 里会变成常量。
-                        val coverMorphActive = remember("MainActivity_coverMorphActive") {
+                        // 竖屏不再限制当前页：歌词/队列页的封面端点就是顶栏 69dp 小封面
+                        // （geometry.bar），由同一层按 q 在 bar↔album 间插值；横屏左列封面
+                        // 在所有子页面均常驻，几何端点相同，故横屏不限制当前页。
+                        // 几何已就绪，避免首帧用错落点。
+
+                        // 页面封面进度 q：0=顶栏 69dp 小封面（歌词/播放列表页），
+                        // 1=大封面（Album 页）。与标题/按钮共享元素同款 spring，保证封面
+                        // 与文字同拍。由 nowPageNowPlaying 驱动，纯绘制期读取。
+                        val coverPageProgress = remember("MainActivity_coverPageProgress") {
+                            Animatable(if (nowPageNowPlaying.value == Album) 1f else 0f)
+                        }
+                        LaunchedEffect(nowPageNowPlaying.value) {
+                            coverPageProgress.animateTo(
+                                targetValue = if (nowPageNowPlaying.value == Album) 1f else 0f,
+                                animationSpec = coverMorphSpring
+                            )
+                        }
+
+                        val coverLayerActive = remember("MainActivity_coverLayerActive") {
                             derivedStateOf {
-                                val split = parentWidth.intValue > 0 &&
-                                        parentHeight.intValue > 0 &&
-                                        parentWidth.intValue > parentHeight.intValue
-                                // 竖屏仅在 Album 页触发 morph（歌词/队列页目标是顶栏小封面）；
-                                // 横屏左列封面在所有子页面均常驻，几何端点相同，故横屏不限制当前页。
-                                if (!split && nowPageNowPlaying.value != Album) return@derivedStateOf false
-                                (dragActive.value || playerMotionJob.value != null) &&
+                                val shellBusy = dragActive.value || playerMotionJob.value != null
+                                // 页面切换：动画在跑，或 q 尚未落到目标值。后者专门覆盖
+                                // LaunchedEffect 启动前的那一帧——此时 isRunning 还没翻 true，
+                                // 若不接管，真实封面节点会闪出一帧（切到歌词时顶栏 69dp 小封面
+                                // 直接在顶部冒出，下一帧又被封面层拉到 Album 位，表现为"抽动/闪现"）。
+                                val pageTarget = if (nowPageNowPlaying.value == Album) 1f else 0f
+                                val pageBusy = coverPageProgress.isRunning ||
+                                        kotlin.math.abs(coverPageProgress.value - pageTarget) > 0.001f
+                                (shellBusy || pageBusy || morphDiagForceEndpoint.value) &&
                                         coverGeometry.ready.value
                             }
                         }
 
                         val navBackdropBackground = MaterialTheme.colorScheme.background
+                        // 页面底衬色：NavHost 交叉淡化时两页都半透明，底衬会以 p(1-p) 的
+                        // 权重透出（p=进场页进度）。艺人域两页底色是提取色，底衬若仍是主题色
+                        // 就会被「闪一下」（浅色泛白、深色泛黑）。故仅当转场两端都是艺人域页面
+                        // 时，底衬才铺提取色（见 ArtistPageAppearance.transitioningBackdropColor）；
+                        // 只要有一端是普通页就回退主题底——普通页自身不铺底色、直接透出底衬，
+                        // 染色会让普通页整块变成提取色（艺人页 pop 回列表页时可见）。
+                        // activeId 取当前 house 的活跃 entry（与底栏遮罩同源）。绘制期读取
+                        // （drawBehind），转场每帧只重绘不重组。
+                        val defaultPageBackground = rememberUpdatedState(navBackdropBackground)
+                        val pageBackgroundActiveId = rememberUpdatedState(activeEntry.value?.id)
+                        val pageBackgroundProvider: () -> Color = remember {
+                            {
+                                ArtistPageAppearance.transitioningBackdropColor(
+                                    activeId = pageBackgroundActiveId.value
+                                ) ?: defaultPageBackground.value
+                            }
+                        }
                         val navBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
                             GlassDiagnostics.tick(
                                 "nav_backdrop_producer",
@@ -952,27 +1073,33 @@ class MainActivity : BaseActivity() {
                                     navBackdrop = navBackdrop,
                                     pageScale = pageScale,
                                     pageCorner = pageCorner,
-                                    pageBackground = navBackdropBackground,
+                                    pageBackground = pageBackgroundProvider,
                                     scrimColorProvider = scrimColorProvider,
                                     bottomScrimHeight = bottomScrimHeight,
                                     // 渐隐段 = 迷你条自身高度：屏幕底到迷你条底边是
                                     // 纯 65% 不透明，再在迷你条高度内渐隐到顶边为 0。
                                     bottomScrimFadeHeight = miniPlayerHeight
                                 ) {
-                                    AppTabsShell(
-                                        selectedHouse = selectedHouse.value,
-                                        homeController = homeNavController,
-                                        libraryController = libraryNavController,
-                                        searchController = searchNavController,
-                                        favoritesController = favoritesNavController,
-                                        navigator = appNavigator,
-                                        modifier = Modifier.fillMaxSize(),
-                                        probe = glassProbe
-                                    )
-                                    SharedNavHost(
-                                        navController = rootNavController,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    // 下拉的定位/高度上限要避开迷你条 + 底栏：把实测的底部
+                                    // 遮罩高度传给房子内的所有 LiquidDropdown。
+                                    CompositionLocalProvider(
+                                        LocalBottomOverlayHeight provides bottomScrimHeight
+                                    ) {
+                                        AppTabsShell(
+                                            selectedHouse = selectedHouse.value,
+                                            homeController = homeNavController,
+                                            libraryController = libraryNavController,
+                                            searchController = searchNavController,
+                                            favoritesController = favoritesNavController,
+                                            navigator = appNavigator,
+                                            modifier = Modifier.fillMaxSize(),
+                                            probe = glassProbe
+                                        )
+                                        SharedNavHost(
+                                            navController = rootNavController,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
 
                                 NavBottomVisual(
@@ -1281,15 +1408,38 @@ class MainActivity : BaseActivity() {
                                         mutableStateOf(false)
                                     }
 
+                                    // 触摸 slop（px）：壳起步时要先"等"过这一段才开始跟手。
+                                    val touchSlopPx = LocalViewConfiguration.current.touchSlop
                                     val playerDragState = rememberDraggableState { delta ->
                                         if (gestureVetoed.value || controlGestureActive.value) {
+                                            dragSkipFirstDelta.value = false
                                             return@rememberDraggableState
+                                        }
+                                        // 起步第一段 delta 里含"手指在 slop 内已经走过的距离"，
+                                        // 那段不该驱动壳（见 dragSkipFirstDelta 注释）。
+                                        // 只扣掉 slop 那么多、其余照常跟手——整段丢弃会把单事件
+                                        // 快速拖拽（真机实测首段可达 98px）整段吞掉，壳纹丝不动。
+                                        var applied = delta
+                                        if (dragSkipFirstDelta.value) {
+                                            dragSkipFirstDelta.value = false
+                                            applied = if (delta > 0f) {
+                                                (delta - touchSlopPx).coerceAtLeast(0f)
+                                            } else {
+                                                (delta + touchSlopPx).coerceAtMost(0f)
+                                            }
+                                            android.util.Log.d(
+                                                "MorphGeo",
+                                                "DRAG_FIRST delta=%.1f slop=%.1f apply=%.1f".format(
+                                                    delta, touchSlopPx, applied
+                                                )
+                                            )
+                                            if (applied == 0f) return@rememberDraggableState
                                         }
                                         val anchor = yosBottomSheetConfig.expandedAnchorPx
                                         if (anchor > 0f) {
                                             val before = dragOffsetY.floatValue
                                             dragOffsetY.floatValue =
-                                                (before + delta).coerceIn(0f, anchor)
+                                                (before + applied).coerceIn(0f, anchor)
                                             // coerce 后没有变化 = 壳已顶到边界、视觉上没动
                                             // （收起态向下拉 / 展开态向上拉），不置位，材质不变。
                                             if (dragOffsetY.floatValue != before) {
@@ -1391,7 +1541,13 @@ class MainActivity : BaseActivity() {
                                                             // 只值 0-2ms，故运动期照留——模糊质感不丢。
                                                             val animating = shellAnimatingForDraw
                                                             if (glassProbe.shellBlur) {
-                                                                blur(4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade))
+                                                                // 玻璃模糊强度倍率：在本体量过大的组合体里改在
+                                                                // effects 内读（库对 effects 内读取走 observeReads，
+                                                                // 值变即重建 RenderEffect 链，不触发整壳重组）。
+                                                                blur(
+                                                                    4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade) *
+                                                                            yos.music.player.ui.widgets.liquid.glassBlurScale
+                                                                )
                                                             }
                                                             if (!animating) {
                                                                 vibrancy()
@@ -1648,18 +1804,35 @@ class MainActivity : BaseActivity() {
                                                 // 触发调音量与关闭播放器（竖直 slop 先被 shell 吃掉）。
                                                 enabled = !controlGestureActive.value,
                                                 onDragStarted = {
+                                                    android.util.Log.d(
+                                                        "MorphGeo",
+                                                        "DRAG_START p=%.4f".format(
+                                                            yosBottomSheetConfig.progress
+                                                        )
+                                                    )
                                                     if (controlGestureActive.value) {
                                                         // 手势起点在控件上：本次由控件独占，
                                                         // shell 不位移，也不置 dragActive。
                                                         gestureVetoed.value = true
+                                                        dragSkipFirstDelta.value = false
                                                     } else {
                                                         gestureVetoed.value = false
                                                         playerMotionJob.value?.cancel()
                                                         dragOffsetY.floatValue = offsetY.value
+                                                        // 丢掉起步过冲量（见 dragSkipFirstDelta）
+                                                        dragSkipFirstDelta.value = true
                                                         dragActive.value = true
                                                     }
                                                 },
                                                 onDragStopped = { velocity ->
+                                                    dragSkipFirstDelta.value = false
+                                                    android.util.Log.d(
+                                                        "MorphGeo",
+                                                        "DRAG_STOP v=%.0f p=%.4f".format(
+                                                            velocity,
+                                                            yosBottomSheetConfig.progress
+                                                        )
+                                                    )
                                                     if (gestureVetoed.value) {
                                                         gestureVetoed.value = false
                                                     } else {
@@ -1700,6 +1873,19 @@ class MainActivity : BaseActivity() {
                                                         with(density) { parentHeight.intValue.toDp() }
                                                     )
                                                     .align(Alignment.TopCenter)
+                                                    // 播放页比壳高，默认会被居中放置（相对壳顶上浮
+                                                    // (壳高−屏高)/2）。补偿回**顶边对齐**：页面内容与
+                                                    // 封面一样随壳顶同步下移——否则收起途中"只有封面在
+                                                    // 往下走"、标题/按钮只走一半（真机反馈）。
+                                                    // offset lambda 在布局期读实时壳高，不触发重组。
+                                                    .offset {
+                                                        IntOffset(
+                                                            0,
+                                                            ((parentHeight.intValue -
+                                                                    yosBottomSheetConfig.shellHeightPx) / 2f)
+                                                                .roundToInt()
+                                                        )
+                                                    }
                                                     .graphicsLayer {
                                                         alpha = yosBottomSheetConfig.playerAlpha
                                                     }
@@ -1723,6 +1909,15 @@ class MainActivity : BaseActivity() {
                                                         with(density) { parentHeight.intValue.toDp() }
                                                     )
                                                     .align(Alignment.TopCenter)
+                                                    // 与背景层同一补偿：页面顶边对齐壳顶（见上）。
+                                                    .offset {
+                                                        IntOffset(
+                                                            0,
+                                                            ((parentHeight.intValue -
+                                                                    yosBottomSheetConfig.shellHeightPx) / 2f)
+                                                                .roundToInt()
+                                                        )
+                                                    }
                                                     .graphicsLayer {
                                                         compositingStrategy =
                                                             CompositingStrategy.ModulateAlpha
@@ -1762,9 +1957,14 @@ class MainActivity : BaseActivity() {
                                                     coverGeometry.album = coords
                                                     coverGeometry.refreshReady()
                                                 },
+                                                barCoverCoordsOnChanged = { coords ->
+                                                    coverGeometry.bar = coords
+                                                    coverGeometry.refreshReady()
+                                                },
                                                 albumCoverSuppressed = {
-                                                    coverMorphActive.value
-                                                }
+                                                    coverLayerActive.value
+                                                },
+                                                onOpenLogin = openLoginFromPlayer
                                             )
                                         }
                                         }
@@ -1822,7 +2022,7 @@ class MainActivity : BaseActivity() {
                                                         coverGeometry.mini = coords
                                                         coverGeometry.refreshReady()
                                                     },
-                                                    coverSuppressed = { coverMorphActive.value }
+                                                    coverSuppressed = { coverLayerActive.value }
                                                 )
                                             } else {
                                                 // 手机/竖屏：紧凑迷你条（43dp），尺寸按参考图实测值定。
@@ -1857,7 +2057,7 @@ class MainActivity : BaseActivity() {
                                                                         // morph 期间由外壳单封面层绘制，本节点在图层面隐藏；
                                                                         // 读 State 只失效图层，不触发重组、不改布局。
                                                                         alpha =
-                                                                            if (coverMorphActive.value) 0f else 1f
+                                                                            if (coverLayerActive.value) 0f else 1f
                                                                     }
                                                                     .onGloballyPositioned {
                                                                         coverGeometry.mini = it
@@ -1930,8 +2130,9 @@ class MainActivity : BaseActivity() {
                                         }
 
                                         // 外壳封面 morph：形变过程中由这一层单独绘制封面，
-                                        // 使迷你封面与全屏 Album 封面成为同一条 progress 上的
-                                        // 连续几何过渡，而不是两张图交叉淡入淡出。
+                                        // 使迷你封面与「当前页封面（大封面 / 顶栏 69dp 小封面）」
+                                        // 成为同一条 progress 上的连续几何过渡，而不是两张图
+                                        // 交叉淡入淡出。页面封面端点在 bar↔album 间按 q 插值。
                                         // 铺满外壳内容区（而非整屏）：这样它天然被壳裁剪，
                                         // 且局部坐标系与两个端点所在坐标系一致，
                                         // 变换量可直接使用，不必再做任何原点换算。
@@ -1941,7 +2142,8 @@ class MainActivity : BaseActivity() {
                                                 morphProgressOverride.value
                                                     ?: yosBottomSheetConfig.progress
                                             },
-                                            active = { coverMorphActive.value },
+                                            pageProgress = { coverPageProgress.value },
+                                            active = { coverLayerActive.value },
                                             geometry = coverGeometry,
                                             bitmap = { MediaViewModelObject.bitmap.value },
                                             handoffRect = morphHandoffRect.value,
@@ -1971,7 +2173,7 @@ class MainActivity : BaseActivity() {
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
         pageScale: State<Float>,
         pageCorner: State<androidx.compose.ui.unit.Dp>,
-        pageBackground: Color,
+        pageBackground: () -> Color,
         scrimColorProvider: () -> Color,
         bottomScrimHeight: Dp,
         bottomScrimFadeHeight: Dp,
@@ -2009,7 +2211,10 @@ class MainActivity : BaseActivity() {
                             shape = RoundedCornerShape(pageCorner.value)
                             clip = true
                         }
-                        .background(pageBackground)
+                        // 绘制期读取底衬色（等价于 .background(pageBackground)，但颜色随
+                        // 艺人页进出场逐帧变化，不进组合、不触发重组）。位置与 .background
+                        // 一致：在 clip 与 scale 之内、内容之下。
+                        .drawBehind { drawRect(pageBackground()) }
                 ) {
                     content()
                 }
@@ -2396,6 +2601,9 @@ private class CoverMorphGeometry {
     var page: LayoutCoordinates? = null
     var mini: LayoutCoordinates? = null
     var album: LayoutCoordinates? = null
+    // 顶栏 PlayingBar 69dp 小封面（歌词/播放列表页）。它常驻组合（在 AnimatedContent
+    // 之外），所以任何时候都能上报；页面封面端点按 q 在 bar 与 album 之间插值。
+    var bar: LayoutCoordinates? = null
     var hero: LayoutCoordinates? = null
 
     /**
@@ -2403,15 +2611,26 @@ private class CoverMorphGeometry {
      * 写进 MutableState 能正常触发失效；而 LayoutCoordinates 每次回调都是
      * 同一实例，写进 State 会被等值比较判为"没变"而不失效（此前动画
      * 时有时无的根因）。所以坐标放普通字段、就绪标志放 State。
+     *
+     * album 只在 Album 页组合时可用，bar 常驻；只要有一个页面封面端点可用即可
+     * 解算（缺 album 时退化为 bar，反之亦然）。
      */
     val ready = mutableStateOf(false)
 
     fun refreshReady() {
-        ready.value = shell != null && page != null && mini != null && album != null
+        ready.value = shell != null && page != null && mini != null &&
+                (album != null || bar != null)
     }
 
     // 迷你封面在外壳内容坐标系中的矩形（恒定：始终在壳顶下方 11dp）。
     fun miniInHero(hero: LayoutCoordinates?): Rect? = localRect(hero, mini)
+
+    // 播放页在外壳内容坐标系中的矩形（页面比壳高，壳变矮时其上浮量 = (壳高−屏高)/2）。
+    // 全屏端点模式下封面的纵向顶边下界锚定它，使封面与页面内容同步移动。
+    fun pageInHero(hero: LayoutCoordinates?): Rect? = localRect(hero, page)
+
+    // 顶栏 69dp 小封面在外壳内容坐标系中的矩形。
+    fun barInHero(hero: LayoutCoordinates?): Rect? = localRect(hero, bar)
 
     // 全屏 Album 封面在**外壳内容坐标系**中的矩形。
     //
@@ -2445,23 +2664,37 @@ private fun localRect(space: LayoutCoordinates?, child: LayoutCoordinates?): Rec
     }
 }
 
-// 视觉圆角：迷你封面 4dp → 全屏 Album 8dp，与 ShadowImageWithCache 的入参保持一致。
-// 两处迷你封面（手机 28dp / 平板 40dp）的 cornerRadius 必须与此同步，
-// 否则 morph 交接瞬间圆角会跳变。
+// 视觉圆角：迷你封面 4dp → 顶栏 69dp 小封面 5dp → 全屏 Album 8dp，与
+// ShadowImageWithCache 的入参保持一致。各处迷你/顶栏封面的 cornerRadius
+// 必须与此同步，否则 morph 交接瞬间圆角会跳变。
+// 例外：全屏静态封面端点模式（设置 NowplayingStaticFullScreenAlbum 且竖屏）下
+// 大封面档圆角为 0（真实满屏出血封面无圆角），见 CoverMorphLayer 内 albumCornerDp。
 private val morphCornerStartDp = 4f
+private val morphCornerBarDp = 5f
 private val morphCornerEndDp = 8f
+
+// 页面封面进度 q 的动画规格：与 NowPlaying 的标题/按钮共享元素 morph 同款
+// spring(1.2f, 800f, 0.001f)，保证封面与文字同曲线同拍。
+private val coverMorphSpring = spring<Float>(
+    dampingRatio = 1.2f,
+    stiffness = 800f,
+    visibilityThreshold = 0.001f
+)
 
 // 封面 morph 层的布局基准上限：与 NowPlaying 全屏封面的限宽一致。
 // 基准取"不小于两个端点"的尺寸，于是整个 morph 只缩小、不放大，
 // 图片始终以足够的分辨率绘制，不会出现先放大再缩小的糊边。
 private val morphBaseMaxWidth = 460.dp
 
-// 一次 morph 的解算结果：hero 层局部坐标下的目标矩形，以及相对基准的缩放。
+// 一次 morph 的解算结果：hero 层局部坐标下的目标矩形、相对基准的缩放，
+// 以及**实际生效的页面封面档位** pageT（0=顶栏 69dp 小封面，1=大封面）——
+// 用于圆角等样式的插值。横屏没有顶栏小封面（bar 不可用）时 pageT 恒为 1。
 private class MorphFrame(
     val left: Float,
     val top: Float,
     val size: Float,
-    val scale: Float
+    val scale: Float,
+    val pageT: Float
 )
 
 // 解算当前帧：两个端点都已在"外壳内容坐标系"中，直接按 progress 直线插值。
@@ -2479,11 +2712,32 @@ private fun resolveMorphFrame(
     geometry: CoverMorphGeometry,
     hero: LayoutCoordinates?,
     progress: Float,
+    pageProgress: Float,
     basePx: Float,
-    handoffRect: Rect? = null
+    handoffRect: Rect? = null,
+    // 全屏静态封面端点模式：album 端点是 1.12×层宽的出血方图，本就合法超出壳宽，
+    // 安全网钳制对它只会制造"接管瞬间突然缩小"的跳变，须跳过。
+    fullScreen: Boolean = false
 ): MorphFrame? {
     val mini = geometry.miniInHero(hero) ?: return null
-    val album = handoffRect ?: geometry.albumInHero(hero) ?: return null
+    // 页面封面端点：q=0 顶栏 69dp 小封面、q=1 大封面。两个端点都在时按 q 直线插值；
+    // 只有一个可用时退化为该端点（Album 页 album 可用、歌词/播放列表页 album 随
+    // 页面离开组合而不可用，此时 q 也必然为 0，退化为 bar 与插值结果一致）。
+    val bar = geometry.barInHero(hero)
+    val album = geometry.albumInHero(hero)
+    val pageCover = handoffRect ?: when {
+        album != null && bar != null -> lerpRect(bar, album, pageProgress.coerceIn(0f, 1f))
+        album != null -> album
+        bar != null -> bar
+        else -> null
+    } ?: return null
+    // 实际生效的页面封面档位：两端都在时按 q 插值；只有一端时恒为那一端
+    // （横屏没有 bar → 恒为大封面档）。
+    val pageT = when {
+        album != null && bar != null -> pageProgress.coerceIn(0f, 1f)
+        album != null -> 1f
+        else -> 0f
+    }
     if (basePx <= 0f) return null
     val p = progress.coerceIn(0f, 1f)
     // 封面视觉上必须始终是正方形。真实图片节点由 fillMaxWidth()
@@ -2491,39 +2745,53 @@ private fun resolveMorphFrame(
     // 否则一个测量上的高度差会让 morph 最后一帧比静态封面小，交接时突然放大。
     // 高度只作为诊断意义上的布局信息，不参与正方形尺寸解算。
     val miniSize = mini.width
-    val albumSize = album.width
-    if (miniSize <= 0f || albumSize <= 0f) return null
-    var size = miniSize + (albumSize - miniSize) * p
+    val pageSize = pageCover.width
+    if (miniSize <= 0f || pageSize <= 0f) return null
+    var size = miniSize + (pageSize - miniSize) * p
     if (size <= 0f) return null
     val miniCenter = Offset(
         mini.left + miniSize / 2f,
         mini.top + miniSize / 2f
     )
-    val albumCenter = Offset(
-        album.left + albumSize / 2f,
-        album.top + albumSize / 2f
+    val pageCenter = Offset(
+        pageCover.left + pageSize / 2f,
+        pageCover.top + pageSize / 2f
     )
     val center = Offset(
-        miniCenter.x + (albumCenter.x - miniCenter.x) * p,
-        miniCenter.y + (albumCenter.y - miniCenter.y) * p
+        miniCenter.x + (pageCenter.x - miniCenter.x) * p,
+        miniCenter.y + (pageCenter.y - miniCenter.y) * p
     )
     var left = center.x - size / 2f
     var top = center.y - size / 2f
 
-    // 安全网：极端情况下（例如壳还没长开、而封面已按 progress 长大）
-    // 把封面平移回壳内；平移放不下才收缩。
     val heroW = if (hero != null && hero.isAttached) hero.size.width.toFloat() else 0f
     val heroH = if (hero != null && hero.isAttached) hero.size.height.toFloat() else 0f
+    // 安全网：极端情况下（例如壳还没长开、而封面已按 progress 长大）
+    // 把封面平移回壳内；平移放不下才收缩。
+    // 全屏静态封面端点模式（fullScreen）只豁免**横向**钳制：它的 album 端点是
+    // 1.12×层宽的出血方图，左右溢出壳是合法静止态，横向钳制会把端点改写成
+    // "缩回壳宽"的卡片（接管第一帧表现为封面突然缩小）。**纵向钳制必须常开**：
+    // 封面顶边一旦跑进负值就会伸出壳顶被壳 clip 硬切（真机："封面超出页面"）。
     if (heroW > 0f && heroH > 0f) {
-        val maxScale = minOf(heroW / size, heroH / size)
+        val maxScale = if (fullScreen) heroH / size else minOf(heroW / size, heroH / size)
         if (maxScale < 1f) size *= maxScale
         left = center.x - size / 2f
         top = center.y - size / 2f
-        left = left.coerceIn(0f, (heroW - size).coerceAtLeast(0f))
+        if (!fullScreen) {
+            left = left.coerceIn(0f, (heroW - size).coerceAtLeast(0f))
+        }
         top = top.coerceIn(0f, (heroH - size).coerceAtLeast(0f))
     }
-    return MorphFrame(left, top, size, size / basePx)
+    return MorphFrame(left, top, size, size / basePx, pageT)
 }
+
+// 两个矩形按 t 直线插值（逐分量）。
+private fun lerpRect(a: Rect, b: Rect, t: Float): Rect = Rect(
+    left = a.left + (b.left - a.left) * t,
+    top = a.top + (b.top - a.top) * t,
+    right = a.right + (b.right - a.right) * t,
+    bottom = a.bottom + (b.bottom - a.bottom) * t
+)
 
 /**
  * 外壳单封面层：在迷你封面矩形与全屏 Album 封面矩形之间，按同一条 progress
@@ -2546,6 +2814,7 @@ private fun resolveMorphFrame(
 @Composable
 private fun CoverMorphLayer(
     progress: () -> Float,
+    pageProgress: () -> Float,
     active: () -> Boolean,
     geometry: CoverMorphGeometry,
     bitmap: () -> Any?,
@@ -2555,14 +2824,27 @@ private fun CoverMorphLayer(
     val density = LocalDensity.current
     val context = LocalContext.current
     val url = bitmap()
+    // 全屏静态封面端点模式：设置开且竖屏时，Album 页的真实封面节点是
+    // FullScreenStaticCover 的 1.12×层宽出血方图（顶边贴屏、圆角 0、无阴影、
+    // 无描边）。morph 层的 album 端点必须按这套样式插值，否则接管/交回的
+    // 第一帧会在"满屏出血"与"圆角卡片"之间跳变（真机表现：动画一开始封面
+    // 突然缩小成正方形再位移）。竖屏判定与 NowPlaying 的 isLandscape 取反
+    // 严格一致（screenWidthDp > screenHeightDp 即横屏）；横屏的 NowPlayingLandscape
+    // 不渲染 FullScreenStaticCover，恒走卡片端点。
+    val configuration = LocalConfiguration.current
+    val fullScreenEndpoint = SettingsLibrary.NowplayingStaticFullScreenAlbum &&
+            configuration.screenWidthDp <= configuration.screenHeightDp
     val baseWidth = morphBaseMaxWidth.coerceAtMost(
-        with(density) { LocalConfiguration.current.screenWidthDp.dp }
+        with(density) { configuration.screenWidthDp.dp }
     )
     val basePx = with(density) { baseWidth.toPx() }
     // 阴影参数与全屏 Album 封面同源（ShadowType.Large、alpha 0.23、Overlay）。
     val shadowType = ShadowType.Large
     val shadowBlurPx = with(density) { shadowType.blur.toPx() }
     val shadowPaint = remember { Paint() }
+    // 全屏端点底边淡出用的离屏图层 paint：saveLayer 只覆盖淡出带本身
+    //（≈1.12×层宽 × 0.28×层宽），不是整层——离屏开销与真实节点的图层同级。
+    val fadeLayerPaint = remember { Paint() }
     // 阴影的 BlurMaskFilter 原先每帧 new 一个再写回 paint。模糊半径是常量，
     // 因此只建一次即可（每帧 new 会持续分配，且写 maskFilter 会脏化 paint）。
     val shadowMaskFilter = remember(shadowBlurPx) {
@@ -2610,11 +2892,62 @@ private fun CoverMorphLayer(
             geometry,
             geometry.hero,
             progress(),
+            pageProgress(),
             basePx,
-            handoffRect = handoffRect
+            handoffRect = handoffRect,
+            fullScreen = fullScreenEndpoint
         )
         // 读 State 只触发重绘，不触发重组；解不出端点就什么都不画。
-        if (!active() || frame == null) return@Canvas
+        if (!active() || frame == null) {
+            morphDiagWasActive = false
+            morphDiagPrevTop = null
+            return@Canvas
+        }
+        // TEMP 诊断（排查"动画开始封面下跳 5–10dp"）：动画期**逐帧**记一行屏幕坐标，
+        // dTop = 这一帧封面顶边的屏幕位移量（"闪现"= 某帧 dTop 明显大于相邻帧）。
+        // 用 adb logcat -s MorphGeo 取；定位后删。
+        val heroTopOnScreen = geometry.hero?.takeIf { it.isAttached }
+            ?.localToWindow(Offset.Zero)?.y
+        val shellTopOnScreen = geometry.shell?.takeIf { it.isAttached }
+            ?.localToWindow(Offset.Zero)?.y
+        val coverTopOnScreen = heroTopOnScreen?.let { it + frame.top }
+        val dTop = if (morphDiagPrevTop != null && coverTopOnScreen != null) {
+            coverTopOnScreen - morphDiagPrevTop!!
+        } else 0f
+        morphDiagPrevTop = coverTopOnScreen
+        android.util.Log.d(
+            "MorphGeo",
+            ("F p=%.4f q=%.3f coverTop=%s size=%.1f dTop=%+.1f shellTop=%s " +
+                    "albumTop=%s pageTop=%s").format(
+                progress().coerceIn(0f, 1f),
+                pageProgress().coerceIn(0f, 1f),
+                coverTopOnScreen?.let { "%.1f".format(it) } ?: "null",
+                frame.size,
+                dTop,
+                shellTopOnScreen?.let { "%.1f".format(it) } ?: "null",
+                geometry.albumInHero(geometry.hero)?.top?.let { "%.1f".format(it) } ?: "null",
+                geometry.pageInHero(geometry.hero)?.top?.let { "%.1f".format(it) } ?: "null"
+            )
+        )
+        if (!morphDiagWasActive) {
+            morphDiagWasActive = true
+            val albumWinTop = geometry.album?.takeIf { it.isAttached }
+                ?.localToWindow(Offset.Zero)?.y
+            val miniWinTop = geometry.mini?.takeIf { it.isAttached }
+                ?.localToWindow(Offset.Zero)?.y
+            android.util.Log.d(
+                "MorphGeo",
+                ("TAKEOVER p=%.3f coverTop=%s albumWinTop=%s miniWinTop=%s " +
+                        "shellTop=%s size=%.1f").format(
+                    progress().coerceIn(0f, 1f),
+                    heroTopOnScreen?.let { "%.1f".format(it + frame.top) } ?: "null",
+                    albumWinTop?.let { "%.1f".format(it) } ?: "null",
+                    miniWinTop?.let { "%.1f".format(it) } ?: "null",
+                    shellTopOnScreen?.let { "%.1f".format(it) } ?: "null",
+                    frame.size
+                )
+            )
+        }
         val scale = frame.scale
         if (scale <= 0f) return@Canvas
         val p = progress().coerceIn(0f, 1f)
@@ -2625,8 +2958,13 @@ private fun CoverMorphLayer(
         // 圆角用**和真实封面同一个形状类**（YosRoundedCornerShape，超椭圆连续圆角），
         // 不能图省事用 RoundRect：同为 6dp，超椭圆角与正圆弧角的观感不同，
         // 交接瞬间能看出角部形状跳变（真机实测）。
+        // 页面封面档圆角随 frame.pageT 在「顶栏 69dp 5dp ↔ 大封面档」间插值，
+        // 再与迷你档 4dp 按 p 插值，保证三个静止端点交接时圆角都逐像素一致。
+        // 全屏端点模式下大封面档圆角为 0（真实满屏封面无圆角）。
+        val albumCornerDp = if (fullScreenEndpoint) 0f else morphCornerEndDp
+        val pageCornerDp = morphCornerBarDp + (albumCornerDp - morphCornerBarDp) * frame.pageT
         val radiusDp = (morphCornerStartDp +
-                (morphCornerEndDp - morphCornerStartDp) * p).dp
+                (pageCornerDp - morphCornerStartDp) * p).dp
         val shape = YosRoundedCornerShape(radiusDp)
         val frameRect = Rect(Offset(frame.left, frame.top), Size(side, side))
         // createOutline 生成的轮廓永远位于坐标原点 (0,0)，而封面画在
@@ -2645,7 +2983,10 @@ private fun CoverMorphLayer(
         // 曾经把模糊按 1/scale 补偿是错的：BlurMaskFilter 的半径是设备像素、
         // 不随画布缩放走，除以 scale 后 p 越小模糊越大（起点约 276dp），
         // 阴影从"巨大弥散"渐变到正常，交接时就暴露成"阴影过渡有问题"。
-        val shadowAlpha = morphShadowAlpha * smoothStep(0.15f, 1f, p)
+        // 全屏端点模式下大封面档无阴影（真实满屏封面无阴影）：阴影只存在于
+        // 迷你端点 → 顶栏 69dp 档之间，随 pageT 渐隐。卡片端点模式不变。
+        val shadowAlpha = morphShadowAlpha * smoothStep(0.15f, 1f, p) *
+                (if (fullScreenEndpoint) 1f - frame.pageT else 1f)
         if (shadowAlpha > 0.001f) {
             drawCoverShadow(
                 paint = shadowPaint,
@@ -2654,33 +2995,167 @@ private fun CoverMorphLayer(
                 alpha = shadowAlpha,
                 blurPx = shadowBlurPx,
                 shadowType = shadowType,
+                // 阴影垂直偏移随页面档位插值：pageT=0 对齐顶栏 69dp 封面的 Small(0.11)，
+                // pageT=1 对齐大封面的 Large(0.08)，交接瞬间阴影不跳。
+                offsetYOverride = morphShadowOffsetYBar +
+                        (morphShadowOffsetYAlbum - morphShadowOffsetYBar) * frame.pageT,
                 density = this,
                 maskFilter = shadowMaskFilter
             )
         }
 
         // 与 ShadowImageWithCache 一致：先按圆角裁剪，再画内容与两道 12px 描边。
-        clipPath(path) {
-            // 只有位图需要在缩放空间里画；圆角、描边、阴影都在屏幕空间完成。
-            withTransform({
-                translate(frame.left, frame.top)
-                scale(scale, scale, pivot = Offset.Zero)
-            }) {
-                drawPainterCropped(painter, Size(basePx, basePx))
+        // 全屏端点模式下真实满屏封面无描边（rimHighlight=false）：描边随 p·pageT
+        // 淡出——迷你端点（p=0）全量、全屏端点（p=1 且 pageT=1）归零，两端交接一致。
+        val strokeFade = if (fullScreenEndpoint) 1f - p * frame.pageT else 1f
+        // 全屏端点底边淡出的几何（屏幕坐标）：真实节点是一条 DstIn 线性渐变，
+        // 长度 = FadeFraction×边长、终点在 side+延伸段（nodeHeight 含 10dp 延伸段）。
+        // 按用户模型：这条渐变**盖在封面（含描边）之上、动画全程不消失**——
+        // 封面移动时页面元素本来就在淡出，所以它透出的内容不会穿帮。
+        val fadeLen = side * yos.music.player.ui.widgets.basic.FullScreenCoverCoverFadeFraction
+        val extPx = with(density) {
+            yos.music.player.ui.widgets.basic.FullScreenCoverBottomExtensionDp.dp.toPx()
+        }
+        val fadeEndY = frame.top + side + extPx
+        val fadeStartY = fadeEndY - fadeLen
+        if (!fullScreenEndpoint) {
+            // 卡片端点（迷你/顶栏/普通大封面）：整块不透明 + 两道描边。
+            clipPath(path) {
+                withTransform({
+                    translate(frame.left, frame.top)
+                    scale(scale, scale, pivot = Offset.Zero)
+                }) {
+                    drawPainterCropped(painter, Size(basePx, basePx))
+                }
+                if (strokeFade > 0.01f) {
+                    drawPath(
+                        path,
+                        Color.Gray.copy(alpha = 0.1f * strokeFade),
+                        style = morphStroke
+                    )
+                    drawPath(
+                        path,
+                        Color.Gray.copy(alpha = 0.5f * strokeFade),
+                        style = morphStroke,
+                        blendMode = BlendMode.Overlay
+                    )
+                }
             }
-            drawPath(path, Color.Gray.copy(alpha = 0.1f), style = morphStroke)
-            drawPath(
-                path,
-                Color.Gray.copy(alpha = 0.5f),
-                style = morphStroke,
-                blendMode = BlendMode.Overlay
+        }
+        if (fullScreenEndpoint) {
+            // 1) 淡出带以上：封面 + 描边，全量不透明。
+            clipPath(path) {
+                clipRect(frame.left, frame.top, frame.left + side, fadeStartY) {
+                    withTransform({
+                        translate(frame.left, frame.top)
+                        scale(scale, scale, pivot = Offset.Zero)
+                    }) {
+                        drawPainterCropped(painter, Size(basePx, basePx))
+                    }
+                    if (strokeFade > 0.01f) {
+                        drawPath(
+                            path,
+                            Color.Gray.copy(alpha = 0.1f * strokeFade),
+                            style = morphStroke
+                        )
+                        drawPath(
+                            path,
+                            Color.Gray.copy(alpha = 0.5f * strokeFade),
+                            style = morphStroke,
+                            blendMode = BlendMode.Overlay
+                        )
+                    }
+                }
+            }
+            // 2) 淡出带 + 底边延伸段：saveLayer 只圈这一块，带内画封面 + 描边
+            //    + 延伸段，再用 DstIn 真渐变擦 alpha——与真实节点同一条曲线、
+            //    逐像素平滑（条带近似会有硬横条，真机踩过）。
+            //    延伸段必须画：真实节点在方图下方 10dp 铺"最底下一行像素的纵向
+            //    拉伸"，落在渐变末端（alpha≈0.09→0）。morph 层不画它，接管/交回
+            //    瞬间封面可见底边就短 10dp（真机：封面像被"顶出去/缩回"了 10dp）。
+            val bandRect = Rect(
+                frame.left - morphFadeBandMargin,
+                fadeStartY - morphFadeBandMargin,
+                frame.left + side + morphFadeBandMargin,
+                frame.top + side + extPx + morphFadeBandMargin
             )
+            drawContext.canvas.saveLayer(bandRect, fadeLayerPaint)
+            clipPath(path) {
+                clipRect(frame.left, fadeStartY, frame.left + side, frame.top + side) {
+                    withTransform({
+                        translate(frame.left, frame.top)
+                        scale(scale, scale, pivot = Offset.Zero)
+                    }) {
+                        drawPainterCropped(painter, Size(basePx, basePx))
+                    }
+                    if (strokeFade > 0.01f) {
+                        drawPath(
+                            path,
+                            Color.Gray.copy(alpha = 0.1f * strokeFade),
+                            style = morphStroke
+                        )
+                        drawPath(
+                            path,
+                            Color.Gray.copy(alpha = 0.5f * strokeFade),
+                            style = morphStroke,
+                            blendMode = BlendMode.Overlay
+                        )
+                    }
+                }
+            }
+            // 底边延伸段（方图之外，故在 clipPath 外画）：与真实节点同法——整张
+            // 方图按 ext/1px 纵向拉伸、支点让"最底下一行像素"的底边正好落在条带
+            // 底边，再裁在 [side, side+ext] 内。
+            // 出现时机：只在**接近满屏端点**时渐显（smoothStep 两端零导数），
+            // 中前段不画——它是满屏封面的专属细节，动画中段提前出现会显得突兀
+            // （真机反馈）。
+            val extWeight = smoothStep(0.9f, 1f, p * frame.pageT)
+            if (extPx > 0f && extWeight > 0.01f) {
+                val k = extPx
+                val pivot = side + extPx / (1f - k)
+                clipRect(
+                    frame.left,
+                    frame.top + side,
+                    frame.left + side,
+                    frame.top + side + extPx
+                ) {
+                    withTransform({
+                        translate(frame.left, frame.top)
+                        scale(1f, k, pivot = Offset(0f, pivot))
+                    }) {
+                        drawPainterCropped(painter, Size(side, side), alpha = extWeight)
+                    }
+                }
+            }
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Black,
+                        1f to Color.Transparent
+                    ),
+                    startY = fadeStartY,
+                    endY = fadeEndY
+                ),
+                topLeft = Offset(bandRect.left, fadeStartY),
+                size = Size(bandRect.width, bandRect.bottom - fadeStartY),
+                blendMode = BlendMode.DstIn
+            )
+            drawContext.canvas.restore()
         }
     }
 }
 
 // 封面阴影透明度上限，与 ShadowImageWithCache 的默认 shadowAlpha 一致。
 private const val morphShadowAlpha = 0.23f
+
+// TEMP 诊断状态（MorphGeo 逐帧步进检测，验完删）。
+private var morphDiagPrevTop: Float? = null
+private var morphDiagWasActive = false
+
+// 封面 morph 阴影的垂直偏移权重两端点：顶栏 69dp 封面档用 ShadowType.Small(0.11)、
+// 大封面档用 ShadowType.Large(0.08)。按 pageT 插值，交接瞬间阴影不跳。
+private val morphShadowOffsetYBar = ShadowType.Small.offsetY
+private val morphShadowOffsetYAlbum = ShadowType.Large.offsetY
 
 /**
  * 以 ContentScale.Crop 的语义把 Painter 画进 box。
@@ -2691,20 +3166,25 @@ private const val morphShadowAlpha = 0.23f
  */
 private fun DrawScope.drawPainterCropped(
     painter: androidx.compose.ui.graphics.painter.Painter,
-    box: Size
+    box: Size,
+    alpha: Float = 1f
 ) {
     val intrinsic = painter.intrinsicSize
     if (!intrinsic.isSpecified || intrinsic.width <= 0f || intrinsic.height <= 0f) {
-        with(painter) { draw(box) }
+        with(painter) { draw(box, alpha = alpha) }
         return
     }
     val k = maxOf(box.width / intrinsic.width, box.height / intrinsic.height)
     val dw = intrinsic.width * k
     val dh = intrinsic.height * k
     translate((box.width - dw) / 2f, (box.height - dh) / 2f) {
-        with(painter) { draw(Size(dw, dh)) }
+        with(painter) { draw(Size(dw, dh), alpha = alpha) }
     }
 }
+
+// 全屏端点底边淡出的离屏图层向外扩的余量（px）：让描边（12px、半宽 6px）与
+// 抗锯齿边也落在图层内，被同一条 DstIn 渐变擦除。
+private const val morphFadeBandMargin = 8f
 
 // 复刻 DropShadow.dropShadow 的几何，参数与全屏封面完全同参：
 // 面积按 areaWeight 收缩、角半径沿用同一 dp 值（不随收缩缩放）、
@@ -2725,7 +3205,10 @@ private fun DrawScope.drawCoverShadow(
     shadowType: ShadowType,
     density: androidx.compose.ui.unit.Density,
     // 由调用方 remember 的模糊滤镜，避免每帧分配。
-    maskFilter: android.graphics.BlurMaskFilter? = null
+    maskFilter: android.graphics.BlurMaskFilter? = null,
+    // 覆盖 shadowType 的垂直偏移权重：封面 morph 需要随页面档位插值
+    // （顶栏 69dp 档=Small 0.11，大封面档=Large 0.08），否则交接瞬间阴影会跳 ~2dp。
+    offsetYOverride: Float? = null
 ) {
     val w = frameRect.width
     val h = frameRect.height
@@ -2738,7 +3221,8 @@ private fun DrawScope.drawCoverShadow(
         density
     )
     val offsetX = shadowType.offsetX * w + (w * (1f - weight)) / 2f
-    val offsetY = shadowType.offsetY * h + (h * (1f - weight)) / 2f
+    val offsetYWeight = offsetYOverride ?: shadowType.offsetY
+    val offsetY = offsetYWeight * h + (h * (1f - weight)) / 2f
 
     paint.color = Color(0xFF000000).copy(alpha = alpha)
     paint.blendMode = BlendMode.Overlay

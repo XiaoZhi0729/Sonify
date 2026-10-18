@@ -7,7 +7,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -31,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.IntrinsicMeasureScope
@@ -95,6 +99,7 @@ import yos.music.player.R
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.liquid.glassBlurScale
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -169,6 +174,12 @@ enum class LiquidDropdownPlacement {
     /** 堆叠子面板：可见左缘 == 锚点行左缘，可见顶边 == 锚点行下缘 + 间隙。*/
     StackBelowAnchor,
 }
+
+/**
+ * 页面底部被迷你播放器 + 底栏遮住的高度。由 MainActivity 在房子外壳层提供；
+ * 下拉的定位与高度上限都会避开这块区域，避免菜单长到迷你条/底栏后面。
+ */
+val LocalBottomOverlayHeight = compositionLocalOf { 0.dp }
 
 /** 堆叠子面板与锚点行之间的间隙（让两块表面读得出是分开的）。*/
 private val StackGap = 10.dp
@@ -393,6 +404,10 @@ private fun LiquidDropdownBody(
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentOnDismissFinished by rememberUpdatedState(onDismissFinished)
     val currentOnFractionProgress by rememberUpdatedState(onFractionProgress)
+    // 迷你条 + 底栏遮住的高度：面板测量上限与定位边界都要避开这块区域
+    val bottomOverlayPx = with(LocalDensity.current) {
+        LocalBottomOverlayHeight.current.toPx()
+    }
 
     // 三轨并行（对齐 NexioSchedule 1.6.1 LiquidGlassDropdownMenu）：
     // fraction 驱动缩放/裁剪，originProgress 驱动缩放锚点从按钮角移向中心（独立曲线），
@@ -453,7 +468,10 @@ private fun LiquidDropdownBody(
                 .layout { measurable, constraints ->
                     val padPx = PopupShadowPadding.roundToPx()
                     val minHeightPx = PopupMinHeight.roundToPx()
-                    val maxHeightPx = (constraints.maxHeight - 2 * padPx)
+                    val safeBottomPx = (constraints.maxHeight - bottomOverlayPx)
+                        .coerceAtLeast(0f)
+                        .toInt()
+                    val maxHeightPx = (safeBottomPx - 2 * padPx)
                         .coerceAtLeast(minHeightPx)
                     val placeable = measurable.measure(
                         constraints.copy(
@@ -464,7 +482,7 @@ private fun LiquidDropdownBody(
                         )
                     )
                     val outerSize = IntSize(placeable.width, placeable.height)
-                    val windowBounds = IntRect(0, 0, constraints.maxWidth, constraints.maxHeight)
+                    val windowBounds = IntRect(0, 0, constraints.maxWidth, safeBottomPx)
                     // 拟合方向判断用可见面板高度（去掉阴影的透明外扩）：
                     // 含外扩会把高菜单误判为"下方放不下"而被钳到屏幕顶端、脱离锚点行
                     val visibleSize = IntSize(
@@ -664,7 +682,8 @@ private fun LiquidDropdownContent(
                             },
                             effects = {
                                 vibrancy()
-                                blur(24.dp.toPx())
+                                // 玻璃模糊强度倍率（effects 内读取由库 observeReads 观察）
+                                blur(24.dp.toPx() * glassBlurScale)
                             },
                             highlight = { null },
                             shadow = { null },
@@ -850,11 +869,13 @@ private val FollowSlideY = 45.dp
 /**
  * 弹层进度 → 触发元件变换的联动状态。
  *
- * 两种联动模式（按面板摆位自动分流）：
+ * 两种联动模式（按面板摆位自动分流），两者都以「按钮彻底消失」收尾：
  * - **让位滑开**（面板向下生长且右缘对齐锚点——顶栏"更多"按钮的标定场景）：
- *   按钮不消失，沿 `(-100dp, +45dp)` 滑到面板旁边，对齐 NexioSchedule 1.6.1
- *   的 buttonFraction offset 手法；
- * - **收缩下沉淡出**（面板向上翻或居中摆位——按钮滑不开，滑了也会留在玻璃面板底下）：
+ *   按钮沿 `(-100dp, +45dp)` 滑开（NexioSchedule 1.6.1 的 buttonFraction offset
+ *   手法），同时随揭示进度淡出。**必须淡出**：滑开量是固定值，只有面板足够高
+ *   （≳105dp，约两行以上）时按钮落点才落在玻璃底下被盖住；单行矮菜单（≈63dp）里
+ *   按钮会正好从面板下缘探出来，悬在列表上像一颗残留的圆钮；
+ * - **收缩下沉淡出**（面板向上翻 / 居中摆位）：
  *   沿用旧版下沉 6dp + 缩 0.9 + 滞回淡出，避免按钮透过 0.6 表面与面板行内容叠影。
  */
 class LiquidDropdownFollowState internal constructor(
@@ -898,14 +919,18 @@ class LiquidDropdownFollowState internal constructor(
 fun Modifier.liquidDropdownAnchorFollow(state: LiquidDropdownFollowState): Modifier =
     graphicsLayer {
         val reveal = state.fraction.floatValue
-        val slideAway = state.directionY.floatValue > 0.5f && state.pivotX.floatValue >= 0.99f
+        val slideAway = state.directionY.floatValue > 0.5f &&
+                state.pivotX.floatValue >= 0.99f
         if (slideAway) {
             // 让位滑开（NexioSchedule 1.6.1 同款）：面板从按钮位置向下生长，
-            // 按钮向左下平移让位、全程可见。用 graphicsLayer 的 translation 而不是
+            // 按钮向左下平移让位。用 graphicsLayer 的 translation 而不是
             // Modifier.offset——offset 会改布局坐标，锚点 onGloballyPositioned 会
-            // 跟着更新、弹层重定位，形成回环
+            // 跟着更新、弹层重定位，形成回环。
+            // 位移**同时**淡出：面板高度不够（单行菜单）时按钮落点会露在面板下缘外，
+            // 只位移不淡出就会留下一颗悬空圆钮。
             translationX = -FollowSlideX.toPx() * reveal
             translationY = FollowSlideY.toPx() * reveal
+            alpha = (1f - reveal).coerceIn(0f, 1f)
         } else {
             // 面板向上翻/居中：按钮滑不开，沿用收缩+下沉+滞回淡出
             val scale = 1f - (1f - state.openScale) * reveal
@@ -983,6 +1008,9 @@ fun liquidDropdownHeightCap(anchorBounds: IntRect, fallback: Dp = 420.dp): Dp {
 // =====================================================================
 
 private const val MaxItemsForWidth = 8
+
+/** 与 CrestoDialogStyle.destructiveColor 同值的危险操作红。 */
+private val DropdownDestructiveColor = Color(0xFFFB2C36)
 
 @Composable
 fun LiquidDropdownColumn(
@@ -1072,6 +1100,7 @@ fun LiquidDropdownColumn(
  * @param showSelectedIcon false 时不渲染尾部勾选位：入口行（点开子面板那种）没有"选中"
  *                         语义，留着会白占 20dp，把 trailing 内容往左挤一截
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LiquidDropdownRow(
     text: String,
@@ -1084,11 +1113,22 @@ fun LiquidDropdownRow(
     modifier: Modifier = Modifier,
     showSelectedIcon: Boolean = true,
     trailing: (@Composable () -> Unit)? = null,
+    /** 行首自定义内容（如歌单封面缩略图），与 [leadingIcon] 二选一 */
+    leading: (@Composable () -> Unit)? = null,
+    /** 行首图标（菜单动作项用）：统一 20dp，随行文字色着色 */
+    leadingIcon: Painter? = null,
+    /** 行内上下内边距：默认 10.5dp；歌曲菜单传更小的值收紧行距 */
+    verticalPadding: Dp = 10.5.dp,
+    /** 文字超长时单行横向滚动（歌单名这类可变长文本用），不换行、不省略 */
+    marquee: Boolean = false,
+    /** 危险操作（如从歌单移除）：文字与前置图标统一用项目 destructive 红 */
+    destructive: Boolean = false,
 ) {
     // 文字统一单色：深色模式白、浅色模式黑，不随选中态换 primary（选中只靠尾部的勾表达）。
     // 用 withNight 而不是 MaterialTheme.colorScheme.onBackground：后者在主题派生色下
     // 深浅两态都不是纯黑/纯白，玻璃面板上会跟着底色发灰
-    val contentColor = Color.Black withNight Color.White
+    val contentColor = if (destructive) DropdownDestructiveColor
+    else Color.Black withNight Color.White
     val selectedColor = MaterialTheme.colorScheme.primary
     val interactionSource = remember { MutableInteractionSource() }
     // 按下遮罩：M3 涟漪在这层玻璃上会画出方形色斑所以 indication 关掉，但行内补一块
@@ -1117,16 +1157,33 @@ fun LiquidDropdownRow(
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 14.dp, vertical = 10.5.dp)
+            .padding(horizontal = 14.dp, vertical = verticalPadding)
             .alpha(if (enabled) 1f else 0.4f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (leading != null) {
+            leading()
+            Spacer(modifier = Modifier.width(10.dp))
+        }
+        if (leadingIcon != null) {
+            Icon(
+                painter = leadingIcon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = if (destructive) contentColor else contentColor.copy(alpha = 0.85f),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+        }
         Text(
             text = text,
             fontSize = 15.6.sp,
             fontWeight = FontWeight.Medium,
             color = contentColor,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .then(if (marquee) Modifier.basicMarquee() else Modifier),
+            maxLines = if (marquee) 1 else Int.MAX_VALUE,
+            softWrap = !marquee,
         )
         if (chip != null) {
             Spacer(modifier = Modifier.width(6.dp))

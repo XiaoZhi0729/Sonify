@@ -8,11 +8,14 @@ import yos.music.player.ui.UI
 class AppNavigationTest {
     @Test
     fun mapsTabIndexesToHouseRoots() {
+        // 底栏四 Tab 顺序（MainActivity navItems 同源）：主页 / 喜爱 / 资料库 / 搜索。
+        // Favorites 于 c3fce40 插入到 index 1，Library/Search 相应后移。
         assertEquals(HouseId.Home, houseForTabIndex(0))
-        assertEquals(HouseId.Library, houseForTabIndex(1))
-        assertEquals(HouseId.Search, houseForTabIndex(2))
+        assertEquals(HouseId.Favorites, houseForTabIndex(1))
+        assertEquals(HouseId.Library, houseForTabIndex(2))
+        assertEquals(HouseId.Search, houseForTabIndex(3))
         assertNull(houseForTabIndex(-1))
-        assertNull(houseForTabIndex(3))
+        assertNull(houseForTabIndex(4))
     }
 
     @Test

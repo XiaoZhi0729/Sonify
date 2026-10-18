@@ -168,11 +168,21 @@ fun LabelItem(
     title: String,
     desc: String? = null,
     superLink: Boolean = false,
+    showArrow: Boolean = true,
+    leading: (@Composable () -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onClick: (() -> Unit)?
 ) =
-    DefaultItem(enabled = enabled, title = title, titleHighLight = superLink, desc = desc, onClick = onClick, onLongClick = onLongClick) {
-        if (!superLink) {
+    DefaultItem(
+        enabled = enabled,
+        title = title,
+        titleHighLight = superLink,
+        desc = desc,
+        leading = leading,
+        onClick = onClick,
+        onLongClick = onLongClick
+    ) {
+        if (!superLink && showArrow) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_action_next), contentDescription = title,
                 modifier = Modifier
@@ -221,6 +231,9 @@ fun DefaultItem(
     title: String,
     titleHighLight: Boolean = false,
     desc: String? = null,
+    // 行首插图位（开发者头像等）。必须放在 onClick 之前：全仓调用点都用尾随 lambda 绑 backIcon，
+    // 新参数若追加在末尾会把那个 lambda 变成别的类型，编译直接炸。
+    leading: (@Composable () -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onClick: (() -> Unit)?,
     backIcon: (@Composable () -> Unit)? = null
@@ -246,6 +259,11 @@ fun DefaultItem(
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (leading != null) {
+            Box(Modifier.padding(end = 12.dp)) {
+                leading()
+            }
+        }
         Column(
             Modifier
                 .fillMaxWidth()

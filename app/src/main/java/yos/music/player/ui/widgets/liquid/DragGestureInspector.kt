@@ -11,6 +11,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.util.fastFirstOrNull
+import kotlin.math.abs
 
 suspend fun PointerInputScope.inspectDragGestures(
     onDragStart: (down: PointerInputChange) -> Unit = {},
@@ -83,6 +84,62 @@ suspend fun PointerInputScope.claimDragGestures(
                 // touchSlop 前不认领也不上报：既是点按判定窗口，也避免拇指在滑动手势
                 // 起点微抖；越过即独占，方向不论（纵向滑动同样不该滚页面）。
                 if (total.getDistance() <= viewConfiguration.touchSlop) continue
+                claimed = true
+            }
+            change.consume()
+            onDrag(delta)
+        }
+        if (finished) onEnd() else onCancel()
+    }
+}
+
+/**
+ * 水平独占拖动：只有**横向位移越过 touchSlop 且占优**时才认领并消费指针。
+ *
+ * 用于滚动容器里的横向滑条：纵向为主的滑动不认领、原样留给父级 LazyColumn，
+ * 避免"拖滑条顺带把页面滚了"；横向一旦认领就独占，页面不会再跟着滚。
+ * 未越过 touchSlop 即抬起视为点按（走 [onEnd]，调用方按"未拖动"处理）。
+ */
+suspend fun PointerInputScope.claimHorizontalDragGestures(
+    onStart: (down: PointerInputChange) -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+    onDrag: (dragAmount: Offset) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        onStart(down)
+
+        var pointer = down.id
+        var total = Offset.Zero
+        var claimed = false
+        var finished = false
+        var cancelled = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.fastFirstOrNull { it.id == pointer }
+            if (change == null) {
+                cancelled = true
+                break
+            }
+            if (change.changedToUpIgnoreConsumed()) {
+                finished = true
+                break
+            }
+            if (change.isConsumed) {
+                cancelled = true
+                break
+            }
+            val delta = change.positionChange()
+            total += delta
+            if (!claimed) {
+                if (total.getDistance() <= viewConfiguration.touchSlop) continue
+                // 纵向占优：这是滚页面，不是拖条。不认领、直接退出，
+                // 事件留给父级滚动容器（此时我们还没消费过任何事件）。
+                if (abs(total.x) <= abs(total.y)) {
+                    cancelled = true
+                    break
+                }
                 claimed = true
             }
             change.consume()

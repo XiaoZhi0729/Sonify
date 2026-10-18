@@ -2,6 +2,7 @@ package yos.music.player.code.utils.lrc
 
 import android.content.Context
 import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import java.io.File
 
 /**
@@ -23,11 +24,13 @@ object LyricDiskCache {
 
     private val gson = Gson()
 
+    // @SerializedName 冻结缓存 JSON 键名：Gson 反射用运行时字段名，release 混淆后与
+    // debug/跨版本键名漂移，读回时字段整体为 null（v0.1.5 启动崩溃循环根因）
     data class CachedLyrics(
-        val lrc: String,
-        val krc: String? = null,
-        val translation: String? = null,
-        val romanization: String? = null
+        @SerializedName("lrc") val lrc: String,
+        @SerializedName("krc") val krc: String? = null,
+        @SerializedName("translation") val translation: String? = null,
+        @SerializedName("romanization") val romanization: String? = null
     )
 
     @Volatile
@@ -50,7 +53,10 @@ object LyricDiskCache {
                 null
             } else {
                 val parsed = runCatching { gson.fromJson(f.readText(), CachedLyrics::class.java) }.getOrNull()
-                if (parsed == null) {
+                if (parsed == null || parsed.lrc.isNullOrBlank()) {
+                    // Gson 反序列化不校验 Kotlin 非空：损坏/旧 schema 条目的 lrc 运行时可能为
+                    // null，回流会让 formatLrcEntries 的参数空检查抛 NPE 造成启动崩溃循环。
+                    // 删除毒化条目，下次加载走网络重取（write 侧守卫重写健康条目）。
                     f.delete()
                     null
                 } else {
@@ -82,6 +88,24 @@ object LyricDiskCache {
     /** 目录总大小（字节），供设置页缓存管理展示。 */
     fun sizeBytes(context: Context): Long =
         synchronized(this) { dir(context).listFiles()?.sumOf { it.length() } ?: 0L }
+
+    /**
+     * 每个歌曲 hash 的缓存字节数（文件名去 .json 即 hash——酷狗 hash 为小写十六进制，
+     * 上面 [fileFor] 的 sanitize 对它是恒等变换）。供设置页按曲清理列表。
+     */
+    fun cachedSongSizes(context: Context): Map<String, Long> =
+        synchronized(this) {
+            dir(context).listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".json") }
+                ?.associate { it.name.removeSuffix(".json") to it.length() }
+                ?: emptyMap()
+        }
+
+    /** 删除某首歌的歌词缓存。 */
+    fun delete(context: Context, hash: String) {
+        if (hash.isBlank()) return
+        synchronized(this) { runCatching { fileFor(context, hash).delete() } }
+    }
 
     fun clear(context: Context) {
         synchronized(this) { dir(context).listFiles()?.forEach { it.delete() } }

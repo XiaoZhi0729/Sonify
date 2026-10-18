@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,26 +40,55 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.AppStorage
+import yos.music.player.ui.UI
+import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
+import yos.music.player.ui.pages.settings.SelectItem
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 
+/** 音频缓存上限档位（MB），与 [SettingsLibrary.AudioCacheCapMb] 配对。 */
+private val AUDIO_CAP_LABELS = listOf("256 MB", "512 MB", "1 GB", "2 GB")
+private val AUDIO_CAP_VALUES = listOf(256, 512, 1024, 2048)
+
+/** 图片缓存上限档位（MB），与 [SettingsLibrary.ImageCacheCapMb] 配对。 */
+private val IMAGE_CAP_LABELS = listOf("128 MB", "256 MB", "512 MB", "1 GB")
+private val IMAGE_CAP_VALUES = listOf(128, 256, 512, 1024)
+
+/** 把当前 MB 值映射到最接近的档位标签（防设置值与档位表漂移时显示为空）。 */
+private fun capLabel(labels: List<String>, values: List<Int>, mb: Int): String {
+    var best = 0
+    var bestDiff = Int.MAX_VALUE
+    values.forEachIndexed { i, v ->
+        val d = kotlin.math.abs(v - mb)
+        if (d < bestDiff) {
+            bestDiff = d
+            best = i
+        }
+    }
+    return labels[best]
+}
+
 /**
  * 设置 > 数据与储存。
  *
- * 视觉对齐 Cresto「Data & Storage」：顶部信息头卡 + 存储用量分段占比条/图例/信息行 +
- * 缓存与重置分区（破坏性操作走确认弹窗）；全部复用本项目的设置页组件
- * （SettingBackground / Title / RoundColumn / ListHeader / LabelItem / OptionDialog）。
+ * 顶部用量卡 + 缓存分类（歌词/音频/图片/其它，各显示大小，音频/图片附"已用/上限"）+
+ * 缓存上限（用户可调，下次启动生效）+ 清除全部缓存。
+ * 歌词与音频可点进二级页「按歌曲挑选清理」。
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -68,20 +98,59 @@ fun DataStorage(navController: NavController) =
         val scope = rememberCoroutineScope()
         val calculating = stringResource(id = R.string.settings_storage_calculating)
         val cacheCleared = stringResource(id = R.string.settings_storage_cache_cleared)
-        var usage by remember { mutableStateOf<AppStorage.Usage?>(null) }
-        var showClearConfirm by remember { mutableStateOf(false) }
+        val clearAllConfirm = stringResource(id = R.string.settings_storage_clear_cache_confirm)
 
-        fun refreshUsage() {
+        var usage by remember { mutableStateOf<AppStorage.Usage?>(null) }
+        var catSizes by remember { mutableStateOf<Map<AppStorage.Category, Long>>(emptyMap()) }
+        var refreshing by remember { mutableStateOf(false) }
+        var showClearAll by remember { mutableStateOf(false) }
+        var pendingClear by remember { mutableStateOf<AppStorage.Category?>(null) }
+
+        fun refresh() {
             scope.launch {
-                usage = withContext(Dispatchers.IO) { AppStorage.usage(context) }
+                refreshing = true
+                val result = withContext(Dispatchers.IO) {
+                    val u = AppStorage.usage(context)
+                    val sizes = AppStorage.Category.values()
+                        .associateWith { AppStorage.categoryBytes(context, it) }
+                    u to sizes
+                }
+                usage = result.first
+                catSizes = result.second
+                refreshing = false
             }
         }
-        LaunchedEffect(Unit) { refreshUsage() }
+
+        LaunchedEffect(Unit) { refresh() }
+
+        // 从二级挑选页返回 / 弹窗回来时刷新大小（LaunchedEffect(Unit) 在返回时不重跑）。
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) refresh()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
+        fun sizeText(bytes: Long?) =
+            bytes?.let { AppStorage.format(context, it) } ?: calculating
+
+        fun capText(used: Long?, cap: Long) =
+            used?.let {
+                context.getString(
+                    R.string.settings_storage_cache_cap,
+                    AppStorage.format(context, it),
+                    AppStorage.format(context, cap)
+                )
+            } ?: calculating
 
         Title(
             title = stringResource(id = R.string.settings_storage_data_storage),
             onBack = { navController.popBackStack() },
             titleHorizontalPadding = 32.dp,
+            onRefresh = { refresh() },
+            refreshing = refreshing,
             content = {
                 item("storage") {
                     Column(Modifier.fillMaxSize()) {
@@ -95,32 +164,135 @@ fun DataStorage(navController: NavController) =
                         ListHeader(stringResource(id = R.string.settings_storage_cache))
                         RoundColumn {
                             LabelItem(
+                                title = stringResource(id = R.string.settings_storage_cache_lyric),
+                                desc = sizeText(catSizes[AppStorage.Category.LYRIC]),
+                                onClick = { navController.navigate(UI.Settings.cacheDetailRoute("lyric")) }
+                            )
+                            Divider()
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_storage_cache_audio),
+                                desc = capText(
+                                    catSizes[AppStorage.Category.AUDIO],
+                                    AppStorage.audioCapBytes()
+                                ),
+                                onClick = { navController.navigate(UI.Settings.cacheDetailRoute("audio")) }
+                            )
+                            Divider()
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_storage_cache_image),
+                                desc = capText(
+                                    catSizes[AppStorage.Category.IMAGE],
+                                    AppStorage.imageCapBytes()
+                                ),
+                                onClick = { pendingClear = AppStorage.Category.IMAGE }
+                            )
+                            Divider()
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_storage_cache_other),
+                                desc = sizeText(catSizes[AppStorage.Category.OTHER]),
+                                onClick = { pendingClear = AppStorage.Category.OTHER }
+                            )
+                            Divider()
+                            LabelItem(
                                 title = stringResource(id = R.string.settings_storage_clear_cache),
-                                superLink = true
-                            ) { showClearConfirm = true }
+                                superLink = true,
+                                onClick = { showClearAll = true }
+                            )
                         }
 
                         GroupSpacer()
 
-                        if (showClearConfirm) {
+                        ListHeader(stringResource(id = R.string.settings_storage_cache_limit_title))
+                        RoundColumn {
+                            SelectItem(
+                                title = stringResource(id = R.string.settings_storage_audio_cap),
+                                items = AUDIO_CAP_LABELS,
+                                value = {
+                                    capLabel(
+                                        AUDIO_CAP_LABELS,
+                                        AUDIO_CAP_VALUES,
+                                        SettingsLibrary.AudioCacheCapMb
+                                    )
+                                },
+                                onValueChange = { label ->
+                                    AUDIO_CAP_VALUES.getOrNull(AUDIO_CAP_LABELS.indexOf(label))
+                                        ?.let { SettingsLibrary.AudioCacheCapMb = it }
+                                }
+                            )
+                            Divider()
+                            SelectItem(
+                                title = stringResource(id = R.string.settings_storage_image_cap),
+                                items = IMAGE_CAP_LABELS,
+                                value = {
+                                    capLabel(
+                                        IMAGE_CAP_LABELS,
+                                        IMAGE_CAP_VALUES,
+                                        SettingsLibrary.ImageCacheCapMb
+                                    )
+                                },
+                                onValueChange = { label ->
+                                    IMAGE_CAP_VALUES.getOrNull(IMAGE_CAP_LABELS.indexOf(label))
+                                        ?.let { SettingsLibrary.ImageCacheCapMb = it }
+                                }
+                            )
+                        }
+                        ListHeader(stringResource(id = R.string.settings_storage_cap_restart_hint))
+
+                        GroupSpacer()
+
+                        val pending = pendingClear
+                        if (pending != null) {
+                            val name = stringResource(
+                                id = when (pending) {
+                                    AppStorage.Category.IMAGE -> R.string.settings_storage_cache_image
+                                    else -> R.string.settings_storage_cache_other
+                                }
+                            )
                             OptionDialog(
                                 icon = {},
-                                title = stringResource(id = R.string.settings_storage_clear_cache),
-                                subTitle = stringResource(id = R.string.settings_storage_clear_cache_confirm),
+                                title = name,
+                                subTitle = stringResource(
+                                    id = R.string.settings_storage_clear_category_confirm,
+                                    name
+                                ),
                                 content = null,
                                 positiveContent = stringResource(id = R.string.common_ok),
                                 negativeContent = stringResource(id = R.string.common_cancel),
                                 destructive = true,
                                 onPositive = {
-                                    showClearConfirm = false
+                                    pendingClear = null
                                     scope.launch {
-                                        withContext(Dispatchers.IO) { AppStorage.clearCaches(context) }
-                                        refreshUsage()
+                                        withContext(Dispatchers.IO) {
+                                            AppStorage.clearCategory(context, pending)
+                                        }
+                                        refresh()
                                         Toast.makeText(context, cacheCleared, Toast.LENGTH_SHORT).show()
                                     }
                                 },
-                                onNegative = { showClearConfirm = false },
-                                onDismissRequest = { showClearConfirm = false }
+                                onNegative = { pendingClear = null },
+                                onDismissRequest = { pendingClear = null }
+                            )
+                        }
+
+                        if (showClearAll) {
+                            OptionDialog(
+                                icon = {},
+                                title = stringResource(id = R.string.settings_storage_clear_cache),
+                                subTitle = clearAllConfirm,
+                                content = null,
+                                positiveContent = stringResource(id = R.string.common_ok),
+                                negativeContent = stringResource(id = R.string.common_cancel),
+                                destructive = true,
+                                onPositive = {
+                                    showClearAll = false
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { AppStorage.clearCaches(context) }
+                                        refresh()
+                                        Toast.makeText(context, cacheCleared, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onNegative = { showClearAll = false },
+                                onDismissRequest = { showClearAll = false }
                             )
                         }
                     }

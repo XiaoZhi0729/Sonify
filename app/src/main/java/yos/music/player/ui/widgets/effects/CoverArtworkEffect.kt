@@ -33,6 +33,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -429,11 +430,18 @@ internal fun Modifier.coverArtworkGesture(
  *    "本层尺寸 / 大封面尺寸"缩放，观感才与大封面一致（涟漪环半径本来就是尺寸相对值，无需处理）。
  *
  * @param cornerRadius 本渲染面自身的圆角（大封面 8dp、顶栏封面 5dp），用于描边高光贴合。
+ * @param rimHighlight 是否画那圈白色描边高光。带圆角的卡片封面要（默认）；
+ *   全屏静态封面（满屏出血、无圆角）不要——描边会变成一条横贯封面的半透明白线。
+ * @param squareFace 绘制面是否按**宽度**取正方形。封面都是正方形，默认 true；
+ *   非正方形面（关于页横幅 1376:768）必须传 false，否则描边下沿落在可视区外、
+ *   涟漪裁切面也错位。
  */
 @Composable
 internal fun Modifier.coverArtworkEffect(
     state: CoverArtworkState,
-    cornerRadius: Dp = CoverArtworkDefaultCorner
+    cornerRadius: Dp = CoverArtworkDefaultCorner,
+    rimHighlight: Boolean = true,
+    squareFace: Boolean = true
 ): Modifier {
     val shape: Shape = remember("CoverArtwork_shape", cornerRadius) {
         YosRoundedCornerShape(cornerRadius)
@@ -454,8 +462,12 @@ internal fun Modifier.coverArtworkEffect(
         .drawWithCache {
             val ref = state.size.value
             val scale = if (ref.width > 0) size.width / ref.width.toFloat() else 1f
+            // 描边/涟漪的裁剪面：封面按**宽度**取正方形——全屏静态封面的画布比方图多出一截
+            // 底边延伸段（见 FullScreenStaticCover），按 size.height 取的话描边高光会跑到
+            // 延伸段下沿、涟漪也能溢进那 10dp。非正方形渲染面（关于页横幅）直接用自己的尺寸。
+            val face = if (squareFace) Size(size.width, size.width) else size
             // outline / path / brush / stroke 只在尺寸变化时重算，绘制期零分配。
-            val outline = shape.createOutline(size, layoutDirection, this)
+            val outline = shape.createOutline(face, layoutDirection, this)
             val path = outline.coverArtworkPath()
             val rimBrush = Brush.verticalGradient(
                 0f to Color.White.copy(alpha = CoverArtworkRimAlpha),
@@ -464,11 +476,11 @@ internal fun Modifier.coverArtworkEffect(
             val rimStroke = Stroke(width = CoverArtworkRimWidth.toPx() * scale)
             onDrawWithContent {
                 drawContent()
-                // 本节点是正方形，四个角落在封面圆角之外：不裁剪就会在封面角上留下白晕。
+                // 裁剪面是正方形（见上），四个角落在封面圆角之外：不裁剪就会在封面角上留下白晕。
                 clipPath(path) {
                     // Phase 3：描边高光跟随"确认"而不是"按下"——按下去不等于确认。
                     val glow = state.glow.value
-                    if (glow > 0.002f) {
+                    if (rimHighlight && glow > 0.002f) {
                         drawOutline(
                             outline = outline,
                             brush = rimBrush,

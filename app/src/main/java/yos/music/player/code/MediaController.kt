@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import coil.imageLoader
@@ -52,6 +53,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,10 +71,13 @@ import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.utils.lrc.LyricDiskCache
 import yos.music.player.code.utils.lrc.LocalLyricCache
 import yos.music.player.code.utils.lrc.LyricLoadCoordinator
+import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.lrc.LyricInfoSerializer
 import yos.music.player.code.MediaController as YosControllerObject
 import yos.music.player.code.utils.player.CrossfadeExo
+import yos.music.player.code.utils.player.BluetoothOutputMonitor
+import yos.music.player.code.utils.player.BluetoothSessionTitles
 import yos.music.player.code.utils.player.FadeExo
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
@@ -96,6 +101,7 @@ import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.ListeningGradeTracker
+import yos.music.player.data.repositories.ListenReportService
 import yos.music.player.data.repositories.SongPlayabilityStore
 import yos.music.player.data.repositories.PerSongQualityIntent
 import yos.music.player.data.repositories.QualityIntentResolver
@@ -373,12 +379,15 @@ object MediaController {
         val controller = mediaControl ?: return@withContext
         val timeline = controller.currentTimeline
         // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem），timeline 读回的
-        // 重建值缺时长等字段：按 mediaId 与编辑前的队列快照合并取完整条目
+        // 重建值缺时长等字段：按 mediaId 与编辑前的队列快照合并取完整条目。
+        // 再退一步查库：车载蓝牙歌词会把条目 title 改写成歌词行，快照缺失时
+        // 直接用 rebuilt 会把这个临时标题持久化进队列。
         val known = playingMusicList.value.orEmpty().associateBy { it.mediaId }
+        val library = MusicLibrary.songs.associateBy { it.mediaId }
         val newList = if (timeline.isEmpty) emptyList()
         else (0 until timeline.windowCount).map { i ->
             val rebuilt = timeline.getWindow(i, Timeline.Window()).mediaItem.toYosMediaItem()
-            known[rebuilt.mediaId] ?: rebuilt
+            known[rebuilt.mediaId] ?: library[rebuilt.mediaId] ?: rebuilt
         }
         playingMusicList.value = newList
         MusicLibrary.updatePlayList(PlayListV1(mainMusicList, newList))
@@ -391,8 +400,80 @@ object MediaController {
         if (from !in 0 until count || to !in 0 until count || from == to) return@withContext
         // 重排会改动"下一首"是谁，副 player 里备好的那首可能就是错的：直接作废，不赌
         CrossfadeExo.abort("queue_move")
+        // 手动重排后，之前记录的还原位置不再可信
+        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "moveQueueItem")
         controller.moveMediaItem(from, to)
+        syncQueueSnapshot()
+    }
+
+    /** 「下一首播放」插入前的队列位置：null = 新插入的副本（取消时直接移除）。 */
+    private data class PlayNextRestore(val originalIndex: Int?)
+
+    /** mediaId → 操作前位置；再次点击同一首的「下一首」时用来还原。 */
+    private val playNextRestore = mutableMapOf<String, PlayNextRestore>()
+
+    /**
+     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首，再点一次则取消并还原到
+     * 操作前的位置（原本不在队列里的则移除插入项）。
+     *
+     * 三处必须显式处理：
+     * - 随机关闭：Media3 的 shuffle order 与时间线索引互相独立，`addMediaItem(index)`
+     *   只分配时间线索引，新歌在 shuffle order 里仍是随机位置，不能保证成为"下一首"；
+     *   与项目「任何播放入口必须显式关随机」的既有约定一致。
+     * - 单曲循环改列表循环：否则当前曲播完会重播自己，违背"下一首播放"。
+     * - 先改快照再插 timeline：`syncQueueSnapshot` 用 timeline 重建值兜底会丢
+     *   duration/author（发布条目不带自有 extras），新条目必须先在快照里。
+     */
+    suspend fun playNext(item: YosMediaItem) = withContext(Dispatchers.Main) {
+        val controller = mediaControl ?: return@withContext
+        val mediaId = item.mediaId ?: return@withContext
+        if (controller.mediaItemCount == 0) {
+            // 队列为空没有"下一首"，直接起播
+            prepare(item, listOf(item))
+            return@withContext
+        }
+        // 插入会改变"下一首"是谁，副 player 预取的那首作废
+        CrossfadeExo.abort("play_next")
+        if (controller.shuffleModeEnabled) controller.shuffleModeEnabled = false
+        if (controller.repeatMode == REPEAT_MODE_ONE) controller.repeatMode = REPEAT_MODE_ALL
+        YosDiagnostics.log("SRC", "fn" to "playNext", "mediaId" to mediaId)
+
+        val currentIndex = controller.currentMediaItemIndex
+        val existingIndex = (0 until controller.mediaItemCount).firstOrNull {
+            controller.getMediaItemAt(it).mediaId == mediaId
+        }
+
+        // 已经是下一首：再点一次 = 取消，还原到操作前的位置（新插入的则移除）
+        if (existingIndex == currentIndex + 1) {
+            val restore = playNextRestore.remove(mediaId) ?: return@withContext
+            val original = restore.originalIndex
+            if (original == null) {
+                controller.removeMediaItem(existingIndex)
+            } else {
+                val to = original.coerceIn(0, controller.mediaItemCount - 1)
+                controller.moveMediaItem(existingIndex, to)
+            }
+            syncQueueSnapshot()
+            return@withContext
+        }
+
+        if (existingIndex != null && existingIndex != currentIndex) {
+            playNextRestore[mediaId] = PlayNextRestore(existingIndex)
+            // 移到当前曲之后：from<current 时当前曲会左移一位，目标位置取 current
+            val to = if (existingIndex < currentIndex) currentIndex else currentIndex + 1
+            controller.moveMediaItem(existingIndex, to)
+            syncQueueSnapshot()
+            return@withContext
+        }
+
+        // 不在队列，或就是当前曲（插副本实现"再播一次"）
+        playNextRestore[mediaId] = PlayNextRestore(null)
+        val insertIndex = (currentIndex + 1).coerceIn(0, controller.mediaItemCount)
+        val snapshot = playingMusicList.value.orEmpty().toMutableList()
+        if (insertIndex <= snapshot.size) snapshot.add(insertIndex, item)
+        playingMusicList.value = snapshot
+        controller.addMediaItem(insertIndex, item.toMediaItem())
         syncQueueSnapshot()
     }
 
@@ -404,6 +485,7 @@ object MediaController {
         val controller = mediaControl ?: return@withContext
         // 同上：删到目的那首就会突然换曲，不如退回硬切
         CrossfadeExo.abort("queue_remove")
+        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "removeQueueItems", "n" to indices.size)
         indices
             .filter { it in 0 until controller.mediaItemCount }
@@ -422,6 +504,7 @@ object MediaController {
             val currentMediaId = controller.currentMediaItem?.mediaId
             // 排序是整时线重建，副 player 手里那首与新顺序不再对应
             CrossfadeExo.abort("queue_sort")
+            playNextRestore.clear()
             YosDiagnostics.log("SRC", "fn" to "sortQueue")
             val sorted = if (descending) current.sortedWith(comparator.reversed())
             else current.sortedWith(comparator)
@@ -518,7 +601,8 @@ object MediaController {
                         runCatching {
                             currentLyricIndex = MainViewModelObject.syncLyricIndex.intValue
 
-                            if (isPlaying == true) {
+                            // 拖动进度条期间由拖动方写入歌词索引，这里不要用播放器位置覆盖
+                            if (isPlaying == true && MainViewModelObject.scrubPositionMs.value == null) {
                                 liveTime = (mediaControl?.currentPosition ?: 0) +
                                     SettingsLibrary.LyricTimingOffset
 
@@ -580,6 +664,34 @@ object MediaController {
                                 }
                             }
                         }
+
+                        // 车载蓝牙歌词：不放在上面的 isPlaying 门控里——暂停后车机仍应停在
+                        // 当前行，且开关关闭/蓝牙断开时要能自愈回歌名。本段的判据是
+                        // 「目标标题 ≠ 会话条目标题」，重复读取只做一次比较，无副作用。
+                        runCatching {
+                            val currentMediaId = musicPlaying.value?.mediaId
+                            val entries = MediaViewModelObject.lrcEntries.value
+                            // 歌词归属门禁：切歌瞬间旧的 lrcEntries 还没清空，不加这道
+                            // 校验就会把上一首的歌词推给车机
+                            val owned = currentMediaId != null &&
+                                MediaViewModelObject.lyricMediaId.value == currentMediaId
+                            val lineIndex = when {
+                                !owned || entries.isEmpty() -> -1
+                                isPlaying == true &&
+                                    MainViewModelObject.scrubPositionMs.value == null -> {
+                                    val liveTime = (mediaControl?.currentPosition ?: 0) +
+                                        SettingsLibrary.LyricTimingOffset
+                                    entries.indexOfLast { it.startTime <= liveTime }
+                                }
+                                // 暂停时停在最后一行（拖动进度条期间同步刷新）
+                                else -> MainViewModelObject.syncLyricIndex.intValue
+                            }
+                            val line = entries.getOrNull(lineIndex)
+                                ?.mainLyric?.joinToString("") { it.second }
+                                ?.trim()
+                                ?.takeIf { it.isNotEmpty() }
+                            setBluetoothLyricLine(line)
+                        }
                     }
 
                     handler.postDelayed(this, 70)
@@ -610,6 +722,8 @@ object MediaController {
         // 用户主动开播（点任意一首歌、恢复上次播放）：一切在途的平滑过渡作废——本功能
         // 只服务"自然播完自动进下一首"，手动路径一律硬切
         CrossfadeExo.abort("prepare")
+        // 新队列不再保留上一轮「下一首播放」的还原位置
+        playNextRestore.clear()
         // 用户显式意图同样作废跳歌锁存：不清就会把"上一轮整队列失败"的计数算到新队列上，
         // 新队列第一首一失败就直接落进"达上限"分支（真机：用户重新点歌也救不回来）
         OnlineSkipState.reset("user_prepare")
@@ -747,9 +861,93 @@ object MediaController {
     private val lyricCoordinator = LyricLoadCoordinator()
     private val lyricParseLock = Any()
 
+    /** 最近一次预取歌词的 mediaId：同一首只预取一次（循环/跳过会反复拿到同一个「下一首」）。 */
+    private var lastPrefetchedLyricId: String? = null
+
+    /**
+     * 下一首歌词预取：当前曲一开始播放，就在后台把下一首的歌词数据取好并预排版。
+     *
+     * 目的：用户切歌后立刻打开歌词页也能直接有字，而不是等网络 + 排版。
+     * 与 [preloadNextCover] 同一时机、同一档位选择（`getNextMediaItemIndex()` 与真实推进一致）。
+     *
+     * 红线：预取**只写** [LyricLoadCoordinator] 内存缓存与排版缓存，
+     * 绝不写 [MediaViewModelObject]（那会把当前正在显示的歌的歌词换成别的歌）。
+     */
+    fun prefetchNextLyric(player: Player) {
+        try {
+            if (player.repeatMode == REPEAT_MODE_ONE) return
+            if (!player.hasNextMediaItem()) return
+            val nextItem = player.getMediaItemAt(player.getNextMediaItemIndex())
+            val mediaId = nextItem.mediaId ?: return
+            if (!isOnlineMedia(mediaId)) return
+            if (mediaId == player.currentMediaItem?.mediaId) return
+            if (mediaId == lastPrefetchedLyricId) return
+            if (lyricCoordinator.cached(mediaId) != null) return
+            if (lyricCoordinator.isInFlight(mediaId)) return
+            lastPrefetchedLyricId = mediaId
+
+            val hash = mediaId.removePrefix("kugou-online-")
+            CoroutineScope(Dispatchers.IO).launch {
+                // 让出起播窗口：切歌瞬间要出封面、起音源、跑上报
+                delay(LYRIC_PRELOAD_DELAY_MS)
+                val context = appContext
+                val cached = context?.let { LyricDiskCache.read(it, hash) }
+                val result: Result<LyricDiskCache.CachedLyrics> = if (cached != null) {
+                    Result.success(cached)
+                } else {
+                    runCatching {
+                        val lyrics = KugouRepository.getLyrics(hash).getOrThrow()
+                        LyricDiskCache.CachedLyrics(
+                            lrc = lyrics.lrc,
+                            krc = lyrics.krc,
+                            translation = lyrics.translation,
+                            romanization = lyrics.romanization
+                        ).also { dto ->
+                            context?.let {
+                                LyricDiskCache.write(
+                                    it, hash, dto.lrc, dto.krc, dto.translation, dto.romanization
+                                )
+                            }
+                        }
+                    }
+                }
+                result.onSuccess { lyrics ->
+                    val payload = parseOnlineLyrics(mediaId, lyrics)
+                    lyricCoordinator.prewarm(mediaId, payload)
+                    LyricRenderWarmup.onLyricsPublished(
+                        context = context,
+                        mediaIdKey = mediaId,
+                        entries = payload.entries,
+                        otherSideForLines = payload.otherSideForLines,
+                        reason = "prefetch_next",
+                    )
+                    YosDiagnostics.log(
+                        "LYRIC_PRELOAD",
+                        "id" to mediaId,
+                        "lines" to payload.entries.size,
+                        "disk" to (cached != null)
+                    )
+                }.onFailure { error ->
+                    // 失败不锁存：下次切歌/回到这首还能再试一次
+                    if (lastPrefetchedLyricId == mediaId) lastPrefetchedLyricId = null
+                    YosDiagnostics.log(
+                        "LYRIC_PRELOAD",
+                        "id" to mediaId,
+                        "ok" to false,
+                        "why" to (error.message ?: error.toString())
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private val lyricHandler = Handler(Looper.getMainLooper())
     private const val LYRIC_PUBLISH_MAX_RETRIES = 5
     private const val LYRIC_PUBLISH_RETRY_INTERVAL_MS = 800L
+
+    /** 下一首歌词预取的延迟：避开切歌瞬间的封面/音源/上报竞态。 */
+    private const val LYRIC_PRELOAD_DELAY_MS = 1200L
 
     private fun isOnlineMedia(mediaId: String?): Boolean =
         mediaId?.startsWith("kugou-online-") == true
@@ -798,6 +996,175 @@ object MediaController {
         return lyricSessionGeneration
     }
 
+    // ---------- 车载蓝牙歌词 ----------
+    //
+    // 车机 AVRCP 只读标准 MediaMetadata（title/artist/album/封面），没有专用歌词通道：
+    // 把当前歌词行写进 title、artist 改成「歌手 - 歌名」，由系统自行映射到车机。
+    // media3 1.4.0 的 replaceMediaItem 在 URI 未变时走 updateMediaSourcesWithMediaItems
+    // 原位更新，不重建 MediaSource、不重新 prepare、不重置进度、不触发
+    // onMediaItemTransition——所以逐行改写不会打到换曲逻辑（历史上报/歌词重置）。
+
+    /** 逐行提交的最小间隔：位置抖动会让同一行反复触发，合并窗口内只提交一次。 */
+    private const val BT_LYRIC_MIN_COMMIT_INTERVAL_MS = 300L
+
+    /** 待下发的当前歌词行；null 表示恢复真实歌名。 */
+    private var bluetoothLyricLine: String? = null
+    private var bluetoothLyricCommitAt = 0L
+    private var bluetoothLyricPending: Runnable? = null
+
+    /**
+     * 会话标题当前是否被本功能改写过。没有这个状态就不能安全地按「标题与原始值不一致」
+     * 去纠偏：功能关闭时若 musicPlaying 与条目本就有别的差异，每 70ms 的 ticker 会把
+     * 不相干的标题差异当成待纠正的漂移，静默改写别人正在维护的元数据。
+     */
+    private var bluetoothTitleRewritten = false
+
+    private fun bluetoothLyricActive(): Boolean =
+        BluetoothOutputMonitor.isActive && SettingsLibrary.BluetoothLyricEnabled
+
+    private fun bluetoothLyricDesiredLine(): String? =
+        if (bluetoothLyricActive()) bluetoothLyricLine?.takeIf { it.isNotBlank() } else null
+
+    /**
+     * 会话标题的目标值；null 表示**不要碰标题**。
+     *
+     * 只有两种情况允许改写：蓝牙歌词正在生效（写当前行），或本功能此前改写过、现在
+     * 需要复原（写回原始歌名）。功能从未介入时一律返回 null——元数据标题归其它链路管，
+     * 这里不能因为 musicPlaying 与条目有任何差异就顺手覆盖。
+     */
+    private fun desiredSessionTitle(original: YosMediaItem?): String? {
+        BluetoothSessionTitles.titleFor(bluetoothLyricDesiredLine())?.let { return it }
+        return if (bluetoothTitleRewritten) original?.title else null
+    }
+
+    /** 蓝牙歌词生效时 artist 让位给「歌手 - 歌名」，把曲名保留给车机可见。 */
+    private fun desiredSessionArtist(original: YosMediaItem?): String? {
+        val line = bluetoothLyricDesiredLine()
+        if (line == null) return if (bluetoothTitleRewritten) original?.artists else null
+        return BluetoothSessionTitles.artistFor(original?.title, original?.artists, line)
+    }
+
+    private fun sessionTitleMatches(item: MediaItem, original: YosMediaItem?): Boolean {
+        val desiredTitle = desiredSessionTitle(original)
+        if (desiredTitle != null && item.mediaMetadata.title?.toString() != desiredTitle) return false
+        val desiredArtist = desiredSessionArtist(original)
+        if (desiredArtist != null && item.mediaMetadata.artist?.toString() != desiredArtist) return false
+        return true
+    }
+
+    /**
+     * 下发当前歌词行（null = 恢复真实歌名）。由服务侧 70ms ticker 与设置页/路由回调调用。
+     *
+     * 判据是「目标标题与实际会话条目标题不一致」而不是「行变了」：音质切换、队列排序都会
+     * 用原始 YosMediaItem 重建条目把标题还原成歌名，按行去重会导致车机停在歌名直到下一行。
+     */
+    fun setBluetoothLyricLine(line: String?) {
+        bluetoothLyricLine = line
+        // 功能未激活、且本功能从未改写过会话标题：绝不触碰会话。ticker 是 70ms 一次的，
+        // 不加这道门禁会把与本功能无关的元数据差异当成漂移反复纠正。
+        if (!bluetoothLyricActive() && !bluetoothTitleRewritten) return
+        val controller = mediaControl ?: return
+        val item = controller.currentMediaItem ?: return
+        if (!sessionMediaMatches(item)) return
+        val original = musicPlaying.value ?: return
+        if (sessionTitleMatches(item, original)) {
+            // 会话已处于目标状态：按目标是不是歌词行同步标记，供关闭后自愈
+            bluetoothTitleRewritten = bluetoothLyricDesiredLine() != null
+            return
+        }
+        scheduleBluetoothLyricCommit()
+    }
+
+    /** 关闭开关/断开蓝牙：立即恢复真实歌名，不等下一行。 */
+    fun clearBluetoothLyric() {
+        setBluetoothLyricLine(null)
+    }
+
+    /** 切歌时丢弃在途的当前行与已排队的提交（不动会话，避免把旧歌名写到新条目上）。 */
+    internal fun resetBluetoothLyricTracking() {
+        bluetoothLyricPending?.let { lyricHandler.removeCallbacks(it) }
+        bluetoothLyricPending = null
+        bluetoothLyricLine = null
+    }
+
+    /**
+     * 会话条目与当前播放曲是否同一首。切歌/音质重建的窗口里条目可能已经换新而
+     * [musicPlaying] 还是旧的（或反之），此时以任何一侧的标题去写另一侧都会写错。
+     */
+    private fun sessionMediaMatches(item: MediaItem): Boolean =
+        item.mediaId != null && item.mediaId == musicPlaying.value?.mediaId
+
+    private fun scheduleBluetoothLyricCommit() {
+        if (bluetoothLyricPending != null) return
+        val sinceLast = SystemClock.uptimeMillis() - bluetoothLyricCommitAt
+        val delay = (BT_LYRIC_MIN_COMMIT_INTERVAL_MS - sinceLast).coerceAtLeast(0L)
+        val run = Runnable { runBluetoothLyricCommit() }
+        bluetoothLyricPending = run
+        lyricHandler.postDelayed(run, delay)
+    }
+
+    private fun runBluetoothLyricCommit() {
+        bluetoothLyricPending = null
+        runCatching {
+            val controller = mediaControl ?: return
+            val index = controller.currentMediaItemIndex
+            if (index == C.INDEX_UNSET) return
+            val item = controller.getMediaItemAt(index)
+            if (!sessionMediaMatches(item)) return
+            val original = musicPlaying.value
+            if (sessionTitleMatches(item, original)) return
+            val targetTitle = desiredSessionTitle(original)
+            val targetArtist = desiredSessionArtist(original)
+            // 两个目标都是 null 表示没有可写的目标（例如原始条目本身无标题），不要提交空操作
+            if (targetTitle == null && targetArtist == null) return
+            val metadataBuilder = item.mediaMetadata.buildUpon()
+            // artist 可能本就是 null（无歌手信息的本地文件），此时只写标题
+            targetTitle?.let { metadataBuilder.setTitle(it) }
+            targetArtist?.let { metadataBuilder.setArtist(it) }
+            // 只改 title/artist：extras 由 buildUpon 原样带过去，不重编码整首歌词，
+            // 避免每行几十 KB 走一次 Binder。
+            controller.replaceMediaItem(
+                index,
+                item.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
+            )
+            bluetoothLyricCommitAt = SystemClock.uptimeMillis()
+            bluetoothTitleRewritten = bluetoothLyricDesiredLine() != null
+            YosDiagnostics.log(
+                "BTLYRIC",
+                "id" to item.mediaId,
+                "line" to desiredSessionTitle(original),
+                "restore" to (bluetoothLyricDesiredLine() == null)
+            )
+        }.onFailure { e ->
+            YosDiagnostics.log("BTLYRIC_ERR", "why" to e.toString())
+        }
+    }
+
+    /**
+     * 会话 extras 构造：lyricInfo（ColorOS 锁屏/超级岛）+ Vivo 车机的整段 LRC 通道。
+     *
+     * Vivo 铁律（md3Music 真机实测）：没有歌词时这几个键必须**不存在**，写空值或
+     * 「无歌词」状态会让车机永久退回单行显示；`support_event` 每次 metadata 更新都要带。
+     */
+    private object SessionExtras {
+        private const val UCAR_LYRICS_WHOLE = "ucar.media.metadata.LYRICS_WHOLE"
+        private const val UCAR_LYRICS_STATUS = "ucar.media.metadata.LYRICS_STATUS"
+        private const val VMM_SUPPORT_EVENT = "vivomusicmix.media.metadata.support_event"
+
+        /** 车机侧 LRC 长度上限：超长整段不如不给（Binder 与车机解析都吃不消）。 */
+        private const val MAX_UCAR_LRC_CHARS = 100_000
+
+        fun build(payload: String): Bundle = Bundle().apply {
+            putString(LyricInfoSerializer.EXTRAS_KEY, payload)
+            val whole = LyricInfoSerializer.wholeLrc(payload)
+            if (whole != null && whole.length <= MAX_UCAR_LRC_CHARS) {
+                putString(UCAR_LYRICS_WHOLE, whole)
+                putLong(UCAR_LYRICS_STATUS, 0L)
+                putLong(VMM_SUPPORT_EVENT, 31L)
+            }
+        }
+    }
+
     private fun requestLyricPublish(mediaId: String?, entries: List<LyricEntry>?, delayMs: Long = 0L) {
         lyricHandler.post {
             lyricPublishRunnable?.let { lyricHandler.removeCallbacks(it) }
@@ -829,7 +1196,17 @@ object MediaController {
             YosDiagnostics.log("LYRIC_RETRY", "id" to mediaId, "attempt" to lyricPublishAttempts)
         }
         val settled = updateSuperIslandExtra(mediaId, generation) { item ->
-            if (entries == null) null else LyricInfoSerializer.encode(item, entries, generation)
+            if (entries == null) null
+            else LyricInfoSerializer.encode(
+                // 身份字段取原始条目：发布条目的 title/artist 可能被「车载蓝牙歌词」
+                // 改写成当前歌词行，拿它当歌名会把歌词写进 payload，且 trackKey 逐行变化。
+                songName = musicPlaying.value?.title.orEmpty(),
+                artist = musicPlaying.value?.artists.orEmpty(),
+                album = musicPlaying.value?.album,
+                songId = item.mediaId,
+                entries = entries,
+                sessionGeneration = generation
+            )
         }
         if (settled || lyricPublishAttempts >= LYRIC_PUBLISH_MAX_RETRIES) {
             if (!settled) {
@@ -873,12 +1250,20 @@ object MediaController {
             val json = encode(item)
             val oldExtras = item.mediaMetadata.extras
             val oldValue = oldExtras?.getString(LyricInfoSerializer.EXTRAS_KEY)
-            if (json == null) {
-                if (oldValue == null) {
+            // 身份一律取原始条目：发布条目的 title/artist 可能已被车载蓝牙歌词改写成歌词行。
+            val original = musicPlaying.value
+            val desiredTitle = desiredSessionTitle(original)
+            val desiredArtist = desiredSessionArtist(original)
+            val titleChanged =
+                (desiredTitle != null && item.mediaMetadata.title?.toString() != desiredTitle) ||
+                    (desiredArtist != null && item.mediaMetadata.artist?.toString() != desiredArtist)
+
+            if (json == null && oldValue == null) {
+                if (!titleChanged) {
                     YosDiagnostics.log("LYRIC_SKIP", "id" to item.mediaId, "why" to "no_content")
                     return true
                 }
-            } else if (json == oldValue) {
+            } else if (json == oldValue && !titleChanged) {
                 YosDiagnostics.log("LYRIC_SKIP", "id" to item.mediaId, "why" to "same")
                 return true
             }
@@ -890,7 +1275,9 @@ object MediaController {
             // framework 重发布（发布条目的自有 extras 已剥离，见 MusicLibrary.toMediaItem）。
             // 旧 extras 非空（残留 lyricInfo）时先清空一帧：清理目标到此终结；写入目标
             // 交给重试循环在 800ms 后以 null→非 null 单帧补写，避开防抖窗口。
-            if (oldExtras != null) {
+            // 例外：蓝牙歌词此刻也在改写标题，equals 已因 title 变化判不等，直接单帧
+            // 提交即可——两段式会让车机看到一帧被清空 title 的中间态，还多花 800ms。
+            if (oldExtras != null && !titleChanged) {
                 val clearedMetadata = item.mediaMetadata.buildUpon().setExtras(null).build()
                 controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(clearedMetadata).build())
                 YosDiagnostics.log(
@@ -900,10 +1287,14 @@ object MediaController {
                 return json == null
             }
 
-            val updatedMetadata = item.mediaMetadata.buildUpon()
-                .setExtras(Bundle().apply { putString(LyricInfoSerializer.EXTRAS_KEY, json) })
-                .build()
-            controller.replaceMediaItem(index, item.buildUpon().setMediaMetadata(updatedMetadata).build())
+            val metadataBuilder = item.mediaMetadata.buildUpon()
+                .setExtras(if (json != null) SessionExtras.build(json) else null)
+            desiredTitle?.let { metadataBuilder.setTitle(it) }
+            desiredArtist?.let { metadataBuilder.setArtist(it) }
+            controller.replaceMediaItem(
+                index,
+                item.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
+            )
             YosDiagnostics.log(
                 "LYRIC_ADD", "id" to item.mediaId, "gen" to generation,
                 "len" to json?.length, "title" to item.mediaMetadata.title,
@@ -938,6 +1329,14 @@ object MediaController {
         MediaViewModelObject.lyricMediaId.value = mediaId
         MediaViewModelObject.lyricLoading.value = false
         publishSuperIslandLyric(mediaId, payload.entries)
+        // 数据刚就绪即后台预排版：用户打开歌词页时排版已完成，不再现场测量（打开卡顿根因）
+        LyricRenderWarmup.onLyricsPublished(
+            context = appContext,
+            mediaIdKey = mediaId,
+            entries = payload.entries,
+            otherSideForLines = payload.otherSideForLines,
+            reason = "publish",
+        )
     }
 
     private fun clearLyricFor(mediaId: String) {
@@ -967,7 +1366,16 @@ object MediaController {
             is LyricLoadCoordinator.Selection.Load -> {
                 clearLyricFor(mediaId)
                 val hash = mediaId.removePrefix("kugou-online-")
-                CoroutineScope(Dispatchers.IO).launch {
+                // 解析/缓存链任何未捕获异常都降级为「无歌词」，不杀进程
+                val handler = CoroutineExceptionHandler { _, error ->
+                    YosDiagnostics.log(
+                        "LYRIC_JOB_CRASH",
+                        "id" to mediaId,
+                        "err" to (error.message ?: error.toString())
+                    )
+                    MediaViewModelObject.lyricLoading.value = false
+                }
+                CoroutineScope(Dispatchers.IO + handler).launch {
                     val request = selection.request
                     // 三级加载：磁盘命中直接上屏（零网络）；未命中走网络，成功后异步写盘。
                     val context = appContext
@@ -1017,17 +1425,33 @@ object MediaController {
 
     /**
      * 在线歌词解析唯一入口：网络与磁盘两条路径共用，保证响应一致性（同输入逐位同输出）。
-     * 注意 [YosLrcFactory] 解析时会把 otherSideForLines 写入全局，须在解析后立即回读。
+     *
+     * [YosLrcFactory] 解析时会把 otherSideForLines 直接写进全局（对唱/RTL 对齐标记），
+     * 所以这里解析前快照、解析后原样还原：预取「下一首」时会走到这里，若让它的解析结果
+     * 留在全局，正在显示的那首歌的对齐标记会被别的歌覆盖。
      */
     private fun parseOnlineLyrics(
         mediaId: String,
         lyrics: LyricDiskCache.CachedLyrics
     ): LyricLoadCoordinator.Payload = synchronized(lyricParseLock) {
+        val restore = MediaViewModelObject.otherSideForLines.toList()
+        try {
+            parseOnlineLyricsLocked(mediaId, lyrics)
+        } finally {
+            MediaViewModelObject.otherSideForLines.clear()
+            MediaViewModelObject.otherSideForLines.addAll(restore)
+        }
+    }
+
+    private fun parseOnlineLyricsLocked(
+        mediaId: String,
+        lyrics: LyricDiskCache.CachedLyrics
+    ): LyricLoadCoordinator.Payload {
         val krcResult = lyrics.krc?.let { krc ->
             runCatching { YosLrcFactory().formatKrcEntries(krc, lyrics.translation) }
         }
         val krcEntries = krcResult?.getOrNull()
-        if (krcEntries != null && krcEntries.isNotEmpty()) {
+        return if (krcEntries != null && krcEntries.isNotEmpty()) {
             println("在线歌词使用 KRC 逐字 mediaId=$mediaId lines=${krcEntries.size}")
             LyricLoadCoordinator.Payload(
                 entries = krcEntries,
@@ -1041,7 +1465,7 @@ object MediaController {
                 else -> "krc_empty"
             }
             println("在线歌词回退 LRC mediaId=$mediaId reason=$reason")
-            val lrcEntries = YosLrcFactory().formatLrcEntries(lyrics.lrc, lyrics.translation)
+            val lrcEntries = YosLrcFactory().formatLrcEntries(lyrics.lrc.orEmpty(), lyrics.translation)
             LyricLoadCoordinator.Payload(
                 entries = lrcEntries,
                 otherSideForLines = MediaViewModelObject.otherSideForLines.toList()
@@ -1093,7 +1517,11 @@ class YosPlaybackService : MediaSessionService() {
     /** 应用侧大监听器：onCreate 里创建并挂到外壳上，扶正时随外壳迁移到新 player。 */
     private var playbackListener: Player.Listener? = null
 
-    /** 播放历史上报去重：服务生命周期内已报过的 mediaId 集合（同一首不重复报）。 */
+    /**
+     * 播放历史上报去重：服务生命周期内已报过的 "userid|mediaId" 集合（同一首在同账号下不重复报）。
+     * 键里带 userid：同一服务内切换账号后，旧账号报过的歌要为新账号重报一次
+     * （服务生命周期长于账号会话，不带 userid 会漏报新账号）。
+     */
     private val playHistoryUploaded = mutableSetOf<String>()
 
     /** 听歌时长心跳循环：随服务生命周期启停（防重建叠加导致计时翻倍）。 */
@@ -1426,12 +1854,27 @@ class YosPlaybackService : MediaSessionService() {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     super.onIsPlayingChanged(isPlaying)
                     MediaViewModelObject.isPlaying.value = isPlaying
+                    pushListeningOnline(isPlaying, currentPlayer?.currentMediaItem?.mediaId)
+                    // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）
+                    yos.music.player.data.repositories.ListenReportService.onPlayingChanged(isPlaying)
                     YosDiagnostics.log(
                         "ISPLAYING",
                         "v" to isPlaying,
                         "state" to YosDiagnostics.stateLabel(currentPlayer?.playbackState ?: Player.STATE_IDLE),
                         "sup" to (currentPlayer?.playbackSuppressionReason ?: -1)
                     )
+                }
+
+                /** 拖动进度：CSCC 计时器先结算再起表，seek 跳变不计入时长。 */
+                override fun onPositionDiscontinuity(
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
+                    reason: Int
+                ) {
+                    super.onPositionDiscontinuity(oldPosition, newPosition, reason)
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                        yos.music.player.data.repositories.ListenReportService.onSeek()
+                    }
                 }
 
                 /**
@@ -1463,9 +1906,9 @@ class YosPlaybackService : MediaSessionService() {
         forwardingPlayer!!.addListener(listener)
 
         // ---------- 听歌时长心跳上报（对照 md3Music） ----------
-        // 每 30s 喂一次 ListeningGradeTracker，只有「正在播在线歌」才累计。
-        // 刻意不跨线程摸 currentPlayer，改用主线程 Listener 回流的状态镜像
-        // （MediaViewModelObject.isPlaying + musicPlaying）判定在线播放态。
+        // 每 30s 喂一次 ListeningGradeTracker。是否在线播放由播放器回调经
+        // ListeningGradeTracker.setListeningOnline 推送（对齐 md3Music PlayerProvider），
+        // 心跳只读该镜像，不在 IO 线程直读 Compose 快照态（musicPlaying/isPlaying）。
         // 循环挂服务生命周期：服务销毁必须停，否则系统回收重建后会叠加第二个
         // 循环，同一秒被计两次、时长翻倍多报。
         gradeHeartbeatJob?.cancel()
@@ -1473,12 +1916,7 @@ class YosPlaybackService : MediaSessionService() {
             while (true) {
                 delay(30_000L)
                 runCatching {
-                    val online =
-                        musicPlaying.value?.mediaId?.startsWith("kugou-online-") == true
-                    ListeningGradeTracker.onHeartbeat(
-                        intervalSec = 30,
-                        onlinePlaying = online && MediaViewModelObject.isPlaying.value
-                    )
+                    ListeningGradeTracker.onHeartbeat(intervalSec = 30)
                 }
             }
         }
@@ -1689,6 +2127,14 @@ class YosPlaybackService : MediaSessionService() {
             }
         }
 
+        // 车载蓝牙歌词：路由变化时立即自愈——断开蓝牙要马上把通知栏标题还给歌名，
+        // 不能等下一行歌词（暂停时根本没有下一行）。
+        BluetoothOutputMonitor.onChanged = { active ->
+            YosDiagnostics.log("BTLYRIC_ROUTE", "bt" to active)
+            yos.music.player.code.MediaController.clearBluetoothLyric()
+        }
+        BluetoothOutputMonitor.start(applicationContext)
+
         onServiceRunning()
     }
 
@@ -1860,6 +2306,18 @@ class YosPlaybackService : MediaSessionService() {
         MediaViewModelObject.isPlaying.value = p.isPlaying
         MediaViewModelObject.repeatMode.intValue = p.repeatMode
         MediaViewModelObject.shuffleModeEnabled.value = p.shuffleModeEnabled
+        // 扶正窗口内监听器刚迁移，onIsPlayingChanged 可能不补发，这里显式补一次在线态推送
+        pushListeningOnline(p.isPlaying && p.playbackState != Player.STATE_IDLE, p.currentMediaItem?.mediaId)
+    }
+
+    /**
+     * 听歌时长上报复用：把「正在播在线歌」推给 [ListeningGradeTracker]（对齐 md3Music
+     * PlayerProvider 推送）。这是 tracker 的唯一在线态来源——刻意不在心跳线程直读
+     * Compose 快照态。仅当 isPlaying 且当前条目是 kugou-online-<hash> 才算在线。
+     */
+    private fun pushListeningOnline(isPlaying: Boolean, mediaId: String?) {
+        // isOnlineMedia 是 object MediaController 的私有成员，服务类内按既有写法内联同判定
+        ListeningGradeTracker.setListeningOnline(isPlaying && mediaId?.startsWith("kugou-online-") == true)
     }
 
     /**
@@ -1878,29 +2336,60 @@ class YosPlaybackService : MediaSessionService() {
         // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
         MediaViewModelObject.bitrate.intValue = 0
         MediaViewModelObject.samplingRate.intValue = 0
+        // 车载蓝牙歌词：新歌的歌词还没加载，先丢弃上一首的当前行，不让它被推到新车；
+        // 这里只清状态不写会话——此刻 musicPlaying 还停在上一首，写回会张冠李戴。
+        yos.music.player.code.MediaController.resetBluetoothLyricTracking()
         mediaItem?.let { item ->
             // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem）：当前曲的完整
-            // YosMediaItem（时长/日期等）按 mediaId 从队列快照取，快照缺失才退回重建值
+            // YosMediaItem（时长/日期等）按 mediaId 从队列快照取，快照缺失再查库，
+            // 最后才退回重建值——重建值可能带着车载蓝牙歌词写进条目的临时标题。
             val yosItem = yos.music.player.code.MediaController.playingMusicList.value
                 ?.firstOrNull { it.mediaId == item.mediaId }
+                ?: MusicLibrary.songs.firstOrNull { it.mediaId == item.mediaId }
                 ?: item.toYosMediaItem()
             yos.music.player.code.MediaController.onCase(yosItem)
             MusicLibrary.recordRecentlyPlayed(yosItem)
+            // 缓存元数据索引：切歌时记下 hash→歌名/歌手/封面，供设置页「按歌曲清理缓存」显示歌名。
+            // 与 recordRecentlyPlayed 同点位（同为一次 MMKV 写入），独立于「播放历史」开关。
+            yos.music.player.data.objects.CacheSongIndex.record(yosItem)
+            // 换曲即刷新在线态镜像：isPlaying 由播放器真正态取（onIsPlayingChanged 也会推）
+            pushListeningOnline(
+                currentPlayer?.isPlaying ?: MediaViewModelObject.isPlaying.value,
+                item.mediaId
+            )
+            // CSCC 真实播放事件（对齐 md3Music _handleListenReportSongChange）：
+            // 切歌边沿先结账上一首 end，再开新段 start。仅在线歌且有 mxid 才走。
+            val csccHash = item.mediaId?.removePrefix("kugou-online-")
+            val csccMxid = csccHash?.let { KugouRepository.songIdentityFor(it)?.mixsongId } ?: 0L
+            if (item.mediaId?.startsWith("kugou-online-") == true && csccMxid > 0) {
+                ListenReportService.onSongStarted(
+                    songId = item.mediaId,
+                    mixsongid = csccMxid.toString(),
+                    playing = currentPlayer?.isPlaying ?: MediaViewModelObject.isPlaying.value
+                )
+            } else {
+                // 非在线歌/无 mxid：结束上一段（切到本地歌也要结账）
+                ListenReportService.onSongEnded(yos.music.player.code.utils.player.PlaybackEndReason.SWITCHED)
+            }
 
             // 播放历史上报（对照 md3Music _maybeUploadPlayHistory）：在线歌开播即报一次，
-            // mxid 取解析时登记的身份表（songIdentityFor），查不到就静默跳过；
-            // best-effort，任何失败不影响播放。受「上传听歌时长」开关统一管。
+            // mxid 取解析时登记的身份表（songIdentityFor），查不到就记一条可落盘告警
+            // （release 也保留，用于定位是哪条入队路径漏登记）；best-effort，不影响播放。
+            // 受「上传听歌时长」开关统一管。
             val switchedMediaId = item.mediaId
+            val uploadUserid = KugouApiService.userid
+            val uploadKey = "$uploadUserid|$switchedMediaId"
             if (switchedMediaId?.startsWith("kugou-online-") == true &&
-                !playHistoryUploaded.contains(switchedMediaId) &&
+                !playHistoryUploaded.contains(uploadKey) &&
                 SettingsLibrary.UploadListeningDuration &&
                 KugouApiService.isLoggedIn()
             ) {
-                playHistoryUploaded.add(switchedMediaId)
+                playHistoryUploaded.add(uploadKey)
                 CoroutineScope(Dispatchers.IO).launch {
                     val hash = switchedMediaId.removePrefix("kugou-online-")
                     val mxid = KugouRepository.songIdentityFor(hash)?.mixsongId ?: 0L
                     if (mxid <= 0) {
+                        YosDiagnostics.log("PLAYHIST_SKIP", "reason" to "no_mxid", "hash" to hash)
                         Log.d("PLAYHIST_UPLOAD", "skip: no mxid for $hash")
                         return@launch
                     }
@@ -1908,19 +2397,37 @@ class YosPlaybackService : MediaSessionService() {
                         .uploadPlayHistory(mxid, ot = System.currentTimeMillis() / 1000L)
                         .fold(
                             onSuccess = { json ->
+                                YosDiagnostics.log(
+                                    "PLAYHIST_UPLOAD",
+                                    "mxid" to mxid,
+                                    "hash" to hash,
+                                    "status" to json.optInt("status"),
+                                    "err" to json.optInt("error_code")
+                                )
                                 Log.d(
                                     "PLAYHIST_UPLOAD",
                                     "mxid=$mxid status=${json.optInt("status")} error_code=${json.optInt("error_code")}"
                                 )
                             },
                             onFailure = { e ->
+                                YosDiagnostics.log(
+                                    "PLAYHIST_UPLOAD",
+                                    "mxid" to mxid,
+                                    "hash" to hash,
+                                    "ok" to false,
+                                    "why" to (e.message ?: e.toString())
+                                )
                                 Log.w("PLAYHIST_UPLOAD", "mxid=$mxid failed: ${e.message}")
                             }
                         )
                 }
             }
         }
-        currentPlayer?.let { yos.music.player.code.MediaController.preloadNextCover(it, applicationContext) }
+        currentPlayer?.let {
+            yos.music.player.code.MediaController.preloadNextCover(it, applicationContext)
+            // 下一首歌词预取：切歌后直接打开歌词页也有字（不写 UI 状态，只填缓存）
+            yos.music.player.code.MediaController.prefetchNextLyric(it)
+        }
 
         // 播放即探测：换曲后立刻把这首歌的档位阶梯问一轮（单调阶梯，通常一个
         // 请求就定完），结论写进能力表。用户打开面板时就能看到哪些档拿不到，
@@ -1963,17 +2470,38 @@ class YosPlaybackService : MediaSessionService() {
             }
 
             if (!mediaId.orEmpty().startsWith("kugou-online-")) {
+                // 同一首已经装载完成就不再重来：播放器会对同一曲多次派发 onTracksChanged
+                // （缓冲/换音轨都会），无条件清空会闪一次「歌词未就绪」再重新读盘。
+                val alreadyLoaded = mediaId != null &&
+                    MediaViewModelObject.lyricMediaId.value == mediaId &&
+                    MediaViewModelObject.lrcEntries.value.isNotEmpty()
                 // 本地歌词内存缓存：key = 路径@mtime，命中则零 IO 直接上屏。
                 val localKey = thisPath?.let { fp ->
                     val mtime = runCatching { java.io.File(fp).lastModified() }.getOrDefault(0L)
                     "$fp@$mtime"
                 }
-                val cachedLocal = localKey?.let { LocalLyricCache.get(it) }
-                if (cachedLocal != null) {
+                val cachedLocal = if (alreadyLoaded) null else localKey?.let { LocalLyricCache.get(it) }
+                if (alreadyLoaded) {
+                    // 数据在手，只需补一次预热（可能上次进程没热过）
+                    LyricRenderWarmup.onLyricsPublished(
+                        context = yos.music.player.code.MediaController.appContext,
+                        mediaIdKey = mediaId.orEmpty(),
+                        entries = MediaViewModelObject.lrcEntries.value,
+                        otherSideForLines = MediaViewModelObject.otherSideForLines.toList(),
+                        reason = "local_already",
+                    )
+                } else if (cachedLocal != null) {
                     MediaViewModelObject.lrcEntries.value = cachedLocal
                     MediaViewModelObject.lyricMediaId.value = mediaId
                     MediaViewModelObject.lyricLoading.value = false
                     YosControllerObject.publishSuperIslandLyric(mediaId, cachedLocal)
+                    LyricRenderWarmup.onLyricsPublished(
+                        context = yos.music.player.code.MediaController.appContext,
+                        mediaIdKey = mediaId.orEmpty(),
+                        entries = cachedLocal,
+                        otherSideForLines = MediaViewModelObject.otherSideForLines.toList(),
+                        reason = "local_memory",
+                    )
                 } else {
                 // 本地歌词：同名 .lrc 优先，读不到再取音频内嵌歌词（M4A ©lyr / MP3 USLT / FLAC）。
                 // TagLib 解析是磁盘 IO，放 IO 线程；发布前回主线程校验 mediaId 防串歌。
@@ -2011,6 +2539,13 @@ class YosPlaybackService : MediaSessionService() {
                             MediaViewModelObject.lyricMediaId.value = mediaId
                             MediaViewModelObject.lyricLoading.value = false
                             YosControllerObject.publishSuperIslandLyric(mediaId, lrcEntries)
+                            LyricRenderWarmup.onLyricsPublished(
+                                context = yos.music.player.code.MediaController.appContext,
+                                mediaIdKey = mediaId.orEmpty(),
+                                entries = lrcEntries,
+                                otherSideForLines = MediaViewModelObject.otherSideForLines.toList(),
+                                reason = "local_disk",
+                            )
                         }
                     }
                 }
@@ -2059,6 +2594,9 @@ class YosPlaybackService : MediaSessionService() {
         OnlineSkipState.detach()
         // 先退过渡：它持有副 player（独立于会话），放在 session 释放前后都会漏，显式收尾
         CrossfadeExo.release()
+        // 蓝牙路由监听要早于会话释放注销：回调会去碰 mediaControl
+        BluetoothOutputMonitor.onChanged = null
+        BluetoothOutputMonitor.stop()
         mediaSession?.run {
             // player 是会话外壳（ForwardingPlayer），release 透传到当前真 player——
             // 无论是否发生过扶正，释放的都是音频真相那一侧

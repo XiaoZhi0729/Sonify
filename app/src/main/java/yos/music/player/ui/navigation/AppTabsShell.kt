@@ -84,7 +84,11 @@ fun AppTabsShell(
             modulateAlpha = probe.houseModulateAlpha,
             backOwner = homeBackOwner,
         ) {
-            HomeNavHost(homeController, navigator)
+            CompositionLocalProvider(
+                LocalArtistNavigator provides rememberArtistNavigator(homeController)
+            ) {
+                HomeNavHost(homeController, navigator)
+            }
         }
         HouseLayer(
             alpha = libraryAlpha,
@@ -93,7 +97,11 @@ fun AppTabsShell(
             modulateAlpha = probe.houseModulateAlpha,
             backOwner = libraryBackOwner,
         ) {
-            LibraryNavHost(libraryController, navigator)
+            CompositionLocalProvider(
+                LocalArtistNavigator provides rememberArtistNavigator(libraryController)
+            ) {
+                LibraryNavHost(libraryController, navigator)
+            }
         }
         HouseLayer(
             alpha = searchAlpha,
@@ -102,7 +110,11 @@ fun AppTabsShell(
             modulateAlpha = probe.houseModulateAlpha,
             backOwner = searchBackOwner,
         ) {
-            SearchNavHost(searchController, navigator)
+            CompositionLocalProvider(
+                LocalArtistNavigator provides rememberArtistNavigator(searchController)
+            ) {
+                SearchNavHost(searchController, navigator)
+            }
         }
         HouseLayer(
             alpha = favoritesAlpha,
@@ -111,7 +123,11 @@ fun AppTabsShell(
             modulateAlpha = probe.houseModulateAlpha,
             backOwner = favoritesBackOwner,
         ) {
-            FavoritesNavHost(favoritesController, navigator)
+            CompositionLocalProvider(
+                LocalArtistNavigator provides rememberArtistNavigator(favoritesController)
+            ) {
+                FavoritesNavHost(favoritesController, navigator)
+            }
         }
     }
 }

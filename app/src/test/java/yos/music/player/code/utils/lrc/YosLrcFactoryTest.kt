@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import yos.music.player.data.objects.MediaViewModelObject
 import java.util.Base64
 
 class YosLrcFactoryTest {
@@ -264,5 +265,51 @@ class YosLrcFactoryTest {
         assertEquals(listOf("第一行", "第二行"), entries.map { it.mainLyric.joinToString("") { pair -> pair.second } })
         assertEquals(listOf(0f, 10000f), entries.map { it.startTime })
         assertTrue(entries.all { it.mainLyric.size == 2 })
+    }
+
+    // ---- 演唱者报幕标签（左右对唱排版） ----
+
+    @Test
+    fun krcTitleTokenEndingWithColonIsNotSingerLabel() {
+        // Re:Re: 的真实 KRC：首行首词是歌名 "Re:Re: "，冒号收尾但不是报幕标签
+        val entries = factory.formatKrcEntries(
+            """
+                [40,1780]<0,240,0>Re:Re: <240,260,0>- <500,250,0>亚洲
+                [32020,2910]<0,250,0>君<250,220,0>を
+                [34930,3140]<0,250,0>途<250,190,0>切
+            """.trimIndent()
+        )
+
+        assertEquals(3, entries.size)
+        assertTrue(entries[0].mainLyric.joinToString("") { it.second }.contains("Re:Re: "))
+        assertEquals(listOf(false, false, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun firstSingerLabelStaysLeftAndLaterLabelsAlternate() {
+        val entries = factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男：<300,300,0>君を
+                [2000,1000]<0,300,0>女：<300,300,0>僕を
+                [3000,1000]<0,300,0>男：<300,300,0>また
+            """.trimIndent()
+        )
+
+        assertEquals(3, entries.size)
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+        // 报幕词从正文里摘掉，只留歌词
+        assertEquals("君を", entries[0].mainLyric.joinToString("") { it.second })
+    }
+
+    @Test
+    fun repeatedSameSingerLabelNeverSwitchesSide() {
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男：<300,300,0>一
+                [2000,1000]<0,300,0>男：<300,300,0>二
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, false), MediaViewModelObject.otherSideForLines.toList())
     }
 }

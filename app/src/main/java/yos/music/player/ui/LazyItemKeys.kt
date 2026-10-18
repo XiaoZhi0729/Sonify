@@ -16,10 +16,12 @@ package yos.music.player.ui
  * 3. itemContent lambda 里也不要读实时 X.value 做索引/长度判断，用同一个 val
  *    （如分割线的 `index < items.size - 1`）。
  */
-fun <T> lazyItemKeys(items: List<T>, baseKey: (T) -> String): List<String> {
+fun <T> lazyItemKeys(items: List<T>, baseKey: (T) -> String?): List<String> {
     val seen = HashMap<String, Int>()
     return List(items.size) { index ->
-        val base = baseKey(items[index]).ifEmpty { "idx_$index" }
+        // baseKey 允许返回 null：Gson 反序列化不校验 Kotlin 非空（Unsafe 反射赋值），
+        // 跨构建混淆键名漂移会让 hash/name 等字段运行时为 null
+        val base = baseKey(items[index])?.takeIf { it.isNotEmpty() } ?: "idx_$index"
         val occurrence = seen.merge(base, 1, Int::plus)!! - 1
         if (occurrence == 0) base else "$base#$occurrence"
     }

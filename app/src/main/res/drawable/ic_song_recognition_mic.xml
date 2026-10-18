@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 听歌识曲页面的大麦克风图标（来源：mic.svg）。
+     原始 viewBox="304 -1863 1431 2140" 是负原点 + 非正方形，Android 矢量视口必须从
+     0 起算，故 pathData 原样保留，由外层 group 平移 + 等比缩放进 24x24：
+     scale = 24 / max(1431, 2140)，水平方向补 3.9757 居中。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.01121495"
+        android:scaleY="0.01121495"
+        android:translateX="0.56635514"
+        android:translateY="20.89345794">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M656 -842C656 -612 804 -450 1020 -450C1235 -450 1383 -612 1383 -842V-1471C1383 -1702 1235 -1863 1020 -1863C804 -1863 656 -1702 656 -1471ZM807 -842V-1471C807 -1619 892 -1714 1020 -1714C1148 -1714 1232 -1619 1232 -1471V-842C1232 -694 1148 -599 1020 -599C892 -599 807 -694 807 -842ZM573 277H1466C1508 277 1542 244 1542 202C1542 160 1508 126 1466 126H1095V-108C1479 -139 1735 -415 1735 -806V-1009C1735 -1051 1702 -1084 1660 -1084C1618 -1084 1584 -1051 1584 -1009V-812C1584 -471 1362 -245 1020 -245C677 -245 455 -471 455 -812V-1009C455 -1051 422 -1084 379 -1084C337 -1084 304 -1051 304 -1009V-806C304 -415 560 -139 944 -108V126H573C531 126 497 160 497 202C497 244 531 277 573 277Z" />
+    </group>
+</vector>

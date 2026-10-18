@@ -58,6 +58,7 @@ import yos.music.player.data.libraries.SettingsLibrary
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import yos.music.player.ui.widgets.liquid.glassBlurScale
 
 private class DialogOverlayHost {
     val entries = mutableStateMapOf<Any, @Composable () -> Unit>()
@@ -237,9 +238,12 @@ private fun DialogPanel(
                             backdrop = backdrop,
                             shape = { shape },
                             effects = {
-                                padding = style.blurRadius.toPx() * 2
+                                // 玻璃模糊强度倍率：padding 是离屏扩展量，必须跟着半径一起放大，
+                                // 否则半径变大后模糊溢出被裁掉（圆角处露硬边）。
+                                val glassBlurRadius = style.blurRadius.toPx() * glassBlurScale
+                                padding = glassBlurRadius * 2
                                 effect(material)
-                                blur(style.blurRadius.toPx(), TileMode.Mirror)
+                                blur(glassBlurRadius, TileMode.Mirror)
                                 if (liquidGlass) lens(48.dp.toPx(), 48.dp.toPx())
                             },
                             highlight = {

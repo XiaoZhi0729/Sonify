@@ -99,9 +99,17 @@ dependencies {
     androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+    // 歌词渲染：第三方库（扫色前沿 / 辉光 / 逐字动画 / 行 reveal）
+    // lyrics-ui 的 POM 把 lyrics-core-jvm 标成 runtime scope，但其公开 API 暴露了 core 的类型，
+    // 必须显式再声明一次才能进 compile classpath。
+    implementation "com.mocharealm.accompanist:lyrics-ui:2.0.0-rc.2-patched7"
+    implementation "com.mocharealm.accompanist:lyrics-core-jvm:0.5.0"
 
     implementation "io.github.kyant0:backdrop:1.0.5"
     implementation "io.github.kyant0:shapes:1.0.0"
+
+    // 关于页横幅连点 10 次的彩带（与 Cresto 同版本、同参数）
+    implementation "io.github.vinceglb:confettikit:0.8.0"
 
     implementation 'androidx.compose.material3:material3:1.4.0'
     implementation 'androidx.compose.material:material-icons-core:1.6.8'

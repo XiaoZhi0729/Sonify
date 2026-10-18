@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.UI
+import yos.music.player.ui.toUI
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.GroupSpacerMedium
@@ -19,6 +21,7 @@ import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
+import yos.music.player.ui.theme.SystemScreenCornerSample
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 
@@ -72,10 +75,23 @@ fun UserInterfaceSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.BarBlurEffect }
                             )
+
+                            Divider()
+
+                            // 玻璃模糊强度倍率调节页（横幅预览 + 滑块）
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_performance_ui_glass_effect_title)
+                            ) {
+                                navController.toUI(UI.Settings.GlassEffectSetting)
+                            }
                         }
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_blur_effect_desc))
 
-                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+                        // Android 12 以下没有系统圆角接口；12+ 上系统也可能报 0（ColorOS 平板），
+                        // 这时同样需要手动校准入口。
+                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S ||
+                            SystemScreenCornerSample.reportsSquare
+                        ) {
                             GroupSpacerMedium()
 
                             val showCornerSetDialog = remember("UserInterfaceSetting_showCornerSetDialog") {
@@ -114,6 +130,21 @@ fun UserInterfaceSetting(navController: NavController) =
                         }
 
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_nowplaying_show_volume_bar_desc))
+                        GroupSpacerMedium()
+
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album),
+                                // desc = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album_desc),
+                                onClick = {
+                                    SettingsLibrary.NowplayingStaticFullScreenAlbum =
+                                        !SettingsLibrary.NowplayingStaticFullScreenAlbum
+                                },
+                                checkedLambda = { SettingsLibrary.NowplayingStaticFullScreenAlbum }
+                            )
+                        }
+
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album_desc))
                         GroupSpacerMedium()
 
                         RoundColumn {

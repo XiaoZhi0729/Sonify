@@ -35,7 +35,10 @@ fun OnlineStatusItem(
     status: String,
     loadingText: String,
     emptyText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // 非 null 时 loading 文案与进度圈改用该色（页面底色不是主题色的场景）；
+    // 默认 null 保持 onSurfaceVariant。
+    contentColor: Color? = null
 ) {
     if (status != "loading" && status != "empty" && !status.startsWith("error:")) return
 
@@ -47,12 +50,19 @@ fun OnlineStatusItem(
     ) {
         when {
             status == "loading" -> {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                if (contentColor != null) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = contentColor
+                    )
+                } else {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                }
                 Spacer(Modifier.size(10.dp))
                 Text(
                     text = loadingText,
                     fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 

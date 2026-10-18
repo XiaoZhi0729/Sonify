@@ -197,6 +197,25 @@ internal class ArtistPresentationStore(
         scope.launch { runCatching { loadPalette(key, compute) } }
     }
 
+    /**
+     * 同步预置调色板值。专供「无照片歌手的身份派生色」：该色是本地算出的确定值，
+     * 无需解码/采样，走 [loadPalette] 的异步路径反而会先亮一帧中性兜底色。写入同一
+     * palettes State，子页面与底栏遮罩经 [palette] 读到同一色，无需各自改代码。
+     * 值未变时不写盘（幂等），避免重组期反复 persist。
+     */
+    @Synchronized
+    fun seedPalette(key: String, rgb: Int) {
+        preload()
+        if (key.isBlank()) return
+        val state = palettes.remove(key) ?: mutableStateOf<Int?>(null)
+        palettes[key] = state
+        if (state.value != rgb) {
+            (state as androidx.compose.runtime.MutableState<Int?>).value = rgb
+            trimPalettes()
+            persist()
+        }
+    }
+
     private fun persist() {
         while (details.size > 64) details.remove(details.keys.first())
         aliases.entries.removeAll { !details.containsKey(it.value) }
@@ -284,6 +303,7 @@ object ArtistPresentationCache {
     suspend fun loadDetail(id: String, name: String, accountId: String, force: Boolean = false) =
         store.loadDetail(id, name, accountId, force)
     fun palette(key: String): State<Int?> = store.palette(key)
+    fun seedPalette(key: String, rgb: Int) = store.seedPalette(key, rgb)
     suspend fun loadPalette(key: String, compute: suspend () -> Int?): Int? = store.loadPalette(key, compute)
     fun ensurePalette(key: String, compute: suspend () -> Int?) = store.ensurePalette(key, compute)
     fun albumSongCount(albumId: String): Int? = store.albumSongCount(albumId)

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -79,6 +81,7 @@ import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
+import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
@@ -335,7 +338,7 @@ fun SearchPage(
                 keyword,
                 { page, size -> KugouRepository.searchSpecials(keyword, page, size) },
                 SearchObject.playlistResults, playlistNextPage, playlistEndReached
-            ) { it.globalCollectionId?.toString() ?: it.specialId.toString() }
+            ) { it.globalCollectionId ?: it.specialId.toString() }
 
             SearchObject.TYPE_LYRIC -> loadMorePage(
                 keyword,
@@ -386,20 +389,49 @@ fun SearchPage(
         listState = listState
     ) {
         item("SearchField") {
-            SearchTextField(
-                text = searchText.value,
-                placeholder = stringResource(id = R.string.page_online_search_placeholder),
-                onValueChange = { searchText.value = it },
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 18.dp)
                     .padding(top = 5.dp),
-                onSearch = {
-                    if (searchText.value.isNotEmpty()) {
-                        keyboardController?.hide()
-                        doSearch()
-                    }
-                })
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // SearchTextField 把传入的 modifier 用在内部 Row 上（Surface 才是根节点），
+                // 所以 weight 必须挂在外面这层 Box 上，否则搜索框会吃掉整行、把麦克风挤出屏幕。
+                Box(Modifier.weight(1f)) {
+                    SearchTextField(
+                        text = searchText.value,
+                        placeholder = stringResource(id = R.string.page_online_search_placeholder),
+                        onValueChange = { searchText.value = it },
+                        // 麦克风在框外：搜索框让出右侧 44dp（40dp 热区 + 4dp 间隔）
+                        modifier = Modifier.fillMaxWidth(),
+                        onSearch = {
+                            if (searchText.value.isNotEmpty()) {
+                                keyboardController?.hide()
+                                doSearch()
+                            }
+                        })
+                }
+                // 听歌识曲入口：搜索框右侧、框外的麦克风标志（图标来自 music.mic.svg）
+                Box(
+                    Modifier
+                        .padding(start = 4.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            keyboardController?.hide()
+                            NavGuard.run { navController.toUI(UI.SongRecognition) }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_song_recognition),
+                        contentDescription = stringResource(id = R.string.song_recognition_title),
+                        modifier = Modifier.size(24.dp),
+                        tint = (Color.Black withNight Color.White).copy(alpha = 0.6f)
+                    )
+                }
+            }
         }
 
         val keyword = searchText.value.trim()
@@ -563,7 +595,7 @@ fun SearchPage(
                         ) { playlist ->
                             val selection = PlaylistSelection(
                                 source = PlaylistSelection.Source.Recommend,
-                                id = playlist.globalCollectionId?.toString()
+                                id = playlist.globalCollectionId
                                     ?: playlist.specialId.toString(),
                                 name = playlist.name,
                                 cover = playlist.cover ?: "",
@@ -762,7 +794,7 @@ private fun PlaylistGrid(
                             }
                             .padding(8.dp)
                     ) {
-                        val playlistId = playlist.globalCollectionId?.toString()
+                        val playlistId = playlist.globalCollectionId
                             ?: playlist.specialId.toString()
                         // 圆角保持列表自身的 8dp；转场中的圆角渐变由详情端依据 SharedCoverStyle 完成
                         val coverModifier = Modifier

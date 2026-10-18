@@ -82,6 +82,21 @@ class LyricLoadCoordinator {
 
     fun isCurrent(request: Request): Boolean = currentRequest == request
 
+    /**
+     * 预取结果入缓存：只写内存热缓存，**不动** [currentRequest]/[inFlight]。
+     * 供「下一首歌词预取」使用——提前准备好数据，但不能改变当前曲的发布语义；
+     * 若该曲已有在途请求则不覆盖（那边完成后会自己写入）。
+     */
+    @Synchronized
+    fun prewarm(mediaId: String, payload: Payload) {
+        if (inFlight.containsKey(mediaId)) return
+        cache[mediaId] = payload
+    }
+
+    /** 该曲是否有在途请求（预取器据此避免重复发起）。 */
+    @Synchronized
+    fun isInFlight(mediaId: String): Boolean = inFlight.containsKey(mediaId)
+
     @Synchronized
     fun cached(mediaId: String): Payload? = cache[mediaId]
 

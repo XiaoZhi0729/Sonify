@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌单选择面板返回箭头（来源：arrow.backward.svg）。
+     原始 viewBox="255 -1480 1857 1516" 是负原点，pathData 原样保留，
+     由外层 group 平移 + 等比缩放进 24x24（24/1857，垂直补 2.204 居中）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.012924071"
+        android:scaleY="0.012924071"
+        android:translateX="-3.295638"
+        android:translateY="21.3312">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M759 -633H2024C2076 -633 2112 -670 2112 -722C2112 -774 2076 -811 2024 -811H759L518 -796L854 -1103L1078 -1331C1094 -1347 1103 -1370 1103 -1394C1103 -1444 1064 -1480 1015 -1480C991 -1480 970 -1472 948 -1450L286 -789C266 -770 255 -747 255 -722C255 -697 266 -674 286 -655L950 8C970 27 991 36 1015 36C1064 36 1103 0 1103 -50C1103 -74 1094 -98 1078 -113L854 -341L518 -648Z" />
+    </group>
+</vector>

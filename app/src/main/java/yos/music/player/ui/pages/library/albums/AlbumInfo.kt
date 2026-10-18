@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,7 +44,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -58,13 +56,13 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.ui.pages.library.AlbumTrackRow
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.artistsName
 import yos.music.player.data.libraries.defaultArtists
 import yos.music.player.data.libraries.defaultArtistsName
-import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -189,6 +187,8 @@ fun AlbumInfo(
                                 )
                             },
                             onPlayAll = {
+                                // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                                MediaController.mediaControl?.shuffleModeEnabled = false
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
                                         songs.first(),
@@ -286,6 +286,7 @@ fun AlbumInfo(
                                     label = stringResource(id = R.string.normal_button_play),
                                     modifier = Modifier.weight(1f)
                                 ) {
+                                    MediaController.mediaControl?.shuffleModeEnabled = false
                                     scope.launch(Dispatchers.IO) {
                                         MediaController.prepare(
                                             songs.first(),
@@ -333,8 +334,9 @@ fun AlbumInfo(
                                 }
                             }
                         } else {
-                            AlbumSongsItem(
+                            AlbumTrackRow(
                                 music = music,
+                                trackNumber = music.trackNumber,
                                 mainArtists = mainArtists.value
                             ) {
                                 scope.launch(Dispatchers.IO) {
@@ -398,13 +400,29 @@ fun AlbumInfo(
         }
     }
 
+/**
+ * 通用动作按钮（图标 + 文案，等宽摆放）。
+ *
+ * [contentColor] / [containerColor] 默认 null → 保持原观感（主题红字 + 浅/深灰 25% 底）。
+ * 页面底色不是主题色的场景（如在线专辑详情的封面色底）传自身文字色与低透明度底色，
+ * 避免红字压彩色底发脏。
+ */
 @Composable
-fun NormalButton(icon: Painter, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun NormalButton(
+    icon: Painter,
+    label: String,
+    modifier: Modifier = Modifier,
+    contentColor: Color? = null,
+    containerColor: Color? = null,
+    onClick: () -> Unit
+) {
     val shape = RoundedCornerShape(10.dp)
+    val tint = contentColor ?: MaterialTheme.colorScheme.primary
     Row(
         modifier = modifier
             .background(
-                color = (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f),
+                color = containerColor
+                    ?: (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f),
                 shape = shape
             )
             .clip(shape)
@@ -416,13 +434,13 @@ fun NormalButton(icon: Painter, label: String, modifier: Modifier = Modifier, on
         Icon(
             painter = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = tint,
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = label,
-            color = MaterialTheme.colorScheme.primary,
+            color = tint,
             fontWeight = FontWeight.Medium,
             fontSize = 17.sp
         )
@@ -442,62 +460,3 @@ private fun AlbumDivider(modifier: Modifier = Modifier) =
             .height(0.5.dp)
             .background(Color.Black withNight Color.White)
     )
-
-@Composable
-private fun AlbumSongsItem(
-    modifier: Modifier = Modifier,
-    music: YosMediaItem,
-    mainArtists: List<String>,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            contentAlignment = Alignment.TopCenter, modifier = Modifier
-                .width(24.dp)
-                /*.height(21.dp)*/
-                .fillMaxHeight()
-        ) {
-            Text(
-                text = "${music.trackNumber?:"-"}",
-                fontSize = 16.sp,
-                modifier = Modifier.alpha(0.4f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-
-        Column(Modifier.padding(vertical = 10.dp)) {
-            Text(
-                text = music.title ?: defaultTitle,
-                fontSize = 16.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 20.sp
-            )
-            YosWrapper {
-                val needShowArtists = remember(music) {
-                    derivedStateOf {
-                        !mainArtists.containsAll(music.artistsList ?: defaultArtists)
-                    }
-                }
-                if (needShowArtists.value) {
-                    Text(
-                        text = music.artistsName ?: defaultArtistsName,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 16.sp,
-                        modifier = Modifier.alpha(0.4f)
-                    )
-                }
-            }
-        }
-    }
-}

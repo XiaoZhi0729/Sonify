@@ -88,6 +88,8 @@ fun NewSongsDetail(navController: NavController) {
                     label = stringResource(id = R.string.normal_button_play),
                     modifier = Modifier.weight(1f)
                 ) {
+                    // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                    MediaController.mediaControl?.shuffleModeEnabled = false
                     playAt(0)
                 }
                 Spacer(modifier = Modifier.width(15.dp))

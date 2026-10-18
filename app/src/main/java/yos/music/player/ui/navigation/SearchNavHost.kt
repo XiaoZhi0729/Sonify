@@ -12,6 +12,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
+import yos.music.player.ui.pages.recognition.SongRecognitionPage
 import yos.music.player.ui.pages.search.SearchPage
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
@@ -41,6 +42,10 @@ fun SearchNavHost(
             }
             // 艺人域路由：与各 house 共享同一张图（漏注册即 "destination cannot be found"）
             artistGraph(navController, this@SharedTransitionLayout)
+            // 听歌识曲：只从搜索页进入，故只在本 house 注册
+            composable(UI.SongRecognition) {
+                SongRecognitionPage(navController = navController)
+            }
             composable(
                 route = UI.OnlinePlaylistDetailPattern,
                 arguments = playlistArguments()
@@ -49,7 +54,9 @@ fun SearchNavHost(
                     navController = navController,
                     selection = entry.playlistSelection(),
                     sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
+                    animatedVisibilityScope = this@composable,
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
                 )
             }
             settingsGraph(

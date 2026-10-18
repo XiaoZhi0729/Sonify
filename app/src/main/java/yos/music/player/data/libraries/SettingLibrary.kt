@@ -134,6 +134,29 @@ object SettingsLibrary {
     )
 
     /**
+     * HDR 歌词：歌词层改用加色混合（BlendMode.Plus），在封面上产生泛光。
+     */
+    @Stable
+    var LyricHdrEffect by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_hdr_effect",
+        initialValue = false
+    )
+
+    /**
+     * 车载蓝牙歌词：检测到蓝牙音频输出时，把当前歌词行写进媒体会话的标题下发到车机。
+     * 车机 AVRCP 只认标准的 title/artist 字段，没有专用歌词通道；因此开启且连着蓝牙时，
+     * 通知栏与锁屏的标题也会同步变成歌词行（同一条 MediaSession，无法只影响车机）。
+     * 默认关：日常用扬声器/耳机时标题保持歌名。
+     */
+    @Stable
+    var BluetoothLyricEnabled by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_bluetooth_lyric",
+        initialValue = false
+    )
+
+    /**
      * 歌词字号缩放（对齐 Flamingo 新版，全局钳制 0.8~1.2）
      */
     @Stable
@@ -174,6 +197,17 @@ object SettingsLibrary {
     )
 
     /**
+     * 全屏静态封面：封面铺满播放页作为背景（高清方图贴边裁切 + 同图放大模糊副本打底），
+     * 且不再随播放/暂停缩放。键名与 Flamingo 同项逐字一致。
+     */
+    @Stable
+    var NowplayingStaticFullScreenAlbum by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_static_fullscreen_album",
+        initialValue = false
+    )
+
+    /**
      * 界面工具栏模糊效果
      */
     @Stable
@@ -181,6 +215,19 @@ object SettingsLibrary {
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_blur_effect",
         initialValue = false
+    )
+
+    /**
+     * 玻璃模糊强度倍率（0f..2f，1f = 原样）。
+     *
+     * 只乘在**玻璃控件**的模糊半径上（顶栏圆钮 / 底栏容器 / 迷你播放器外壳 / 玻璃开关 /
+     * 下拉面板 / 对话框），顶部渐进模糊等背景类效果不受影响 —— 见 GlassBlurStrength.kt。
+     */
+    @Stable
+    var GlassBlurScale by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_glass_blur_scale",
+        initialValue = 1.0f
     )
 
     /**
@@ -415,6 +462,28 @@ object SettingsLibrary {
     )
 
     /**
+     * 音频字节缓存上限（MB）。在 SimpleCache 首次构造时读取，故改动于下次启动生效
+     * （LRU 初始化时会 trim 到新上限）。默认 1024MB（原硬编码值）。
+     */
+    @Stable
+    var AudioCacheCapMb by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_storage_audio_cache_cap_mb",
+        initialValue = 1024
+    )
+
+    /**
+     * 图片磁盘缓存上限（MB）。Coil 的 DiskCache.maxSize 只读，只能在 newImageLoader()
+     * 建缓存时定，故改动于下次启动生效。默认 512MB（原硬编码值）。
+     */
+    @Stable
+    var ImageCacheCapMb by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_storage_image_cache_cap_mb",
+        initialValue = 512
+    )
+
+    /**
      * 一键把全部设置恢复默认值。先清空 settings MMKV（顺带清掉历史遗留的无主 key），
      * 再把上面每个属性重新赋回声明处的 initialValue——赋值走 setter 会把默认值写回
      * MMKV，内存态即时生效，UI 无需重启即刷新。
@@ -437,14 +506,19 @@ object SettingsLibrary {
         LyricFontWeight = "ExtraBold"
         LyricLineBalance = false
         LyricBlurEffect = false
+        LyricHdrEffect = false
+        BluetoothLyricEnabled = false
         LyricFontScale = 1.0f
         SmartWordByWordLyric = false
         LyricTimingOffset = 0
         NowplayingBackgroundEffect = false
+        NowplayingStaticFullScreenAlbum = false
         BarBlurEffect = false
+        GlassBlurScale = 1.0f
         NotificationEnableIcon = true
         NotificationSmallerIcon = false
         ListenHistory = true
+        UploadListeningDuration = true
         StatusBarLyricEnabled = false
         StatusBarLyricHooked = false
         AudioAttributes = true
@@ -462,5 +536,7 @@ object SettingsLibrary {
             yos.music.player.code.utils.player.CrossfadePolicy.DEFAULT_DURATION_SEC.toString()
         DiagLogEnabled = true
         ColorOsLyricDiagEnabled = false
+        AudioCacheCapMb = 1024
+        ImageCacheCapMb = 512
     }
 }
