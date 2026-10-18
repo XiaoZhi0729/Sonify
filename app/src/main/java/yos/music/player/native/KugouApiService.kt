@@ -223,6 +223,17 @@ class KugouApiService private constructor() {
 
     private val jsonMediaType = "application/json".toMediaType()
 
+    /**
+     * 识曲专用 client：指纹接口上游要算完一整段指纹才回包，15s 的读超时不够，
+     * 单独放宽到 30s（其余 GET 仍走 [client]）。
+     */
+    private val audioMatchClient by lazy {
+        client.newBuilder()
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
     /** 保证 Rust server 在运行（幂等）。返回是否可用；启动瞬时失败最多重试 3 次。 */
     private suspend fun ensureServer(): Boolean = retryResult {
         try {
@@ -278,7 +289,9 @@ class KugouApiService private constructor() {
     private fun httpGetOnce(
         path: String,
         params: Map<String, String>,
-        extraHeaders: Map<String, String> = emptyMap()
+        extraHeaders: Map<String, String> = emptyMap(),
+        // true 时日志只记路径、不记 query：评论正文等用户内容不得进日志
+        redactLog: Boolean = false
     ): Pair<Int, String> {
         val baseUrl = KugouNativeBridge.getBaseUrl()
         val builder = baseUrl.toHttpUrl().newBuilder()
@@ -299,7 +312,7 @@ class KugouApiService private constructor() {
         val authDesc = if (req.header("Authorization") != null) {
             "present(token,userid${if (vipToken != null) ",vip_token" else ""})"
         } else "none"
-        Log.d(TAG, "GET ${req.url} Authorization=$authDesc")
+        Log.d(TAG, "GET ${if (redactLog) path else req.url} Authorization=$authDesc")
         val response = client.newCall(req).execute()
         val code = response.code
         val body = response.body?.string() ?: ""
@@ -376,6 +389,64 @@ class KugouApiService private constructor() {
                 Result.failure(e)
             }
         }
+
+    /**
+     * 听歌识曲：把 8000Hz / 16bit / 单声道 PCM 发给酷狗指纹接口。
+     *
+     * 对应 Rust 路由 `POST /audio/match`（modules/audio_match.rs）→ 上游
+     * `/fingerprint.service/v1/music_trackid_mulit`。
+     *
+     * 三个必须注意的点：
+     * 1. body 是**裸 PCM**（application/octet-stream），不是 JSON；
+     * 2. **没匹配到时上游返回 HTTP 502 + JSON 体**（`status=0`），这是正常答复，
+     *    所以必须先尝试把 body 解析成 JSON 再谈失败，否则每轮"没听出来"都会被
+     *    当成网络错误；
+     * 3. 结果依赖 body（每段都不同），必须带 `x-apicache-bypass` 绕开 apicache。
+     */
+    suspend fun audioMatch(pcm: ByteArray): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) {
+                return@withContext Result.failure(IOException("Failed to start server"))
+            }
+            if (pcm.isEmpty()) {
+                return@withContext Result.failure(IOException("Empty PCM"))
+            }
+
+            val builder = KugouNativeBridge.getBaseUrl().toHttpUrl().newBuilder()
+            // 路径必须逐段 addPathSegment（整体传 "audio/match" 会被编码成 %2F → 404）
+            builder.addPathSegment("audio")
+            builder.addPathSegment("match")
+            builder.addQueryParameter("timestamp", System.currentTimeMillis().toString())
+            // Rust 侧 param_or_cookie_num(q, "userid", 0)：显式带上更稳（未登录传 0）
+            builder.addQueryParameter("userid", userid ?: "0")
+
+            val rb = Request.Builder()
+                .url(builder.build())
+                .post(pcm.toRequestBody("application/octet-stream".toMediaType()))
+                .addHeader("Cookie", "KUGOU_API_PLATFORM=$KUGOU_PLATFORM")
+                .addHeader("x-apicache-bypass", "1")
+            authHeader()?.let { rb.addHeader("Authorization", it) }
+            val req = rb.build()
+
+            val response = audioMatchClient.newCall(req).execute()
+            val code = response.code
+            val body = response.body?.string() ?: ""
+            response.close()
+
+            Log.d(TAG, "POST /audio/match -> HTTP $code, body=${body.take(400)}")
+
+            val json = runCatching { JSONObject(body) }.getOrNull()
+                ?: return@withContext Result.failure(
+                    IOException("/audio/match HTTP $code: ${body.take(300)}")
+                )
+            Result.success(json)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Log.e(TAG, "audioMatch exception", error)
+            Result.failure(error)
+        }
+    }
 
     /**
      * Get playback URL for a song.
@@ -1322,6 +1393,36 @@ class KugouApiService private constructor() {
     }
 
     /**
+     * 收藏专辑（对齐 md3Music `collectAlbum`，kugou_api_client.dart:4304；Rust playlist.rs handle_add）。
+     *   GET /playlist/add?name=&type=1&source=2&list_create_userid=<artistId>
+     *                    &list_create_listid=<albumId>&list_create_gid=
+     * 语义：在账号下建一条「专辑收藏」条目（source=2 标记来源为专辑），之后在
+     * /user/playlist 里以 type=1&source=2 出现；取消收藏走 /playlist/del?type=1。
+     * 走 httpGetVipBusiness：必须绕 apicache，且业务错误可能包在 4xx 里。
+     */
+    suspend fun collectAlbum(
+        name: String,
+        artistId: String,
+        albumId: String
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = mapOf(
+                "name" to name,
+                "type" to "1",
+                "source" to "2",
+                "list_create_userid" to artistId,
+                "list_create_listid" to albumId,
+                "list_create_gid" to ""
+            )
+            httpGetVipBusiness("/playlist/add", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "collectAlbum exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 删除自建歌单（对齐 Dart deletePlaylist(listid, type=0)，kugou_api_client.dart:3208
      * 与上游 playlist_page.dart:788 一致用 type=0；Rust playlist.rs:184 → /v2/delete_list）。
      * 注意 is_def != 0 的系统歌单（我喜欢/默认收藏）不允许传给本接口（仓库层守卫）。
@@ -1332,6 +1433,186 @@ class KugouApiService private constructor() {
             httpGetVipBusiness("/playlist/del", mapOf("listid" to listid, "type" to type.toString()))
         } catch (e: Exception) {
             Log.e(TAG, "deletePlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
+    // ==================== 歌曲评论（Rust comment_*.rs，参数契约与 md3Music 逐字一致） ====================
+    // 读接口走 httpGetVipBusiness：评论实时变化，必须绕 apicache（2 分钟），且业务错误
+    // 可能包在 4xx/502 里；写接口**只请求一次**——发布成功即产生真实公开内容，重试会重复
+    // 发布（Rust comment_send.rs 顶部的安全边界）。日志不记正文（redactLog）。
+
+    /** 评论写接口专用：单次请求，不重试；非 2xx 也保留业务 JSON（error_code/status）。 */
+    private suspend fun httpGetBusinessOnce(
+        path: String,
+        params: Map<String, String>
+    ): Result<JSONObject> = try {
+        val (code, body) = httpGetOnce(path, params, VIP_NO_CACHE_HEADERS, redactLog = true)
+        Log.d(TAG, "$path -> HTTP $code, body length=${body.length}")
+        val business = if (body.isNotEmpty()) runCatching { JSONObject(body) }.getOrNull() else null
+        when {
+            business != null && (business.has("error_code") || business.has("status")) ->
+                Result.success(business)
+            code !in 200..299 -> Result.failure(IOException("$path HTTP $code: ${body.take(200)}"))
+            body.isEmpty() -> Result.failure(IOException("$path empty response body"))
+            business == null -> Result.failure(IOException("$path invalid JSON body"))
+            else -> Result.success(business)
+        }
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        Result.failure(error)
+    }
+
+    /**
+     * 歌曲评论列表（Rust comment_music.rs → /mcomment/v1/cmtlist）。
+     * [mixsongid] 即 album_audio_id（KugouRepository.songIdentityFor(hash)?.mixSongId）。
+     * 响应含 data.list / data.total / data.childrenid（最热接口必需的评论区 id）。
+     */
+    suspend fun getMusicComments(mixsongid: String, page: Int = 1, pageSize: Int = 30): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+                httpGetVipBusiness(
+                    "/comment/music",
+                    mapOf(
+                        "mixsongid" to mixsongid,
+                        "page" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "show_classify" to "1",
+                        "show_hotword_list" to "1"
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getMusicComments exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 最热评论（/comment/music/topliked）：必传 childrenid，上游不接受 mixsongid。 */
+    suspend fun getTopLikedComments(childrenId: String, page: Int = 1, pageSize: Int = 30): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+                httpGetVipBusiness(
+                    "/comment/music/topliked",
+                    mapOf(
+                        "childrenid" to childrenId,
+                        "page" to page.toString(),
+                        "pagesize" to pageSize.toString()
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getTopLikedComments exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 楼层回复（/comment/floor）：special_id 取评论区 childrenid，tid 为楼层根评论 id。 */
+    suspend fun getCommentFloor(
+        specialId: String,
+        tid: String,
+        mixsongid: String?,
+        page: Int = 1,
+        pageSize: Int = 50
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("special_id", specialId)
+                put("tid", tid)
+                put("page", page.toString())
+                put("pagesize", pageSize.toString())
+                mixsongid?.takeIf { it.isNotBlank() }?.let { put("mixsongid", it) }
+            }
+            httpGetVipBusiness("/comment/floor", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "getCommentFloor exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 歌曲详情（Rust audio.rs → kmr /v1/audio/audio）：只用于兜底解析 album_audio_id。
+     * 身份表（搜索/歌单/榜单/FM 解析时登记）没命中时才调用。
+     */
+    suspend fun getSongDetailByHash(hash: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            httpGetVipBusiness("/audio", mapOf("hash" to hash.lowercase()))
+        } catch (e: Exception) {
+            Log.e(TAG, "getSongDetailByHash exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 发歌曲顶层评论（/comment/music/send → commentsv3/add）。只传 mixsongid 时 Rust 自行解析 special_id。 */
+    suspend fun sendMusicComment(
+        content: String,
+        mixsongid: String?,
+        specialId: String?
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("content", content)
+                mixsongid?.takeIf { it.isNotBlank() }?.let { put("mixsongid", it) }
+                specialId?.takeIf { it.isNotBlank() }?.let { put("special_id", it) }
+            }
+            httpGetBusinessOnce("/comment/music/send", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendMusicComment exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 楼层回复（/comment/floor/send → commentsv2/reply）。pid 非空表示回复楼内某条回复。 */
+    suspend fun sendFloorReply(
+        content: String,
+        specialId: String,
+        tid: String,
+        pid: String?,
+        mixsongid: String?,
+        replyUserName: String?,
+        replyContent: String?
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("content", content)
+                put("special_id", specialId)
+                put("tid", tid)
+                put("resource_type", "song")
+                pid?.takeIf { it.isNotBlank() }?.let { put("pid", it) }
+                mixsongid?.takeIf { it.isNotBlank() }?.let { put("mixsongid", it) }
+                replyUserName?.takeIf { it.isNotBlank() }?.let { put("reply_user_name", it) }
+                replyContent?.takeIf { it.isNotBlank() }?.let { put("reply_content", it) }
+            }
+            httpGetBusinessOnce("/comment/floor/send", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendFloorReply exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 删除自己的评论（/comment/music/del → commentsv2/delcomment）。删楼中楼回复时 tid 必传。 */
+    suspend fun deleteComment(
+        cid: String,
+        specialId: String?,
+        mixsongid: String?,
+        tid: String?
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("cid", cid)
+                specialId?.takeIf { it.isNotBlank() }?.let { put("special_id", it) }
+                mixsongid?.takeIf { it.isNotBlank() }?.let { put("mixsongid", it) }
+                tid?.takeIf { it.isNotBlank() }?.let { put("tid", it) }
+            }
+            httpGetBusinessOnce("/comment/music/del", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "deleteComment exception", e)
             Result.failure(e)
         }
     }

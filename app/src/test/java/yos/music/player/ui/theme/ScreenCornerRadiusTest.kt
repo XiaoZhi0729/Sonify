@@ -14,10 +14,17 @@ class ScreenCornerRadiusTest {
         assertEquals(48.dp, screenCornerRadiusDp(31, 156, 3.25f, "12"))
         assertEquals(78.dp, screenCornerRadiusDp(31, 156, 2f, "12"))
     }
-    @Test fun modernDevicesIgnoreSavedManualValue() {
-        assertEquals(30.dp, screenCornerRadiusDp(31, null, 3f, "130"))
-        assertEquals(0.dp, screenCornerRadiusDp(31, 0, 3f, "130"))
+    @Test fun systemValueWinsButZeroFallsBackToManualValue() {
+        // 0 是 ColorOS 平板那种"物理圆角、系统声明直角"的未知值，不能当真实直角
+        assertEquals(130.dp, screenCornerRadiusDp(31, 0, 3f, "130"))
+        assertEquals(130.dp, screenCornerRadiusDp(31, null, 3f, "130"))
         assertEquals(40.dp, screenCornerRadiusDp(31, 120, 3f, "130"))
+    }
+    @Test fun zeroFromSystemNeedsManualCalibration() {
+        assertTrue(systemCornerRadiusUnknown(31, 0))
+        assertFalse(systemCornerRadiusUnknown(31, null))
+        assertFalse(systemCornerRadiusUnknown(31, 120))
+        assertFalse(systemCornerRadiusUnknown(30, 0))
     }
     @Test fun asymmetricCornersUseMaximumAndAbsentCornersAreZero() {
         assertEquals(160, maximumScreenCornerRadius(listOf(null, 120, 156, 160)))

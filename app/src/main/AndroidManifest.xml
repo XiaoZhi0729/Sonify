@@ -2,12 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 歌词库的传递依赖 capsule 声明 minSdk 24，本应用 minSdk 23。
+         该库只用于行点击水波纹的圆角裁剪，不涉及 API 24 专属能力，故放行。 -->
+    <uses-sdk tools:overrideLibrary="com.mocharealm.gaze.capsule" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- 听歌识曲：麦克风录音（运行时按需申请，不放进启动权限流程） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission
         android:name="android.permission.MEDIA_CONTENT_CONTROL"

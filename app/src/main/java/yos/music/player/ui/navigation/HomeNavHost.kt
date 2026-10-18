@@ -90,7 +90,9 @@ fun HomeNavHost(
                     navController = navController,
                     selection = entry.playlistSelection(),
                     sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
+                    animatedVisibilityScope = this@composable,
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
                 )
             }
             settingsGraph(

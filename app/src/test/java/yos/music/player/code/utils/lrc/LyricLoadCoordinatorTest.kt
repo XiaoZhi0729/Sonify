@@ -63,4 +63,57 @@ class LyricLoadCoordinatorTest {
             (second as LyricLoadCoordinator.Selection.InFlight).request
         )
     }
+
+    @Test
+    fun prewarmedSongIsServedFromCacheOnSelect() {
+        val coordinator = LyricLoadCoordinator()
+        // 当前在放 A，后台预取 B
+        coordinator.select("kugou-online-a")
+        val prefetched = payload("B")
+        coordinator.prewarm("kugou-online-b", prefetched)
+
+        val selection = coordinator.select("kugou-online-b")
+
+        assertTrue(selection is LyricLoadCoordinator.Selection.Cached)
+        assertEquals(prefetched, (selection as LyricLoadCoordinator.Selection.Cached).payload)
+    }
+
+    @Test
+    fun prewarmDoesNotStealCurrentRequestOwnership() {
+        val coordinator = LyricLoadCoordinator()
+        val a = coordinator.select("kugou-online-a") as LyricLoadCoordinator.Selection.Load
+
+        // 预取别的歌不能改变「当前请求」的归属判定
+        coordinator.prewarm("kugou-online-b", payload("B"))
+
+        assertTrue(coordinator.isCurrent(a.request))
+        // A 的结果仍然可以发布
+        assertTrue(coordinator.complete(a.request, payload("A")))
+    }
+
+    @Test
+    fun prewarmDoesNotOverwriteInFlightRequest() {
+        val coordinator = LyricLoadCoordinator()
+        val inFlight = coordinator.select("kugou-online-b") as LyricLoadCoordinator.Selection.Load
+        assertTrue(coordinator.isInFlight("kugou-online-b"))
+
+        coordinator.prewarm("kugou-online-b", payload("stale"))
+
+        // 在途请求仍是唯一来源：select 返回 InFlight，完成时才写入真实结果
+        val again = coordinator.select("kugou-online-b")
+        assertTrue(again is LyricLoadCoordinator.Selection.InFlight)
+        coordinator.complete(inFlight.request, payload("fresh"))
+        assertEquals(
+            "fresh",
+            coordinator.cached("kugou-online-b")!!.entries.first().mainLyric.first().second
+        )
+    }
+
+    @Test
+    fun prewarmedSongIsStillReportedAsInFlightOnlyWhileLoading() {
+        val coordinator = LyricLoadCoordinator()
+        assertTrue(!coordinator.isInFlight("kugou-online-c"))
+        coordinator.prewarm("kugou-online-c", payload("C"))
+        assertTrue(!coordinator.isInFlight("kugou-online-c"))
+    }
 }

@@ -850,11 +850,13 @@ private val FollowSlideY = 45.dp
 /**
  * 弹层进度 → 触发元件变换的联动状态。
  *
- * 两种联动模式（按面板摆位自动分流）：
+ * 两种联动模式（按面板摆位自动分流），两者都以「按钮彻底消失」收尾：
  * - **让位滑开**（面板向下生长且右缘对齐锚点——顶栏"更多"按钮的标定场景）：
- *   按钮不消失，沿 `(-100dp, +45dp)` 滑到面板旁边，对齐 NexioSchedule 1.6.1
- *   的 buttonFraction offset 手法；
- * - **收缩下沉淡出**（面板向上翻或居中摆位——按钮滑不开，滑了也会留在玻璃面板底下）：
+ *   按钮沿 `(-100dp, +45dp)` 滑开（NexioSchedule 1.6.1 的 buttonFraction offset
+ *   手法），同时随揭示进度淡出。**必须淡出**：滑开量是固定值，只有面板足够高
+ *   （≳105dp，约两行以上）时按钮落点才落在玻璃底下被盖住；单行矮菜单（≈63dp）里
+ *   按钮会正好从面板下缘探出来，悬在列表上像一颗残留的圆钮；
+ * - **收缩下沉淡出**（面板向上翻 / 居中摆位）：
  *   沿用旧版下沉 6dp + 缩 0.9 + 滞回淡出，避免按钮透过 0.6 表面与面板行内容叠影。
  */
 class LiquidDropdownFollowState internal constructor(
@@ -898,14 +900,18 @@ class LiquidDropdownFollowState internal constructor(
 fun Modifier.liquidDropdownAnchorFollow(state: LiquidDropdownFollowState): Modifier =
     graphicsLayer {
         val reveal = state.fraction.floatValue
-        val slideAway = state.directionY.floatValue > 0.5f && state.pivotX.floatValue >= 0.99f
+        val slideAway = state.directionY.floatValue > 0.5f &&
+                state.pivotX.floatValue >= 0.99f
         if (slideAway) {
             // 让位滑开（NexioSchedule 1.6.1 同款）：面板从按钮位置向下生长，
-            // 按钮向左下平移让位、全程可见。用 graphicsLayer 的 translation 而不是
+            // 按钮向左下平移让位。用 graphicsLayer 的 translation 而不是
             // Modifier.offset——offset 会改布局坐标，锚点 onGloballyPositioned 会
-            // 跟着更新、弹层重定位，形成回环
+            // 跟着更新、弹层重定位，形成回环。
+            // 位移**同时**淡出：面板高度不够（单行菜单）时按钮落点会露在面板下缘外，
+            // 只位移不淡出就会留下一颗悬空圆钮。
             translationX = -FollowSlideX.toPx() * reveal
             translationY = FollowSlideY.toPx() * reveal
+            alpha = (1f - reveal).coerceIn(0f, 1f)
         } else {
             // 面板向上翻/居中：按钮滑不开，沿用收缩+下沉+滞回淡出
             val scale = 1f - (1f - state.openScale) * reveal

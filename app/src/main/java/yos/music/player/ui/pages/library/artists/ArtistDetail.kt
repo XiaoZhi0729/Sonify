@@ -978,6 +978,9 @@ fun ArtistDetail(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val intro = detail.value?.intro
+                        // 三个按钮全部由页面文字色派生（圆钮底色 = 文字色 18%，播放圆实心 = 文字色），
+                        // 浅色取色底上翻成深色，与标题/简介的翻转时机同源。
+                        val roundContainer = contentColor.copy(alpha = 0.18f)
                         if (!intro.isNullOrBlank()) {
                             // 注意：这里不能用 LiquidTopBarButton（消费 pageBackdrop）——
                             // 按钮在 pageBackdrop 录制层内部，采样源包含自身会构成
@@ -985,15 +988,20 @@ fun ArtistDetail(
                             ArtistRoundActionButton(
                                 icon = R.drawable.ic_mini_info,
                                 contentDescription = stringResource(id = R.string.artist_detail_intro_title),
-                                iconTint = if (introOpen.value) Color.White else Color.Unspecified,
+                                // 展开态圆底是主题红的 55%，图标保持纯白（红底上深色图标不可读）
+                                iconTint = if (introOpen.value) Color.White else contentColor,
                                 highlighted = introOpen.value,
                                 iconSize = 32.dp,
+                                containerColor = roundContainer,
                                 onClick = { introOpen.value = !introOpen.value }
                             )
                             Spacer(Modifier.width(26.dp))
                         }
                         // EvenOdd 几何镂空不依赖离屏清除，孔洞始终透出真实背景。
-                        ArtistPlayButton(enabled = songs.isNotEmpty()) { playAt(songs, 0) }
+                        ArtistPlayButton(
+                            enabled = songs.isNotEmpty(),
+                            contentColor = contentColor
+                        ) { playAt(songs, 0) }
         if (resolvedId.value.isNotBlank()) {
                             Spacer(Modifier.width(26.dp))
                             // 收藏钮：无任何动效的静态圆钮，背景常驻；
@@ -1007,11 +1015,12 @@ fun ArtistDetail(
                                 ),
                                 iconTint = if (isFollowed.value) {
                                     if (isDark) Color(0xFFFF453A) else Color(0xFFE53935)
-                                } else Color.Unspecified,
+                                } else contentColor,
                                 highlighted = false,
                                 iconSize = 28.dp,
                                 motionEffects = false,
                                 dimWhenDisabled = false,
+                                containerColor = roundContainer,
                                 enabled = !followBusy.value && !headerLoading.value,
                                 onClick = { toggleFollow() }
                             )
@@ -1279,100 +1288,6 @@ fun ArtistDetail(
 }
 
 /**
- * 动作区半透明圆钮（不消费 backdrop）：处于 pageBackdrop 录制层内部，
- * 任何 drawBackdrop 消费者都会构成自引用递归崩溃，故用实色半透明圆。
- * 填充为半透明白，透明度与「最新专辑」卡片同值（浅 0.22 / 深 0.12）；
- * 图标统一白色；高亮（highlighted，如简介展开）分支保持不变。
- */
-@Composable
-private fun ArtistRoundActionButton(
-    icon: Int,
-    contentDescription: String?,
-    iconTint: Color,
-    highlighted: Boolean,
-    enabled: Boolean = true,
-    iconSize: androidx.compose.ui.unit.Dp = 23.dp,
-    highlightContainerColor: Color? = null,
-    motionEffects: Boolean = true,
-    dimWhenDisabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    val isDark = isFlamingoInDarkMode()
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, tween(120), label = "artistActionPress")
-    Box(
-        modifier = Modifier
-            .then(if (motionEffects) Modifier.graphicsLayer { scaleX = scale; scaleY = scale } else Modifier)
-            .size(42.dp)
-            .clip(CircleShape)
-            .background(
-                when {
-                    highlighted -> highlightContainerColor ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                    else -> Color.White.copy(alpha = if (isDark) 0.12f else 0.22f)
-                }
-            )
-            // 圆钮高光：上下同强的纯色白描边（用户定版 alpha 0.1）
-            .border(
-                width = 0.75.dp,
-                color = Color.White.copy(alpha = 0.10f),
-                shape = CircleShape
-            )
-            .alpha(if (dimWhenDisabled && !enabled) 0.45f else 1f)
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            painter = painterResource(id = icon),
-            contentDescription = contentDescription,
-            modifier = Modifier.size(iconSize),
-            tint = when {
-                iconTint != Color.Unspecified -> iconTint
-                else -> Color.White
-            }
-        )
-    }
-}
-
-/**
- * 播放圆钮：EvenOdd 几何镂空，孔洞始终透出真实背景（不依赖离屏清除）。
- * 从原三圆钮行内联抽出，供竖向三圆钮行与平板横屏头部复用。
- */
-@Composable
-private fun ArtistPlayButton(enabled: Boolean, onClick: () -> Unit) {
-    val context = LocalContext.current
-    Box(
-        modifier = Modifier
-            .size(64.dp)
-            .drawBehind {
-                // 三角形：左移 4% 圆角放大；右侧尖角圆角必须沿上下两边的切线方向收缩
-                // （控制点落在边的方向上），否则会呈现「尖角外贴圆点」的伪影（用户截图实锤）
-                val path = Path().apply {
-                    val w = size.width
-                    val h = size.height
-                    moveTo(w * 0.37f, h * 0.33f)
-                    cubicTo(w * 0.37f, h * 0.2925f, w * 0.389f, h * 0.28f, w * 0.42f, h * 0.299f)
-                    lineTo(w * 0.678f, h * 0.475f)
-                    cubicTo(w * 0.701f, h * 0.491f, w * 0.701f, h * 0.510f, w * 0.677f, h * 0.525f)
-                    lineTo(w * 0.42f, h * 0.695f)
-                    cubicTo(w * 0.389f, h * 0.714f, w * 0.37f, h * 0.701f, w * 0.37f, h * 0.664f)
-                    close()
-                }
-                val button = Path().apply {
-                    fillType = PathFillType.EvenOdd
-                    addOval(Rect(Offset.Zero, size))
-                    addPath(path)
-                }
-                drawPath(button, color = Color.White)
-            }
-            .circleEdgeLight(Color.White.copy(alpha = 0.8f), 0.15.dp, 0.5.dp)
-            .semantics { contentDescription = context.getString(R.string.normal_button_play) }
-            .alpha(if (enabled) 1f else 0.45f)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-    )
-}
-
-/**
  * 平板横屏头部：左方形头像 + 右「名字 / 三圆钮 / 数量 / 简介」信息列，
  * 复用其它平板详情页（DetailPageHeader）的横向头部几何与 Apple Music 观感。
  * 本页横屏为非沉浸式（外层 LazyColumn 已加 54dp 顶 padding），故这里再 statusBarsPadding()
@@ -1401,6 +1316,10 @@ private fun ArtistTabletLandscapeHeader(
 ) {
     val context = LocalContext.current
     val isDark = isFlamingoInDarkMode()
+    // 页面主文字色由外层 CompositionLocalProvider 注入，这里直接继承；
+    // 操作行三个按钮全部由它派生，浅色取色底上翻成深色。
+    val contentColor = LocalContentColor.current
+    val roundContainer = contentColor.copy(alpha = 0.18f)
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
@@ -1452,14 +1371,20 @@ private fun ArtistTabletLandscapeHeader(
                         ArtistRoundActionButton(
                             icon = R.drawable.ic_mini_info,
                             contentDescription = stringResource(id = R.string.artist_detail_intro_title),
-                            iconTint = if (introOpen) Color.White else Color.Unspecified,
+                            // 展开态圆底是主题红的 55%，图标保持纯白（红底上深色图标不可读）
+                            iconTint = if (introOpen) Color.White else contentColor,
                             highlighted = introOpen,
                             iconSize = 24.dp,
+                            containerColor = roundContainer,
                             onClick = onIntro
                         )
                         Spacer(Modifier.width(20.dp))
                     }
-                    ArtistPlayButton(enabled = songsEnabled, onClick = onPlay)
+                    ArtistPlayButton(
+                        enabled = songsEnabled,
+                        contentColor = contentColor,
+                        onClick = onPlay
+                    )
                     if (showFollow) {
                         Spacer(Modifier.width(20.dp))
                         ArtistRoundActionButton(
@@ -1470,11 +1395,12 @@ private fun ArtistTabletLandscapeHeader(
                             ),
                             iconTint = if (isFollowed) {
                                 if (isDark) Color(0xFFFF453A) else Color(0xFFE53935)
-                            } else Color.Unspecified,
+                            } else contentColor,
                             highlighted = false,
                             iconSize = 28.dp,
                             motionEffects = false,
                             dimWhenDisabled = false,
+                            containerColor = roundContainer,
                             enabled = followEnabled,
                             onClick = onFollow
                         )

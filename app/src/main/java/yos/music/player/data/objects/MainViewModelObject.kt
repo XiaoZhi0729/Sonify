@@ -14,5 +14,11 @@ object MainViewModelObject {
 
     val syncLyricIndex = mutableIntStateOf(-1)
 
+    /**
+     * 拖动进度条时的临时播放位置（毫秒）。
+     * 非 null 时歌词用该位置驱动扫色与跟随滚动；松手 seek 生效后置回 null。
+     */
+    val scrubPositionMs = mutableStateOf<Int?>(null)
+
     // val nowPage = mutableStateOf(NowPlayingPage.Album)
 }

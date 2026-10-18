@@ -109,6 +109,9 @@ interface UI {
         // 最近播放完整列表（主页「最近播放」查看全部；入口在主页 Tab）
         const val RecentPlayedDetail = "RecentPlayedDetail"
 
+        // 听歌识曲（搜索页搜索框右侧麦克风入口；只注册在 Search house 图里）
+        const val SongRecognition = "SongRecognition"
+
         // 每日推荐（主页顶部入口卡；登录可见，未登录走通用推荐）
         const val EverydayRecommendDetail = "EverydayRecommendDetail"
 

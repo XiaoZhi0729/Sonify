@@ -12,6 +12,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // 本地补丁版歌词库（点击范围 = 文字宽度，见 docs/LYRIC_LIB_VALIDATION.md）
+        maven { url "$rootDir/libs/maven" }
         google()
         mavenCentral()
         maven { url 'https://jitpack.io' }

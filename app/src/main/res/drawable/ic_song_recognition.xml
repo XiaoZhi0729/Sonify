@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 听歌识曲入口图标（来源：music.mic.svg）。
+     原始 viewBox="230 -1776 1985 2032" 是负原点 + 非正方形，Android 矢量视口必须从
+     0 起算，故 pathData 原样保留，由外层 group 平移 + 等比缩放进 24x24：
+     scale = 24 / max(1985, 2032)，水平方向补 0.2776 居中。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.01181102"
+        android:scaleY="0.01181102"
+        android:translateX="-2.43897638"
+        android:translateY="20.97637795">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M1528 -1641 2079 -1090C2255 -1264 2262 -1487 2093 -1655C1925 -1821 1704 -1817 1528 -1641ZM1249 256C1300 256 1340 216 1340 166V-576L1639 -852C1753 -837 1873 -884 1978 -989L1428 -1540C1322 -1435 1278 -1317 1294 -1202L364 -201C326 -160 320 -103 367 -56L239 109C227 125 226 148 244 166L273 196C290 213 313 214 331 200L496 71C541 118 599 112 639 74L1158 -406V166C1158 216 1198 256 1249 256ZM467 -119 1349 -1055C1366 -1026 1386 -999 1411 -972C1435 -947 1463 -924 1489 -908L559 -27Z" />
+    </group>
+</vector>

@@ -111,3 +111,10 @@ bfts_logo/
 
 # Locally generated release manifest; latest.json is reviewed and published separately
 /updates/generated.json
+
+# 歌词库本地补丁的历史迭代（只保留 build.gradle 实际引用的 patched7）
+/libs/maven/com/mocharealm/accompanist/*/2.0.0-rc.2-patched*/*
+!/libs/maven/com/mocharealm/accompanist/*/2.0.0-rc.2-patched7/*
+
+# 原生库原始版本备份（仅用于本地对比，避免每份 ~8MB 入库）
+/app/libs/_backup_orig_so/

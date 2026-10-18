@@ -89,8 +89,7 @@ import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistCollectButton
-import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
-import yos.music.player.ui.pages.library.artists.PlayPillButton
+import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
@@ -522,53 +521,40 @@ fun OnlineAlbumDetail(
                             .padding(top = 4.dp)
                     )
 
-                    // 圆钮材质对齐歌手页「简介」按钮：半透明白圆（浅 0.22 / 深 0.12）+ 白色图标，
-                    // 不传 containerColor 即用默认材质。
+                    // 操作行：与歌单页共用同一几何（随机 · 播放胶囊 · 加入/收藏），
+                    // 播放胶囊取剩余空间的 2/3。三个按钮全部由页面文字色派生：
+                    // 浅色封面底上翻成深色胶囊+深色图标，深色封面底上保持白胶囊+白图标。
                     YosWrapper {
-                        // 操作行：与歌手页同款圆钮（白色镂空播放圆 + 半透明动作圆），
-                        // 顺序对齐参考页：随机（左）· 播放（中）· 加入（右，暂开占位菜单）。
-                        // 圆钮底与图标都取页面文字色，浅色封面底上也不隐形。
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(top = 14.dp, bottom = 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
-                            ArtistRoundActionButton(
-                                icon = R.drawable.button_icon_shuffle,
-                                contentDescription = stringResource(id = R.string.normal_button_shuffle),
-                                iconTint = Color.Unspecified,
-                                highlighted = false,
-                                iconSize = 24.dp,
-                                enabled = queue.value.isNotEmpty()
-                            ) {
+                        CompactPlayActionRow(
+                            foregroundColor = contentColor,
+                            playEnabled = queue.value.isNotEmpty(),
+                            onShuffle = {
+                                // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
                                 val list = queue.value
                                 if (list.isNotEmpty()) {
                                     MediaController.mediaControl?.shuffleModeEnabled = true
                                     playAt(list.indices.random())
                                 }
-                            }
-                            Spacer(Modifier.width(13.dp))
-                            // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
-                            PlayPillButton(
-                                label = stringResource(id = R.string.normal_button_play),
-                                enabled = queue.value.isNotEmpty()
-                            ) {
+                            },
+                            onPlayAll = {
+                                // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
                                 MediaController.mediaControl?.shuffleModeEnabled = false
                                 playAt(0)
+                            },
+                            modifier = Modifier.padding(top = 14.dp, bottom = 10.dp),
+                            trailing = {
+                                // 加入资料库：未收藏「+」、已收藏「✓」，点击后两个图标互相形变
+                                ArtistCollectButton(
+                                    collected = collected,
+                                    iconSize = 24.dp,
+                                    iconTint = contentColor,
+                                    containerColor = contentColor.copy(alpha = 0.18f),
+                                    enabled = !collectBusy && collectReady
+                                ) {
+                                    toggleCollect()
+                                }
                             }
-                            Spacer(Modifier.width(13.dp))
-                            // 加入资料库：未收藏「+」、已收藏「✓」，点击后两个图标互相形变
-                            ArtistCollectButton(
-                                collected = collected,
-                                iconSize = 24.dp,
-                                enabled = !collectBusy && collectReady
-                            ) {
-                                toggleCollect()
-                            }
-                        }
+                        )
                     }
 
                     // 简介：常驻在三个按钮下方；超过两行时行尾接「…更多」可点展开

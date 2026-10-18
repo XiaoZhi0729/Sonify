@@ -27,8 +27,10 @@ import yos.music.player.code.YosPlaybackService
 import yos.music.player.data.libraries.Folder
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.PlayList
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.YosStringWrapper
+import yos.music.player.data.objects.CacheSongIndex
 import yos.music.player.data.objects.MediaViewModelObject
 import kotlin.system.exitProcess
 
@@ -52,12 +54,13 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                     .maxSizePercent(0.35)
                     .build()
             }
-            // 磁盘缓存显式落 filesDir（系统"清除缓存"/存储紧张不会清），容量提到 512MB。
+            // 磁盘缓存显式落 filesDir（系统"清除缓存"/存储紧张不会清），容量默认 512MB（用户可调）。
             // 未显式配置时 Coil 用 cacheDir/image_cache（2% 存储、钳制 ≤250MB），会被系统回收。
+            // DiskCache.maxSize 是只读 val，只能在此建缓存时定 → 改动于下次启动生效。
             .diskCache {
                 coil.disk.DiskCache.Builder()
                     .directory(java.io.File(filesDir, "image_cache"))
-                    .maxSizeBytes(512L * 1024 * 1024)
+                    .maxSizeBytes(SettingsLibrary.ImageCacheCapMb.coerceAtLeast(64).toLong() * 1024 * 1024)
                     .build()
             }
             .respectCacheHeaders(false)
@@ -123,6 +126,19 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             // 解析地址缓存同样跨重启保留：30 分钟内重启可免去第一首的 /song/url 解析
             yos.music.player.data.repositories.KugouRepository.preloadUrlCache()
             yos.music.player.data.objects.ArtistPresentationCache.preload()
+            // 缓存上限设置项（Int，不依赖类型转换器）：主线程先建好，避免播放线程首次读它时
+            // 把 DataSaver 状态创建到非全局快照里，主线程（设置页）再读即崩。
+            yos.music.player.data.libraries.SettingsLibrary.AudioCacheCapMb
+            yos.music.player.data.libraries.SettingsLibrary.ImageCacheCapMb
+            // 主页板块布局：MMKV+Gson 落盘，主线程先建好状态，避免首帧组合才读磁盘
+            yos.music.player.data.libraries.HomeLayoutStore.sections.value
+        }
+        // 音频字节缓存上限：主线程读设置一次存进 OnlineAudioCache 的普通字段，缓存层后续
+        // 构造时不再读 DataSaver（否则播放线程首次读设置会把状态建到非全局快照里）。
+        runCatching {
+            yos.music.player.code.OnlineAudioCache.applyCapMb(
+                yos.music.player.data.libraries.SettingsLibrary.AudioCacheCapMb
+            )
         }
 
         // 图片磁盘缓存旧位置在 cacheDir/image_cache，搬到 filesDir 后一次性清理回收空间。
@@ -198,6 +214,18 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             save = { bean -> gson.toJson(bean) },
             restore = { str -> gson.fromJson(str, YosStringWrapper::class.java) }
         )
+
+        // 缓存元数据索引（hash→歌名/歌手/封面）用到的 MusicLibrary：它的 object 初始化会读
+        // DataSaver 列表，必须在上面各 registerTypeConverters 之后、且在主线程先触发一次——
+        // 否则（早于转换器注册）会抛 "YosDataSaver: Cannot read []"，或让后台线程抢先初始化
+        // 状态、主线程读取时抛 "Reading a state that was created after the snapshot was taken"。
+        runCatching { yos.music.player.data.libraries.MusicLibrary.recentlyPlayed }
+
+        // 缓存元数据索引回填（只跑一次）：把存量缓存（本功能上线前已缓存的歌）用
+        // 歌单/专辑首屏缓存 + 已存队列 + 最近播放补上 hash→歌名/歌手/封面，供设置页按曲清理显示歌名。
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { CacheSongIndex.backfillOnce(this@YosBasicApplication) }
+        }
 
         // 初始化媒体控制器
         val sessionToken = SessionToken(this, ComponentName(this, YosPlaybackService::class.java))

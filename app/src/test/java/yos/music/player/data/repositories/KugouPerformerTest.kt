@@ -67,4 +67,51 @@ class KugouPerformerTest {
         assertNull(matchPerformerId(performers, "高桥洋子"))
         assertNull(matchPerformerId(emptyList(), "高橋洋子"))
     }
+
+    // ---------- 歌曲搜索反查 singerid（兜底 /search/artist 零命中） ----------
+
+    @Test
+    fun selectsIdFromFirstSongThatHasAMatch() {
+        val first = mergePerformers(listOf("The Marías" to 825924L))
+        val second = mergePerformers(listOf("SIENNA SPIRO" to 13110999L))
+        assertEquals(13110999L, selectArtistIdForName(listOf(first, second), "SIENNA SPIRO"))
+    }
+
+    @Test
+    fun selectIsExactIgnoringCaseAndSurroundingSpace() {
+        val lists = listOf(mergePerformers(listOf("SIENNA SPIRO" to 13110999L)))
+        assertEquals(13110999L, selectArtistIdForName(lists, "sienna spiro"))
+        assertEquals(13110999L, selectArtistIdForName(lists, "  SIENNA SPIRO  "))
+    }
+
+    @Test
+    fun selectPicksTheRightArtistOutOfAMultiArtistSong() {
+        // 多歌手：只认点中的那一个，不能退化成「取第一位」
+        val lists = listOf(
+            mergePerformers(listOf("DJ Dark" to 171261L, "Sienna" to 446220L))
+        )
+        assertEquals(446220L, selectArtistIdForName(lists, "Sienna"))
+        assertEquals(171261L, selectArtistIdForName(lists, "DJ Dark"))
+        assertNull(selectArtistIdForName(lists, "Sienna Spiro"))
+    }
+
+    @Test
+    fun selectReturnsNullWhenNothingMatchesAnywhere() {
+        val lists = listOf(
+            mergePerformers(listOf("周杰伦" to 3520L)),
+            mergePerformers(emptyList())
+        )
+        assertNull(selectArtistIdForName(lists, "SIENNA SPIRO"))
+        assertNull(selectArtistIdForName(emptyList(), "SIENNA SPIRO"))
+        assertNull(selectArtistIdForName(lists, "   "))
+    }
+
+    @Test
+    fun strippedHighlightCollapsesToThePlainNameForLookup() {
+        // 搜索上游会给命中关键词注入 <em>；parsePerformerArray 的 nameTransform 负责剥离，
+        // 这里锁定「剥离后的名字」与点中的原名落在同一个去重键上（否则反查精确相等会落空）。
+        val stripped = mergePerformers(listOf("SIENNA SPIRO" to 13110999L))
+        assertEquals(listOf(KugouPerformer("SIENNA SPIRO", 13110999L)), stripped)
+        assertEquals(13110999L, selectArtistIdForName(listOf(stripped), "SIENNA SPIRO"))
+    }
 }

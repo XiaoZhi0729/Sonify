@@ -3,11 +3,12 @@ package yos.music.player.ui.pages.library.playlists
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,16 +21,20 @@ import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -39,12 +44,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -65,35 +75,54 @@ import yos.music.player.data.repositories.KugouPlaylistTrack
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.KugouSearchSong
 import yos.music.player.data.repositories.PendingPlaylistStore
+import yos.music.player.ui.navigation.ArtistArtworkColors
+import yos.music.player.ui.navigation.ArtistPageAppearance
+import yos.music.player.ui.navigation.PageScrimTransition
+import yos.music.player.ui.navigation.artworkContentColor
+import yos.music.player.ui.navigation.rememberPlaylistBackdropColors
+import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
-import yos.music.player.ui.pages.library.formatDurationMs
-import yos.music.player.ui.pages.library.albums.NormalButton
-import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
+import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
+import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
+import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
+import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
+import yos.music.player.ui.widgets.basic.LiquidDropdownRow
+import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
+import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.enterCoverCorner
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBar
+import yos.music.player.ui.widgets.basic.TitleBarIcon
+import yos.music.player.ui.widgets.basic.TitleOverlayHost
+import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 
 /**
- * 在线歌单详情页（正式 UI，视觉已归一）。
+ * 在线歌单详情页（视觉与在线专辑详情页同款）。
  *
  * 数据链：KugouRepository.getPlaylistSongs(listid) → /playlist/track/all/new（Rust 现有路由）。
  * 播放链（整列表）：全部歌曲映射为队列用 YosMediaItem（uri 为占位符，真实 URL 由播放器
  *        惰性解析）→ 现有 MediaController.prepare(clicked, 完整列表) → Media3 整列表队列。
- * 页面结构（参考 Apple Music 歌单详情布局）：左上大封面 + 封面右侧歌单名/曲目数 +
- * 下方随机/播放 NormalButton + MusicList 统一歌曲 Item + 浮动返回按钮。
+ *
+ * 页面结构（对齐 OnlineAlbumDetail）：封面提取色铺满全屏 → 居中大封面 + 歌单名 +
+ * 「N 首 · PLAYLIST」meta 行 + 随机/播放/添加歌曲圆钮 + 可展开简介 → 序号式歌曲行
+ * （无封面小图）→ 末尾「N 首歌曲, 约 M 分钟」统计行；顶栏随底色着色、底栏遮罩同色。
  */
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -103,7 +132,11 @@ fun OnlinePlaylistDetail(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     // 作为 Tab 根页（喜爱）时隐藏返回键；默认显示，保持既有调用点行为不变
-    showBackButton: Boolean = true
+    showBackButton: Boolean = true,
+    // 本条目在返回栈里的 id：用于向 ArtistPageAppearance 注册底栏遮罩色
+    // （与专辑页/歌手页同机制，转场进度取本页自身进出场）。
+    entryId: String = "",
+    scrimTransition: PageScrimTransition? = null
 ) {
     val routeSelection = selection
     val source = routeSelection?.source
@@ -175,6 +208,10 @@ fun OnlinePlaylistDetail(
     // 添加歌曲弹层 / 待删除歌曲（长按行触发，仅自有歌单）
     val showAddDialog = remember("OnlinePlaylistDetail_add") { mutableStateOf(false) }
     val removeTarget = remember("OnlinePlaylistDetail_remove") { mutableStateOf<KugouPlaylistTrack?>(null) }
+    // 长按移除（仅自有歌单；推荐歌单不传 → 行保持普通点击）
+    val removeAt: ((Int) -> Unit)? = if (source == PlaylistSelection.Source.User) {
+        { index -> removeTarget.value = displayTracks.getOrNull(index) }
+    } else null
 
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
@@ -281,214 +318,369 @@ fun OnlinePlaylistDetail(
         }
     }
 
-    // 宽屏（≥600dp）歌曲行启用三列布局：歌手列起于屏幕正中央、时长贴右（对齐 Apple Music 平板横屏）
+    // 宽屏（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持居中头部
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
+    // 头部/尾部统一曲目数：已加载优先，未加载用路由 songCount 兜底
+    val displayCount = if (displayTracks.isNotEmpty()) displayTracks.size else (songCount ?: 0)
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+    // ---- 封面色底（与在线专辑详情共用同一条取色管线） ----
+    // 键按「来源 + 歌单 id」建，不按封面 URL：列表封面与详情封面常是同一张图的不同尺寸。
+    val playlistColors = rememberPlaylistBackdropColors(
+        source = source?.name.orEmpty(),
+        playlistId = playlistId.orEmpty(),
+        coverUrl = coverUrl.takeIf { it.isNotEmpty() }
+    )
+    val isDark = isFlamingoInDarkMode()
+    val themeAccent = remember(isDark) { ArtistArtworkColors.fromRgb(null, isDark).accent }
+    val resolvedAccent = playlistColors?.accent
+    val backdropState = animateColorAsState(
+        targetValue = resolvedAccent ?: themeAccent,
+        animationSpec = if (resolvedAccent != null) tween(600) else tween(0),
+        label = "onlinePlaylistBackdrop"
+    )
+    val backdrop = backdropState.value
+    // 文字色：歌单提取色 → 主题默认（继承 LocalContentColor）
+    val contentColor = playlistColors?.let { artworkContentColor(it.accent) }
+        ?: LocalContentColor.current
+
+    // 底栏遮罩 / NavHost 底衬：注册本条目当前底色，与页面铺底同源同帧
+    if (entryId.isNotBlank() && scrimTransition != null) {
+        DisposableEffect(entryId, scrimTransition) {
+            val registration = ArtistPageAppearance.register(entryId, backdropState, scrimTransition)
+            onDispose { ArtistPageAppearance.unregister(entryId, registration) }
+        }
+    }
+
+    // 滚动状态 / 顶栏模糊采样源。
+    // 采样种子用**目标色**而不是逐帧的动画值：底色 600ms 渐变期间每帧换种子会重建
+    // LayerBackdrop，把整个列表的录制层反复重录。
+    val state = rememberLazyListState()
+    val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
+    val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    // 简介底色明暗：用当前底色亮度判定（与专辑页一致）
+    val lightBackdrop = backdrop.luminance() > 0.179f
+    // 页面级弹层宿主：右上「更多」的 LiquidDropdown 注册进它就能**同窗口**渲染，
+    // 跨窗口 Popup 采不到本页的 layerBackdrop，玻璃材质会退化成实色面板。
+    val overlayHost = remember { TitleOverlayHost() }
+    val menuOpen = remember("OnlinePlaylistDetail_menu") { mutableStateOf(false) }
+
+    CompositionLocalProvider(
+        LocalContentColor provides contentColor,
+        LocalTitlePageColor provides backdrop,
+        LocalTitlePageBackdrop provides titleBackdrop,
+        LocalTitleOverlayHost provides overlayHost
     ) {
-        val state = rememberLazyListState()
-        val titleBackdrop = rememberTitleBackdrop()
-        val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
-
-        PullToRefreshBox(
-            isRefreshing = refreshing.value,
-            onRefresh = { refreshFromPull() },
-            modifier = Modifier.fillMaxSize()
-        ) {
-        LazyColumn(
-            state = state,
-            modifier = Modifier
+        Box(
+            Modifier
                 .fillMaxSize()
-                .layerBackdrop(titleBackdrop)
-                .overScrollVertical(),
-            flingBehavior = rememberOverscrollFlingBehavior { state },
-            contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+                .background(backdrop)
         ) {
-            item("PlaylistHeader") {
-                if (isWideScreen) {
-                    // 平板（≥600dp）：Apple Music 式头部（封面左上/信息右侧/按钮沉底/简介）
-                        DetailPageHeader(
-                            title = playlistName,
-                            coverData = { coverUrl.takeIf { it.isNotEmpty() } },
-                            coverSharedElementKey = sharedPlaylistCoverKey(source, playlistId),
-                            sharedTransitionScope = sharedTransitionScope,
-                            animatedVisibilityScope = animatedVisibilityScope,
-                        tag = "PLAYLIST",
-                        countText = "${if (tracks.value.isNotEmpty()) tracks.value.size else songCount} " +
-                            stringResource(id = R.string.online_playlists_song_unit),
-                        intro = playlistIntro,
-                        onPlayAll = {
-                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
-                            MediaController.mediaControl?.shuffleModeEnabled = false
-                            playAt(0)
-                        },
-                        onShuffle = {
-                            val list = currentQueue()
-                            if (list.isNotEmpty()) {
-                                MediaController.mediaControl?.shuffleModeEnabled = true
-                                playAt(list.indices.random())
-                            }
-                        }
-                    )
-                } else {
-                    // 手机（<600dp）：保持改版前的旧版居中布局
-                        PlaylistHeaderCompact(
-                            playlistName = playlistName,
-                            displayCount = if (tracks.value.isNotEmpty()) tracks.value.size else songCount,
-                            coverUrl = coverUrl,
-                            coverSharedElementKey = sharedPlaylistCoverKey(source, playlistId),
-                            sharedTransitionScope = sharedTransitionScope,
-                            animatedVisibilityScope = animatedVisibilityScope,
-                        onPlayAll = {
-                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
-                            MediaController.mediaControl?.shuffleModeEnabled = false
-                            playAt(0)
-                        },
-                        onShuffle = {
-                            val list = currentQueue()
-                            if (list.isNotEmpty()) {
-                                MediaController.mediaControl?.shuffleModeEnabled = true
-                                playAt(list.indices.random())
-                            }
-                        }
-                    )
-                }
-            }
-
-            // 挂起歌单同步状态 banner（创建中 / 创建失败可重试）；绑定完成后自动消失
-            if (isPendingPlaylist && pendingEntry.value?.isBound != true) {
-                item("PendingBanner") {
-                    val entry = pendingEntry.value
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = if (entry?.failed == true) {
-                                stringResource(id = R.string.online_playlist_pending_failed)
-                            } else {
-                                stringResource(id = R.string.online_playlist_pending_creating)
-                            },
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
-                            color = if (entry?.failed == true) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.alpha(if (entry?.failed == true) 1f else 0.7f)
-                        )
-                        if (entry?.failed == true) {
-                            Text(
-                                text = stringResource(id = R.string.online_playlist_pending_retry),
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .padding(top = 6.dp)
-                                    .clickable {
-                                        scope.launch {
-                                            PendingPlaylistStore.retryCreate(entry.localId)
-                                                .onSuccess { pendingEntry.value = PendingPlaylistStore.get(entry.localId) }
-                                                .onFailure { e ->
-                                                    status.value = "error:${e.message}"
-                                                }
-                                        }
+            PullToRefreshBox(
+                isRefreshing = refreshing.value,
+                onRefresh = { refreshFromPull() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                LazyColumn(
+                    state = state,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .layerBackdrop(titleBackdrop)
+                        .overScrollVertical(),
+                    flingBehavior = rememberOverscrollFlingBehavior { state },
+                    contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+                ) {
+                    item("PlaylistHeader") {
+                        if (isWideScreen) {
+                            // 平板（≥600dp）：与专辑页同款 Apple Music 式头部
+                            DetailPageHeader(
+                                title = playlistName,
+                                coverData = { coverUrl.takeIf { it.isNotEmpty() } },
+                                coverSharedElementKey = sharedPlaylistCoverKey(source, playlistId),
+                                sharedTransitionScope = sharedTransitionScope,
+                                animatedVisibilityScope = animatedVisibilityScope,
+                                tag = "PLAYLIST",
+                                countText = "$displayCount " +
+                                    stringResource(id = R.string.online_playlists_song_unit),
+                                intro = playlistIntro,
+                                accentColor = contentColor,
+                                // 第三个圆钮：自有歌单「添加歌曲」（推荐歌单没有加歌能力，不显示）
+                                trailingIcon = if (source == PlaylistSelection.Source.User) {
+                                    R.drawable.ic_add
+                                } else null,
+                                trailingIconDescription = stringResource(
+                                    id = R.string.online_playlist_add_songs
+                                ),
+                                onTrailingClick = if (source == PlaylistSelection.Source.User) {
+                                    { showAddDialog.value = true }
+                                } else null,
+                                onPlayAll = {
+                                    // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                                    MediaController.mediaControl?.shuffleModeEnabled = false
+                                    playAt(0)
+                                },
+                                onShuffle = {
+                                    val list = currentQueue()
+                                    if (list.isNotEmpty()) {
+                                        MediaController.mediaControl?.shuffleModeEnabled = true
+                                        playAt(list.indices.random())
                                     }
+                                }
+                            )
+                        } else {
+                            // 手机（<600dp）：与专辑页同款居中头部
+                            PlaylistHeaderCompact(
+                                playlistName = playlistName,
+                                displayCount = displayCount,
+                                coverUrl = coverUrl,
+                                coverSharedElementKey = sharedPlaylistCoverKey(source, playlistId),
+                                sharedTransitionScope = sharedTransitionScope,
+                                animatedVisibilityScope = animatedVisibilityScope,
+                                intro = playlistIntro,
+                                lightBackdrop = lightBackdrop,
+                                contentColor = contentColor,
+                                playEnabled = displayTracks.isNotEmpty(),
+                                onPlayAll = {
+                                    // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
+                                    MediaController.mediaControl?.shuffleModeEnabled = false
+                                    playAt(0)
+                                },
+                                onShuffle = {
+                                    val list = currentQueue()
+                                    if (list.isNotEmpty()) {
+                                        MediaController.mediaControl?.shuffleModeEnabled = true
+                                        playAt(list.indices.random())
+                                    }
+                                },
+                                onAddSongs = if (source == PlaylistSelection.Source.User) {
+                                    { showAddDialog.value = true }
+                                } else null
                             )
                         }
                     }
-                }
-            }
 
-            // 自有歌单：添加歌曲入口（挂起/已绑定均可；挂起时先进本地队列，绑定后自动补发）
-            if (source == PlaylistSelection.Source.User) {
-                item("AddSongs") {
-                    NormalButton(
-                        icon = painterResource(id = R.drawable.ic_add),
-                        label = stringResource(id = R.string.online_playlist_add_songs),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 6.dp)
-                    ) {
-                        showAddDialog.value = true
+                    // 挂起歌单同步状态 banner（创建中 / 创建失败可重试）；绑定完成后自动消失
+                    if (isPendingPlaylist && pendingEntry.value?.isBound != true) {
+                        item("PendingBanner") {
+                            val entry = pendingEntry.value
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (entry?.failed == true) {
+                                        stringResource(id = R.string.online_playlist_pending_failed)
+                                    } else {
+                                        stringResource(id = R.string.online_playlist_pending_creating)
+                                    },
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp,
+                                    // 彩色底上不再用 onSurfaceVariant / primary（会与底色脏）
+                                    color = if (entry?.failed == true) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        LocalContentColor.current
+                                    },
+                                    modifier = Modifier.alpha(if (entry?.failed == true) 1f else 0.7f)
+                                )
+                                if (entry?.failed == true) {
+                                    Text(
+                                        text = stringResource(id = R.string.online_playlist_pending_retry),
+                                        fontSize = 14.sp,
+                                        color = LocalContentColor.current,
+                                        modifier = Modifier
+                                            .padding(top = 6.dp)
+                                            .clickable {
+                                                scope.launch {
+                                                    PendingPlaylistStore.retryCreate(entry.localId)
+                                                        .onSuccess {
+                                                            pendingEntry.value =
+                                                                PendingPlaylistStore.get(entry.localId)
+                                                        }
+                                                        .onFailure { e ->
+                                                            status.value = "error:${e.message}"
+                                                        }
+                                                }
+                                            }
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
-            }
 
-            item("Status") {
-                if (status.value == "empty") {
-                    // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛，贴近上方「添加歌曲」按钮）
-                    Box(
-                        modifier = Modifier
-                            .fillParentMaxWidth()
-                            .fillParentMaxHeight(0.32f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_uitabbar_library),
-                                contentDescription = null,
+                    item("Status") {
+                        if (status.value == "empty") {
+                            // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛）
+                            Box(
                                 modifier = Modifier
-                                    .size(70.dp)
-                                    .alpha(0.3f),
-                                tint = Color.Black withNight Color.White
+                                    .fillParentMaxWidth()
+                                    .fillParentMaxHeight(0.32f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_uitabbar_library),
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(70.dp)
+                                            .alpha(0.3f),
+                                        tint = LocalContentColor.current
+                                    )
+                                    Text(
+                                        text = stringResource(id = R.string.online_playlist_songs_empty),
+                                        fontSize = 16.sp,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier
+                                            .padding(top = 12.dp)
+                                            .alpha(0.55f)
+                                    )
+                                }
+                            }
+                        } else {
+                            OnlineStatusItem(
+                                status = status.value,
+                                loadingText = loadProgress.value.ifEmpty { loadingBaseText },
+                                emptyText = stringResource(id = R.string.online_playlist_songs_empty),
+                                contentColor = contentColor
                             )
+                        }
+                    }
+
+                    // 分割线仅在非空列表渲染；空歌单只有图标+文字，不要分割线
+                    if (status.value != "empty") {
+                        item {
+                            OnlineDetailDivider()
+                        }
+                    }
+
+                    // 歌曲行：保留封面小图（52dp）的统一歌曲行；
+                    // 宽屏（≥600dp）三列：歌名（左半）+ 歌手（起于屏幕中央）+ 时长（贴右）。
+                    // 点击 → 全部歌曲进队列，从被点击歌曲开始播放；自有歌单支持长按移除。
+                    itemsIndexed(
+                        displayTracks,
+                        key = { index, _ -> trackKeys[index] }
+                    ) { index, track ->
+                        key(trackKeys[index]) {
+                            if (isWideScreen) {
+                                DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(track)) {
+                                    playAt(index)
+                                }
+                            } else {
+                                MusicList(
+                                    music = KugouRepository.toDisplayMediaItem(track),
+                                    itemClick = { playAt(index) },
+                                    onLongClick = removeAt?.let { cb -> { cb(index) } }
+                                )
+                            }
+                        }
+
+                        key("divider_$index") {
+                            if (index < displayTracks.size - 1) {
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        // 缩进对齐封面右缘（行 padding 22 + 封面 52 + 间距 14 = 88dp）
+                                        .padding(start = 88.dp, end = 16.dp)
+                                        .alpha(0.15f)
+                                        .height(0.5.dp)
+                                        .background(LocalContentColor.current)
+                                )
+                            }
+                        }
+                    }
+
+                    if (status.value != "empty") {
+                        item {
+                            OnlineDetailDivider()
+                        }
+                    }
+
+                    // 末尾统计行（与专辑页「N 首歌曲, 约 M 分钟」一致）
+                    if (displayTracks.isNotEmpty()) {
+                        item("PlaylistOthers") {
                             Text(
-                                text = stringResource(id = R.string.online_playlist_songs_empty),
-                                fontSize = 16.sp,
-                                textAlign = TextAlign.Center,
+                                text = stringResource(
+                                    id = R.string.page_library_album_info_others,
+                                    displayTracks.size,
+                                    (displayTracks.sumOf { it.durationMs } / 60000).toInt()
+                                ),
+                                fontSize = 15.sp,
                                 modifier = Modifier
-                                    .padding(top = 12.dp)
-                                    .alpha(0.55f)
+                                    .alpha(0.4f)
+                                    .padding(horizontal = 18.dp)
+                                    .padding(top = 18.dp)
                             )
                         }
                     }
-                } else {
-                    OnlineStatusItem(
-                        status = status.value,
-                        loadingText = loadProgress.value.ifEmpty { loadingBaseText },
-                        emptyText = stringResource(id = R.string.online_playlist_songs_empty)
+
+                    item("navbar") {
+                        Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
+                    }
+                }
+            }
+
+            // 顶栏：滚动离屏浮现小标题 + 模糊；返回键/右上图标着色跟随页面文字色
+            TitleBar(
+                title = playlistName,
+                onBack = if (showBackButton) ({ navController.popBackStack() }) else null,
+                showSmallTitle = showSmallTitle,
+                backdrop = titleBackdrop,
+                backIconTint = contentColor,
+                rightBarIcon = {
+                    // 与专辑页/资料库「歌曲」页同款：MoreHoriz 图标 + 锚点捕获 + 按钮联动，
+                    // 弹层住在页面作用域内（同窗口玻璃采样），动画同一套引擎。
+                    val anchorBounds = remember { mutableStateOf(IntRect.Zero) }
+                    // 与专辑页/资料库「歌曲」页同一套锚点联动：按钮随面板揭示进度
+                    // 向左下滑开并淡出（菜单只有一行、面板盖不住按钮落点，所以必须淡出）
+                    val followState = rememberLiquidDropdownFollowState()
+
+                    TitleBarIcon(
+                        modifier = Modifier
+                            .onGloballyPositioned { coords ->
+                                val pos = coords.positionInWindow()
+                                val size = coords.size
+                                anchorBounds.value = IntRect(
+                                    left = pos.x.toInt(),
+                                    top = pos.y.toInt(),
+                                    right = pos.x.toInt() + size.width,
+                                    bottom = pos.y.toInt() + size.height
+                                )
+                            }
+                            // 联动必须挂在锚点捕获的下游：按钮会随面板进度下沉/收缩，
+                            // 锚点若跟着走会形成逐帧抖动回环
+                            .liquidDropdownAnchorFollow(followState),
+                        icon = Icons.Rounded.MoreHoriz,
+                        contentColor = contentColor,
+                        onBack = { menuOpen.value = true }
                     )
-                }
-            }
 
-            // 分割线仅在非空列表渲染；空歌单只有图标+文字，不要分割线
-            if (status.value != "empty") {
-                item {
-                    OnlineDetailDivider()
+                    // 菜单内容暂为占位（具体动作后续补），结构与专辑页「更多」一致
+                    LiquidDropdownLayout(
+                        expanded = menuOpen.value,
+                        anchorBounds = anchorBounds.value,
+                        onDismissRequest = { menuOpen.value = false },
+                        surfaceAlpha = 0.6f,
+                        backdrop = LocalTitlePageBackdrop.current,
+                        onFractionProgress = followState::onProgress
+                    ) {
+                        LiquidDropdownColumn {
+                            LiquidDropdownRow(
+                                text = stringResource(id = R.string.online_album_more_placeholder),
+                                selected = false,
+                                enabled = false,
+                                onClick = {},
+                                isFirst = true,
+                                isLast = true,
+                                showSelectedIcon = false
+                            )
+                        }
+                    }
                 }
-            }
-
-            OnlineDetailSongs(
-                tracks = displayTracks,
-                trackKeys = trackKeys,
-                isWide = isWideScreen,
-                onPlayAt = { playAt(it) },
-                onRemoveTrack = if (source == PlaylistSelection.Source.User) {
-                    { index -> removeTarget.value = displayTracks.getOrNull(index) }
-                } else null
             )
 
-            if (status.value != "empty") {
-                item {
-                    OnlineDetailDivider()
-                }
-            }
-
-            item("navbar") {
-                Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
-            }
+            // 页面级弹层宿主：弹层渲染在列表与顶栏之上（与专辑页同位置）
+            TitleOverlayHostSlot(overlayHost)
         }
-        }
-
-        // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
-        TitleBar(
-            title = playlistName,
-            onBack = if (showBackButton) ({ navController.popBackStack() }) else null,
-            showSmallTitle = showSmallTitle,
-            backdrop = titleBackdrop
-        )
     }
 
     // 删歌确认弹层（长按歌曲行触发，仅自有歌单）
@@ -555,7 +747,7 @@ fun OnlinePlaylistDetail(
 }
 
 /**
- * 详情页横向分割线（对齐 AlbumInfo 的 AlbumDivider 规范）。
+ * 封面共享元素 key（入口卡片与详情页封面配对）。
  */
 internal fun sharedPlaylistCoverKey(
     source: PlaylistSelection.Source?,
@@ -564,6 +756,9 @@ internal fun sharedPlaylistCoverKey(
     "playlist/${source.name}/$id"
 } else null
 
+/**
+ * 详情页横向分割线（对齐专辑页 OnlineAlbumDivider 规范）。
+ */
 @Composable
 private fun OnlineDetailDivider(modifier: Modifier = Modifier) =
     Spacer(
@@ -572,40 +767,54 @@ private fun OnlineDetailDivider(modifier: Modifier = Modifier) =
             .padding(start = 18.dp, end = 16.dp)
             .alpha(0.2f)
             .height(0.5.dp)
-            .background(Color.Black withNight Color.White)
+            .background(LocalContentColor.current)
     )
 
 /**
- * 手机（<600dp）旧版居中头部：与 2026-09-06 改版前完全一致
- * （居中大封面 + 居中歌单名/曲目数/PLAYLIST + 全宽 播放/随机 按钮，无简介）。
- * 平板宽屏使用共享 DetailPageHeader（Apple Music 式，见 DetailPageParts.kt）。
+ * 手机（<600dp）居中头部：与在线专辑详情页同款
+ * （居中大封面 + 歌单名 + 「N 首 · PLAYLIST」+ 随机/播放/添加 圆钮 + 可展开简介）。
+ * 平板宽屏使用共享 DetailPageHeader。
  */
 @Composable
 @OptIn(ExperimentalSharedTransitionApi::class)
 private fun PlaylistHeaderCompact(
     playlistName: String,
-    displayCount: Int?,
+    displayCount: Int,
     coverUrl: String,
     coverSharedElementKey: String?,
     sharedTransitionScope: SharedTransitionScope?,
     animatedVisibilityScope: AnimatedVisibilityScope?,
+    intro: String?,
+    lightBackdrop: Boolean,
+    contentColor: Color,
+    playEnabled: Boolean,
     onPlayAll: () -> Unit,
-    onShuffle: () -> Unit
+    onShuffle: () -> Unit,
+    onAddSongs: (() -> Unit)?
 ) {
     Column(
         Modifier
             .fillMaxWidth()
             .padding(top = 9.5.dp)
             .padding(horizontal = 18.dp)
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            // 头部整体上抬 20dp。用 layout 而不是 offset：offset 只改绘制位置，
+            // 条目仍占原高度，下方歌曲列表不会跟着上移、会多出 20dp 空白。
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val shift = 20.dp.roundToPx()
+                layout(placeable.width, (placeable.height - shift).coerceAtLeast(0)) {
+                    placeable.place(0, -shift)
+                }
+            },
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 大封面：与 AlbumInfo 同款 ShadowImage 规范，URL 为空时组件内部显示占位图
+        // 大封面：与专辑页同款 ShadowImage 规范，URL 为空时组件内部显示占位图。
+        // 注意：aspectRatio 必须由 ShadowImage 自己按**缩进后的宽度**算，不能写在 padding 外面。
         val coverModifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 54.5.dp)
-            .aspectRatio(1f)
+            .padding(horizontal = 50.dp)
             .then(
                 if (sharedTransitionScope != null && animatedVisibilityScope != null && coverSharedElementKey != null) {
                     with(sharedTransitionScope) {
@@ -618,7 +827,7 @@ private fun PlaylistHeaderCompact(
             )
         Box(coverModifier) {
             ShadowImage(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth(),
                 dataLambda = { coverUrl.takeIf { it.isNotEmpty() } },
                 contentDescription = null,
                 // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
@@ -628,7 +837,8 @@ private fun PlaylistHeaderCompact(
             )
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        // 封面与文字间距 10dp
+        Spacer(modifier = Modifier.height(10.dp))
 
         Text(
             text = playlistName,
@@ -640,101 +850,54 @@ private fun PlaylistHeaderCompact(
             overflow = TextOverflow.Ellipsis
         )
 
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        // 已加载出歌曲时优先显示实际 tracks.size；未加载时用 source songCount 兜底
-        if (displayCount != null) {
-            Text(
-                text = "$displayCount " +
-                    stringResource(id = R.string.online_playlists_song_unit),
-                fontSize = 17.5.sp,
-                textAlign = TextAlign.Center,
-                lineHeight = 23.5.sp,
-                color = MaterialTheme.colorScheme.primary
+        // 数量 / 类型合并成一行（对齐专辑页 meta 行）：12.5sp / α0.6
+        Text(
+            text = "$displayCount " +
+                stringResource(id = R.string.online_playlists_song_unit) +
+                " · PLAYLIST",
+            fontSize = 12.5.sp,
+            lineHeight = 16.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .alpha(0.6f)
+                .padding(top = 4.dp)
+        )
+
+        // 操作行：随机圆钮（左）· 实心播放胶囊（中，剩余空间的 2/3）· 添加歌曲圆钮（右，仅自有歌单）
+        // 三个按钮全部由页面文字色派生，浅色封面上翻成深色、深色封面上保持白色。
+        YosWrapper {
+            CompactPlayActionRow(
+                foregroundColor = contentColor,
+                playEnabled = playEnabled,
+                onShuffle = onShuffle,
+                onPlayAll = onPlayAll,
+                modifier = Modifier.padding(top = 14.dp, bottom = 10.dp),
+                trailing = if (onAddSongs != null) {
+                    {
+                        ArtistRoundActionButton(
+                            icon = R.drawable.ic_add,
+                            contentDescription = stringResource(id = R.string.online_playlist_add_songs),
+                            iconTint = contentColor,
+                            highlighted = false,
+                            iconSize = 24.dp,
+                            containerColor = contentColor.copy(alpha = 0.18f)
+                        ) {
+                            onAddSongs()
+                        }
+                    }
+                } else null
             )
         }
 
-        Text(
-            text = "PLAYLIST",
-            fontSize = 11.5.sp,
-            modifier = Modifier
-                .alpha(0.4f)
-                .padding(top = 2.dp)
-        )
-
-        YosWrapper {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 15.dp)
-            ) {
-                // 播放：全部歌曲进队列，从第一首开始（URL 惰性解析，入队零等待）
-                NormalButton(
-                    icon = painterResource(id = R.drawable.button_icon_play),
-                    label = stringResource(id = R.string.normal_button_play),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    onPlayAll()
-                }
-                Spacer(modifier = Modifier.width(15.dp))
-                // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
-                //（对齐 NormalMusic/AlbumInfo 本地模式）
-                NormalButton(
-                    icon = painterResource(id = R.drawable.button_icon_shuffle),
-                    label = stringResource(id = R.string.normal_button_shuffle),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    onShuffle()
-                }
-            }
-        }
-    }
-}
-
-/**
- * 歌曲列表：统一歌曲 Item + 歌曲间分割线（对齐本地列表 MusicList 视觉规范）。
- * 宽屏（≥600dp）换用三列行：歌名（左半）+ 歌手（起于屏幕中央）+ 时长（贴右）。
- * [onRemoveTrack] 非 null 时行支持长按（自有歌单删歌）。
- */
-private fun LazyListScope.OnlineDetailSongs(
-    tracks: List<KugouPlaylistTrack>,
-    trackKeys: List<String>,
-    isWide: Boolean,
-    onPlayAt: (Int) -> Unit,
-    onRemoveTrack: ((Int) -> Unit)? = null
-) {
-    itemsIndexed(
-        tracks,
-        key = { index, _ -> trackKeys[index] }
-    ) { index, track ->
-        key(trackKeys[index]) {
-            // 统一歌曲 Item：与本地列表同款 MusicList 视觉规范；
-            // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
-            if (isWide) {
-                DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(track)) {
-                    onPlayAt(index)
-                }
-            } else {
-                MusicList(
-                    music = KugouRepository.toDisplayMediaItem(track),
-                    itemClick = { onPlayAt(index) },
-                    onLongClick = onRemoveTrack?.let { cb -> { cb(index) } }
-                )
-            }
-        }
-
-        key("divider_$index") {
-            if (index < tracks.size - 1) {
-                Spacer(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // 右侧与列表首末分割线一致留 18dp，任何屏幕都不顶到边缘
-                        .padding(start = 88.dp, end = 16.dp)
-                        .alpha(0.15f)
-                        .height(0.5.dp)
-                        .background(Color.Black withNight Color.White)
-                )
-            }
+        // 简介：常驻在三个按钮下方（仅推荐歌单携带 intro）；超过两行行尾接「…更多」
+        intro?.takeIf { it.isNotBlank() }?.let { text ->
+            DetailIntro(
+                text = text,
+                lightBackdrop = lightBackdrop,
+                modifier = Modifier.padding(start = 2.dp, end = 2.dp, top = 2.dp, bottom = 12.dp)
+            )
         }
     }
 }

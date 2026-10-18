@@ -21,12 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Icon
@@ -56,6 +56,7 @@ import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.pages.discovery.DiscoveryRailSnapDistance
 import yos.music.player.ui.pages.discovery.NewAlbumCard
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
@@ -255,6 +256,20 @@ private fun ArtistSkeletonBlock(modifier: Modifier) {
     Box(modifier.clip(RoundedCornerShape(6.dp)).background(LocalContentColor.current.copy(alpha = 0.09f)))
 }
 
+/** 艺人专辑横排定版几何：卡宽 150dp（[NewAlbumCard] 历史定版）+ 卡间距 12dp。 */
+internal val ArtistAlbumRailCardWidth = 150.dp
+internal val ArtistAlbumRailCardGap = 12.dp
+
+/** 一个 Page 的占位宽度 = 卡宽 + 卡间距：卡贴 Page 左缘，右侧余量即卡间距。 */
+internal val ArtistAlbumRailPageSize = ArtistAlbumRailCardWidth + ArtistAlbumRailCardGap
+
+/**
+ * 吸附距离策略：直接复用主页横排的 [DiscoveryRailSnapDistance]（快甩保留自然衰减目标、
+ * 慢拖吸附相邻卡），保证本横排与主页「精选歌单 / 本周新发行」手感逐字一致——
+ * 主页那边改策略，这里自动跟随。
+ */
+internal val ArtistAlbumRailSnapDistance = DiscoveryRailSnapDistance
+
 @Composable
 internal fun ArtistAlbumsSection(
     albums: List<KugouNewAlbum>,
@@ -267,18 +282,12 @@ internal fun ArtistAlbumsSection(
 ) {
     Column(Modifier.fillMaxWidth()) {
         when {
-            albums.isNotEmpty() -> LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                itemsIndexed(albums, key = { index, album -> "artist-album-$index-${album.albumId}" }) { _, album ->
-                    NewAlbumCard(
-                        album = album,
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope
-                    ) { onOpen(album) }
-                }
-            }
+            albums.isNotEmpty() -> ArtistAlbumRail(
+                albums = albums,
+                onOpen = onOpen,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope
+            )
             loading -> LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -294,6 +303,53 @@ internal fun ArtistAlbumsSection(
             error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_albums_empty))
         }
         if (error != null) ArtistSectionError(error, loading, onRetry)
+    }
+}
+
+/**
+ * 艺人专辑吸附横排：几何与外观逐字沿用旧 LazyRow（150dp 卡宽 / 12dp 间距 / 20dp 左右内边距、
+ * 卡贴左缘、右侧留白），只把滚动容器由 LazyRow 换成 HorizontalPager——
+ * 松手吸附（[PagerDefaults.flingBehavior] + [ArtistAlbumRailSnapDistance]，与主页横排同源）
+ * 是 LazyRow（自由滚动、只在边缘受限）无法提供的，也是本组件从主页「精选歌单 / 本周新发行」
+ * 抄过来的唯一目的。
+ *
+ * 吸附等式：card(150) + gap(12) → pageSize = 162 = 卡宽 + 间距，卡固定在 Page 左缘，
+ * 20dp contentPadding 保证每个 Page 吸附后卡左缘都落在 x=20（含末页），每滑一页正好走一张卡。
+ * 与主页横排的唯一差别是这里不做自适应变宽（卡宽必须锁死 150dp 才与旧观感一致）。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun ArtistAlbumRail(
+    albums: List<KugouNewAlbum>,
+    onOpen: (KugouNewAlbum) -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
+) {
+    val pagerState = rememberPagerState(pageCount = { albums.size })
+    HorizontalPager(
+        state = pagerState,
+        // 与主页「精选歌单 / 本周新发行」同一套吸附参数（PagerDefaults + DiscoveryRailSnapDistance）
+        flingBehavior = PagerDefaults.flingBehavior(
+            state = pagerState,
+            pagerSnapDistance = ArtistAlbumRailSnapDistance
+        ),
+        pageSize = PageSize.Fixed(ArtistAlbumRailPageSize),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        // 卡片高度由内容撑开；Pager 默认 CenterVertically 会让不同高度的卡纵向居中，
+        // 显式 Top 让所有 Page 统一顶部对齐（与旧 LazyRow 行为一致）。
+        verticalAlignment = Alignment.Top,
+        // key 带下标：上游偶发重复 albumId 时，纯 albumId 作 key 会触发 Pager 的
+        // 「Key was already used」崩溃；旧 LazyRow 的 key 同样带下标，行为保持一致。
+        key = { page -> "artist-album-$page-${albums[page].albumId}" },
+        beyondViewportPageCount = 1
+    ) { page ->
+        val album = albums[page]
+        NewAlbumCard(
+            album = album,
+            modifier = Modifier.width(ArtistAlbumRailCardWidth),
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope
+        ) { onOpen(album) }
     }
 }
 

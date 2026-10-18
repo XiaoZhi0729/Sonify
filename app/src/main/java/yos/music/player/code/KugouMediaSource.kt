@@ -376,7 +376,10 @@ class KugouResolvingDataSourceFactory(
 @OptIn(UnstableApi::class)
 object OnlineAudioCache {
     private const val DIR_NAME = "kugou_audio_cache"
-    private const val MAX_BYTES = 1024L * 1024 * 1024
+    private const val MB = 1024L * 1024
+
+    /** 上限下限防呆：用户把上限调得过小也不至于让缓存形同虚设。 */
+    private const val MIN_CAP_MB = 64
 
     private val lock = Any()
 
@@ -396,7 +399,7 @@ object OnlineAudioCache {
                     // 落在 filesDir 而非 cacheDir：系统"清除缓存"/存储紧张不会连锅端，
                     // 已播过的歌重启/清缓存后仍可命中字节，不再回 CDN。
                     File(context.filesDir, DIR_NAME),
-                    LeastRecentlyUsedCacheEvictor(MAX_BYTES),
+                    LeastRecentlyUsedCacheEvictor(capBytes()),
                     StandaloneDatabaseProvider(context)
                 )
             } catch (e: Exception) {
@@ -412,9 +415,62 @@ object OnlineAudioCache {
     fun keyOf(hash: String, effectiveTier: String): String =
         "kugou:${hash.lowercase()}:$effectiveTier"
 
+    /**
+     * 用户可调的音频缓存上限（MB）。主线程启动时经 [applyCapMb] 注入一次（避免播放线程首次
+     * 读 DataSaver 设置把状态建到非全局快照里），故「设置里改了上限」于下次启动生效
+     * （LRU 初始化时会 trim 到新上限）。下限 [MIN_CAP_MB] 防呆。
+     */
+    @Volatile
+    private var capMb: Int = 1024
+
+    /** 主线程启动时按设置注入一次。 */
+    fun applyCapMb(mb: Int) {
+        capMb = mb.coerceAtLeast(MIN_CAP_MB)
+    }
+
+    fun capBytes(): Long = capMb.toLong() * MB
+
     /** 已用字节数（供设置页「数据与储存」展示）。 */
     fun cacheSpace(context: Context): Long =
         runCatching { get(context)?.cacheSpace ?: 0L }.getOrDefault(0L)
+
+    /**
+     * 每个歌曲 hash 已缓存的字节数（同一首歌可能有多档位 key，合并求和）。
+     * 供设置页按曲清理列表。用 `getCachedSpans` 里 isCached 的 span 求和——
+     * 不能用 `sumOf { length }`：空洞(hole) span 的 length 是负数。
+     */
+    fun cachedSongSizes(context: Context): Map<String, Long> {
+        val cache = get(context) ?: return emptyMap()
+        return runCatching {
+            val out = HashMap<String, Long>()
+            cache.keys.toList().forEach { key ->
+                val hash = hashOfKey(key) ?: return@forEach
+                val bytes = runCatching {
+                    cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
+                }.getOrDefault(0L)
+                out[hash] = (out[hash] ?: 0L) + bytes
+            }
+            out
+        }.getOrDefault(emptyMap())
+    }
+
+    /** 删除某首歌的所有档位字节缓存（走 removeResource，不删目录）。 */
+    fun deleteSong(context: Context, hash: String) {
+        val cache = get(context) ?: return
+        val prefix = "kugou:${hash.lowercase()}:"
+        runCatching {
+            cache.keys.filter { it.startsWith(prefix) }.toList().forEach { cache.removeResource(it) }
+        }
+    }
+
+    /** 从缓存 key（"kugou:&lt;hash&gt;:&lt;tier&gt;"）解析出 hash；非本前缀返回 null。 */
+    private fun hashOfKey(key: String): String? {
+        if (!key.startsWith("kugou:")) return null
+        val rest = key.substring("kugou:".length)
+        val idx = rest.indexOf(':')
+        if (idx <= 0) return null
+        return rest.substring(0, idx)
+    }
 
     /** 清空字节缓存：走 SimpleCache 的 removeResource，避免直接删目录致缓存实例状态不一致。 */
     fun clearCache(context: Context) {

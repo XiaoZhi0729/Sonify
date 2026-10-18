@@ -400,13 +400,29 @@ fun AlbumInfo(
         }
     }
 
+/**
+ * 通用动作按钮（图标 + 文案，等宽摆放）。
+ *
+ * [contentColor] / [containerColor] 默认 null → 保持原观感（主题红字 + 浅/深灰 25% 底）。
+ * 页面底色不是主题色的场景（如在线专辑详情的封面色底）传自身文字色与低透明度底色，
+ * 避免红字压彩色底发脏。
+ */
 @Composable
-fun NormalButton(icon: Painter, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun NormalButton(
+    icon: Painter,
+    label: String,
+    modifier: Modifier = Modifier,
+    contentColor: Color? = null,
+    containerColor: Color? = null,
+    onClick: () -> Unit
+) {
     val shape = RoundedCornerShape(10.dp)
+    val tint = contentColor ?: MaterialTheme.colorScheme.primary
     Row(
         modifier = modifier
             .background(
-                color = (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f),
+                color = containerColor
+                    ?: (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f),
                 shape = shape
             )
             .clip(shape)
@@ -418,13 +434,13 @@ fun NormalButton(icon: Painter, label: String, modifier: Modifier = Modifier, on
         Icon(
             painter = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = tint,
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = label,
-            color = MaterialTheme.colorScheme.primary,
+            color = tint,
             fontWeight = FontWeight.Medium,
             fontSize = 17.sp
         )

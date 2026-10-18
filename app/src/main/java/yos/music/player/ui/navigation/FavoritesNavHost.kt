@@ -31,11 +31,13 @@ fun FavoritesNavHost(
             popEnterTransition = { fadeIn() },
             popExitTransition = { fadeOut() }
         ) {
-            composable(UI.Favorites) {
+            composable(UI.Favorites) { entry ->
                 FavoriteSongsPage(
                     navController = navController,
                     sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
+                    animatedVisibilityScope = this@composable,
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
                 )
             }
             // 保留歌单详情路由：与其它 house 一致，页内后续跳转有落点
@@ -47,7 +49,9 @@ fun FavoritesNavHost(
                     navController = navController,
                     selection = entry.playlistSelection(),
                     sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
+                    animatedVisibilityScope = this@composable,
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
                 )
             }
             // 艺人域路由（歌手详情 + 子页 + 在线专辑详情）：播放页歌手名等入口在

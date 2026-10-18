@@ -38,7 +38,14 @@ object OnlineAlbumCache {
         }
         val json = runCatching { f.readText() }.getOrNull() ?: return null
         f.setLastModified(System.currentTimeMillis())
-        return runCatching { gson.fromJson<List<KugouNewSong>>(json, listType) }.getOrNull()
+        val parsed = runCatching { gson.fromJson<List<KugouNewSong>>(json, listType) }.getOrNull()
+        if (parsed == null || parsed.any { it.hash == null || it.name == null }) {
+            // Gson 不校验 Kotlin 非空：跨构建混淆键名漂移或损坏缓存会让字段为 null，
+            // 回流 UI 即 NPE。整文件作废，重新走网络。
+            f.delete()
+            return null
+        }
+        return parsed
     }
 
     fun write(context: Context, key: String, tracks: List<KugouNewSong>) {
@@ -53,4 +60,20 @@ object OnlineAlbumCache {
     fun clear(context: Context) {
         runCatching { dir(context).listFiles()?.forEach { it.delete() } }
     }
+
+    /**
+     * 列出缓存里所有曲目（忽略 TTL——过期的元数据仍可用来回填索引）。
+     * 供设置页「数据与储存」首次启动回填 hash→歌名/歌手/封面索引。
+     */
+    fun allTracks(context: Context): List<KugouNewSong> =
+        runCatching {
+            dir(context).listFiles()
+                ?.filter { it.isFile && it.name.startsWith("al_") && it.name.endsWith(".json") }
+                ?.flatMap { f ->
+                    runCatching { gson.fromJson<List<KugouNewSong>>(f.readText(), listType) }
+                        .getOrNull() ?: emptyList()
+                }
+                ?.filter { t -> runCatching { t.hash.isNotBlank() && t.name.isNotBlank() }.getOrDefault(false) }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
 }

@@ -135,9 +135,17 @@ fun OnlinePlaylists(
     val deleteTarget = remember("OnlinePlaylists_delete") { mutableStateOf<KugouPlaylist?>(null) }
     val deleting = remember("OnlinePlaylists_deleting") { mutableStateOf(false) }
 
-    fun load(autoOpenIndex: Int? = null) {
-        if (status.value == "loading") return
-        status.value = "loading"
+    /**
+     * [silent] = true：静默刷新——不置 "loading"（不出现加载中）、不清空/闪动列表、
+     * 失败也不改状态；成功后仅在数据确有变化时原位更新列表内容（列表 State 走结构相等，
+     * 内容未变时赋值不会触发重组）。用于「返回本页时后台对账」，避免转场中途出现
+     * 「加载中」与列表整体消失/封面抖动。
+     */
+    fun load(autoOpenIndex: Int? = null, silent: Boolean = false) {
+        if (!silent) {
+            if (status.value == "loading") return
+            status.value = "loading"
+        }
         scope.launch {
             KugouRepository.getMyPlaylists()
                 .onSuccess { rawList ->
@@ -223,7 +231,8 @@ fun OnlinePlaylists(
                     }
                 }
                 .onFailure { e ->
-                    status.value = "error:${e.message}"
+                    // 静默刷新失败保留现有内容与状态，不打断界面
+                    if (!silent) status.value = "error:${e.message}"
                 }
         }
     }
@@ -301,9 +310,16 @@ fun OnlinePlaylists(
         }
     }
 
+    // 歌单/收藏等云端变化（含返回本页时重新进入组合）触发对账：
+    // 已有数据 → 静默刷新（不置 loading、不清空列表，仅在有变化时原位更新内容，
+    // 避免返回时出现「加载中」与列表整体消失/封面抖动）；无数据（首次进入）→ 常规加载。
     LaunchedEffect(KugouSyncCoordinator.playlistsRevision.value) {
-        status.value = "idle"
-        load()
+        if (playlists.value.isEmpty()) {
+            status.value = "idle"
+            load()
+        } else {
+            load(silent = true)
+        }
     }
 
     Title(

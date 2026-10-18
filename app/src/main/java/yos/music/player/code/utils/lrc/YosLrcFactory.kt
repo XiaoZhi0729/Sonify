@@ -405,6 +405,19 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             }
         }
 
+    /**
+     * 演唱者报幕标签：`男：`/`女：`/`合：`/歌手名：`——冒号收尾，前缀短且自身不含冒号。
+     * 歌名 `Re:Re:` 也是「冒号收尾的短文本」，但前缀里带冒号，不能当报幕标签：
+     * 一旦误判，第一行就会把整首歌词翻到另一侧（单歌手歌曲全程靠右）。
+     */
+    private val singerLabelRegex = Regex("^[^:：\\s][^:：]{0,15}\\s*[:：]$")
+
+    /** 返回下一次切换后应处的侧：首个报幕标签只记录歌手，不翻转（第一位演唱者固定靠左）。 */
+    private fun switchSideOnLabel(label: String, lastSinger: String?, otherSide: Boolean): Boolean {
+        val key = label.trim()
+        return if (lastSinger == null || lastSinger == key) otherSide else !otherSide
+    }
+
     private fun processOtherSide(entries: List<LyricEntry>): List<LyricEntry> {
         val sides = mutableStateListOf<Boolean>()
         var otherSide = false
@@ -412,14 +425,15 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         val filtered = entries.map { entry ->
             val text = entry.mainLyric.joinToString("") { it.second }
             var isSingerLabel = false
-            if (text.endsWith(":") || text.endsWith("：")) {
-                otherSide = !otherSide
+            if (singerLabelRegex.matches(text.trim())) {
+                otherSide = switchSideOnLabel(text, lastSinger, otherSide)
+                lastSinger = text.trim()
             } else if (entry.mainLyric.size > 1) {
                 val candidate = entry.mainLyric[1].second
-                if (candidate.matches(Regex(".+\\s*:\\s*"))) {
+                if (singerLabelRegex.matches(candidate.trim())) {
                     isSingerLabel = true
-                    if (lastSinger == null || lastSinger != candidate) otherSide = !otherSide
-                    lastSinger = candidate
+                    otherSide = switchSideOnLabel(candidate, lastSinger, otherSide)
+                    lastSinger = candidate.trim()
                 }
             }
             sides += otherSide

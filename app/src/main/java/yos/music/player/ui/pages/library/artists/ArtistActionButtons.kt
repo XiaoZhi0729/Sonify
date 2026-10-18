@@ -10,6 +10,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -45,6 +47,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.R
+import yos.music.player.ui.navigation.artworkContentColor
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.circleEdgeLight
 
@@ -187,11 +190,13 @@ private fun iconColorOf(iconTint: Color, dim: Float): Color =
     (if (iconTint != Color.Unspecified) iconTint else Color.White).copy(alpha = dim)
 
 /**
- * 播放胶囊（白底 + 深色实心三角 + 文字），对齐 Apple Music 专辑页的「播放」按钮。
+ * 播放胶囊（实心 + 三角图标 + 文字），对齐 Apple Music 专辑页的「播放」按钮。
  *
  * 与 [ArtistPlayButton]（白色镂空圆，孔洞透出背景）是两个形态：圆形用于歌手页
- * 三圆钮行，胶囊用于在线专辑详情的操作行。底色恒为白色，故内容色固定深色，
- * 不随页面文字色翻转（深色封面下白字会看不见）。
+ * 三圆钮行，胶囊用于在线专辑详情的操作行。
+ *
+ * 默认白底 + 深字（深色封面场景）；调用方可同时传 [containerColor] / [contentColor]
+ * 反转成「浅色封面上的深色胶囊」，[CompactPlayActionRow] 即按页面文字色派生。
  */
 @Composable
 internal fun PlayPillButton(
@@ -199,12 +204,13 @@ internal fun PlayPillButton(
     enabled: Boolean = true,
     containerColor: Color = Color.White,
     contentColor: Color = Color(0xFF161616),
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     // 同上：禁用态用颜色 alpha 调暗，避免额外 graphicsLayer 在 enabled 翻转时丢底色
     val dim = if (enabled) 1f else 0.45f
     Row(
-        modifier = Modifier
+        modifier = modifier
             .height(44.dp)
             .clip(CircleShape)
             .background(containerColor.copy(alpha = containerColor.alpha * dim))
@@ -236,11 +242,81 @@ internal fun PlayPillButton(
 }
 
 /**
- * 播放圆钮：EvenOdd 几何镂空，孔洞始终透出真实背景（不依赖离屏清除）。
- * 从原三圆钮行内联抽出，供竖向三圆钮行与平板横屏头部复用。
+ * 手机详情页（在线专辑 / 在线歌单）操作行：随机圆钮 · 播放胶囊 · 可选尾部圆钮。
+ *
+ * 播放胶囊宽度 = 行内剩余空间 × 2/3 —— 占满整行会过长（用户实机反馈），
+ * 两侧圆钮固定 42dp 不参与拉伸，整行居中。专辑页与歌单页共用同一几何，
+ * 避免两处各写一份后走样。
+ *
+ * [foregroundColor] 是页面按封面底色算好的主文字色（深底白 / 浅底近黑），
+ * 三个按钮全部由它派生，从而跟着封面明暗翻转：
+ * - 圆钮：底色 = 文字色 @18%，图标 = 文字色；
+ * - 播放胶囊（实心反色）：底色 = 文字色，内容色 = [artworkContentColor] 之上再取反。
  */
 @Composable
-internal fun ArtistPlayButton(enabled: Boolean, onClick: () -> Unit) {
+internal fun CompactPlayActionRow(
+    foregroundColor: Color,
+    playEnabled: Boolean,
+    onShuffle: () -> Unit,
+    onPlayAll: () -> Unit,
+    modifier: Modifier = Modifier,
+    shuffleEnabled: Boolean = playEnabled,
+    trailing: @Composable (() -> Unit)? = null
+) {
+    val gap = 13.dp
+    val buttonSize = 42.dp
+    // 圆钮统一材质：文字色 18% 透明底（与平板 DetailPageHeader 同值）
+    val roundContainer = foregroundColor.copy(alpha = 0.18f)
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val trailingWidth = if (trailing != null) buttonSize + gap else 0.dp
+        val remaining = maxWidth - buttonSize - gap - trailingWidth
+        // 下限 140dp：再窄会挤掉图标与文字（胶囊内容本身约 134dp）
+        val pillWidth = (remaining * 2f / 3f).coerceAtLeast(140.dp)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ArtistRoundActionButton(
+                icon = R.drawable.button_icon_shuffle,
+                contentDescription = stringResource(id = R.string.normal_button_shuffle),
+                iconTint = foregroundColor,
+                highlighted = false,
+                iconSize = 24.dp,
+                enabled = shuffleEnabled,
+                containerColor = roundContainer,
+                onClick = onShuffle
+            )
+            Spacer(Modifier.width(gap))
+            PlayPillButton(
+                label = stringResource(id = R.string.normal_button_play),
+                enabled = playEnabled,
+                containerColor = foregroundColor,
+                contentColor = artworkContentColor(foregroundColor),
+                modifier = Modifier.width(pillWidth),
+                onClick = onPlayAll
+            )
+            if (trailing != null) {
+                Spacer(Modifier.width(gap))
+                trailing()
+            }
+        }
+    }
+}
+
+/**
+ * 播放圆钮：EvenOdd 几何镂空，孔洞始终透出真实背景（不依赖离屏清除）。
+ * 从原三圆钮行内联抽出，供竖向三圆钮行与平板横屏头部复用。
+ *
+ * [contentColor] 是页面主文字色（深底白 / 浅底近黑）：实心圆与边缘光都由它派生，
+ * 孔洞自然透出的就是页面底色，深浅两种底色下都成立。默认白色保持深色底的旧观感。
+ */
+@Composable
+internal fun ArtistPlayButton(
+    enabled: Boolean,
+    contentColor: Color = Color.White,
+    onClick: () -> Unit
+) {
     val context = LocalContext.current
     Box(
         modifier = Modifier
@@ -264,9 +340,9 @@ internal fun ArtistPlayButton(enabled: Boolean, onClick: () -> Unit) {
                     addOval(Rect(Offset.Zero, size))
                     addPath(path)
                 }
-                drawPath(button, color = Color.White)
+                drawPath(button, color = contentColor)
             }
-            .circleEdgeLight(Color.White.copy(alpha = 0.8f), 0.15.dp, 0.5.dp)
+            .circleEdgeLight(contentColor.copy(alpha = 0.8f), 0.15.dp, 0.5.dp)
             .semantics { contentDescription = context.getString(R.string.normal_button_play) }
             .alpha(if (enabled) 1f else 0.45f)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)

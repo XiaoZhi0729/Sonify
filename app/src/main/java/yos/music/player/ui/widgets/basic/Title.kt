@@ -336,10 +336,15 @@ val LocalTitlePageColor = compositionLocalOf<Color?> { null }
  * 顶栏模糊的采样源：带不透明底色的层背景。
  * 先用 drawRect 铺满 3× 尺寸的底色作种子，再 drawContent；列表/网格本身透明，
  * 故不会透出黑底。参考页（BaseTitleGrid/BaseTitleList）与自带滚动列表的详情页共用。
+ *
+ * [pageColorOverride] 供「底色不是由 [LocalTitlePageColor] 提供」的场景显式传色
+ * （如在 CompositionLocalProvider 之前就要创建 backdrop）。null 时行为不变。
  */
 @Composable
-fun rememberTitleBackdrop(): LayerBackdrop {
-    val pageColor = LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
+fun rememberTitleBackdrop(pageColorOverride: Color? = null): LayerBackdrop {
+    val pageColor = pageColorOverride
+        ?: LocalTitlePageColor.current
+        ?: (Color.White withNight Color.Black)
     // onDraw 必须是稳定实例：rememberLayerBackdrop 以 onDraw 为 remember key，
     // 每次重组传新 lambda 会重建 LayerBackdrop，让采样层反复失效。
     val onDraw: ContentDrawScope.() -> Unit = remember(pageColor) {
@@ -837,7 +842,7 @@ val LocalTitleOverlayHost = compositionLocalOf<TitleOverlayHost?> { null }
 
 /** 独立作用域读取 slots：弹层注册/注销只重组这一层，不牵动页面内容。 */
 @Composable
-private fun TitleOverlayHostSlot(host: TitleOverlayHost) {
+internal fun TitleOverlayHostSlot(host: TitleOverlayHost) {
     Box(Modifier.fillMaxSize()) {
         host.slots.forEach { (slotKey, slot) ->
             key(slotKey) { slot.content.value?.invoke() }
@@ -846,7 +851,14 @@ private fun TitleOverlayHostSlot(host: TitleOverlayHost) {
 }
 
 @Composable
-fun TitleBarIcon(modifier: Modifier = Modifier, icon: ImageVector? = null, onBack: (() -> Unit)? = null) {
+fun TitleBarIcon(
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    onBack: (() -> Unit)? = null,
+    // 扁平分支（未开「工具栏液态玻璃」）的图标着色；默认主题红。
+    // 玻璃分支无需此参数：LiquidTopBarButton 自带 adaptiveLuminance 采样。
+    contentColor: Color? = null
+) {
     if (icon == null) return
     val glass = LocalTitleBarGlass.current
     if (glass != null) {
@@ -892,7 +904,7 @@ fun TitleBarIcon(modifier: Modifier = Modifier, icon: ImageVector? = null, onBac
                 contentDescription = null,
                 modifier = Modifier
                     .size(19.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = contentColor ?: MaterialTheme.colorScheme.primary
             )
         }
     }
@@ -912,7 +924,11 @@ fun TitleBar(
     backdrop: Backdrop,
     // 顶栏背景（模糊+渐变）与玻璃按钮的可见时机。默认与小标题同拍；
     // Base 页传入"任何滚动即出现"的状态（Nexio 式常驻顶栏），让大标题从玻璃下穿过。
-    barBackgroundVisible: State<Boolean>? = null
+    barBackgroundVisible: State<Boolean>? = null,
+    // 关闭「工具栏液态玻璃」时的返回键着色。默认仍是主题红（primary），
+    // 页面底色不是主题色的页面（如在线专辑详情的封面色底）传入自身文字色。
+    // 玻璃分支无需此参数：LiquidTopBarButton 自带 adaptiveLuminance 采样。
+    backIconTint: Color? = null
 ) {
     // 结构对照原版（D:\flamingo源码 Title.kt TitleBar），仅一处设备适配：
     // 原版外层 statusBarsHeight(54.dp) 在本机因 accompanist inset=0 只有 54dp、
@@ -1030,7 +1046,7 @@ fun TitleBar(
                                         painter = backIcon,
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.primary
+                                        tint = backIconTint ?: MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }

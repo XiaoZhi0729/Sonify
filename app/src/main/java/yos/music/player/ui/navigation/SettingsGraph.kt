@@ -2,7 +2,9 @@ package yos.music.player.ui.navigation
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.settings.Settings
 import yos.music.player.ui.pages.settings.account.KugouLogin
@@ -17,6 +19,7 @@ import yos.music.player.ui.pages.settings.others.Acknowledgements
 import yos.music.player.ui.pages.settings.performance.LyricSetting
 import yos.music.player.ui.pages.settings.performance.NotificationSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.UserInterfaceSetting
+import yos.music.player.ui.pages.settings.storage.CacheDetail
 import yos.music.player.ui.pages.settings.storage.DataStorage
 
 fun NavGraphBuilder.settingsGraph(
@@ -39,5 +42,16 @@ fun NavGraphBuilder.settingsGraph(
     composable(UI.Settings.KugouLogin) { KugouLogin(navController) }
     composable(UI.Settings.KugouVipSignIn) { KugouVipSignIn(navController) }
     composable(UI.Settings.DataStorage) { DataStorage(navController) }
+    composable(
+        route = UI.Settings.CacheDetailPattern,
+        arguments = listOf(
+            navArgument(UI.Settings.CacheDetailArg) {
+                type = NavType.StringType
+                defaultValue = "audio"
+            }
+        )
+    ) { entry ->
+        CacheDetail(navController, entry.arguments?.getString(UI.Settings.CacheDetailArg) ?: "audio")
+    }
     composable("poc_debug") { }
 }

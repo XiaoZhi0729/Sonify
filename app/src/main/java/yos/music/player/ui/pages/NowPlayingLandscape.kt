@@ -71,12 +71,15 @@ import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.models.MainViewModel
 import yos.music.player.data.models.MediaViewModel
 import yos.music.player.ui.pages.NowPlayingPage.Album
+import yos.music.player.ui.pages.NowPlayingPage.Comment
 import yos.music.player.ui.pages.NowPlayingPage.Lyric
 import yos.music.player.ui.pages.NowPlayingPage.PlayingList
+import yos.music.player.ui.pages.comments.SongCommentsPanel
 import yos.music.player.ui.widgets.YosLyricScrollState
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.kugouHash
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
@@ -98,6 +101,8 @@ import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
  * - 封面视觉正方形 = 45% 屏高，控件带 = 视觉封面 + 120dp
  * - 传输键 52/52.5dp、键间距 30dp（竖屏仍为 61/58.5dp、43dp）
  * - 内容区上 96dp / 下 44dp：下方留白不能再大，否则音量行会被 Column 挤成 0 高度
+ * - 主内容（封面/标题/控件带 + 右栏歌词·评论·队列）整体上抬 20dp，
+ *   最底部悬浮入口行（输出设备/歌词/评论/队列）留在原位
  *
  * 实现要点（避免切换时"重载"感）：
  * - 左列媒体是常驻单一实例，"居中 ↔ 左对齐"仅对容器 start padding 做动画
@@ -126,6 +131,7 @@ internal fun NowPlayingLandscape(
     onSeek: (Float) -> Unit,
     onLyrics: () -> Unit,
     onPlaylist: () -> Unit,
+    onComments: () -> Unit,
     onSlider: () -> Unit,
     onWhile: suspend () -> Unit,
     lyricState: YosLyricScrollState,
@@ -138,7 +144,9 @@ internal fun NowPlayingLandscape(
     // 避免与外壳单封面层同时画出两张图。
     albumCoverSuppressed: () -> Boolean = { false },
     // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
-    onOpenArtist: (String) -> Unit = {}
+    onOpenArtist: (String) -> Unit = {},
+    // 评论页未登录 → 去登录（由外壳在当前 Tab 内 push 登录页）
+    onOpenLogin: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -167,13 +175,15 @@ internal fun NowPlayingLandscape(
             onSeek = onSeek,
             onLyrics = onLyrics,
             onPlaylist = onPlaylist,
+            onComments = onComments,
             onSlider = onSlider,
             onWhile = onWhile,
             lyricState = lyricState,
             onControlGesture = onControlGesture,
             albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
             albumCoverSuppressed = albumCoverSuppressed,
-            onOpenArtist = onOpenArtist
+            onOpenArtist = onOpenArtist,
+            onOpenLogin = onOpenLogin
         )
         return
     }
@@ -192,6 +202,13 @@ internal fun NowPlayingLandscape(
                 .padding(top = 96.dp, bottom = 44.dp)
         ) {
             val paneWidth = maxWidth
+
+            // 平板横屏定版：封面/标题/控件带与右侧歌词·评论·队列整体上抬 20dp。
+            // 不能靠改内容区的上下 padding 实现——左列内容在内容区内「居中」、右栏
+            // 「贴内容区底部」，同一份 padding 变化会让两者移动量不同（左列只走一半）。
+            // 两块区域各自 offset 平移，尺寸与内部间距完全不变；最底部悬浮入口行在
+            // 这个 Box 之外，留在原位。
+            val contentLift = 20.dp
 
             val configuration = LocalConfiguration.current
             val screenHeight = configuration.screenHeightDp.dp
@@ -242,6 +259,8 @@ internal fun NowPlayingLandscape(
                 Modifier
                     .fillMaxSize()
                     .padding(start = mediaStartPadding)
+                    // 封面/标题/控件带整体上抬；封面 morph 上报的坐标随之同步。
+                    .offset(y = -contentLift)
             ) {
                 LandscapeMediaColumn(
                     modifier = Modifier
@@ -297,12 +316,15 @@ internal fun NowPlayingLandscape(
                     // 但歌词/队列不该跟着变高（否则整块歌词下移 20dp）：
                     // 这里把右栏的下沿钉回原来的 716dp。
                     .padding(bottom = 40.dp)
+                    // 右栏（歌词/评论/队列）与左列同步上抬；
+                    // 上抬后不得裁切——父级 Box 不裁剪，面板顶部溢出内容区 20dp 是预期的。
+                    .offset(y = -contentLift)
             ) {
                 // 从 Album 打开歌词时水平滑入；从队列切到歌词时只淡入淡出。
                 AnimatedVisibility(
                     visible = page == Lyric,
                     enter = if (previousPage.value == Album) paneSlideIn else paneFadeIn,
-                    exit = if (page == PlayingList) paneFadeOut else paneSlideOut,
+                    exit = if (page == PlayingList || page == Comment) paneFadeOut else paneSlideOut,
                     modifier = Modifier.fillMaxSize()
                 ) {
                     Lyric(
@@ -329,7 +351,7 @@ internal fun NowPlayingLandscape(
                 AnimatedVisibility(
                     visible = page == PlayingList,
                     enter = if (previousPage.value == Album) paneSlideIn else paneFadeIn,
-                    exit = if (page == Lyric) paneFadeOut else paneSlideOut,
+                    exit = if (page == Lyric || page == Comment) paneFadeOut else paneSlideOut,
                     modifier = Modifier.fillMaxSize()
                 ) {
                     PlayingList(
@@ -339,6 +361,20 @@ internal fun NowPlayingLandscape(
                         repeatModeOnChanged = { repeatMode.intValue = it },
                         thisMusicPlayingLambda = thisMusicPlayingLambda,
                         heightFraction = 1f,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // 评论：与歌词/队列同款编排（从 Album 进横滑入，页间切换只淡入淡出）
+                AnimatedVisibility(
+                    visible = page == Comment,
+                    enter = if (previousPage.value == Album) paneSlideIn else paneFadeIn,
+                    exit = if (page == Lyric || page == PlayingList) paneFadeOut else paneSlideOut,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    SongCommentsPanel(
+                        hash = thisMusicPlayingLambda()?.kugouHash(),
+                        onOpenLogin = onOpenLogin,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -388,6 +424,15 @@ internal fun NowPlayingLandscape(
                 onLyrics = onLyrics,
                 nowPage = nowPageLambda
             )
+
+            // 本地歌曲没有评论资源：入口不出现
+            if (thisMusicPlayingLambda()?.kugouHash() != null) {
+                CommentEntryButton(
+                    modifier = Modifier.width(56.dp),
+                    onComments = onComments,
+                    nowPage = nowPageLambda
+                )
+            }
 
             QueueEntryButton(
                 modifier = Modifier.width(56.dp),
@@ -685,13 +730,15 @@ private fun NowPlayingLandscapePhone(
     onSeek: (Float) -> Unit,
     onLyrics: () -> Unit,
     onPlaylist: () -> Unit,
+    onComments: () -> Unit,
     onSlider: () -> Unit,
     onWhile: suspend () -> Unit,
     lyricState: YosLyricScrollState,
     onControlGesture: (Boolean) -> Unit,
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit,
     albumCoverSuppressed: () -> Boolean,
-    onOpenArtist: (String) -> Unit = {}
+    onOpenArtist: (String) -> Unit = {},
+    onOpenLogin: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -884,6 +931,19 @@ private fun NowPlayingLandscapePhone(
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
+
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = page == Comment,
+                            enter = paneFadeIn,
+                            exit = paneFadeOut,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            SongCommentsPanel(
+                                hash = thisMusicPlayingLambda()?.kugouHash(),
+                                onOpenLogin = onOpenLogin,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
 
                     // 底部行：歌词入口 / 输出设备 / 队列入口，铺在控件带宽度内
@@ -900,6 +960,15 @@ private fun NowPlayingLandscapePhone(
                             onLyrics = onLyrics,
                             nowPage = nowPageLambda
                         )
+
+                        // 本地歌曲没有评论资源：入口不出现
+                        if (thisMusicPlayingLambda()?.kugouHash() != null) {
+                            CommentEntryButton(
+                                modifier = Modifier.width(56.dp),
+                                onComments = onComments,
+                                nowPage = nowPageLambda
+                            )
+                        }
 
                         AirPlay(fill = false)
 

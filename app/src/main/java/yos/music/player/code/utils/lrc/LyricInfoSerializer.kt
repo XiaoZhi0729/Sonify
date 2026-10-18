@@ -2,6 +2,7 @@ package yos.music.player.code.utils.lrc
 
 import androidx.media3.common.MediaItem
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 /**
  * 将当前歌词序列化为 LyricInfo 协议 JSON（写入 MediaSession 元数据 extras 的 [EXTRAS_KEY] 键），
@@ -94,9 +95,22 @@ object LyricInfoSerializer {
         return out
     }
 
+    /**
+     * 取已编码 payload 里的行级纯 LRC（`lyric` 字段），供 Vivo 车机
+     * （`ucar.media.metadata.LYRICS_WHOLE`）这类「整段歌词 + 自己按进度滚动」的消费端使用。
+     *
+     * 该字段本身即行级无翻译、无词级标签的 LRC：车机解析器对同时间戳行取最后一行作主句，
+     * 若把翻译行一并下发，外文歌的当前行会永远落在中文翻译上。
+     */
+    fun wholeLrc(payload: String?): String? {
+        if (payload.isNullOrEmpty()) return null
+        return runCatching {
+            JsonParser.parseString(payload).asJsonObject.get("lyric")?.asString
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
     /** 一行歌词的统一中间表示：行时间与文本来自 [LyricEntry.mainLyric] 非空片段拼接。 */
-    private data class LineData(
-        val timeMs: Float,
+    private data class LineData(        val timeMs: Float,
         val text: String,
         val translation: String?,
         val mainLyric: List<Pair<Float, String>>

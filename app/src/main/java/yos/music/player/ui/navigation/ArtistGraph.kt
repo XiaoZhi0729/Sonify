@@ -93,19 +93,18 @@ fun NavGraphBuilder.artistGraph(
     ) { entry ->
         val sourceArtistId = entry.arguments?.getString(UI.OnlineAlbumSourceArtistArg)
             ?.takeIf { it.isNotBlank() }
-        ArtistChildBackground(
+        // 专辑页自己负责铺底 / 文字色 / 底栏遮罩注册（底色取自专辑封面，
+        // 而不是来源歌手；sourceArtistId 只作为转场起点的兜底色）。
+        // 因此不再套 ArtistChildBackground——它按 artistId 取色，从发现页/搜索
+        // 进入时 artistId 为空，页面会完全没有底色。
+        OnlineAlbumDetail(
             navController = navController,
+            albumId = entry.arguments?.getString(UI.OnlineAlbumIdArg).orEmpty(),
+            sourceArtistId = sourceArtistId,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = this@composable,
             entryId = entry.id,
-            artistId = sourceArtistId,
             scrimTransition = scrimTransition()
-        ) {
-            OnlineAlbumDetail(
-                navController = navController,
-                albumId = entry.arguments?.getString(UI.OnlineAlbumIdArg).orEmpty(),
-                sourceArtistId = sourceArtistId,
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = this@composable
-            )
-        }
+        )
     }
 }

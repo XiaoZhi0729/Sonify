@@ -8,6 +8,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
+import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.GroupSpacerMedium
@@ -142,6 +143,27 @@ fun LyricSetting(navController: NavController) =
 
                         GroupSpacer()
 
+                        // 设备歌词：把当前行写进会话标题，供车机/蓝牙设备显示
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
+
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_bluetooth_lyric),
+                                onClick = {
+                                    SettingsLibrary.BluetoothLyricEnabled =
+                                        !SettingsLibrary.BluetoothLyricEnabled
+                                    // 关闭时立刻把通知栏/车机标题还给歌名，不等下一行歌词
+                                    if (!SettingsLibrary.BluetoothLyricEnabled) {
+                                        MediaController.clearBluetoothLyric()
+                                    }
+                                },
+                                checkedLambda = { SettingsLibrary.BluetoothLyricEnabled }
+                            )
+                        }
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_bluetooth_lyric_desc))
+
+                        GroupSpacer()
+
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_others))
 
                         RoundColumn {
@@ -154,9 +176,18 @@ fun LyricSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.LyricBlurEffect }
                             )
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_hdr_effect),
+                                onClick = {
+                                    SettingsLibrary.LyricHdrEffect =
+                                        !SettingsLibrary.LyricHdrEffect
+                                },
+                                checkedLambda = { SettingsLibrary.LyricHdrEffect }
+                            )
                         }
 
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_blur_effect_desc))
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc))
                         GroupSpacer()
                     }
                 }

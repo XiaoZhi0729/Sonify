@@ -47,6 +47,8 @@
 -keep class yos.music.player.data.objects.ArtistCachedDetail { <fields>; }
 -keep class yos.music.player.data.objects.ArtistCachedPalette { <fields>; }
 -keep class yos.music.player.data.repositories.KugouArtistDetailData { <fields>; }
+# 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
+-keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }
 
 -assumenosideeffects class android.util.Log {
     public static *** d(...);

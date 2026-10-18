@@ -58,6 +58,7 @@ import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouVipState
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.repositories.KugouVipRepository
+import yos.music.player.data.repositories.ListeningGradeTracker
 import yos.music.player.native.KugouApiService
 import yos.music.player.native.KugouLoginAccountCandidate
 import yos.music.player.native.KugouLoginException
@@ -176,6 +177,10 @@ fun KugouLogin(navController: NavController) =
                             }
 
                             GroupSpacer()
+                            // 听歌时长展示（对齐 md3Music 用户中心）：服务器累计 + 未上报，可手动重新拉取
+                            ListeningGradeSection()
+
+                            GroupSpacer()
                             RoundColumn {
                                 LabelItem(title = stringResource(id = R.string.kugou_logout)) {
                                     showLogoutConfirm = true
@@ -219,6 +224,63 @@ fun KugouLogin(navController: NavController) =
                 }
             })
     }
+
+/**
+ * 听歌时长展示（对齐 md3Music user_center_page 的等级信息行）。
+ * 首次组合时查询服务器累计时长并回灌本地基准；未上报 ≥5 分钟才显示「未上报」行。
+ */
+@Composable
+private fun ListeningGradeSection() {
+    var serverSeconds by remember { mutableStateOf<Long?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun refresh() {
+        refreshing = true
+        val json = KugouApiService.getInstance().getUserGradeInfo().getOrNull()
+        val serverDsec = json?.optJSONObject("data")?.optLong("d_sec", 0L) ?: 0L
+        if (json?.optInt("status") == 1 && json.optInt("error_code") == 0) {
+            serverSeconds = serverDsec
+            // 服务器值回灌本地基准（只升不降），未上报时长据此计算
+            ListeningGradeTracker.resyncFromServer(serverDsec)
+        }
+        refreshing = false
+    }
+
+    // 进页拉一次（切账号会因 key 变化重组重拉）
+    LaunchedEffect(KugouAccountState.userid) { refresh() }
+
+    RoundColumn {
+        DefaultItem(
+            title = stringResource(id = R.string.settings_listening_total),
+            desc = if (serverSeconds != null) formatListeningSeconds(serverSeconds!!) else null,
+            onClick = null
+        )
+        val unreported = ListeningGradeTracker.unreportedSeconds
+        if (unreported >= 300) {
+            Divider()
+            DefaultItem(
+                title = stringResource(id = R.string.settings_listening_unreported),
+                desc = formatListeningSeconds(unreported.toLong()),
+                onClick = null
+            )
+        }
+        Divider()
+        LabelItem(title = stringResource(id = R.string.settings_listening_refresh)) {
+            if (!refreshing) scope.launch { refresh() }
+        }
+    }
+}
+
+/** 秒数 → 可读时长（精确到分钟）：X天Y小时Z分 / X小时Y分 / Z分钟（对齐 md3Music）。 */
+private fun formatListeningSeconds(sec: Long): String {
+    val minutes = sec / 60
+    return when {
+        minutes >= 1440 -> "${minutes / 1440}天${(minutes % 1440) / 60}小时${minutes % 60}分"
+        minutes >= 60 -> "${minutes / 60}小时${minutes % 60}分"
+        else -> "${minutes}分钟"
+    }
+}
 
 /**
  * 登录方式分段切换（扫码 | 手机号）。
