@@ -400,8 +400,80 @@ object MediaController {
         if (from !in 0 until count || to !in 0 until count || from == to) return@withContext
         // 重排会改动"下一首"是谁，副 player 里备好的那首可能就是错的：直接作废，不赌
         CrossfadeExo.abort("queue_move")
+        // 手动重排后，之前记录的还原位置不再可信
+        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "moveQueueItem")
         controller.moveMediaItem(from, to)
+        syncQueueSnapshot()
+    }
+
+    /** 「下一首播放」插入前的队列位置：null = 新插入的副本（取消时直接移除）。 */
+    private data class PlayNextRestore(val originalIndex: Int?)
+
+    /** mediaId → 操作前位置；再次点击同一首的「下一首」时用来还原。 */
+    private val playNextRestore = mutableMapOf<String, PlayNextRestore>()
+
+    /**
+     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首，再点一次则取消并还原到
+     * 操作前的位置（原本不在队列里的则移除插入项）。
+     *
+     * 三处必须显式处理：
+     * - 随机关闭：Media3 的 shuffle order 与时间线索引互相独立，`addMediaItem(index)`
+     *   只分配时间线索引，新歌在 shuffle order 里仍是随机位置，不能保证成为"下一首"；
+     *   与项目「任何播放入口必须显式关随机」的既有约定一致。
+     * - 单曲循环改列表循环：否则当前曲播完会重播自己，违背"下一首播放"。
+     * - 先改快照再插 timeline：`syncQueueSnapshot` 用 timeline 重建值兜底会丢
+     *   duration/author（发布条目不带自有 extras），新条目必须先在快照里。
+     */
+    suspend fun playNext(item: YosMediaItem) = withContext(Dispatchers.Main) {
+        val controller = mediaControl ?: return@withContext
+        val mediaId = item.mediaId ?: return@withContext
+        if (controller.mediaItemCount == 0) {
+            // 队列为空没有"下一首"，直接起播
+            prepare(item, listOf(item))
+            return@withContext
+        }
+        // 插入会改变"下一首"是谁，副 player 预取的那首作废
+        CrossfadeExo.abort("play_next")
+        if (controller.shuffleModeEnabled) controller.shuffleModeEnabled = false
+        if (controller.repeatMode == REPEAT_MODE_ONE) controller.repeatMode = REPEAT_MODE_ALL
+        YosDiagnostics.log("SRC", "fn" to "playNext", "mediaId" to mediaId)
+
+        val currentIndex = controller.currentMediaItemIndex
+        val existingIndex = (0 until controller.mediaItemCount).firstOrNull {
+            controller.getMediaItemAt(it).mediaId == mediaId
+        }
+
+        // 已经是下一首：再点一次 = 取消，还原到操作前的位置（新插入的则移除）
+        if (existingIndex == currentIndex + 1) {
+            val restore = playNextRestore.remove(mediaId) ?: return@withContext
+            val original = restore.originalIndex
+            if (original == null) {
+                controller.removeMediaItem(existingIndex)
+            } else {
+                val to = original.coerceIn(0, controller.mediaItemCount - 1)
+                controller.moveMediaItem(existingIndex, to)
+            }
+            syncQueueSnapshot()
+            return@withContext
+        }
+
+        if (existingIndex != null && existingIndex != currentIndex) {
+            playNextRestore[mediaId] = PlayNextRestore(existingIndex)
+            // 移到当前曲之后：from<current 时当前曲会左移一位，目标位置取 current
+            val to = if (existingIndex < currentIndex) currentIndex else currentIndex + 1
+            controller.moveMediaItem(existingIndex, to)
+            syncQueueSnapshot()
+            return@withContext
+        }
+
+        // 不在队列，或就是当前曲（插副本实现"再播一次"）
+        playNextRestore[mediaId] = PlayNextRestore(null)
+        val insertIndex = (currentIndex + 1).coerceIn(0, controller.mediaItemCount)
+        val snapshot = playingMusicList.value.orEmpty().toMutableList()
+        if (insertIndex <= snapshot.size) snapshot.add(insertIndex, item)
+        playingMusicList.value = snapshot
+        controller.addMediaItem(insertIndex, item.toMediaItem())
         syncQueueSnapshot()
     }
 
@@ -413,6 +485,7 @@ object MediaController {
         val controller = mediaControl ?: return@withContext
         // 同上：删到目的那首就会突然换曲，不如退回硬切
         CrossfadeExo.abort("queue_remove")
+        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "removeQueueItems", "n" to indices.size)
         indices
             .filter { it in 0 until controller.mediaItemCount }
@@ -431,6 +504,7 @@ object MediaController {
             val currentMediaId = controller.currentMediaItem?.mediaId
             // 排序是整时线重建，副 player 手里那首与新顺序不再对应
             CrossfadeExo.abort("queue_sort")
+            playNextRestore.clear()
             YosDiagnostics.log("SRC", "fn" to "sortQueue")
             val sorted = if (descending) current.sortedWith(comparator.reversed())
             else current.sortedWith(comparator)
@@ -648,6 +722,8 @@ object MediaController {
         // 用户主动开播（点任意一首歌、恢复上次播放）：一切在途的平滑过渡作废——本功能
         // 只服务"自然播完自动进下一首"，手动路径一律硬切
         CrossfadeExo.abort("prepare")
+        // 新队列不再保留上一轮「下一首播放」的还原位置
+        playNextRestore.clear()
         // 用户显式意图同样作废跳歌锁存：不清就会把"上一轮整队列失败"的计数算到新队列上，
         // 新队列第一首一失败就直接落进"达上限"分支（真机：用户重新点歌也救不回来）
         OnlineSkipState.reset("user_prepare")

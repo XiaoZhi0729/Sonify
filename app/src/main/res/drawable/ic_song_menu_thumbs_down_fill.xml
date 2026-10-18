@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌曲菜单「已标记不感兴趣」图标（来源：hand.thumbsdown.fill.svg）。
+     原始 viewBox="212 -1746 1970 2046" 是负原点，pathData 原样保留，
+     由外层 group 平移 + 等比缩放进 24x24（24/2046，水平补 0.446 居中）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.011730176"
+        android:scaleY="0.011730176"
+        android:translateX="-2.041056"
+        android:translateY="20.480938">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M1695 -1100C1701 -1465 1405 -1741 940 -1745L805 -1746C675 -1747 579 -1737 525 -1722C447 -1703 372 -1656 372 -1561C372 -1523 382 -1494 394 -1473C402 -1461 401 -1450 388 -1445C327 -1420 275 -1361 275 -1283C275 -1237 288 -1198 311 -1170C322 -1155 320 -1142 302 -1131C257 -1105 225 -1049 225 -984C225 -937 240 -888 266 -864C283 -850 280 -840 263 -825C232 -799 212 -754 212 -697C212 -601 287 -522 386 -522H738C827 -522 886 -476 886 -402C886 -269 720 -24 720 152C720 246 779 300 858 300C929 300 964 251 1002 176C1151 -113 1349 -347 1500 -548C1628 -718 1691 -864 1695 -1100ZM2182 -1107C2182 -1403 1996 -1651 1749 -1651H1573C1753 -1520 1833 -1322 1829 -1097C1826 -847 1729 -668 1642 -560H1786C2009 -560 2182 -800 2182 -1107Z" />
+    </group>
+</vector>

@@ -11,8 +11,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import yos.music.player.code.utils.others.YosDiagnostics
+import yos.music.player.data.objects.BlacklistState
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouVipState
+import yos.music.player.data.objects.MyPlaylistsCache
 import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouUpstreamError
 
@@ -181,6 +183,9 @@ class KugouApiService private constructor() {
             // 按账号重载本地已签标记：重登同一账号立即恢复"今日已签"显示，
             // 无需等网络/重启（修复登出→重登显示"今日未签到"的 bug）
             KugouVipState.onAccountResolved(userid)
+            // 不感兴趣黑名单是账号级数据：换账号必须丢弃上一个账号的缓存
+            BlacklistState.reset()
+            MyPlaylistsCache.reset()
             // 持久化留证（logcat 会被刷掉，诊断文件不会）：本次登录/刷新有没有拿到会员凭据。
             // 这里是全部登录路径的唯一写入点，一条记录即可覆盖扫码/验证码/刷新三种来源。
             YosDiagnostics.log(
@@ -202,6 +207,8 @@ class KugouApiService private constructor() {
             // VIP 签到态同属账号身份：服务端派生态清空；本地已签日期按账号保留
             // （仅切回匿名命名空间，重登同一账号由 onAccountResolved 恢复）
             KugouVipState.clear()
+            BlacklistState.reset()
+            MyPlaylistsCache.reset()
             Log.d(TAG, "Login state cleared")
         }
 

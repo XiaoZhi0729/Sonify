@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.native.KugouApiService
+import yos.music.player.native.KugouBlacklistApi
 import yos.music.player.native.toPlainAny
 
 /**
@@ -1800,7 +1801,9 @@ object KugouRepository {
 
     /** 向任意自有歌单加歌（/playlist/tracks/add，协议 name|hash|albumId|mixsongId）。 */
     suspend fun addTracksToPlaylist(listid: String, title: String, hash: String): Result<Unit> {
-        val id = songIdentity[hash.lowercase()]
+        // songIdentityFor 会回源 MMKV：进程重启后内存表为空时仍能拿到 albumId/mixsongId，
+        // 避免退化成 0|0 导致加歌失败（与 PendingPlaylistStore.addSong 同口径）。
+        val id = songIdentityFor(hash)
         val data = "$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}"
         return KugouApiService.getInstance()
             .addPlaylistTracks(listid, data)
@@ -1813,6 +1816,15 @@ object KugouRepository {
         return KugouApiService.getInstance()
             .deletePlaylistTracks(listid, fileids)
             .map { Unit }
+    }
+
+    /**
+     * 「不感兴趣」：写入/移除酷狗内容黑名单（relationuser /v1/edit_list_items，歌曲桶 source=3）。
+     * 仅上报服务端，客户端不做本地过滤——推荐场景的排除由服务端完成（同 md3Music）。
+     */
+    suspend fun setNotInterested(hash: String, name: String, marked: Boolean): Result<Unit> {
+        val mixSongId = songIdentityFor(hash)?.mixsongId ?: 0L
+        return KugouBlacklistApi.setNotInterested(hash, name, mixSongId, marked)
     }
 
     /** 搜索结果 → 队列用 [YosMediaItem]（uri 为占位符，真实 URL 由播放器惰性解析）。 */

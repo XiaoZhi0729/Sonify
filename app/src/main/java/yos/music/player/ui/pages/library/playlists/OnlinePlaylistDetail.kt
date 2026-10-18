@@ -562,7 +562,10 @@ fun OnlinePlaylistDetail(
                     ) { index, track ->
                         key(trackKeys[index]) {
                             if (isWideScreen) {
-                                DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(track)) {
+                                DetailSongRowWide(
+                                    music = KugouRepository.toDisplayMediaItem(track),
+                                    onDelete = removeAt?.let { cb -> { cb(index) } }
+                                ) {
                                     playAt(index)
                                 }
                             } else {

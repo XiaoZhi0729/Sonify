@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌曲菜单「下一首播放」图标（来源：plus.circle.fill.svg）。
+     原始 viewBox="179 -1742 2040 2040" 是负原点，Android 视口必须从 0 起算，
+     pathData 原样保留，由外层 group 平移 + 等比缩放进 24x24（24/2040）。
+     内外两条子路径用 evenOdd 挖出加号。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.011764706"
+        android:scaleY="0.011764706"
+        android:translateX="-2.105882"
+        android:translateY="20.494118">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M1199 298C1762 298 2219 -159 2219 -722C2219 -1285 1762 -1742 1199 -1742C636 -1742 179 -1285 179 -722C179 -159 636 298 1199 298ZM1198 -245C1147 -245 1112 -282 1112 -333V-637H809C757 -637 721 -671 721 -722C721 -774 757 -810 809 -810H1112V-1113C1112 -1165 1147 -1202 1198 -1202C1250 -1202 1286 -1165 1286 -1113V-810H1590C1641 -810 1678 -774 1678 -722C1678 -671 1641 -637 1590 -637H1286V-333C1286 -281 1250 -245 1198 -245Z" />
+    </group>
+</vector>

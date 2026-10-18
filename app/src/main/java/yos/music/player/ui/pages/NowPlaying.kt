@@ -148,6 +148,7 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -239,6 +240,7 @@ import yos.music.player.ui.widgets.YosLyricViewLib
 import yos.music.player.ui.widgets.LAST_LINE_OBSTRUCTION_FRACTION
 import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.audio.MusicQualityIndicator
+import yos.music.player.ui.widgets.basic.AddToPlaylistPickerPanel
 import yos.music.player.ui.widgets.basic.FullScreenStaticCover
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
@@ -2517,7 +2519,8 @@ internal fun Lyric(
 internal fun ActionButtonsRow(
     musicPlayingLambda: () -> YosMediaItem?,
     // 外部可传共享元素 modifier：页面切换时按钮行随封面/文字一起 morph
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenArtist: (String) -> Unit = {},
 ) {
     var moreMenuOpen by remember { mutableStateOf(false) }
     // 「更多」按钮本体的窗口系边界，供玻璃弹层定位与展开方向判定。
@@ -2666,12 +2669,13 @@ internal fun ActionButtonsRow(
         visible = moreMenuOpen,
         anchorBounds = moreAnchorBounds,
         onAnchorProgress = moreFollow::onProgress,
+        onOpenArtist = onOpenArtist,
         onDismiss = { moreMenuOpen = false }
     )
 }
 
-/** 更多菜单的段落：Root = 两级都收起（只看到根列表），Speed/Sleep = 对应子面板展开。*/
-private enum class MoreSection { Root, Speed, Sleep }
+/** 更多菜单的段落：Root = 两级都收起（只看到根列表），Speed/Sleep/Playlists = 对应子面板展开。*/
+private enum class MoreSection { Root, Speed, Sleep, Playlists }
 
 /** 倍速候选（与改造前底部弹层的取值逐值一致）。*/
 private val MoreSpeedOptions = listOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0)
@@ -2709,6 +2713,7 @@ private fun NowPlayingMoreMenu(
     visible: Boolean,
     anchorBounds: IntRect,
     onAnchorProgress: (LiquidDropdownProgress) -> Unit,
+    onOpenArtist: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -2716,6 +2721,11 @@ private fun NowPlayingMoreMenu(
     val sleepRemaining = MediaController.sleepTimerRemainingSeconds.intValue
     val speedTitle = stringResource(id = R.string.nowplaying_menu_speed)
     val sleepTitle = stringResource(id = R.string.nowplaying_menu_sleep_timer)
+    // 当前曲：前往艺人 / 添加至歌单 的目标（切歌时跟随重组）
+    val currentSong = MediaController.musicPlaying.value
+    val artistName = currentSong?.artistsName?.trim().orEmpty()
+    val showArtist = artistName.isNotEmpty() && artistName != defaultArtistsName
+    val showPlaylistPicker = currentSong != null
 
     // 二级状态与行锚点提在这一层：父面板写锚点、子面板读锚点
     var section by remember { mutableStateOf(MoreSection.Root) }
@@ -2728,14 +2738,16 @@ private fun NowPlayingMoreMenu(
     }
     var speedRowBounds by remember { mutableStateOf(IntRect.Zero) }
     var sleepRowBounds by remember { mutableStateOf(IntRect.Zero) }
+    var playlistsRowBounds by remember { mutableStateOf(IntRect.Zero) }
     // 退场动画期间 section 已回到 Root，锚点与内容都得留在上一段，否则子面板会在收起
     // 途中跳到 (0,0) 或闪成另一段（Miuix 用 displayedItem 做同一件事）
     var subAnchor by remember { mutableStateOf(IntRect.Zero) }
     var displayedSection by remember { mutableStateOf(MoreSection.Root) }
-    LaunchedEffect(section, speedRowBounds, sleepRowBounds) {
+    LaunchedEffect(section, speedRowBounds, sleepRowBounds, playlistsRowBounds) {
         val next = when (section) {
             MoreSection.Speed -> speedRowBounds
             MoreSection.Sleep -> sleepRowBounds
+            MoreSection.Playlists -> playlistsRowBounds
             MoreSection.Root -> IntRect.Zero
         }
         if (next != IntRect.Zero) {
@@ -2760,6 +2772,7 @@ private fun NowPlayingMoreMenu(
 
     val speedOpen = section == MoreSection.Speed
     val sleepOpen = section == MoreSection.Sleep
+    val playlistsOpen = section == MoreSection.Playlists
 
     // ---------- 一级：两行入口 ----------
     // 不能 if (!visible) return：弹层靠常驻组合播退出动画（同 MusicQualityIndicator 的用法）
@@ -2781,11 +2794,39 @@ private fun NowPlayingMoreMenu(
                 .width(MoreMenuPanelWidth)
                 .heightIn(max = liquidDropdownHeightCap(anchorBounds))
         ) {
+            if (showArtist) {
+                LiquidDropdownRow(
+                    text = stringResource(R.string.song_menu_go_artist),
+                    selected = false,
+                    isFirst = true,
+                    showSelectedIcon = false,
+                    leadingIcon = painterResource(R.drawable.ic_song_recognition),
+                    onClick = {
+                        Vibrator.click(context)
+                        onOpenArtist(artistName)
+                        onDismiss()
+                    }
+                )
+            }
+            if (showPlaylistPicker) {
+                MoreEntryRow(
+                    title = stringResource(R.string.add_to_playlist_menu_entry),
+                    value = null,
+                    expanded = playlistsOpen,
+                    leadingIcon = painterResource(R.drawable.ic_song_menu_playlist),
+                    isFirst = !showArtist,
+                    onBounds = { playlistsRowBounds = it },
+                    onClick = {
+                        Vibrator.click(context)
+                        section = if (playlistsOpen) MoreSection.Root else MoreSection.Playlists
+                    }
+                )
+            }
             MoreEntryRow(
                 title = speedTitle,
                 value = "${currentSpeed}x",
                 expanded = speedOpen,
-                isFirst = true,
+                isFirst = !showArtist && !showPlaylistPicker,
                 onBounds = { speedRowBounds = it },
                 onClick = {
                     Vibrator.click(context)
@@ -2821,56 +2862,67 @@ private fun NowPlayingMoreMenu(
         // 宿主 slots 是 HashMap 快照、插入序不可控，靠 zIndex 显式压在父面板之上
         zIndex = 1f
     ) {
-        LiquidDropdownColumn(
-            modifier = Modifier
-                .width(MoreMenuPanelWidth)
-                .heightIn(max = liquidDropdownHeightCap(subAnchor))
-        ) {
-            if (displayedSection == MoreSection.Speed) {
-                MoreSpeedOptions.forEachIndexed { index, speed ->
+        if (displayedSection == MoreSection.Playlists) {
+            currentSong?.let { song ->
+                AddToPlaylistPickerPanel(
+                    song = song,
+                    heightCap = liquidDropdownHeightCap(subAnchor),
+                    onBack = { section = MoreSection.Root },
+                    onDismiss = onDismiss,
+                )
+            }
+        } else {
+            LiquidDropdownColumn(
+                modifier = Modifier
+                    .width(MoreMenuPanelWidth)
+                    .heightIn(max = liquidDropdownHeightCap(subAnchor))
+            ) {
+                if (displayedSection == MoreSection.Speed) {
+                    MoreSpeedOptions.forEachIndexed { index, speed ->
+                        LiquidDropdownRow(
+                            text = "${speed}x",
+                            selected = speed == currentSpeed,
+                            isFirst = index == 0,
+                            isLast = index == MoreSpeedOptions.lastIndex,
+                            onClick = {
+                                Vibrator.click(context)
+                                MediaController.applyPlaybackSpeed(speed)
+                                // 选完即收：单选菜单停在屏幕上会让用户以为没生效（同音质面板）
+                                onDismiss()
+                            }
+                        )
+                    }
+                } else {
                     LiquidDropdownRow(
-                        text = "${speed}x",
-                        selected = speed == currentSpeed,
-                        isFirst = index == 0,
-                        isLast = index == MoreSpeedOptions.lastIndex,
+                        text = stringResource(id = R.string.sleep_timer_off),
+                        selected = sleepRemaining <= 0,
+                        isFirst = true,
                         onClick = {
                             Vibrator.click(context)
-                            MediaController.applyPlaybackSpeed(speed)
-                            // 选完即收：单选菜单停在屏幕上会让用户以为没生效（同音质面板）
+                            MediaController.cancelSleepTimer()
                             onDismiss()
                         }
                     )
-                }
-            } else {
-                LiquidDropdownRow(
-                    text = stringResource(id = R.string.sleep_timer_off),
-                    selected = sleepRemaining <= 0,
-                    isFirst = true,
-                    onClick = {
-                        Vibrator.click(context)
-                        MediaController.cancelSleepTimer()
-                        onDismiss()
+                    MoreSleepOptions.forEach { minutes ->
+                        LiquidDropdownRow(
+                            text = stringResource(id = R.string.sleep_timer_minutes, minutes),
+                            selected = false,
+                            onClick = {
+                                Vibrator.click(context)
+                                MediaController.startSleepTimer(minutes)
+                                onDismiss()
+                            }
+                        )
                     }
-                )
-                MoreSleepOptions.forEach { minutes ->
-                    LiquidDropdownRow(
-                        text = stringResource(id = R.string.sleep_timer_minutes, minutes),
-                        selected = false,
-                        onClick = {
-                            Vibrator.click(context)
+                    SleepTimerSliderRow(
+                        initialMinutes = sleepPanelMinutes,
+                        onCommit = { minutes ->
                             MediaController.startSleepTimer(minutes)
                             onDismiss()
                         }
                     )
+                    SleepTimerFinishRow()
                 }
-                SleepTimerSliderRow(
-                    initialMinutes = sleepPanelMinutes,
-                    onCommit = { minutes ->
-                        MediaController.startSleepTimer(minutes)
-                        onDismiss()
-                    }
-                )
-                SleepTimerFinishRow()
             }
         }
     }
@@ -2936,6 +2988,7 @@ private fun MoreEntryRow(
     onBounds: (IntRect) -> Unit,
     isFirst: Boolean = false,
     isLast: Boolean = false,
+    leadingIcon: Painter? = null,
     onClick: () -> Unit,
 ) {
     // 尖角走比面板更快的弹簧（Miuix 的错峰：展开时箭头先到位、面板后收尾）
@@ -2955,6 +3008,7 @@ private fun MoreEntryRow(
         isFirst = isFirst,
         isLast = isLast,
         showSelectedIcon = false,
+        leadingIcon = leadingIcon,
         modifier = Modifier.onGloballyPositioned { coords ->
             val pos = coords.positionInWindow()
             val size = coords.size
@@ -3249,7 +3303,7 @@ private fun PlayingBar(
         }
 
         YosWrapper {
-            ActionButtonsRow(musicPlayingLambda, modifier = actionsModifier)
+            ActionButtonsRow(musicPlayingLambda, modifier = actionsModifier, onOpenArtist = onArtistClick)
         }
     }
 

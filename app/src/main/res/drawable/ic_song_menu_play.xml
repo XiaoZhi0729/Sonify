@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌曲菜单「播放」图标（来源：play.fill.svg）。
+     原始 viewBox="255 -1562 1493 1680" 是负原点，Android 视口必须从 0 起算，
+     故 pathData 原样保留，由外层 group 平移 + 等比缩放进 24x24：
+     scale = 24 / 1680（高为最大边），宽度缩后 21.33，水平补 1.336 居中。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.014285714"
+        android:scaleY="0.014285714"
+        android:translateX="-2.307143"
+        android:translateY="22.314286">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M255 -28C255 71 312 118 380 118C410 118 441 108 472 92L1637 -589C1720 -637 1748 -670 1748 -722C1748 -775 1720 -807 1637 -855L472 -1536C441 -1553 410 -1562 380 -1562C312 -1562 255 -1515 255 -1416Z" />
+    </group>
+</vector>

@@ -238,6 +238,7 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.BottomNavigator
+import yos.music.player.ui.widgets.basic.LocalBottomOverlayHeight
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.NavItem
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
@@ -1079,20 +1080,26 @@ class MainActivity : BaseActivity() {
                                     // 纯 65% 不透明，再在迷你条高度内渐隐到顶边为 0。
                                     bottomScrimFadeHeight = miniPlayerHeight
                                 ) {
-                                    AppTabsShell(
-                                        selectedHouse = selectedHouse.value,
-                                        homeController = homeNavController,
-                                        libraryController = libraryNavController,
-                                        searchController = searchNavController,
-                                        favoritesController = favoritesNavController,
-                                        navigator = appNavigator,
-                                        modifier = Modifier.fillMaxSize(),
-                                        probe = glassProbe
-                                    )
-                                    SharedNavHost(
-                                        navController = rootNavController,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    // 下拉的定位/高度上限要避开迷你条 + 底栏：把实测的底部
+                                    // 遮罩高度传给房子内的所有 LiquidDropdown。
+                                    CompositionLocalProvider(
+                                        LocalBottomOverlayHeight provides bottomScrimHeight
+                                    ) {
+                                        AppTabsShell(
+                                            selectedHouse = selectedHouse.value,
+                                            homeController = homeNavController,
+                                            libraryController = libraryNavController,
+                                            searchController = searchNavController,
+                                            favoritesController = favoritesNavController,
+                                            navigator = appNavigator,
+                                            modifier = Modifier.fillMaxSize(),
+                                            probe = glassProbe
+                                        )
+                                        SharedNavHost(
+                                            navController = rootNavController,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
 
                                 NavBottomVisual(

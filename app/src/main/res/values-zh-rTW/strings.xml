@@ -429,4 +429,31 @@
     <string name="nowplaying_comments_copied">已複製</string>
     <string name="song_recognition_no_sound">沒有收到聲音，請檢查麥克風後重試</string>
     <string name="nowplaying_comments_unavailable">目前歌曲暫不支援評論</string>
+    <!-- 歌曲列「加入歌單」 -->
+    <string name="add_to_playlist_menu_entry">加入歌單</string>
+    <string name="add_to_playlist_picker_title">加入歌單</string>
+    <string name="add_to_playlist_confirm_message">確定將「%1$s」加入「%2$s」？</string>
+    <string name="add_to_playlist_success">已加入「%1$s」</string>
+    <string name="add_to_playlist_failed">加入失敗，請稍後再試</string>
+    <string name="add_to_playlist_load_failed">歌單載入失敗</string>
+    <string name="add_to_playlist_loading">載入中…</string>
+    <string name="add_to_playlist_empty">暫無可用歌單</string>
+    <string name="add_to_playlist_login_required">請先登入酷狗帳號</string>
+    <string name="add_to_playlist_song_count">%1$d 首</string>
+    <string name="add_to_playlist_back">返回</string>
+    <!-- 歌曲列選單的其它動作 -->
+    <string name="song_menu_go_artist">前往藝人</string>
+    <string name="song_menu_favorite">喜愛</string>
+    <string name="song_menu_unfavorite">取消喜愛</string>
+    <string name="song_menu_play">播放</string>
+    <string name="song_menu_favorite_failed">操作失敗，請稍後再試</string>
+    <string name="song_menu_play_next">下一首</string>
+    <string name="song_menu_play_next_done">已加入下一首</string>
+    <string name="song_menu_play_next_failed">加入失敗，請稍後再試</string>
+    <string name="song_menu_not_interested">不感興趣</string>
+    <string name="song_menu_not_interested_done">已標記為不感興趣</string>
+    <string name="song_menu_not_interested_failed">標記失敗，請稍後再試</string>
+    <string name="song_menu_cancel_not_interested">取消不感興趣</string>
+    <string name="song_menu_not_interested_removed">已取消不感興趣</string>
+    <string name="song_menu_login_required">請先登入酷狗帳號</string>
 </resources>

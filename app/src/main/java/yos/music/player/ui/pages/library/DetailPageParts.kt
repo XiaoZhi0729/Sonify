@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
+import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -280,6 +281,7 @@ fun DetailPageHeader(
 @Composable
 fun DetailSongRowWide(
     music: YosMediaItem,
+    onDelete: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
     // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
@@ -287,15 +289,17 @@ fun DetailSongRowWide(
     val blocked = availability.isBlocked
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
+    val playAction: () -> Unit = {
+        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+        else itemClick()
+    }
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
             .alpha(if (blocked) 0.4f else 1f)
-            .clickable {
-                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-                else itemClick()
-            }
+            .clickable(onClick = playAction)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -346,6 +350,9 @@ fun DetailSongRowWide(
                 lineHeight = 13.sp
             )
         }
+
+        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+        SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onDelete)
     }
 }
 
@@ -383,14 +390,16 @@ fun AlbumTrackRow(
     val blocked = availability.isBlocked
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
+    val playAction: () -> Unit = {
+        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+        else itemClick()
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (blocked) 0.4f else 1f)
-            .clickable {
-                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-                else itemClick()
-            }
+            .clickable(onClick = playAction)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -409,7 +418,11 @@ fun AlbumTrackRow(
         }
         Spacer(modifier = Modifier.width(10.dp))
 
-        Column(Modifier.padding(vertical = 10.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(vertical = 10.dp)
+        ) {
             Text(
                 text = music.title ?: defaultTitle,
                 fontSize = 16.sp,
@@ -435,6 +448,9 @@ fun AlbumTrackRow(
                 }
             }
         }
+
+        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+        SongAddToPlaylistButton(music = music, onPlay = playAction)
     }
 }
 
@@ -453,15 +469,17 @@ fun AlbumTrackRowWide(
     val blocked = availability.isBlocked
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
+    val playAction: () -> Unit = {
+        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+        else itemClick()
+    }
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
             .alpha(if (blocked) 0.4f else 1f)
-            .clickable {
-                if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-                else itemClick()
-            }
+            .clickable(onClick = playAction)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -516,6 +534,9 @@ fun AlbumTrackRowWide(
                 lineHeight = 13.sp
             )
         }
+
+        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+        SongAddToPlaylistButton(music = music, onPlay = playAction)
     }
 }
 

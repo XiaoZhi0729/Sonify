@@ -27,6 +27,7 @@ import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
+import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
 import yos.music.player.ui.widgets.basic.isBlocked
 import yos.music.player.ui.widgets.basic.rememberSongAvailability
 import yos.music.player.ui.widgets.basic.handleBlockedClick
@@ -110,6 +111,11 @@ LaunchedEffect(Unit) {
     val blocked = availability.isBlocked
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
+    val playAction: () -> Unit = {
+        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
+        else itemClick()
+    }
     Row(
         modifier = Modifier
             /*.animateItem(fadeInSpec = null, fadeOutSpec = null)*/
@@ -119,14 +125,14 @@ LaunchedEffect(Unit) {
             .then(
                 when {
                     blocked -> Modifier.combinedClickable(
-                        onClick = { scope.launch { handleBlockedClick(context, music) { itemClick() } } },
+                        onClick = playAction,
                         onLongClick = onLongClick
                     )
 
                     onLongClick != null ->
-                        Modifier.combinedClickable(onClick = { itemClick() }, onLongClick = onLongClick)
+                        Modifier.combinedClickable(onClick = playAction, onLongClick = onLongClick)
 
-                    else -> Modifier.clickable { itemClick() }
+                    else -> Modifier.clickable(onClick = playAction)
                 }
             )
             .padding(horizontal = horizontalPadding),
@@ -141,7 +147,11 @@ LaunchedEffect(Unit) {
             imageQuality = ImageQuality.LOW
         )
 
-        Column(Modifier.padding(start = 16.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 16.dp)
+        ) {
             Text(
                 text = music.title ?: defaultTitle,
                 modifier = Modifier.padding(bottom = 1.dp),
@@ -160,5 +170,8 @@ LaunchedEffect(Unit) {
                 lineHeight = 13.sp,
             )
         }
+
+        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+        SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onLongClick)
     }
 }

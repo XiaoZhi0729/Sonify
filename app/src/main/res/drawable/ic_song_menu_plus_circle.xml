@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 歌曲菜单「下一首播放」未在下一首时的图标（来源：plus.circle.svg，空心）。
+     与 ic_song_menu_plus_circle_fill 同一 viewBox（179 -1742 2040 2040）与同一套
+     group 平移缩放；外圆/内圆/加号三条子路径用 evenOdd 得到空心圆 + 实心加号。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.011764706"
+        android:scaleY="0.011764706"
+        android:translateX="-2.105882"
+        android:translateY="20.494118">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M1199 298C1762 298 2219 -159 2219 -722C2219 -1285 1762 -1742 1199 -1742C636 -1742 179 -1285 179 -722C179 -159 636 298 1199 298ZM1199 128C729 128 349 -252 349 -722C349 -1192 729 -1572 1199 -1572C1669 -1572 2049 -1192 2049 -722C2049 -252 1669 128 1199 128ZM820 -640H1114V-345C1114 -295 1148 -260 1197 -260C1247 -260 1282 -294 1282 -345V-640H1577C1627 -640 1662 -673 1662 -722C1662 -772 1627 -807 1577 -807H1282V-1101C1282 -1152 1247 -1187 1197 -1187C1148 -1187 1114 -1152 1114 -1101V-807H820C769 -807 735 -772 735 -722C735 -673 769 -640 820 -640Z" />
+    </group>
+</vector>
