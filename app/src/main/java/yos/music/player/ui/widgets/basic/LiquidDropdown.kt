@@ -99,6 +99,7 @@ import yos.music.player.R
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.liquid.glassBlurScale
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -681,7 +682,8 @@ private fun LiquidDropdownContent(
                             },
                             effects = {
                                 vibrancy()
-                                blur(24.dp.toPx())
+                                // 玻璃模糊强度倍率（effects 内读取由库 observeReads 观察）
+                                blur(24.dp.toPx() * glassBlurScale)
                             },
                             highlight = { null },
                             shadow = { null },

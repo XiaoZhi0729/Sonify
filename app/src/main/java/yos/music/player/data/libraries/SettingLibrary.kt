@@ -218,6 +218,19 @@ object SettingsLibrary {
     )
 
     /**
+     * 玻璃模糊强度倍率（0f..2f，1f = 原样）。
+     *
+     * 只乘在**玻璃控件**的模糊半径上（顶栏圆钮 / 底栏容器 / 迷你播放器外壳 / 玻璃开关 /
+     * 下拉面板 / 对话框），顶部渐进模糊等背景类效果不受影响 —— 见 GlassBlurStrength.kt。
+     */
+    @Stable
+    var GlassBlurScale by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_glass_blur_scale",
+        initialValue = 1.0f
+    )
+
+    /**
      * 媒体通知-额外的媒体图标
      */
     @Stable
@@ -501,6 +514,7 @@ object SettingsLibrary {
         NowplayingBackgroundEffect = false
         NowplayingStaticFullScreenAlbum = false
         BarBlurEffect = false
+        GlassBlurScale = 1.0f
         NotificationEnableIcon = true
         NotificationSmallerIcon = false
         ListenHistory = true

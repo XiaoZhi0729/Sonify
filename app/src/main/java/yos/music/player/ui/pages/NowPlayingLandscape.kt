@@ -687,7 +687,7 @@ private fun LandscapeTitleBlock(
                 }
 
                 YosWrapper {
-                    ActionButtonsRow(thisMusicPlayingLambda)
+                    ActionButtonsRow(thisMusicPlayingLambda, onOpenArtist = onOpenArtist)
                 }
             }
         }

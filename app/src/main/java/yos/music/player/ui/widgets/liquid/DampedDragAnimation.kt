@@ -29,6 +29,9 @@ class DampedDragAnimation(
     val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
     // 独占拖动：越过 touchSlop 后消费指针，父级滚动容器不再跟着滚（开关用）。
     private val exclusiveDrag: Boolean = false,
+    // 只认领横向拖动（滚动容器里的横向滑条用）：横向越过 touchSlop 且占优才消费指针，
+    // 纵向为主的滑动原样留给父级滚动容器。优先于 exclusiveDrag。
+    private val horizontalClaim: Boolean = false,
     // 拖动被外部抢占而中止时的回调；默认与 onDragStopped 同语义（保持旧行为）。
     val onDragCancelled: DampedDragAnimation.() -> Unit = onDragStopped,
 ) {
@@ -68,7 +71,24 @@ class DampedDragAnimation(
     val velocity: Float get() = velocityAnimation.value
 
     val modifier: Modifier = Modifier.pointerInput(Unit) {
-        if (exclusiveDrag) {
+        if (horizontalClaim) {
+            claimHorizontalDragGestures(
+                onStart = { down ->
+                    onDragStarted(down.position)
+                    press()
+                },
+                onEnd = {
+                    onDragStopped()
+                    release()
+                },
+                onCancel = {
+                    onDragCancelled()
+                    release()
+                }
+            ) { dragAmount ->
+                onDrag(size, dragAmount)
+            }
+        } else if (exclusiveDrag) {
             claimDragGestures(
                 onStart = { down ->
                     onDragStarted(down.position)

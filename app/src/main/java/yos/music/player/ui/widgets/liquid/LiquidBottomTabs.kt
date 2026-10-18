@@ -314,6 +314,8 @@ fun LiquidBottomTabs(
         }
 
         // Tab 图标/文字用主题内容色（底栏已放弃自适应亮度适配）。
+        // 玻璃模糊强度倍率：只乘下面的玻璃容器分支；磨砂分支的 12dp 是"无玻璃材质"回退，不乘。
+        val glassScale = glassBlurScale
         CompositionLocalProvider(
             LocalGlassContentColor provides null
         ) {
@@ -378,7 +380,7 @@ fun LiquidBottomTabs(
                                         // 整条效果链一个开关：量它挂在 1190x208 层上到底贵不贵。
                                         if (GlassProbe.current.navContainerEffects) {
                                             vibrancy()
-                                            blur(4f.dp.toPx())
+                                            blur(4f.dp.toPx() * glassScale)
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                                 lens(16f.dp.toPx(), 32f.dp.toPx())
                                             }

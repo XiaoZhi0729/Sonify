@@ -1541,7 +1541,13 @@ class MainActivity : BaseActivity() {
                                                             // 只值 0-2ms，故运动期照留——模糊质感不丢。
                                                             val animating = shellAnimatingForDraw
                                                             if (glassProbe.shellBlur) {
-                                                                blur(4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade))
+                                                                // 玻璃模糊强度倍率：在本体量过大的组合体里改在
+                                                                // effects 内读（库对 effects 内读取走 observeReads，
+                                                                // 值变即重建 RenderEffect 链，不触发整壳重组）。
+                                                                blur(
+                                                                    4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade) *
+                                                                            yos.music.player.ui.widgets.liquid.glassBlurScale
+                                                                )
                                                             }
                                                             if (!animating) {
                                                                 vibrancy()

@@ -18,6 +18,7 @@ import yos.music.player.ui.pages.settings.others.About
 import yos.music.player.ui.pages.settings.others.Acknowledgements
 import yos.music.player.ui.pages.settings.performance.LyricSetting
 import yos.music.player.ui.pages.settings.performance.NotificationSetting
+import yos.music.player.ui.pages.settings.performance.userinterface.GlassEffectSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.UserInterfaceSetting
 import yos.music.player.ui.pages.settings.storage.CacheDetail
 import yos.music.player.ui.pages.settings.storage.DataStorage
@@ -38,6 +39,7 @@ fun NavGraphBuilder.settingsGraph(
     composable(UI.Settings.MediaCodec) { MediaCodec(navController) }
     composable(UI.Settings.LyricSetting) { LyricSetting(navController) }
     composable(UI.Settings.UserInterfaceSetting) { UserInterfaceSetting(navController) }
+    composable(UI.Settings.GlassEffectSetting) { GlassEffectSetting(navController) }
     composable(UI.Settings.NotificationSetting) { NotificationSetting(navController) }
     composable(UI.Settings.KugouLogin) { KugouLogin(navController) }
     composable(UI.Settings.KugouVipSignIn) { KugouVipSignIn(navController) }

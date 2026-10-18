@@ -293,6 +293,11 @@
     <string name="settings_performance_ui_basic">基本</string>
     <string name="settings_performance_ui_blur_effect_desc">开启液态玻璃后可能会导致性能问题</string>
     <string name="settings_performance_ui_blur_effect_title">液态玻璃效果</string>
+    <string name="settings_performance_ui_glass_effect_title">玻璃效果调节</string>
+    <string name="settings_performance_ui_glass_blur_strength">模糊强度</string>
+    <string name="settings_performance_ui_glass_blur_reset">重置为 100%</string>
+    <string name="settings_performance_ui_glass_effect_desc">只影响玻璃控件的模糊半径：工具栏按钮、底部标签栏、迷你播放器、下拉面板与对话框。顶部渐进模糊等背景类效果不受影响。</string>
+    <string name="settings_performance_ui_glass_effect_unsupported">当前系统版本不支持实时玻璃模糊（需 Android 12 及以上）。</string>
     <string name="playlist_shuffle_desc">当前正处于随机播放模式。</string>
     <string name="page_library_playlists_music_total">%d 首歌曲</string>
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album">全屏静态封面</string>

@@ -42,6 +42,7 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
+import yos.music.player.ui.widgets.liquid.glassBlurScale
 import kotlin.math.ceil
 
 /** 非自适应路径的稳定单例 onDrawBackdrop（库默认值同款）：内联 lambda 会被
@@ -85,6 +86,8 @@ fun LiquidTopBarButton(
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val isLightTheme = !isFlamingoInDarkMode()
+    // 玻璃模糊强度倍率：在组合体内读，拖动设置页滑块时这颗按钮当场跟着变
+    val glassScale = glassBlurScale
     // 自适应亮度共享设施（AdaptiveLuminanceGlass demo 同款，实现见 BackdropAdaptiveLuminance）；
     // null = 关闭或 API<31，走主题静态材质。
     val luminance = rememberAdaptiveBackdropLuminance(
@@ -185,10 +188,10 @@ fun LiquidTopBarButton(
                         if (luminance != null) {
                             val l = luminance.l()
                             adaptiveGlassColorControls(l)
-                            blur(adaptiveBlurPx(8f.dp.toPx(), l))
+                            blur(adaptiveBlurPx(8f.dp.toPx(), l) * glassScale)
                         } else {
                             vibrancy()
-                            blur(4.dp.toPx())
+                            blur(4.dp.toPx() * glassScale)
                         }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             lens(8f.dp.toPx(), 24f.dp.toPx())

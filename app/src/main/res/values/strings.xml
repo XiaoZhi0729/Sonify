@@ -293,6 +293,11 @@
     <string name="settings_performance_ui_basic">Basic</string>
     <string name="settings_performance_ui_blur_effect_desc">Enabling liquid glass may cause performance issues.</string>
     <string name="settings_performance_ui_blur_effect_title">Liquid Glass Effect</string>
+    <string name="settings_performance_ui_glass_effect_title">Glass Effect</string>
+    <string name="settings_performance_ui_glass_blur_strength">Blur Strength</string>
+    <string name="settings_performance_ui_glass_blur_reset">Reset to 100%</string>
+    <string name="settings_performance_ui_glass_effect_desc">Only the blur radius of glass controls is affected: toolbar buttons, the bottom tab bar, the mini player, dropdown panels and dialogs. Background effects such as the progressive blur at the top are not affected.</string>
+    <string name="settings_performance_ui_glass_effect_unsupported">Live glass blur is not supported on this system version (Android 12 or later required).</string>
     <string name="playlist_shuffle_desc">Currently in shuffle play mode.</string>
     <string name="page_library_playlists_music_total">%d Songs</string>
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album">Static Fullscreen Cover</string>

@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.UI
+import yos.music.player.ui.toUI
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.GroupSpacerMedium
@@ -73,6 +75,15 @@ fun UserInterfaceSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.BarBlurEffect }
                             )
+
+                            Divider()
+
+                            // 玻璃模糊强度倍率调节页（横幅预览 + 滑块）
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_performance_ui_glass_effect_title)
+                            ) {
+                                navController.toUI(UI.Settings.GlassEffectSetting)
+                            }
                         }
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_blur_effect_desc))
 
