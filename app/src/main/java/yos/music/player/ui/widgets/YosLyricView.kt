@@ -114,6 +114,7 @@ import yos.music.player.code.utils.lrc.LyricLayoutSpec
 import yos.music.player.code.utils.lrc.LyricPreparedCache
 import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.code.utils.lrc.buildSyncedLyrics
+import yos.music.player.code.utils.lrc.lyricListStateKey
 import yos.music.player.code.utils.lrc.lyricMainTextStyle
 import yos.music.player.code.utils.lrc.lyricRenderKey
 import yos.music.player.code.utils.others.Vibrator
@@ -303,12 +304,14 @@ fun YosLyricViewLib(
                 val preparedLyrics = remember(cacheKey) {
                     LyricPreparedCache.preparedFor(cacheKey)
                 }
-                // 列表状态缓存：同一首歌切页回来直接复用，不再从顶部滚一次
-                val listState = remember(cacheKey) {
-                    LyricPreparedCache.listStateFor(cacheKey) ?: LyricsLazyListState()
+                // 列表状态缓存：同一首歌切页回来直接复用，不再从顶部滚一次。
+                // 键只含歌曲与栏宽、不含字号/字重：改样式不该把歌词弹回顶部重滚。
+                val listStateKey = lyricListStateKey(mediaIdKey, layoutWidthPx / localDensity.density)
+                val listState = remember(listStateKey) {
+                    LyricPreparedCache.listStateFor(listStateKey) ?: LyricsLazyListState()
                 }
                 LaunchedEffect(cacheKey) {
-                    LyricPreparedCache.putListState(cacheKey, listState)
+                    LyricPreparedCache.putListState(listStateKey, listState)
                     // 歌词页已接管这首歌：放弃同键后台预热，避免两边重复测量
                     LyricRenderWarmup.markLive(cacheKey)
                     // 记录真实排版宽度，供下次启动时的预热估算（按横竖屏分别保存）

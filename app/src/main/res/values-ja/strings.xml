@@ -213,7 +213,6 @@
     <string name="settings_performance_ui_basic">基本</string>
     <string name="settings_performance_ui_blur_effect_desc">リキッドグラスを有効にすると、パフォーマンスに問題が発生する可能性があります。</string>
     <string name="settings_performance_ui_blur_effect_title">リキッドグラス効果</string>
-    <string name="settings_performance_lyric_style_font_weight_desc">設定後、アプリを再起動する必要があります。</string>
     <string name="playlist_shuffle_desc">現在シャッフル再生モードです。</string>
     <string name="page_library_playlists_music_total">%d 曲</string>
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album">全画面静的カバー</string>

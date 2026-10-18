@@ -4,11 +4,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.GroupSpacerMedium
@@ -22,6 +24,9 @@ import yos.music.player.ui.widgets.basic.Title
 @Composable
 fun LyricSetting(navController: NavController) =
     SettingBackground {
+        // 样式改动即时生效：排版缓存键已含字重/字号/行平衡，这里按当前曲把新键提前预热，
+        // 回到歌词页直接命中，不会走冷排版（空一帧/闪一下）。
+        val context = LocalContext.current
         Title(title = stringResource(id = R.string.settings_performance_lyric_title),
             onBack = {
                 navController.popBackStack()
@@ -36,7 +41,6 @@ fun LyricSetting(navController: NavController) =
                         RoundColumn {
                             SelectItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_style_font_weight),
-                                // desc = stringResource(id = R.string.settings_performance_lyric_style_font_weight_desc),
                                 items = listOf(
                                     "Thin",
                                     "ExtraLight",
@@ -51,10 +55,10 @@ fun LyricSetting(navController: NavController) =
                                 value = { SettingsLibrary.LyricFontWeight },
                                 onValueChange = {
                                     SettingsLibrary.LyricFontWeight = it
+                                    LyricRenderWarmup.onRenderStyleChanged(context)
                                 }
                             )
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_style_font_weight_desc))
 
                         GroupSpacerMedium()
 
@@ -80,6 +84,7 @@ fun LyricSetting(navController: NavController) =
                                         "120%" -> 1.2f
                                         else -> 1.0f
                                     }
+                                    LyricRenderWarmup.onRenderStyleChanged(context)
                                 }
                             )
                         }
@@ -93,6 +98,7 @@ fun LyricSetting(navController: NavController) =
                                 onClick = {
                                     SettingsLibrary.LyricLineBalance =
                                         !SettingsLibrary.LyricLineBalance
+                                    LyricRenderWarmup.onRenderStyleChanged(context)
                                 },
                                 checkedLambda = { SettingsLibrary.LyricLineBalance }
                             )

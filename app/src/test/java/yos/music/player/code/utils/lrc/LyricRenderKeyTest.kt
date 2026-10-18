@@ -79,4 +79,15 @@ class LyricRenderKeyTest {
         assertNotEquals(key(mediaIdKey = "kugou-online-a"), key(mediaIdKey = "kugou-online-b"))
         assertNotEquals(key(entriesSize = 42), key(entriesSize = 43))
     }
+
+    @Test
+    fun listStateKeyIgnoresTypography() {
+        // 滚动状态键只有「歌曲 + 栏宽」两个维度：改字号/字重/行平衡时键不变，
+        // 列表状态才不会被重建（否则歌词会跳回顶部重滚）。
+        val base = lyricListStateKey("kugou-online-abc", 899.4f)
+        assertEquals(base, lyricListStateKey("kugou-online-abc", 899.0f))
+        // 换歌、换栏宽（竖屏整页 vs 横屏右栏）必须分开
+        assertNotEquals(base, lyricListStateKey("kugou-online-def", 899.4f))
+        assertNotEquals(base, lyricListStateKey("kugou-online-abc", 400f))
+    }
 }

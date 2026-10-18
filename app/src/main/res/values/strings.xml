@@ -293,7 +293,6 @@
     <string name="settings_performance_ui_basic">Basic</string>
     <string name="settings_performance_ui_blur_effect_desc">Enabling liquid glass may cause performance issues.</string>
     <string name="settings_performance_ui_blur_effect_title">Liquid Glass Effect</string>
-    <string name="settings_performance_lyric_style_font_weight_desc">The application needs to be restarted for the settings to take effect.</string>
     <string name="playlist_shuffle_desc">Currently in shuffle play mode.</string>
     <string name="page_library_playlists_music_total">%d Songs</string>
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album">Static Fullscreen Cover</string>

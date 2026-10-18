@@ -213,7 +213,6 @@
     <string name="settings_performance_ui_basic">基本</string>
     <string name="settings_performance_ui_blur_effect_desc">開啟液態玻璃後可能會導致性能問題</string>
     <string name="settings_performance_ui_blur_effect_title">液態玻璃效果</string>
-    <string name="settings_performance_lyric_style_font_weight_desc">設置後需要重啟應用生效。</string>
     <string name="playlist_shuffle_desc">當前正處於隨機播放模式。</string>
     <string name="page_library_playlists_music_total">%d 首歌曲</string>
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album">全螢幕靜態封面</string>

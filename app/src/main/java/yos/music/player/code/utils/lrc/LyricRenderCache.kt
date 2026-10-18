@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.objects.MediaViewModelObject
 import kotlin.math.roundToInt
 
 /** 主行字号（sp）。样式构造与预热共用同源常量。 */
@@ -186,6 +187,19 @@ fun lyricRenderKey(
     append('|').append(entriesSize)
     append('|').append((systemFontScale * 100).roundToInt())
 }
+
+/**
+ * 歌词列表滚动状态的缓存键。
+ *
+ * 与排版键（[lyricRenderKey]）刻意分开：滚动位置只跟「哪首歌 + 多宽的一栏」有关，
+ * 与字号/字重/行平衡无关。若沿用排版键，改一次字重就会新建一个 [LyricsLazyListState]，
+ * 歌词会跳回顶部再滚回来——看起来像重载，而不是换样式。
+ *
+ * 宽度必须留在键里：竖屏整页与横屏右栏是两个不同的列表，共用一个 LazyListState
+ * 会在交接时丢手势（见 YosLyricView 里 LazyListState 单归属的说明）。
+ */
+fun lyricListStateKey(mediaIdKey: String, layoutWidthDp: Float): String =
+    "$mediaIdKey|${layoutWidthDp.roundToInt()}"
 
 /**
  * 跨页面切换保留的歌词排版结果：歌词页被销毁后回来直接复用，不重排、不重滚。
@@ -401,6 +415,26 @@ object LyricRenderWarmup {
                 jobKey = null
             }
         }
+    }
+
+    /**
+     * 歌词排版样式（字重/字号/行平衡）改变后，按当前曲把新键提前预热。
+     *
+     * 缓存键本身已含这些设置（见 [lyricRenderKey]），这里只是把新键的排版在用户回到
+     * 歌词页之前算好，避免每次改样式都要走一次冷排版（空一帧 / 闪一下 / 卡一下）。
+     * 没有正在显示的歌词时直接跳过：切歌后发布歌词时会用当时的设置重新预热。
+     */
+    fun onRenderStyleChanged(context: Context?) {
+        val mediaIdKey = MediaViewModelObject.lyricMediaId.value ?: return
+        val entries = MediaViewModelObject.lrcEntries.value
+        if (entries.isEmpty()) return
+        onLyricsPublished(
+            context = context,
+            mediaIdKey = mediaIdKey,
+            entries = entries,
+            otherSideForLines = MediaViewModelObject.otherSideForLines.toList(),
+            reason = "style_changed",
+        )
     }
 
     /** 歌词页开始组合这个键：放弃同键预热，避免两边重复测量。 */
