@@ -652,8 +652,7 @@ fun ArtistDetail(
         val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakeBlurPx = maxBlurPx * bakeScale
         val bakeCacheKey = remember(avatarUrl, heroAspect, edgeReflection, bakeW, bakePhotoH, bakeBandH) {
-            // 配方版本进键：着色器/渐隐算法变了必须换键，否则磁盘里的旧烘焙图永远复用
-            avatarUrl?.let { "v$ArtistHeroBakeRecipeVersion|$it|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}" }
+            avatarUrl?.let { "$it|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}" }
         }
         // 烘焙位图按头像 URL 记忆（不含几何尺寸）：旋转等尺寸变化触发重烘焙期间保留旧图
         // 继续显示——回到同方向后旧图与新盒子几何一致，交换逐像素相同完全无感；烘焙失败也

@@ -19,7 +19,8 @@ import kotlin.math.roundToInt
 /**
  * 艺人页 Hero 倒影配方（Apple Music 式头像→提取色过渡）：
  * 照片底部 [ArtistReflectionFraction] 上下镜像紧贴照片下边（像素级无缝），
- * 倒影不透明度自上而下 100% → 0，且与模糊共用同一条过渡路径（同起点、同终点、同 t² 节奏）。
+ * 倒影不透明度自上而下 100% → [ArtistReflectionMinAlpha]，模糊「由下至上逐渐清晰」
+ * （倒影底最糊），且模糊向上压进真实照片下缘 [ArtistReflectionPhotoOverlapFraction]。
  *
  * 模糊引擎与顶栏同源：[ArtistHeroReflectionShader] 即 [yos.music.player.ui.widgets.basic]
  * TitleBarProgressiveBlur 的 32 点黄金角抖动多重采样 AGSL 渐进模糊（半径沿 y 以 t² 递增），
@@ -31,37 +32,29 @@ import kotlin.math.roundToInt
  */
 const val ArtistReflectionFraction = 0.5f
 
-/** 模糊与渐隐共用路径的起点：在照片底边之上、占倒影带高的比例（越大过渡越长）。 */
+/** 模糊起点在照片底边之上、占倒影带高的比例（越大渐进路径越长）。 */
 const val ArtistReflectionPhotoOverlapFraction = 0.8f
+
+/** 倒影带底部的不透明度（顶部恒 100%，向下线性降到此值）。 */
+const val ArtistReflectionMinAlpha = 0.2f
 
 /** 倒影带底部（最糊处）的模糊半径，烘焙时换算成像素。 */
 const val ArtistReflectionMaxBlurDp = 60f
-
-/**
- * 烘焙配方版本，必须拼进调用侧的缓存键（[yos.music.player.code.utils.artist.HeroBakeCache]）。
- * 改动着色器/渐隐/几何公式后 +1：磁盘缓存的键不含任何算法指纹，不换版会让旧的
- * 已烘焙 PNG 被无限期复用，等于这次修复在回访用户身上不可见。
- * v2：带内渐隐从着色器移到读回后的 DST_IN（硬件路径输出不透明，旧图带尾为实色）。
- * v3：渐隐与渐进模糊对齐到同一条路径（原先是带内 1→0.2 再 0.2→0 的两段式）。
- */
-const val ArtistHeroBakeRecipeVersion = 3
 
 /** 金字塔降级模糊的分条数（仅 API < 33 回退分支使用）。 */
 private const val FallbackStrips = 32
 
 /**
  * 32 点黄金角抖动多重采样渐进模糊（移植自 TitleBarProgressiveBlur，去掉
- * tint/presence）。半径自 blurStart（照片下缘上方）向带底以 t² 递增：接缝处近似 0。
- * 采样坐标 clamp 在图层内：输入出界是透明像素，不 clamp 会在边缘出现黑边。
+ * tint/presence——倒影深处不透明度已降到 20%）。半径自 blurStart（照片下缘上方）
+ * 向带底以 t² 递增：接缝处近似 0。采样坐标 clamp 在图层内：输入出界是透明像素，
+ * 不 clamp 会在边缘出现黑边。
  *
  * [edgeMode]（uniform）：手机为 0——带内画的是照片的**镜像**（上下翻转的同一张图），
  * 与照片在接缝两侧内容相同，过渡天然无痕；平板为 1——带内不画镜像（否则正方形 hero
  * 会把下半张人脸翻转贴上来，观感像第二张脸），改为把采样 y 夹在照片底边之内，
- * 于是带内是「照片底边纵向延展」的模糊底色，再沿同一条路径溶入提取色。
- * 渐隐**不在着色器里做**：RenderEffect 的输出会合成进 ImageReader 的不透明硬件缓冲，
- * alpha 被固化成 255，带尾变成不透明实色（平板正方形 hero 上就是一条与提取色硬分割的
- * 纯黑带）。着色器只负责采样与模糊，渐隐在 [applyReflectionFade] 里用 DST_IN 打在
- * 读回后的位图上，且与这里 blurStart → bandBottom 的路径逐点对齐。
+ * 于是带内是「照片底边纵向延展」的模糊底色，再按同一条 fade 曲线溶入提取色。
+ * 不透明度：照片区恒 1；带内 100% → minAlpha 线性，乘在（预乘的）颜色上。
  */
 const val ArtistHeroReflectionShader = """
 uniform shader content;
@@ -70,6 +63,7 @@ uniform float photoBottom;
 uniform float bandBottom;
 uniform float blurStart;
 uniform float maxRadius;
+uniform float minAlpha;
 uniform float edgeMode;
 
 float hash12(float2 p) {
@@ -113,7 +107,15 @@ half4 main(float2 coord) {
         }
         color = wsum < 0.0001 ? content.eval(sampleCoord(coord, bounds, clampTop)) : sum / wsum;
     }
-    return color;
+    float fade = 1.0;
+    if (coord.y > photoBottom) {
+        float t = clamp((coord.y - photoBottom) / max(bandBottom - photoBottom, 1.0), 0.0, 1.0);
+        // 先按 100% → minAlpha 走完前 70% 带高，最后 30% 平滑收敛到 0：
+        // 带底与实色提取色之间不能留硬边
+        float head = mix(1.0, minAlpha, clamp(t / 0.7, 0.0, 1.0));
+        fade = head * (1.0 - smoothstep(0.7, 1.0, t));
+    }
+    return color * fade;
 }
 """
 
@@ -212,9 +214,6 @@ private fun drawEdgeExtendedBand(
  * 下部 [bandHeightPx] 倒影带）。[shader] 非 null 且 API≥33 走 AGSL 真渐进模糊
  * （HardwareRenderer 离屏渲染，质量与顶栏同源）；否则退化为金字塔降采样-回放
  * 分条模糊（近似质量，仅低版本回退）。必须在后台线程调用。
- *
- * 带内渐隐统一在模糊之后由 [applyReflectionFade] 打在位图 alpha 上——硬件路径的
- * RenderEffect 输出只有不透明缓冲，着色器里的 alpha 会被丢弃（见 [ArtistHeroReflectionShader]）。
  */
 fun bakeHeroReflection(
     src: Bitmap,
@@ -225,59 +224,15 @@ fun bakeHeroReflection(
     shader: RuntimeShader?,
     edgeReflection: Boolean = false
 ): Bitmap {
-    if (shader != null && Build.VERSION.SDK_INT >= 33) {
-        // 渐隐失败（硬件位图无法复制）时整条硬件结果作废，回落到能保留 alpha 的软件路径
-        val faded = runCatching {
-            val hardware = bakeWithHardwareRenderer(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, shader, edgeReflection)
-            applyReflectionFade(hardware, photoHeightPx, bandHeightPx)
-        }.getOrNull()
-        if (faded != null) return faded
-        android.util.Log.w("ArtistDetail", "hero reflection: hardware bake/fade failed, falling back to pyramid blur")
-    }
-    val pyramid = bakeWithPyramidBlur(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, edgeReflection)
-    return applyReflectionFade(pyramid, photoHeightPx, bandHeightPx) ?: pyramid
-}
-
-/**
- * 带内渐隐：与渐进模糊**共用同一条路径**——起点同为 [ArtistReflectionPhotoOverlapFraction]
- * 处的 blurStart（压在照片下缘之上），终点同为带底；进度同样按 t² 增长。
- * 于是「模糊增长」与「溶入提取色」两条过渡的起止位置与节奏完全一致，不会出现
- * 模糊已经在照片下半部铺开、颜色却要等到照片底边才开始接管的错位。
- *
- * 用 DST_IN 直接打在位图 alpha 上（预乘语义下 SrcOver 到页面底色恰好是
- * 「照片色 → 提取色」的线性过渡）。位图不可变时先复制一份再打；复制不出来返回 null 让调用方回落。
- */
-private fun applyReflectionFade(source: Bitmap, photoHeightPx: Int, bandHeightPx: Int): Bitmap? {
     val total = photoHeightPx + bandHeightPx
-    if (bandHeightPx <= 0 || photoHeightPx <= 0) return source
-    val out = if (source.isMutable) source else {
-        val copy = runCatching { source.copy(Bitmap.Config.ARGB_8888, true) }.getOrNull()
-            ?: return null
-        runCatching { source.recycle() }
-        copy
+    if (shader != null && Build.VERSION.SDK_INT >= 33) {
+        return runCatching {
+            bakeWithHardwareRenderer(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, shader, edgeReflection)
+        }.getOrElse {
+            bakeWithPyramidBlur(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, edgeReflection)
+        }
     }
-    val start = photoHeightPx - bandHeightPx * ArtistReflectionPhotoOverlapFraction
-    // t² 曲线按 12 段折线近似：每段内的线性插值误差 < 1/255，肉眼不可见
-    val steps = 12
-    val colors = IntArray(steps + 1)
-    val positions = FloatArray(steps + 1)
-    for (i in 0..steps) {
-        val t = i.toFloat() / steps
-        val a = ((1f - t * t) * 255f).roundToInt().coerceIn(0, 255)
-        colors[i] = (a shl 24) or 0x00FFFFFF
-        positions[i] = t
-    }
-    val canvas = Canvas(out)
-    val fade = Paint(Paint.ANTI_ALIAS_FLAG)
-    fade.shader = android.graphics.LinearGradient(
-        0f, start, 0f, total.toFloat(),
-        colors, positions,
-        android.graphics.Shader.TileMode.CLAMP
-    )
-    fade.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
-    canvas.drawRect(0f, start, out.width.toFloat(), total.toFloat(), fade)
-    fade.xfermode = null
-    return out
+    return bakeWithPyramidBlur(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, edgeReflection)
 }
 
 /**
@@ -300,6 +255,7 @@ fun newArtistHeroReflectionShader(
             setFloatUniform("bandBottom", (photoHeightPx + bandHeightPx).toFloat())
             setFloatUniform("blurStart", blurStart)
             setFloatUniform("maxRadius", maxBlurRadiusPx)
+            setFloatUniform("minAlpha", ArtistReflectionMinAlpha)
             setFloatUniform("edgeMode", if (edgeReflection) 1f else 0f)
         }
     }.getOrNull()
@@ -307,11 +263,8 @@ fun newArtistHeroReflectionShader(
 
 /**
  * RenderNode 录制「照片+镜像」→ 挂 AGSL RenderEffect → HardwareRenderer 渲进
- * ImageReader 的硬件缓冲 → 回读成可变软件位图。整条链路与系统模糊材质同一实现，
+ * ImageReader 的硬件缓冲 → wrap 成硬件位图。整条链路与系统模糊材质同一实现，
  * RenderEffect 真实作用于像素内容（与 Paint.maskFilter 的掩码语义完全不同）。
- *
- * 返回软件位图而非硬件位图：着色器算出的 alpha 在合成进不透明缓冲时会被丢弃，
- * 所以渐隐必须由调用方在位图 alpha 上补（见 [applyReflectionFade]），而硬件位图不可写。
  */
 private fun bakeWithHardwareRenderer(
     src: Bitmap,
@@ -362,13 +315,8 @@ private fun bakeWithHardwareRenderer(
             ?: throw IllegalStateException("hero bake: no image from HardwareRenderer")
         val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, ColorSpace.get(ColorSpace.Named.SRGB))
             ?: throw IllegalStateException("hero bake: wrapHardwareBuffer failed")
-        // 必须在 image.close() 之前回读成可变软件位图：后续 DST_IN 渐隐要写入 alpha，
-        // 且硬件缓冲释放后再复制会失败。复制只做一次（这里），applyReflectionFade 原地打。
-        val software = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-            ?: throw IllegalStateException("hero bake: copy to ARGB_8888 failed")
-        bitmap.recycle()
         image.close()
-        return software
+        return bitmap
     } finally {
         renderer.setSurface(null)
         renderer.destroy()
@@ -440,6 +388,19 @@ private fun bakeWithPyramidBlur(
     }
     levelBitmaps.forEach { it?.recycle() }
     base.recycle()
-    // 带内渐隐由 bakeHeroReflection 末尾统一施加（见 applyReflectionFade）
+
+    // 不透明度：照片区恒 1；倒影带先 1 → minAlpha（前 70% 带高），末 30% 收敛到 0，
+    // 与实色提取色无硬边（与 AGSL 主路径的 fade 曲线一致）
+    val fade = Paint(Paint.ANTI_ALIAS_FLAG)
+    val minA = (ArtistReflectionMinAlpha * 255f).roundToInt()
+    fade.shader = android.graphics.LinearGradient(
+        0f, photoHeightPx.toFloat(), 0f, total.toFloat(),
+        intArrayOf(0xFFFFFFFF.toInt(), (minA shl 24) or 0x00FFFFFF, 0x00FFFFFF),
+        floatArrayOf(0f, 0.7f, 1f),
+        android.graphics.Shader.TileMode.CLAMP
+    )
+    fade.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+    canvas.drawRect(0f, photoHeightPx.toFloat(), widthPx.toFloat(), total.toFloat(), fade)
+    fade.xfermode = null
     return out
 }

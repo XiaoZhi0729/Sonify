@@ -47,27 +47,16 @@ internal object HeroBakeCache {
         synchronized(this) { mem[key]?.let { return it } }
         val f = fileFor(context, key)
         if (!f.isFile) return null
-        val decoded = runCatching { BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() }.getOrNull()
-        if (decoded == null) {
-            // 半截/损坏的 PNG（写入期被杀）会永久占用一个键：每次都解码失败又不被淘汰
-            runCatching { f.delete() }
-            return null
-        }
-        return decoded.also { synchronized(this) { mem[key] = it } }
+        return runCatching { BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() }
+            .getOrNull()
+            ?.also { synchronized(this) { mem[key] = it } }
     }
 
     /** 写内存 + 落盘 PNG（落盘为文件 IO，建议在 IO 线程调用）。 */
     fun put(context: Context, key: String, bitmap: Bitmap) {
         synchronized(this) { mem[key] = bitmap.asImageBitmap() }
         runCatching {
-            // 先写临时文件再 rename：直接覆盖目标文件时被杀会留下半截 PNG
-            val target = fileFor(context, key)
-            val tmp = java.io.File(target.parentFile, target.name + ".tmp")
-            tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            if (!tmp.renameTo(target)) {
-                target.delete()
-                if (!tmp.renameTo(target)) tmp.delete()
-            }
+            fileFor(context, key).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             trim(context)
         }
     }
