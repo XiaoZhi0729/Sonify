@@ -107,6 +107,10 @@ private val AddToPlaylistFadeSpec = tween<Float>(180, easing = FastOutSlowInEasi
 
 private enum class AddToPlaylistPage { Actions, Playlists }
 
+private class SongMenuAnchor {
+    var bounds: IntRect = IntRect.Zero
+}
+
 /**
  * 歌单选择项：服务端歌单用 listid/gid 作 key；「创建中」歌单用 localId 作 key 并把
  * [pendingLocalId] 一并带出去，加歌时走挂起队列而不是服务端直调。
@@ -143,27 +147,28 @@ fun SongAddToPlaylistButton(
     // 锚点仍由外层未变换的 Box 捕获，变换只作用在内层图标。
     val follow = rememberLiquidDropdownFollowState()
 
+    var expanded by remember { mutableStateOf(false) }
+    var retainedForExit by remember { mutableStateOf(false) }
+    val menuActive = expanded || retainedForExit
     val artistName = music.artistsList?.firstOrNull()?.trim().orEmpty()
     val artistNavigator = LocalArtistNavigator.current
     val canOpenArtist = artistNavigator != null &&
         artistName.isNotEmpty() && artistName != defaultArtistsName
-    // 以下状态都读在调用方作用域：弹层 content 注册在宿主的独立组合树里，
-    // 在 lambda 内读 State 不会触发宿主重组。
-    val isFavorite = FavoriteRepository.isFavorite(music)
-    val notInterested = BlacklistState.isMarked(hash)
-    // 「下一首播放」状态：这首歌是否已经排在当前曲之后（playingMusicList 与 timeline 同序）
-    val queue = MediaController.playingMusicList.value.orEmpty()
-    val currentIndex = queue.indexOfFirst {
-        it.mediaId == MediaController.musicPlaying.value?.mediaId
-    }
-    val isNextInQueue = currentIndex >= 0 &&
-        currentIndex + 1 < queue.size &&
-        queue[currentIndex + 1].mediaId == music.mediaId
+    // 宿主使用独立组合树；状态在菜单存活期间由调用方读取后传入。
+    val isFavorite = menuActive && FavoriteRepository.isFavorite(music)
+    val notInterested = menuActive && BlacklistState.isMarked(hash)
+    val isNextInQueue = if (menuActive) {
+        val queue = MediaController.playingMusicList.value.orEmpty()
+        val currentMediaId = MediaController.musicPlaying.value?.mediaId
+        val currentIndex = queue.indexOfFirst { it.mediaId == currentMediaId }
+        currentIndex >= 0 && currentIndex + 1 < queue.size &&
+            queue[currentIndex + 1].mediaId == music.mediaId
+    } else false
 
-    var expanded by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(AddToPlaylistPage.Actions) }
+    val anchor = remember { SongMenuAnchor() }
     var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
-    val heightCap = rememberAddToPlaylistHeightCap(anchorBounds)
+    val heightCap = if (menuActive) rememberAddToPlaylistHeightCap(anchorBounds) else 290.dp
 
     // 打开菜单时后台加载黑名单状态（歌单列表由面板自己按需加载）
     LaunchedEffect(expanded) {
@@ -175,12 +180,14 @@ fun SongAddToPlaylistButton(
             .size(40.dp)
             .onGloballyPositioned { coords ->
                 val pos = coords.positionInWindow()
-                anchorBounds = IntRect(
+                val bounds = IntRect(
                     left = pos.x.toInt(),
                     top = pos.y.toInt(),
                     right = pos.x.toInt() + coords.size.width,
                     bottom = pos.y.toInt() + coords.size.height,
                 )
+                anchor.bounds = bounds
+                if (menuActive) anchorBounds = bounds
             },
         contentAlignment = Alignment.Center
     ) {
@@ -198,6 +205,8 @@ fun SongAddToPlaylistButton(
                 ) {
                     // 每次打开都回到一级页，避免上次停在歌单列表
                     page = AddToPlaylistPage.Actions
+                    anchorBounds = anchor.bounds
+                    retainedForExit = true
                     expanded = true
                 },
             contentAlignment = Alignment.Center
@@ -214,6 +223,7 @@ fun SongAddToPlaylistButton(
             expanded = expanded,
             anchorBounds = anchorBounds,
             onDismissRequest = { expanded = false },
+            onDismissFinished = { retainedForExit = false },
             surfaceAlpha = 0.6f,
             backdrop = LocalTitlePageBackdrop.current,
             onFractionProgress = follow::onProgress,

@@ -327,20 +327,31 @@ fun LiquidDropdownLayout(
     onFractionProgress: ((LiquidDropdownProgress) -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
+    var retainedForExit by remember { mutableStateOf(false) }
+    val currentExpanded by rememberUpdatedState(expanded)
+    val currentOnDismissFinished by rememberUpdatedState(onDismissFinished)
+    SideEffect {
+        if (expanded) retainedForExit = true
+    }
+    if (!expanded && !retainedForExit) return
+
+    val finishDismiss: () -> Unit = {
+        if (!currentExpanded) {
+            retainedForExit = false
+            currentOnDismissFinished()
+        }
+    }
     val host = LocalTitleOverlayHost.current
     if (host != null) {
-        // 同窗口渲染（首选）：弹层挂在 Title 页根 Box 顶层，与页面同窗口同帧，
-        // 展开动画与 Nexio 的 LaunchedEffect(show) 同帧起跑。
-        // 注册必须在 SideEffect（apply 阶段）写入——组合期写宿主状态不会触发宿主重组。
-        // 无条件常驻注册（关闭时 body 自渲染为空），退出动画期间内容不会被卸载。
-        val slotKey = remember { Any() }
+        // 保留宿主内容直到退出动画完成，关闭态不占用 slot 或独立窗口。
+        val slotKey = remember(host) { Any() }
         SideEffect {
             host.set(slotKey) {
                 LiquidDropdownBody(
                     expanded = expanded,
                     anchorBounds = anchorBounds,
                     onDismissRequest = onDismissRequest,
-                    onDismissFinished = onDismissFinished,
+                    onDismissFinished = finishDismiss,
                     backdrop = backdrop,
                     alignCenterHorizontally = alignCenterHorizontally,
                     surfaceAlpha = surfaceAlpha,
@@ -363,7 +374,7 @@ fun LiquidDropdownLayout(
                 expanded = expanded,
                 anchorBounds = anchorBounds,
                 onDismissRequest = onDismissRequest,
-                onDismissFinished = onDismissFinished,
+                onDismissFinished = finishDismiss,
                 backdrop = backdrop,
                 alignCenterHorizontally = alignCenterHorizontally,
                 surfaceAlpha = surfaceAlpha,
@@ -419,7 +430,10 @@ private fun LiquidDropdownBody(
             launch { originProgress.animateTo(1f, OriginEnterAnimSpec) }
             launch { alphaProgress.animateTo(1f, AlphaEnterAnimSpec) }
         } else {
-            if (!internalVisible) return@LaunchedEffect
+            if (!internalVisible) {
+                currentOnDismissFinished()
+                return@LaunchedEffect
+            }
             launch { fractionProgress.animateTo(0f, FractionExitAnimSpec) }
             launch { originProgress.animateTo(0f, OriginExitAnimSpec) }
             alphaProgress.animateTo(0f, AlphaExitAnimSpec)

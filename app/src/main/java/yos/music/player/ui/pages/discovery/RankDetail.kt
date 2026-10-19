@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +66,10 @@ import yos.music.player.ui.widgets.basic.enterCoverCorner
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBar
+import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
+import yos.music.player.ui.widgets.basic.TitleOverlayHost
+import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
@@ -158,215 +163,222 @@ fun RankDetail(
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
 
-    Box(
-        Modifier
-            .fillMaxSize()
+    val state = rememberLazyListState()
+    val titleBackdrop = rememberTitleBackdrop()
+    val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    val overlayHost = remember { TitleOverlayHost() }
+
+    CompositionLocalProvider(
+        LocalTitlePageBackdrop provides titleBackdrop,
+        LocalTitleOverlayHost provides overlayHost,
     ) {
-        val state = rememberLazyListState()
-        val titleBackdrop = rememberTitleBackdrop()
-        val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
-
-        LazyColumn(
-            state = state,
-            modifier = Modifier
+        Box(
+            Modifier
                 .fillMaxSize()
-                .layerBackdrop(titleBackdrop)
-                .overScrollVertical(),
-            flingBehavior = rememberOverscrollFlingBehavior { state },
-            contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
         ) {
-            item("RankHeader") {
-                if (isWideScreen) {
-                    // 平板（≥600dp）：Apple Music 式头部（封面左上/信息右侧/按钮沉底）
-                    DetailPageHeader(
-                        title = rank.name,
-                        coverData = { rank.coverUrl.takeIf { it.isNotEmpty() } },
-                        tag = "RANK",
-                        coverSharedElementKey = "rank/${rank.rankId}",
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        countText = "${if (tracks.value.isNotEmpty()) tracks.value.size else rank.songCount} " +
-                            stringResource(id = R.string.online_playlists_song_unit),
-                        onPlayAll = {
-                            // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
-                            MediaController.mediaControl?.shuffleModeEnabled = false
-                            playAt(0)
-                        },
-                        onShuffle = {
-                            val list = queue.value
-                            if (list.isNotEmpty()) {
-                                MediaController.mediaControl?.shuffleModeEnabled = true
-                                playAt(list.indices.random())
-                            }
-                        }
-                    )
-                } else {
-                // 手机：保持旧版居中头部
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 9.5.dp)
-                        .padding(horizontal = 18.dp)
-                        .statusBarsPadding(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // 大封面：固定正方形外壳承载 shared element；ShadowImage 只在外壳内部绘制
-                    val coverModifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 54.5.dp)
-                        .aspectRatio(1f)
-                        .then(
-                            if (sharedTransitionScope != null && animatedVisibilityScope != null) {
-                                with(sharedTransitionScope) {
-                                    Modifier.sharedElement(
-                                        sharedContentState = rememberSharedContentState(
-                                            key = "rank/${rank.rankId}"
-                                        ),
-                                        animatedVisibilityScope = animatedVisibilityScope
-                                    )
-                                }
-                            } else Modifier
-                        )
-                    Box(coverModifier) {
-                        ShadowImage(
-                            modifier = Modifier.fillMaxSize(),
-                            dataLambda = { rank.coverUrl.takeIf { it.isNotEmpty() } },
-                            contentDescription = null,
-                            // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
-                            cornerRadius = enterCoverCorner(animatedVisibilityScope, 7.dp),
-                            imageQuality = ImageQuality.RAW,
-                            shadowType = ShadowType.Medium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Text(
-                        text = rank.name,
-                        fontSize = 20.sp,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 26.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    // 数量：优先显示实际加载的歌曲数（与列表一致）；
-                    // 加载前用 /rank/list 的 songCount 兑底（含 extra.resp.all_total）
-                    val songCountDisplay = if (tracks.value.isNotEmpty()) tracks.value.size else rank.songCount
-                    Text(
-                        text = "$songCountDisplay " + stringResource(id = R.string.online_playlists_song_unit),
-                        fontSize = 17.5.sp,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 23.5.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Text(
-                        text = "RANK",
-                        fontSize = 11.5.sp,
-                        modifier = Modifier
-                            .alpha(0.4f)
-                            .padding(top = 2.dp)
-                    )
-
-                    YosWrapper {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp, bottom = 15.dp)
-                        ) {
-                            // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
-                            NormalButton(
-                                icon = painterResource(id = R.drawable.button_icon_play),
-                                label = stringResource(id = R.string.normal_button_play),
-                                modifier = Modifier.weight(1f)
-                            ) {
+            LazyColumn(
+                state = state,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(titleBackdrop)
+                    .overScrollVertical(),
+                flingBehavior = rememberOverscrollFlingBehavior { state },
+                contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+            ) {
+                item("RankHeader") {
+                    if (isWideScreen) {
+                        // 平板（≥600dp）：Apple Music 式头部（封面左上/信息右侧/按钮沉底）
+                        DetailPageHeader(
+                            title = rank.name,
+                            coverData = { rank.coverUrl.takeIf { it.isNotEmpty() } },
+                            tag = "RANK",
+                            coverSharedElementKey = "rank/${rank.rankId}",
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            countText = "${if (tracks.value.isNotEmpty()) tracks.value.size else rank.songCount} " +
+                                stringResource(id = R.string.online_playlists_song_unit),
+                            onPlayAll = {
+                                // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
                                 MediaController.mediaControl?.shuffleModeEnabled = false
                                 playAt(0)
-                            }
-                            Spacer(modifier = Modifier.width(15.dp))
-                            // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
-                            NormalButton(
-                                icon = painterResource(id = R.drawable.button_icon_shuffle),
-                                label = stringResource(id = R.string.normal_button_shuffle),
-                                modifier = Modifier.weight(1f)
-                            ) {
+                            },
+                            onShuffle = {
                                 val list = queue.value
                                 if (list.isNotEmpty()) {
                                     MediaController.mediaControl?.shuffleModeEnabled = true
                                     playAt(list.indices.random())
                                 }
                             }
-                        }
-                    }
-                }
-                }
-            }
-
-            item("Status") {
-                OnlineStatusItem(
-                    status = status.value,
-                    loadingText = stringResource(id = R.string.online_playlist_loading_songs),
-                    emptyText = stringResource(id = R.string.rank_songs_empty)
-                )
-            }
-
-            item {
-                RankDetailDivider()
-            }
-
-            itemsIndexed(
-                trackItems,
-                key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
-            ) { index, song ->
-                key(songKeys.getOrElse(index) { "oob_$index" }) {
-                    // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放
-                    if (isWideScreen) {
-                        DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
-                            playAt(index)
-                        }
-                    } else {
-                        MusicList(KugouRepository.toDisplayMediaItem(song)) {
-                            playAt(index)
-                        }
-                    }
-                }
-
-                key("divider_$index") {
-                    if (index < trackItems.size - 1) {
-                        Spacer(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                // 右侧与首末分割线一致留 16dp，任何屏幕都不顶到边缘
-                                .padding(start = 88.dp, end = 16.dp)
-                                .alpha(0.15f)
-                                .height(0.5.dp)
-                                .background(Color.Black withNight Color.White)
                         )
+                    } else {
+                    // 手机：保持旧版居中头部
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 9.5.dp)
+                            .padding(horizontal = 18.dp)
+                            .statusBarsPadding(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // 大封面：固定正方形外壳承载 shared element；ShadowImage 只在外壳内部绘制
+                        val coverModifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 54.5.dp)
+                            .aspectRatio(1f)
+                            .then(
+                                if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                                    with(sharedTransitionScope) {
+                                        Modifier.sharedElement(
+                                            sharedContentState = rememberSharedContentState(
+                                                key = "rank/${rank.rankId}"
+                                            ),
+                                            animatedVisibilityScope = animatedVisibilityScope
+                                        )
+                                    }
+                                } else Modifier
+                            )
+                        Box(coverModifier) {
+                            ShadowImage(
+                                modifier = Modifier.fillMaxSize(),
+                                dataLambda = { rank.coverUrl.takeIf { it.isNotEmpty() } },
+                                contentDescription = null,
+                                // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
+                                cornerRadius = enterCoverCorner(animatedVisibilityScope, 7.dp),
+                                imageQuality = ImageQuality.RAW,
+                                shadowType = ShadowType.Medium
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = rank.name,
+                            fontSize = 20.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 26.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        // 数量：优先显示实际加载的歌曲数（与列表一致）；
+                        // 加载前用 /rank/list 的 songCount 兑底（含 extra.resp.all_total）
+                        val songCountDisplay = if (tracks.value.isNotEmpty()) tracks.value.size else rank.songCount
+                        Text(
+                            text = "$songCountDisplay " + stringResource(id = R.string.online_playlists_song_unit),
+                            fontSize = 17.5.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 23.5.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Text(
+                            text = "RANK",
+                            fontSize = 11.5.sp,
+                            modifier = Modifier
+                                .alpha(0.4f)
+                                .padding(top = 2.dp)
+                        )
+
+                        YosWrapper {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp, bottom = 15.dp)
+                            ) {
+                                // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
+                                NormalButton(
+                                    icon = painterResource(id = R.drawable.button_icon_play),
+                                    label = stringResource(id = R.string.normal_button_play),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    MediaController.mediaControl?.shuffleModeEnabled = false
+                                    playAt(0)
+                                }
+                                Spacer(modifier = Modifier.width(15.dp))
+                                // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
+                                NormalButton(
+                                    icon = painterResource(id = R.drawable.button_icon_shuffle),
+                                    label = stringResource(id = R.string.normal_button_shuffle),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    val list = queue.value
+                                    if (list.isNotEmpty()) {
+                                        MediaController.mediaControl?.shuffleModeEnabled = true
+                                        playAt(list.indices.random())
+                                    }
+                                }
+                            }
+                        }
                     }
+                    }
+                }
+
+                item("Status") {
+                    OnlineStatusItem(
+                        status = status.value,
+                        loadingText = stringResource(id = R.string.online_playlist_loading_songs),
+                        emptyText = stringResource(id = R.string.rank_songs_empty)
+                    )
+                }
+
+                item {
+                    RankDetailDivider()
+                }
+
+                itemsIndexed(
+                    trackItems,
+                    key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
+                ) { index, song ->
+                    key(songKeys.getOrElse(index) { "oob_$index" }) {
+                        // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放
+                        if (isWideScreen) {
+                            DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
+                                playAt(index)
+                            }
+                        } else {
+                            MusicList(KugouRepository.toDisplayMediaItem(song)) {
+                                playAt(index)
+                            }
+                        }
+                    }
+
+                    key("divider_$index") {
+                        if (index < trackItems.size - 1) {
+                            Spacer(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    // 右侧与首末分割线一致留 16dp，任何屏幕都不顶到边缘
+                                    .padding(start = 88.dp, end = 16.dp)
+                                    .alpha(0.15f)
+                                    .height(0.5.dp)
+                                    .background(Color.Black withNight Color.White)
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    RankDetailDivider()
+                }
+
+                item("navbar") {
+                    Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
                 }
             }
 
-            item {
-                RankDetailDivider()
-            }
-
-            item("navbar") {
-                Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
-            }
+            // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
+            TitleBar(
+                title = rank.name,
+                onBack = { navController.popBackStack() },
+                showSmallTitle = showSmallTitle,
+                backdrop = titleBackdrop
+            )
+            TitleOverlayHostSlot(overlayHost)
         }
-
-        // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
-        TitleBar(
-            title = rank.name,
-            onBack = { navController.popBackStack() },
-            showSmallTitle = showSmallTitle,
-            backdrop = titleBackdrop
-        )
     }
 }
 
