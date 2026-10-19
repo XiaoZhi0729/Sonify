@@ -5,8 +5,17 @@ package yos.music.player.code.utils.player
  * 全账号失效时跳多少首都一样，逐首拦截时跳恰恰是对的。
  */
 enum class OnlineFailureKind {
-    /** 上游鉴权失效（illegal_key）：整账号都拿不到 URL。 */
+    /** 账号恢复后仍确认鉴权无效，不能靠切歌恢复。 */
     AUTH_INVALID,
+
+    /** 需要完成验证，原地有限退避。 */
+    VERIFICATION_REQUIRED,
+
+    /** 请求签名被拒绝，不把它当作账号失效或逐首拦截。 */
+    SIGNATURE_REJECTED,
+
+    /** 临时 token 拒绝，尚未经过账号恢复确认。 */
+    TOKEN_REJECTED,
 
     /** 版权/付费拦截：只有这一首拿不到，下一首可能正常 → 跳。 */
     BLOCKED,
@@ -46,13 +55,7 @@ object OnlineSkipPolicy {
      */
     const val TRANSIENT_LIMIT = 10
 
-    /**
-     * 鉴权失效的预算：全账号失败，第二首再失败就已经是证据而不是猜测，继续跳只是把
-     * 同一个 502 多刷几遍。
-     */
-    const val AUTH_LIMIT = 2
-
-    /** 锁存后过这么久即当作"新一轮"，计数复位（旧实现只在 STATE_READY 复位，见下）。 */
+    /** 普通逐首失败的锁存复位窗；到期只清连续失败数，不补回退避轮次。 */
     const val LATCH_RESET_MS = 60_000L
 
     /**
@@ -81,6 +84,15 @@ object OnlineSkipPolicy {
     fun latchExpired(nowElapsed: Long, latchedAtElapsed: Long): Boolean =
         latchedAtElapsed != 0L && nowElapsed - latchedAtElapsed >= LATCH_RESET_MS
 
+    /** 这些失败切歌无益，用户切歌也不能补回鉴权类退避预算。 */
+    fun requiresAccountRecovery(kind: OnlineFailureKind): Boolean = when (kind) {
+        OnlineFailureKind.AUTH_INVALID,
+        OnlineFailureKind.VERIFICATION_REQUIRED,
+        OnlineFailureKind.SIGNATURE_REJECTED,
+        OnlineFailureKind.TOKEN_REJECTED -> true
+        else -> false
+    }
+
     /**
      * @param failures 本次之前的**连续失败数**（0 起，不含本次）
      * @param authWindowActive 仓库层的鉴权冷却窗是否开着（窗口内一次请求都不该再发）
@@ -93,8 +105,8 @@ object OnlineSkipPolicy {
         authWindowActive: Boolean,
         retryRound: Int,
     ): Decision = when {
-        // 冷却窗里/鉴权失效攒够证据：只能等，跳和重试都没用；轮次用完就停
-        authWindowActive || (kind == OnlineFailureKind.AUTH_INVALID && failures + 1 >= AUTH_LIMIT) ->
+        // 验证、签名和未确认 token 拒绝也只能原地退避，轮次用尽就停。
+        authWindowActive || requiresAccountRecovery(kind) ->
             if (roundsExhausted(retryRound + 1)) Decision.STOP else Decision.HOLD_AND_RETRY
 
         // 没有可跳的目标：停在原地等用户操作，不做无意义的自转
@@ -106,4 +118,92 @@ object OnlineSkipPolicy {
 
         else -> Decision.SKIP_NEXT
     }
+}
+
+/**
+ * 无 Android 依赖的恢复会话。宿主串行调用，时钟与延迟调度可在测试中替换。
+ * 时间流逝只释放普通逐首失败锁存，不补回已用的退避预算。
+ */
+internal class OnlineSkipSession(
+    private val nowElapsed: () -> Long,
+    private val schedule: (Long, () -> Unit) -> (() -> Unit),
+    private val onRearm: () -> Unit,
+) {
+    var failureCount: Int = 0
+        private set
+    var retryRounds: Int = 0
+        private set
+    private var latchedAt: Long? = null
+    private var accountRecoveryActive = false
+    private var cancelPending: (() -> Unit)? = null
+    private var generation = 0L
+
+    fun decide(
+        kind: OnlineFailureKind,
+        hasNext: Boolean,
+        authWindowActive: Boolean,
+    ): OnlineSkipPolicy.Decision {
+        val now = nowElapsed()
+        val latch = latchedAt
+        if (!accountRecoveryActive && latch != null && now - latch >= OnlineSkipPolicy.LATCH_RESET_MS) {
+            failureCount = 0
+            latchedAt = null
+        }
+        accountRecoveryActive = accountRecoveryActive || authWindowActive ||
+            OnlineSkipPolicy.requiresAccountRecovery(kind)
+        val decision = OnlineSkipPolicy.decide(
+            kind, failureCount, hasNext, authWindowActive || accountRecoveryActive, retryRounds
+        )
+        failureCount++
+        when (decision) {
+            OnlineSkipPolicy.Decision.SKIP_NEXT -> Unit
+            OnlineSkipPolicy.Decision.HOLD_AND_RETRY -> {
+                if (latchedAt == null) latchedAt = now
+                retryRounds++
+                val wait = requireNotNull(OnlineSkipPolicy.backoffMs(retryRounds))
+                cancelRearm()
+                val token = generation
+                cancelPending = schedule(wait) {
+                    if (token == generation) {
+                        cancelPending = null
+                        generation++
+                        onRearm()
+                    }
+                }
+            }
+            OnlineSkipPolicy.Decision.STOP -> {
+                if (latchedAt == null) latchedAt = now
+                cancelRearm()
+            }
+        }
+        return decision
+    }
+
+    fun cancelRearm() {
+        generation++
+        cancelPending?.invoke()
+        cancelPending = null
+    }
+
+    /** 手动意图总会取消旧任务；鉴权类的已用轮次不因点歌而补回。 */
+    fun onUserIntent() {
+        if (accountRecoveryActive) {
+            cancelRearm()
+            failureCount = 0
+            latchedAt = null
+        } else {
+            reset()
+        }
+    }
+
+    /** 真实播放已推进，或账号发生变化，才允许清除鉴权恢复预算。 */
+    fun reset() {
+        cancelRearm()
+        failureCount = 0
+        retryRounds = 0
+        latchedAt = null
+        accountRecoveryActive = false
+    }
+
+    fun onAccountChanged() = reset()
 }

@@ -1,15 +1,13 @@
 package yos.music.player.data.repositories
 
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
-/**
- * 鉴权失效识别。这几条断言全部照抄真机响应体（PKT110 用户报告 09:57 段），
- * 目的就是把"illegal_key 必须是独立一类"钉住：历史上它被当成普通 IOException，
- * 于是既享受了不该有的退避重试，又被逐首写进负缓存，一次爆发刷出 98 条 RESOLVE_FAIL。
- */
+/** 请求错误分类与恢复后确证失效的边界，使用纯 Map 和真机响应形态回归。 */
 class KugouUpstreamErrorTest {
 
     /** 真机原文（未压缩）：未登录/登录态失效时 /song/url 的响应。 */
@@ -19,16 +17,28 @@ class KugouUpstreamErrorTest {
 
     @Test
     fun detectsTheRealIllegalKeyBody() {
-        assertTrue(KugouUpstreamError.isAuthInvalid(502, illegalKeyBody))
+        assertFalse(KugouUpstreamError.isAuthInvalid(502, illegalKeyBody))
     }
 
     @Test
-    fun detectsEitherMarkerAlone() {
-        // 只有错误码（有的版本不带 error 明文）
-        assertTrue(KugouUpstreamError.isAuthInvalid(502, """{"error_code":31833}"""))
-        // 只有明文；以及带空格的序列化写法
-        assertTrue(KugouUpstreamError.isAuthInvalid(502, """{"error":"ILLEGAL KEY"}"""))
-        assertTrue(KugouUpstreamError.isAuthInvalid(502, """{"error_code": 31833}"""))
+    fun signatureMarkersDoNotConfirmExpiredAuthentication() {
+        listOf(
+            """{"error_code":31833}""",
+            """{"error":"ILLEGAL KEY"}""",
+            """{"error_code": 31833}"""
+        ).forEach { assertFalse(KugouUpstreamError.isAuthInvalid(502, it)) }
+    }
+
+    @Test
+    fun classifiesSignatureAtTopLevelAndInDataShapes() {
+        val samples = listOf(
+            mapOf("error_code" to 31833),
+            mapOf("data" to mapOf("error_code" to "31833")),
+            mapOf("data" to listOf(mapOf("error" to "ILLEGAL KEY")))
+        )
+        samples.forEach {
+            assertEquals(KugouUpstreamErrorType.SignatureRejected, KugouUpstreamError.classify(it))
+        }
     }
 
     @Test
@@ -59,12 +69,61 @@ class KugouUpstreamErrorTest {
 
     @Test
     fun detectsTheRealNeedVerifyBody() {
-        // 502 + 真机体：既算"需要验证"，也算账号级鉴权失效（重试后仍失败 → 挂起而非跳歌）
+        // 需要验证不等于恢复后已确认鉴权失效。
         assertTrue(KugouUpstreamError.isNeedVerify(needVerifyBody))
-        assertTrue(KugouUpstreamError.isAuthInvalid(502, needVerifyBody))
+        assertFalse(KugouUpstreamError.isAuthInvalid(502, needVerifyBody))
         // 字段/明文二选一，带空格也能认
         assertTrue(KugouUpstreamError.isNeedVerify("""{"errcode": 20028}"""))
         assertTrue(KugouUpstreamError.isNeedVerify("""{"error":"本次请求需要验证"}"""))
+    }
+
+    @Test
+    fun verificationClassificationSupportsCodesAndFirstDataItem() {
+        listOf(
+            mapOf("errcode" to "20028"),
+            mapOf("data" to mapOf("error_code" to 20028)),
+            mapOf("data" to listOf(mapOf("errcode" to "20028"))),
+            mapOf("message" to "本次请求需要验证")
+        ).forEach {
+            assertEquals(KugouUpstreamErrorType.VerificationRequired, KugouUpstreamError.classify(it))
+            assertTrue(KugouUpstreamError.isNeedVerifyPlain(it))
+        }
+        assertTrue(KugouUpstreamError.isNeedVerify("""{"data":[{"errcode":"20028"}]}"""))
+        assertFalse(KugouUpstreamError.isNeedVerify("""{"errcode":200280}"""))
+        assertNull(KugouUpstreamError.classify(mapOf("detail" to mapOf("errcode" to 20028))))
+        assertNull(KugouUpstreamError.classify(mapOf("data" to listOf(emptyMap<String, Any>(), mapOf("errcode" to 20028)))))
+    }
+
+    @Test
+    fun tokenRejectionRequiresSongUrlContext() {
+        val samples = (20017..20020).flatMap { code ->
+            listOf(
+                mapOf("error_code" to code),
+                mapOf("data" to mapOf("errcode" to code.toString())),
+                mapOf("data" to listOf(mapOf("error_code" to code)))
+            )
+        } + listOf(
+            mapOf("error" to "TOKEN API ERROR."),
+            mapOf("message" to "other", "errmsg" to "token api error.")
+        )
+        samples.forEach {
+            assertNull(KugouUpstreamError.classify(it))
+            assertEquals(KugouUpstreamErrorType.TokenRejected, KugouUpstreamError.classify(it, songUrlContext = true))
+            assertTrue(KugouUpstreamError.isSongUrlTokenInvalid(it))
+        }
+        assertNull(KugouUpstreamError.classify(mapOf("error_code" to 20010), songUrlContext = true))
+    }
+
+    @Test
+    fun rejectionExceptionsDoNotConfirmAuthenticationInvalidity() {
+        listOf(
+            KugouVerificationRequiredException("test"),
+            KugouSignatureRejectedException("test"),
+            KugouTokenRejectedException("test")
+        ).forEach {
+            assertTrue(it is IOException)
+            assertFalse(KugouUpstreamError.hasAuthInvalidCause(IOException("wrapper", it)))
+        }
     }
 
     @Test

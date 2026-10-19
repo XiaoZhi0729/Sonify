@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.repositories.PlayState
 import yos.music.player.data.repositories.SongAvailability
 import yos.music.player.data.repositories.SongPlayabilityStore
@@ -29,7 +30,8 @@ val SongAvailability.isBlocked: Boolean get() = state == PlayState.BLOCKED
 @Composable
 fun rememberSongAvailability(music: YosMediaItem): SongAvailability {
     val hash = music.kugouHash()
-    LaunchedEffect(hash) { SongPlayabilityStore.ensureChecked(hash) }
+    val authVersion = KugouAccountState.authVersion
+    LaunchedEffect(hash, authVersion) { SongPlayabilityStore.ensureChecked(hash) }
     return SongPlayabilityStore.stateOf(hash)
 }
 

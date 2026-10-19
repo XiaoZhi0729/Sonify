@@ -2,162 +2,103 @@ package yos.music.player.data.repositories
 
 import java.io.IOException
 
-/**
- * 上游**鉴权失效**（不是某一首曲目的问题，也不是网络问题）：
- * `/song/url` 返回 HTTP 502 + `{"error_code":31833,"error":"illegal key"}`，
- * 实测对应未登录/登录态过期/sign_key 计算错（Rust 侧 userid 参与签名，见
- * [yos.music.player.native.KugouApiService] 的 `/song/url` 注释）。
- *
- * 它必须与另外两类失败分开，历史故障就是被混成一类才放大成"整晚静默停播"：
- *  1. 与版权/付费拦截（[KugouRepository.KugouPlayBlockedException]）不同——拦截是**这首歌**
- *     拿不到，跳下一首是对的；鉴权失效是**整个账号**都拿不到，跳多少首都一样。
- *  2. 与网络失败（普通 [IOException]）不同——网络失败值得让 ExoPlayer 退避重试一次，
- *     鉴权失效重试只是把 1 秒一次的 502 刷成刷屏（真机一次爆发：22 个 hash、98 条
- *     RESOLVE_FAIL、每首 3.4 秒才认输）。
- *
- * 独立成顶层类（而不是嵌在 `object KugouRepository` 里）：`KugouApiService` 要构造它，
- * 而两个 `object` 互相在 `<clinit>` 里碰对方会踩初始化环。
- */
+/** 仅在恢复流程完成、仍已确认凭据失效时使用；单次上游错误体不能确证。 */
 class KugouAuthInvalidException(detail: String) :
-    IOException("鉴权失效 illegal_key: $detail")
+    IOException("鉴权已确认失效: $detail")
 
-/**
- * 上游错误体的识别。纯函数、无 Android 依赖，便于单测。
- */
+class KugouVerificationRequiredException(detail: String) :
+    IOException("请求需要安全验证: $detail")
+
+class KugouSignatureRejectedException(detail: String) :
+    IOException("请求签名被拒绝: $detail")
+
+class KugouTokenRejectedException(detail: String) :
+    IOException("请求 token 被拒绝: $detail")
+
+/** 单次响应能提供的证据，不代表恢复后确认的登录态失效。 */
+enum class KugouUpstreamErrorType {
+    VerificationRequired,
+    SignatureRejected,
+    TokenRejected
+}
+
+/** 上游错误体的识别。纯函数、无 Android/JSON 依赖。 */
 object KugouUpstreamError {
 
-    /** 酷狗侧鉴权/签名失效的错误码（实测固定值）。 */
+    /** 旧常量名保留兼容；31833 表示签名被拒绝，不能确证 token 过期。 */
     const val AUTH_INVALID_CODE = 31833
-
-    /**
-     * 风控要求"本次请求需要验证"的业务码（实测固定 20028）。
-     * 注意字段名是 **errcode**（不是 error_code）：设备身份/sign_key 失效时上游返回
-     * `{"errcode":20028,"status":0,"error":"本次请求需要验证"}`。与 illegal_key 同类——
-     * 整账号都拿不到 URL，逐首跳只是把同一个 502 刷成屏。
-     */
     const val NEED_VERIFY_CODE = 20028
 
-    /** 响应体里的明文标记（与 error_code 二选一命中即可，服务端两处都会带）。 */
-    private const val AUTH_INVALID_MARKER = "illegal key"
-
-    /** 需要安全验证的明文（与 errcode 二选一命中即可）。 */
-    private const val NEED_VERIFY_MARKER = "本次请求需要验证"
-
-    /**
-     * 精选歌单 listfile 不存在/键无效的业务码。2026-10-13 真机：
-     * `HTTP 502 + {"error_code":20010,"errmsg":"get other listfile fail","data":{},"status":0}`，
-     * 由 `/playlist/track/all`（上游 `/pubsongs/v2/get_other_list_file_nofilt`）在
-     * `global_collection_id` 传成数字 specialid 时返回——同族还有 20017。
-     *
-     * **这是确定性错误**（该键不存在），不是抖动：按 HTTP 状态重试只会把同一个 502 刷 3 遍。
-     *
-     * 注意：`20010` 在 [KugouVipRepository] 的签到链里另有含义（领取日期参数错误），
-     * 故 [isListFileMissing] 只应在本接口链路调用，勿全局复用。
-     */
+    /** 仅限精选歌单 listfile 接口；其他接口的同码可能另有含义。 */
     const val LIST_FILE_MISSING_CODE = 20010
-
-    /** 20010 的明文标记（与 error_code 二选一命中即可；上游两处都会带）。 */
     private const val LIST_FILE_MISSING_MARKER = "get other listfile fail"
+    private const val SIGNATURE_REJECTED_MARKER = "illegal key"
+    private const val NEED_VERIFY_MARKER = "本次请求需要验证"
+    private const val TOKEN_ERROR_MARKER = "token api error"
+    private val SONG_URL_TOKEN_CODES = setOf(20017, 20018, 20019, 20020)
+    private val codeFields = listOf("error_code", "errcode")
+    private val messageFields = listOf("error", "message", "errmsg")
 
     /**
-     * 是不是"需要安全验证"（风控 20028）。与 [isAuthInvalid] 分开暴露：调用方需要
-     * 先做"重注册设备 + 重试一次"的自愈（对齐 md3Music kugou_api_client.dart:1112-1126），
-     * 重试仍失败才当账号级失效处理。不区分 2xx/非 2xx——上游两种 HTTP 形态都会带这个体。
+     * 接收 JSON 展开的纯 Map，检查顶层与 data 对象/数组首项；错误码接受数字或字符串。
+     * 20017–20020 在歌单等接口可能表示参数错误，因此只有 songUrlContext=true 才识别
+     * TokenRejected（包括 token api error 明文）。验证优先于签名，签名优先于 token。
+     * 返回 null 表示未识别；任何返回值都不是恢复后确证的鉴权失效。
      */
-    fun isNeedVerify(body: String?): Boolean {
-        if (body.isNullOrBlank()) return false
-        val compact = body.replace(" ", "")
-        return compact.contains("\"errcode\":$NEED_VERIFY_CODE") ||
-            body.contains(NEED_VERIFY_MARKER)
-    }
-
-    /**
-     * 与 [isNeedVerify] 同义，但入参是 `toPlainAny` 展开后的纯结构（song/url 判读用）：
-     * 展开后 `"errcode":20028` 会变成 `errcode=20028`，故匹配形态放宽。
-     */
-    fun isNeedVerifyPlain(root: Map<*, *>): Boolean {
-        val flat = flattenForMatch(root)
-        return flat.contains("errcode=$NEED_VERIFY_CODE") ||
-            flat.contains("\"errcode\":$NEED_VERIFY_CODE") ||
-            flat.contains(NEED_VERIFY_MARKER)
-    }
-
-    private fun flattenForMatch(root: Map<*, *>): String = buildString {
-        root.forEach { (k, v) ->
-            append(k).append('=')
-            when (v) {
-                is Map<*, *> -> append(flattenForMatch(v))
-                is List<*> -> v.forEach { append(it).append(',') }
-                else -> append(v)
-            }
-            append(';')
+    fun classify(root: Map<*, *>, songUrlContext: Boolean = false): KugouUpstreamErrorType? {
+        val data = when (val raw = root["data"]) {
+            is Map<*, *> -> raw
+            is List<*> -> raw.firstOrNull() as? Map<*, *>
+            else -> null
+        }
+        val nodes = listOfNotNull(root, data)
+        val codes = nodes.flatMap { node -> codeFields.mapNotNull { numOf(node[it]) } }
+        val messages = nodes.flatMap { node -> messageFields.mapNotNull { node[it] as? String } }
+        return when {
+            NEED_VERIFY_CODE in codes || messages.any { it.contains(NEED_VERIFY_MARKER) } ->
+                KugouUpstreamErrorType.VerificationRequired
+            AUTH_INVALID_CODE in codes || messages.any { it.contains(SIGNATURE_REJECTED_MARKER, ignoreCase = true) } ->
+                KugouUpstreamErrorType.SignatureRejected
+            songUrlContext && (codes.any { it in SONG_URL_TOKEN_CODES } ||
+                messages.any { it.contains(TOKEN_ERROR_MARKER, ignoreCase = true) }) ->
+                KugouUpstreamErrorType.TokenRejected
+            else -> null
         }
     }
 
-    /**
-     * song/url 链路实测的「上游不接受这份凭据」业务码。**只在 song/url(|/new) 判读时使用。**
-     *
-     * - `20017`：priv_url 同时回明文 `"message":"token api error."`；v5/url 回
-     *   `{"status":2,"error_code":20017,"priv_status":0}` 且**没有 url 字段**。
-     *   2026-10-14 真机取证：同一份 App 凭据连"肯定能播"的歌都拿到这个响应，
-     *   而 Anonymous 请求走的是另一条错误（31833 illegal key）——即凭据被读到了、
-     *   只是不被接受（登录态过期）。
-     * - `20018`：登录已过期（Dart 侧据此刷新 token；见 KugouVipRepository 文案表）。
-     *
-     * 20017 在**歌单链**里另有「参数错误」含义（见 [LIST_FILE_MISSING_CODE] 注释），
-     * 因此本判定严禁全局复用。
-     */
-    private val SONG_URL_TOKEN_CODES = setOf(20017, 20018, 20019, 20020)
-
-    /** priv_url 的凭据失效明文标记。 */
-    private const val TOKEN_ERROR_MARKER = "token api error"
-
-    /**
-     * song/url 响应体是不是「凭据不被接受」（账号级问题，**不是这首歌没音源**）。
-     *
-     * 与 [isAuthInvalid] 分开：后者看 HTTP 状态码、面向 502/illegal key；本判定只看
-     * **业务体**——上游把登录态失效包在 HTTP 200 里返回，正是历史误判成"确凿拒播"
-     * 并置灰 24 小时的来源。入参是 `toPlainAny` 展开后的纯结构，便于单测。
-     */
-    fun isSongUrlTokenInvalid(root: Map<*, *>): Boolean {
-        val data = (root["data"] as? Map<*, *>) ?: root
-        val msg = listOf(data["message"], data["errmsg"], root["message"], root["errmsg"])
-            .firstNotNullOfOrNull { it as? String }
-            .orEmpty()
-        if (msg.contains(TOKEN_ERROR_MARKER, ignoreCase = true)) return true
-        val code = numOf(data["error_code"]) ?: numOf(root["error_code"]) ?: return false
-        return code in SONG_URL_TOKEN_CODES
+    /** 兼容原始响应体入口；HTTP 200 与非 2xx 均可能要求验证。 */
+    fun isNeedVerify(body: String?): Boolean {
+        if (body.isNullOrBlank()) return false
+        return NEED_VERIFY_BODY_CODE.containsMatchIn(body) || body.contains(NEED_VERIFY_MARKER)
     }
 
+    private val NEED_VERIFY_BODY_CODE = Regex("\"(?:errcode|error_code)\"\\s*:\\s*(?:\"20028\"|20028)(?=\\s*[,}])")
+
+    fun isNeedVerifyPlain(root: Map<*, *>): Boolean =
+        classify(root) == KugouUpstreamErrorType.VerificationRequired
+
+    /** 旧名字保留兼容：仅表示 song/url 拒绝 token，不确证登录态过期。 */
+    fun isSongUrlTokenInvalid(root: Map<*, *>): Boolean =
+        classify(root, songUrlContext = true) == KugouUpstreamErrorType.TokenRejected
+
     private fun numOf(value: Any?): Int? = when (value) {
-        is Number -> value.toInt()
+        is Number -> value.toInt().takeIf { it.toDouble() == value.toDouble() }
         is String -> value.trim().toIntOrNull()
         else -> null
     }
 
     /**
-     * 是不是鉴权失效。只看非 2xx 的响应体：2xx 时同样的字段形状可能是别的意思，
-     * 不猜。响应体空格不定（`{"error_code": 31833}` 也会出现），先压掉空格再匹配。
-     * 20028（需要验证）同样算账号级失效——重试过后仍失败就不该再逐首跳。
+     * 兼容旧调用签名，但单个 HTTP 状态/响应体不足以确证鉴权失效。
+     * 调用方应改用 classify 执行相应恢复，恢复后确认失效才构造 KugouAuthInvalidException。
      */
-    fun isAuthInvalid(httpCode: Int, body: String?): Boolean {
-        if (httpCode in 200..299) return false
-        if (body.isNullOrBlank()) return false
-        val compact = body.replace(" ", "")
-        return compact.contains("\"error_code\":$AUTH_INVALID_CODE") ||
-            body.contains(AUTH_INVALID_MARKER, ignoreCase = true) ||
-            isNeedVerify(body)
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun isAuthInvalid(httpCode: Int, body: String?): Boolean = false
 
-    /** 沿因果链找鉴权失效：包装层（DataSource/Loader）会把它裹在 IOException 里。 */
+    /** 沿因果链只识别恢复后已确认的失效，不混入请求验证/签名/token 拒绝。 */
     fun hasAuthInvalidCause(error: Throwable?): Boolean =
         generateSequence(error) { it.cause }.any { it is KugouAuthInvalidException }
 
-    /**
-     * 是不是「精选歌单 listfile 查无此物」（20010 `get other listfile fail`）。
-     * 上游把该错误包在 HTTP 502 里、`data:{}` 为空对象——是**确定性**失败，
-     * 重试无意义，应直接提示而不是退避重试 3 次再透传 200 字原始 JSON。
-     */
+    /** 精选歌单 listfile 查无此物，独立于账号/请求错误。 */
     fun isListFileMissing(body: String?): Boolean {
         if (body.isNullOrBlank()) return false
         return body.replace(" ", "").contains("\"error_code\":$LIST_FILE_MISSING_CODE") ||

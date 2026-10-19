@@ -1,7 +1,11 @@
 package yos.music.player.data.repositories
 
 import androidx.compose.runtime.mutableStateMapOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -9,7 +13,7 @@ import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.NormalSaver
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouVipState
-import java.util.concurrent.ConcurrentHashMap
+import yos.music.player.native.KugouApiService
 
 /** 单曲可播状态。UNKNOWN = 尚未有结论（按正常样式渲染，绝不置灰）。 */
 enum class PlayState { UNKNOWN, PLAYABLE, BLOCKED }
@@ -78,14 +82,14 @@ object SongPlayabilityStore {
     /** 状态表：按 hash 订阅，只有本曲变化才触发对应行重组。 */
     private val states = mutableStateMapOf<String, SongAvailability>()
 
-    /** 正在探测中的 hash：同一首不并发重复请求。 */
-    private val inFlight = ConcurrentHashMap.newKeySet<String>()
+    /** 同一账号/hash 的探测合并及短期无结论节流；不改账号级恢复预算。 */
+    private val probes = SongPlayabilityProbeCoordinator<ProbeResult>()
 
     /** 全局并发闸：开列表时批量可见行各探一次，避免瞬间打爆请求。 */
     private val gate = Semaphore(4)
 
     /** 内存态当前所属账号；账号变化即整体作废，避免把上一个账号的结论套到新账号。 */
-    private var syncedAccountKey: String? = null
+    private var syncedAccountKey: SongPlayabilityAccountKey? = null
 
     /** 进程内已确认"账号无会员权益"（付费歌提示语据此说清，避免重复请求）；null=未确认。 */
     @Volatile
@@ -94,16 +98,25 @@ object SongPlayabilityStore {
     /** 纯读、无 IO：未知返回 UNKNOWN（首帧正常样式，探测返回后再变灰）。 */
     fun stateOf(hash: String?): SongAvailability {
         val h = normalize(hash) ?: return SongAvailability.UNKNOWN
-        return states[h] ?: SongAvailability.UNKNOWN
+        val state = states[h] ?: SongAvailability.UNKNOWN
+        return if (syncedAccountKey == accountKey()) state else SongAvailability.UNKNOWN
     }
 
-    fun markPlayable(hash: String?) {
-        commit(hash, SongAvailability(PlayState.PLAYABLE, null))
+    fun markPlayable(hash: String?, expectedAuthVersion: Long = KugouApiService.authVersion()) {
+        if (expectedAuthVersion != KugouApiService.authVersion()) return
+        val account = syncAccount()
+        if (expectedAuthVersion != KugouApiService.authVersion()) return
+        commit(hash, SongAvailability(PlayState.PLAYABLE, null), account)
     }
 
-    fun markBlocked(hash: String?, reason: String?) {
+    fun markBlocked(
+        hash: String?, reason: String?, expectedAuthVersion: Long = KugouApiService.authVersion()
+    ) {
+        if (expectedAuthVersion != KugouApiService.authVersion()) return
+        val account = syncAccount()
+        if (expectedAuthVersion != KugouApiService.authVersion()) return
         val r = reason?.takeIf { it.isNotBlank() } ?: "无法播放"
-        commit(hash, SongAvailability(PlayState.BLOCKED, r))
+        commit(hash, SongAvailability(PlayState.BLOCKED, r), account)
     }
 
     /**
@@ -112,86 +125,98 @@ object SongPlayabilityStore {
      */
     suspend fun ensureChecked(hash: String?) {
         val h = normalize(hash) ?: return
-        syncAccount()
+        val account = syncAccount()
         if (states.containsKey(h)) return
-        readDisk(h)?.let { states[h] = it; return }
-        if (!inFlight.add(h)) return
-        try {
-            // 鉴权失效窗口内整账号都不准：此时探测只会刷失败，不产生结论
-            if (KugouRepository.isAuthInvalidWindow()) return
-            gate.withPermit { applyResult(h, probeViaPlaybackChain(h)) }
-        } finally {
-            inFlight.remove(h)
+        readDisk(h, account)?.let {
+            if (isCurrentAccount(account)) states[h] = it
+            return
+        }
+        probes.run(requestKey(h, account), fresh = false, inconclusive = { it is ProbeResult.Inconclusive }) {
+            gate.withPermit {
+                // 排队期间可能已切账号；旧请求不得使用新凭据或写入新账号。
+                if (!isCurrentAccount(account)) return@withPermit accountChanged()
+                if (KugouRepository.isAuthInvalidWindow()) {
+                    return@withPermit ProbeResult.Inconclusive(LOGIN_EXPIRED_REASON)
+                }
+                val result = probeViaPlaybackChain(h)
+                currentCoroutineContext().ensureActive()
+                if (!isCurrentAccount(account)) return@withPermit accountChanged()
+                applyResult(h, result, account)
+            }
         }
     }
 
-    /**
-     * 点击已判定不可播的行时复核：作废旧结论、**绕开所有缓存**问一次上游（证据最新，
-     * 也不会被 30s 负缓存牵连）。返回最新结论，由调用方决定"直接播"还是"弹原因"。
-     */
+    /** 点击复核使用完整降档链和总截止，绕歌曲缓存；同 hash 的短期点击合并。 */
     suspend fun recheck(hash: String?): ProbeResult {
         val h = normalize(hash) ?: return ProbeResult.Inconclusive(null)
-        invalidate(h)
-        if (KugouRepository.isAuthInvalidWindow()) {
-            return ProbeResult.Inconclusive(LOGIN_EXPIRED_REASON)
-        }
-        return gate.withPermit {
-            val result = probeFresh(h)
-            applyResult(h, result)
-            result
-        }
+        val account = syncAccount()
+        val result = probes.run(
+            requestKey(h, account), fresh = true, inconclusive = { it is ProbeResult.Inconclusive }
+        ) {
+            gate.withPermit {
+                if (!isCurrentAccount(account)) return@withPermit accountChanged()
+                invalidate(h, account)
+                val result = probeFresh(h)
+                currentCoroutineContext().ensureActive()
+                if (!isCurrentAccount(account)) return@withPermit accountChanged()
+                applyResult(h, result, account)
+            }
+        } ?: ProbeResult.Inconclusive(null)
+        currentCoroutineContext().ensureActive()
+        return if (isCurrentAccount(account)) result else accountChanged()
     }
 
     /** 作废某曲结论（内存 + 当前账号的磁盘项）。 */
     fun invalidate(hash: String?) {
         val h = normalize(hash) ?: return
+        invalidate(h, syncAccount())
+    }
+
+    private fun invalidate(h: String, account: SongPlayabilityAccountKey) {
+        if (!isCurrentAccount(account)) return
         states.remove(h)
-        runCatching { NormalSaver.remove(storageKey(h)) }
+        runCatching { NormalSaver.remove(storageKey(h, account)) }
     }
 
-    /** 首次探测：与播放同源（含 urlCache/负缓存/lastGood 与 10s 总截止）。 */
-    private suspend fun probeViaPlaybackChain(h: String): ProbeResult = withContext(Dispatchers.IO) {
-        // resolvePlayUrlBlocking 是阻塞实现（内部 runBlocking），必须离开主线程
-        runCatching { KugouRepository.resolvePlayUrlBlocking(h, STANDARD_TIER) }.fold(
-            onSuccess = { ProbeResult.Playable },
-            onFailure = { classify(it) }
-        )
+    /** 首次探测保留播放链缓存语义，使用后台探测预算。 */
+    private suspend fun probeViaPlaybackChain(h: String): ProbeResult = resolveSongPlayabilityProbe {
+        Result.success(runInterruptible(Dispatchers.IO) {
+            KugouRepository.resolvePlayUrlBlocking(
+                h, STANDARD_TIER, purpose = PlaybackRequestPurpose.VISIBLE_PROBE
+            )
+        })
     }
 
-    /** 点击复核：绕缓存直问上游（[KugouRepository.resolvePlayUrl] 不做任何缓存命中）。 */
+    /** 手动复核由 Repository 提供全降档、10 秒截止及歌曲缓存旁路。 */
     private suspend fun probeFresh(h: String): ProbeResult = withContext(Dispatchers.IO) {
-        runCatching { KugouRepository.resolvePlayUrl(h, STANDARD_TIER) }.fold(
-            onSuccess = { ProbeResult.Playable },
-            onFailure = { classify(it) }
-        )
+        resolveSongPlayabilityProbe {
+            KugouRepository.resolvePlayUrlFresh(
+                h, STANDARD_TIER, purpose = PlaybackRequestPurpose.MANUAL_RECHECK
+            )
+        }
     }
 
-    private fun classify(error: Throwable): ProbeResult = when {
-        // 取消不是失败证据：原样抛出，保持结构化并发（切页取消探测不留下误判）
-        error is kotlinx.coroutines.CancellationException -> throw error
-        error is KugouRepository.KugouPlayBlockedException -> ProbeResult.Blocked(error.userReason)
-        KugouUpstreamError.hasAuthInvalidCause(error) -> ProbeResult.Inconclusive(LOGIN_EXPIRED_REASON)
-        else -> ProbeResult.Inconclusive(null)
-    }
-
-    private suspend fun applyResult(h: String, result: ProbeResult) {
+    private suspend fun applyResult(h: String, result: ProbeResult, account: SongPlayabilityAccountKey): ProbeResult {
         when (result) {
-            ProbeResult.Playable -> commit(h, SongAvailability(PlayState.PLAYABLE, null))
+            ProbeResult.Playable -> commit(h, SongAvailability(PlayState.PLAYABLE, null), account)
             is ProbeResult.Blocked -> {
-                val reason = clarify(result.reason)
-                commit(h, SongAvailability(PlayState.BLOCKED, reason))
-                // 持久化留证：被判不可播时，同时记下"当前有没有会员凭据 / 账号是否会员"，
-                // 便于区分"没版权"与"会员权益没被服务端认出来"（logcat 会被刷掉）。
+                val reason = clarify(result.reason, account)
+                currentCoroutineContext().ensureActive()
+                if (!isCurrentAccount(account)) return accountChanged()
+                commit(h, SongAvailability(PlayState.BLOCKED, reason), account)
                 YosDiagnostics.log(
                     "GRAY_BLOCKED", "hash" to h.take(8), "reason" to reason,
                     "hasVipToken" to KugouAccountState.hasVipToken,
                     "accountIsVip" to (KugouVipState.vipDetail?.isVip ?: "unknown")
                 )
+                return ProbeResult.Blocked(reason)
             }
-            // 无结论：不落盘、不置灰，已有结论也不改写（避免一次抖动抹掉可用判据）
             is ProbeResult.Inconclusive -> Unit
         }
+        return if (isCurrentAccount(account)) result else accountChanged()
     }
+
+    private fun accountChanged() = ProbeResult.Inconclusive("账号已变更，请重试")
 
     /**
      * 付费类拒播时把原因说清：**账号没有会员权益 ≠ 这首歌没有音源**。
@@ -201,26 +226,32 @@ object SongPlayabilityStore {
      * 这里在付费类拒播且账号确实没有会员权益时改说人话；判定结果（BLOCKED）不变。
      * 结论按进程缓存，避免每首付费歌都多打一次上游。
      */
-    private suspend fun clarify(reason: String): String {
+    private suspend fun clarify(reason: String, account: SongPlayabilityAccountKey): String {
         if (!reason.contains("付费")) return reason
         if (KugouAccountState.hasVipToken) return reason
-        val absent = accountVipAbsent ?: runCatching { KugouVipRepository.refreshVipDetail() }
-            .getOrNull()
-            ?.let { !it.isVip }
-            ?.also { accountVipAbsent = it }
-            ?: return reason
+        val absent = accountVipAbsent ?: try {
+            val detail = KugouVipRepository.refreshVipDetail() ?: return reason
+            currentCoroutineContext().ensureActive()
+            if (!isCurrentAccount(account)) return reason
+            (!detail.isVip).also { accountVipAbsent = it }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return reason
+        }
         return if (absent) "暂无可用音源（当前账号无会员权益）" else reason
     }
 
-    private fun commit(hash: String?, value: SongAvailability) {
+    private fun commit(hash: String?, value: SongAvailability, account: SongPlayabilityAccountKey = syncAccount()) {
         val h = normalize(hash) ?: return
+        if (!isCurrentAccount(account)) return
         states[h] = value
-        runCatching { NormalSaver.saveData(storageKey(h), encode(value)) }
+        runCatching { NormalSaver.saveData(storageKey(h, account), encode(value)) }
     }
 
     /** 读盘：按状态各自的 TTL 判过期，过期即弃（视为未知，触发重探）。 */
-    private fun readDisk(hash: String): SongAvailability? = try {
-        val raw = NormalSaver.readData(storageKey(hash), "")
+    private fun readDisk(hash: String, account: SongPlayabilityAccountKey): SongAvailability? = try {
+        val raw = NormalSaver.readData(storageKey(hash, account), "")
         val p = raw.split('|')
         val at = p.getOrNull(2)?.toLongOrNull()
         if (p.size >= 3 && at != null) {
@@ -247,23 +278,64 @@ object SongPlayabilityStore {
      * 旧结论不得复用到新账号（历史实现按 hash 单键存，登录态一坏，整份歌单的
      * 误判结论会在换号后继续生效）。
      */
-    private fun accountKey(): String {
-        val uid = KugouAccountState.userid ?: "anon"
-        return if (KugouAccountState.hasVipToken) "$uid.v" else uid
-    }
+    private fun accountKey() = SongPlayabilityAccountKey(
+        userid = KugouAccountState.userid,
+        vip = KugouAccountState.hasVipToken,
+        authVersion = KugouApiService.authVersion()
+    )
 
-    private fun storageKey(hash: String): String = KEY_PREFIX + accountKey() + "_" + hash
+    /** 磁盘按稳定账号分键，避免进程重启后复用认证版本计数。 */
+    private fun storageKey(hash: String, account: SongPlayabilityAccountKey): String =
+        KEY_PREFIX + account.storageNamespace + "_" + hash
 
-    /** 账号变化时作废内存态（磁盘项本就按账号分键，无需清理）。 */
-    private fun syncAccount() {
+    private fun requestKey(hash: String, account: SongPlayabilityAccountKey): String =
+        account.requestNamespace + "_" + hash
+
+    private fun isCurrentAccount(account: SongPlayabilityAccountKey): Boolean = account == accountKey()
+
+    /** 账号变化仅作废本表内存；不清 Repository 的账号级恢复预算。 */
+    private fun syncAccount(): SongPlayabilityAccountKey {
         val key = accountKey()
         if (syncedAccountKey != key) {
             syncedAccountKey = key
             states.clear()
             accountVipAbsent = null
         }
+        return key
     }
 
     private fun normalize(hash: String?): String? =
         hash?.lowercase()?.takeIf { it.isNotEmpty() }
+}
+
+/** Unwrap Result before declaring success; cancellation is never evidence about a song. */
+internal suspend fun <T> resolveSongPlayabilityProbe(
+    resolve: suspend () -> Result<T>
+): SongPlayabilityStore.ProbeResult = try {
+    resolve().getOrThrow()
+    currentCoroutineContext().ensureActive()
+    SongPlayabilityStore.ProbeResult.Playable
+} catch (error: Exception) {
+    // Inspect wrappers too; a transport IOException must not hide account evidence or cancellation.
+    val causes = mutableListOf<Throwable>()
+    var cause: Throwable? = error
+    while (cause != null && causes.none { it === cause }) {
+        causes += cause
+        cause = cause.cause
+    }
+    causes.filterIsInstance<CancellationException>().firstOrNull()?.let { throw it }
+    val reason = when {
+        causes.any { it is KugouAuthInvalidException } -> SongPlayabilityStore.LOGIN_EXPIRED_REASON
+        causes.any { it is KugouVerificationRequiredException } -> "请求需要安全验证，请稍后重试"
+        causes.any { it is KugouSignatureRejectedException } -> "请求签名被拒绝，请稍后重试"
+        causes.any { it is KugouTokenRejectedException } -> "登录凭据暂未被接受，请稍后重试"
+        else -> null
+    }
+    if (reason != null) {
+        SongPlayabilityStore.ProbeResult.Inconclusive(reason)
+    } else {
+        val blocked = causes.filterIsInstance<KugouRepository.KugouPlayBlockedException>().firstOrNull()
+        if (blocked != null) SongPlayabilityStore.ProbeResult.Blocked(blocked.userReason)
+        else SongPlayabilityStore.ProbeResult.Inconclusive(null)
+    }
 }

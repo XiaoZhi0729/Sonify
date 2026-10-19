@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.native.KugouApiService
+import yos.music.player.native.PlaybackRecoveryBudget
 import yos.music.player.native.KugouBlacklistApi
 import yos.music.player.native.toPlainAny
 
@@ -1993,10 +1994,12 @@ object KugouRepository {
             CachedUrl(url, KugouQuality.parse(stamped), System.currentTimeMillis())
     }
 
-    /**
-     * 测试专用：读一条缓存项携带的实际档位（null 且无该键 = 条目不存在）。
-     * 用来断言"显式降档会丢掉高于目标的缓存"，不必依赖网络。
-     */
+    internal fun seedAuthCooldownForTest() {
+        val version = KugouApiService.authVersion()
+        authCooldown.confirm(PlaybackRequestPurpose.PLAYBACK, version, version, AUTH_INVALID_COOLDOWN_MS)
+    }
+
+    /** 测试专用：读一条缓存项携带的实际档位（null 且无该键 = 条目不存在）。 */
     internal fun stampedOfCachedUrl(hash: String, requested: String): String? =
         urlCache["${hash.lowercase()}:$requested"]?.stamped
 
@@ -2006,14 +2009,14 @@ object KugouRepository {
         failedCache.clear()
         factByHash.clear()
         pendingByHash.clear()
-        authInvalidUntilMs = 0L
+        authCooldown.clear()
         // 能力表由解析结果回写，不一起清会让用例之间互相污染
         SongQualityCapabilityStore.clearForTest()
     }
 
     /** 解析失败负缓存：酷狗拒播（如 status=3 版权/付费拦截）的 hash 短期内必然继续失败，
      * 窗口内快速失败，避免重试/点击反复请求 Rust 与酷狗。 */
-    private data class FailedResolve(val failedAt: Long, val reason: String)
+    private data class FailedResolve(val failedAt: Long, val reason: String, val authVersion: Long)
 
     private val failedCache = ConcurrentHashMap<String, FailedResolve>()
 
@@ -2025,22 +2028,10 @@ object KugouRepository {
      *  缩短窗口 + [prepareForExplicitSwitch] 在显式意图时作废，两头一起堵。 */
     private const val FAIL_CACHE_TTL_MS = 30 * 1000L
 
-    /**
-     * 鉴权失效（illegal_key）的**全账号**冷却窗口：写一条全局标记，而不是逐首写 [failedCache]。
-     * 拿真机那次爆发对比就能看出区别：22 个 hash 各写一条负缓存、各重试两轮，共刷出 98 条
-     * RESOLVE_FAIL；而窗口标记只需要一次网络请求就能把整段队列判住。
-     * TTL 取 30 s（与负缓存同量级）：上游真恢复了就下一首能播，不需要用户重开应用。
-     */
     private const val AUTH_INVALID_COOLDOWN_MS = 30 * 1000L
+    private val authCooldown = PlaybackAuthCooldown(System::currentTimeMillis)
 
-    @Volatile
-    private var authInvalidUntilMs = 0L
-
-    /**
-     * 当前是否处于鉴权失效窗口。供跳歌策略与 UI 判用：窗口内“跳到下一首”没有意义，
-     * 该给用户的是“去重新登录”，而不是“《x》播放失败，已跳到下一首”。
-     */
-    fun isAuthInvalidWindow(): Boolean = System.currentTimeMillis() < authInvalidUntilMs
+    fun isAuthInvalidWindow(): Boolean = authCooldown.isActive(KugouApiService.authVersion())
 
     /**
      * 解析整链的全局截止。没有它，弱网下"逐档试探 × 单档 3 次重试 × readTimeout 15s"
@@ -2068,7 +2059,8 @@ object KugouRepository {
     fun resolvePlayUrlBlocking(
         hash: String,
         quality: String,
-        intentSource: IntentSource = IntentSource.WIFI_PREF
+        intentSource: IntentSource = IntentSource.WIFI_PREF,
+        purpose: PlaybackRequestPurpose = PlaybackRequestPurpose.PLAYBACK
     ): String {
         val lower = hash.lowercase()
         val key = "$lower:$quality"
@@ -2082,12 +2074,19 @@ object KugouRepository {
                 )
                 return it.url
             }
-        // 鉴权失效是整账号的：窗口内不再逐首发请求（上面命中可用 URL 的仍然正常播）
         if (isAuthInvalidWindow()) {
+            val cached = findHighestCachedUrl(hash)
+            if (cached != null) {
+                rememberResolvedQuality(hash, quality, intentSource, cached.stamped)
+                return cached.url
+            }
             QualityTrace.log("RESOLVE", "path" to "auth_cooldown", "hash" to lower, "intent" to quality)
-            throw KugouAuthInvalidException("冷却窗口内跳过解析 hash=$hash")
+            throw KugouAuthInvalidException("当前凭据已被拒绝，等待重试")
         }
-        failedCache[key]?.takeIf { System.currentTimeMillis() - it.failedAt < FAIL_CACHE_TTL_MS }
+        failedCache[key]?.takeIf {
+            it.authVersion == KugouApiService.authVersion() &&
+                System.currentTimeMillis() - it.failedAt < FAIL_CACHE_TTL_MS
+        }
             ?.let { failed ->
                 // 负缓存命中，但本会话仍有可用的已解析音源时不抛——切音质永不把正在播的歌变成跳歌
                 val lastGood = findHighestCachedUrl(hash)
@@ -2117,10 +2116,11 @@ object KugouRepository {
         // 在弱网下可达分钟级（真机实测 92s），整段时间 Loader 线程阻塞、播放器停在 BUFFERING。
         // 超时不算"曲目被拒"也不算"取消"：在 runBlocking 内捕获落回 Result.failure，
         // 由下方 lastGood 兜底接管（本会话解析成功过则续播，从未成功则走跳歌，与解析失败同义）。
+        val recoveryBudget = PlaybackRecoveryBudget()
         val result = runBlocking {
             try {
                 kotlinx.coroutines.withTimeout(RESOLVE_TOTAL_TIMEOUT_MS) {
-                    resolvePlayUrlWithFallback(hash, quality)
+                    resolvePlayUrlWithFallback(hash, quality, recoveryBudget)
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 QualityTrace.log(
@@ -2129,6 +2129,9 @@ object KugouRepository {
                 )
                 Result.failure(e)
             }
+        }
+        if (recoveryBudget.currentAuthVersion != KugouApiService.authVersion()) {
+            throw kotlinx.coroutines.CancellationException("认证状态已变化，丢弃旧解析结果")
         }
         if (result.isFailure) {
             // 切歌取消（ExoPlayer 中断 Loader 线程）不是解析失败的证据：原样抛回，
@@ -2152,20 +2155,18 @@ object KugouRepository {
                 return lastGood.url
             }
             val cause = result.exceptionOrNull()
-            // 鉴权失效：只记一条全局窗口，**不逐首写负缓存**（否则一次爆发会刷出几十条），
-            // 也不谎报成“这首歌没音源”——该给用户的是“登录态失效，请重新登录”。
             if (KugouUpstreamError.hasAuthInvalidCause(cause)) {
-                // 只在"开窗"这一刻记一条关键事件：必须走 YosDiagnostics 而不是 QualityTrace——
-                // 后者是 Logcat，release 会被 R8 剥掉，而这条证据恰恰要随用户报告发回来
-                if (authInvalidUntilMs <= System.currentTimeMillis()) {
+                if (authCooldown.confirm(
+                        purpose, recoveryBudget.currentAuthVersion,
+                        KugouApiService.authVersion(), AUTH_INVALID_COOLDOWN_MS
+                    )
+                ) {
                     YosDiagnostics.log(
                         "AUTH_INVALID", "hash" to lower,
-                        "cooldown" to AUTH_INVALID_COOLDOWN_MS
+                        "cooldown" to AUTH_INVALID_COOLDOWN_MS, "purpose" to purpose.name
                     )
                 }
-                authInvalidUntilMs = System.currentTimeMillis() + AUTH_INVALID_COOLDOWN_MS
-                QualityTrace.log("RESOLVE", "path" to "auth_invalid", "hash" to lower)
-                throw KugouAuthInvalidException("整账号鉴权失效 hash=$hash: ${cause?.message}")
+                throw (cause as? IOException ?: KugouAuthInvalidException("播放凭据已被拒绝"))
             }
             val blocked = cause as? KugouPlayBlockedException
             // 只有"确凿拒播"才进负缓存：这类 hash 短期内必然继续失败（版权/付费拦截），
@@ -2174,10 +2175,10 @@ object KugouRepository {
             // 连续"秒失败"并弹"已跳到下一首"（原因里还漏着 Timed out waiting for 10000 ms），
             // 30 秒 TTL 到期才自愈。与上面的取消分支、下面的鉴权分支同一原则：瞬时失败不写证据。
             if (blocked != null) {
-                failedCache[key] = FailedResolve(System.currentTimeMillis(), blocked.userReason)
+                failedCache[key] = FailedResolve(System.currentTimeMillis(), blocked.userReason, recoveryBudget.currentAuthVersion)
                 // 确凿拒播（版权/付费拦截）写进可播性表：列表里的行下次可见即置灰。
                 // 其余失败（网络/超时/鉴权）不算证据，不写，避免误灰可播歌曲。
-                SongPlayabilityStore.markBlocked(hash, blocked.userReason)
+                SongPlayabilityStore.markBlocked(hash, blocked.userReason, recoveryBudget.currentAuthVersion)
             }
             QualityTrace.log(
                 "RESOLVE", "path" to "failed", "hash" to lower,
@@ -2189,7 +2190,7 @@ object KugouRepository {
         failedCache.remove(key)
         putCached(hash, quality, resolved)
         // 成功解析 = 可播：清除历史置灰（会员开通/音源上架后自愈）
-        SongPlayabilityStore.markPlayable(hash)
+        SongPlayabilityStore.markPlayable(hash, recoveryBudget.currentAuthVersion)
         // 实际拿到的是更低档：这条 URL 对该真实档位同样有效，按实际档再存一份，
         // 下次请求该档时零网络且读数正确（以前只存 high 键，于是 high 键里装着 FLAC 流）。
         resolved.quality?.takeIf { it != quality }?.let { putCached(hash, it, resolved) }
@@ -2300,7 +2301,7 @@ object KugouRepository {
         decision: QualityIntentResolver.Decision
     ): QualityFact? {
         try {
-            resolvePlayUrlBlocking(hash, decision.tier, decision.source)
+            resolvePlayUrlBlocking(hash, decision.tier, decision.source, PlaybackRequestPurpose.QUALITY_PROBE)
         } catch (e: kotlinx.coroutines.CancellationException) {
             // 取消不是"切换失败"：不能拿它把用户刚选的那一档回滚掉
             throw e
@@ -2393,8 +2394,15 @@ object KugouRepository {
      * 宁可少拿一档也不编造证据。
      * 全部失败返回最后一次错误（保留 [KugouPlayBlockedException] 语义供跳歌与负缓存）。
      */
-    private suspend fun resolvePlayUrlWithFallback(hash: String, requested: String): Result<KugouResolvedPlayUrl> {
+    internal suspend fun resolvePlayUrlWithFallback(
+        hash: String,
+        requested: String,
+        recoveryBudget: PlaybackRecoveryBudget = PlaybackRecoveryBudget(),
+        resolveTier: suspend (String, String, PlaybackRecoveryBudget) -> Result<KugouResolvedPlayUrl> =
+            { h, q, budget -> resolvePlayUrl(h, q, budget) }
+    ): Result<KugouResolvedPlayUrl> {
         var best: KugouResolvedPlayUrl? = null
+        var bestAuthVersion = recoveryBudget.currentAuthVersion
         var lastFailure: Throwable? = null
         // 链上每一档的"请求 → 实发"全部收集。降级过程本身就是在逐档试探，一趟下来
         // 已经问过哪些档、哪些档给不出货全部知道了；只记最终采用那一档就会把它
@@ -2402,7 +2410,7 @@ object KugouRepository {
         // 点下去又静默退回 320K）。
         val probes = mutableListOf<Pair<String, String?>>()
         for (q in KugouQuality.downgradeChain(requested)) {
-            resolvePlayUrl(hash, q).fold(
+            resolveTier(hash, q, recoveryBudget).fold(
                 onSuccess = { resolved ->
                     probes += q to resolved.quality
                     if (resolved.quality == q) {
@@ -2417,13 +2425,18 @@ object KugouRepository {
                         (candidateRank != null && (bestRank == null || candidateRank > bestRank))
                     ) {
                         best = resolved
+                        bestAuthVersion = recoveryBudget.currentAuthVersion
                     }
                 },
                 onFailure = { e ->
                     lastFailure = e
                     // 鉴权是全账号的：降档链再问四档也只是多刷四条 502（不记能力结论：
                     // 失败不等于拿不到这一档，与下面“全程失败”分支同一语义）
-                    if (KugouUpstreamError.hasAuthInvalidCause(e)) return Result.failure(e)
+                    if (isPlaybackIdentityFailure(e)) {
+                        best?.takeIf { bestAuthVersion == recoveryBudget.currentAuthVersion }
+                            ?.let { return Result.success(it) }
+                        return Result.failure(e)
+                    }
                 }
             )
         }
@@ -2433,6 +2446,37 @@ object KugouRepository {
         }
         // 全程失败：不产生任何能力结论（失败 != 拿不到这一档，可能只是网络）
         return Result.failure(lastFailure ?: IOException("所有音质档位均解析失败 hash=$hash"))
+    }
+
+    private fun isPlaybackIdentityFailure(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any {
+            it is KugouAuthInvalidException || it is KugouVerificationRequiredException ||
+                it is KugouSignatureRejectedException || it is KugouTokenRejectedException
+        }
+
+    suspend fun resolvePlayUrlFresh(
+        hash: String,
+        quality: String,
+        purpose: PlaybackRequestPurpose = PlaybackRequestPurpose.MANUAL_RECHECK
+    ): Result<KugouResolvedPlayUrl> = withContext(Dispatchers.IO) {
+        val budget = PlaybackRecoveryBudget()
+        try {
+            val result = kotlinx.coroutines.withTimeout(RESOLVE_TOTAL_TIMEOUT_MS) {
+                resolvePlayUrlWithFallback(hash, quality, budget)
+            }
+            if (budget.currentAuthVersion != KugouApiService.authVersion()) {
+                throw kotlinx.coroutines.CancellationException("认证状态已变化")
+            }
+            if (result.exceptionOrNull()?.let { KugouUpstreamError.hasAuthInvalidCause(it) } == true) {
+                authCooldown.confirm(purpose, budget.currentAuthVersion,
+                    KugouApiService.authVersion(), AUTH_INVALID_COOLDOWN_MS)
+            }
+            result
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Result.failure(e)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        }
     }
 
     /** 正在做阶梯探测的 hash：同一首不并发重复问（切歌与打开面板可能同时触发）。 */
@@ -2454,6 +2498,8 @@ object KugouRepository {
      */
     suspend fun probeAllQualities(hash: String) {
         val lower = hash.lowercase()
+        if (isAuthInvalidWindow()) return
+        val recoveryBudget = PlaybackRecoveryBudget()
         if (!ladderProbing.add(lower)) return
         try {
             val askedBlind = ladderAskedBlind.getOrPut(lower) { mutableSetOf() }
@@ -2468,7 +2514,8 @@ object KugouRepository {
                 synchronized(askedBlind) { if (tier in askedBlind) continue }
                 val before = SongQualityCapabilityStore.provenUnavailableOf(lower)
                 // 失败就整轮收尾：网络不可达时继续问只会拿到更多无结论的失败
-                val resolved = resolvePlayUrl(lower, tier).getOrNull() ?: return
+                val resolved = resolvePlayUrl(lower, tier, recoveryBudget).getOrNull() ?: return
+                if (recoveryBudget.currentAuthVersion != KugouApiService.authVersion()) return
                 SongQualityCapabilityStore.recordProbeChain(lower, listOf(tier to resolved.quality))
                 val stillBlind = SongQualityCapabilityStore.provenUnavailableOf(lower) == before &&
                         tier in SongQualityCapabilityStore.tiersNeedingProbe(lower)
@@ -2493,24 +2540,37 @@ object KugouRepository {
      * **已收藏的无版权歌**仍然有效，所以两条都要试。非会员账号不发会员协议请求。
      *
      * 判读全部交给 [interpretSongUrlBody]：只有版权/付费硬拦才抛
-     * [KugouPlayBlockedException]；登录态失效（20017/20018/20028）改判
-     * [KugouAuthInvalidException]——它从来不是"这首歌没音源"，历史上正是这一条被误判，
-     * 才把整份歌单写成了 24 小时置灰。认不出的空响应当 [KugouTierUnavailableException]，
-     * 交给降档链与上层重试，不产生任何"不可播"结论。
+     * [KugouPlayBlockedException]；验证、签名和凭据拒绝分别保留原因，
+     * 恢复流程确认凭据失效后才使用 [KugouAuthInvalidException]。
+     * 未知空响应交给降档链，不产生不可播结论。
      */
-    suspend fun resolvePlayUrl(hash: String, quality: String): Result<KugouResolvedPlayUrl> =
+    suspend fun resolvePlayUrl(
+        hash: String,
+        quality: String,
+        recoveryBudget: PlaybackRecoveryBudget = PlaybackRecoveryBudget()
+    ): Result<KugouResolvedPlayUrl> =
         withContext(Dispatchers.IO) {
             try {
                 val primary = if (KugouApiService.hasVipToken()) {
-                    attemptSongUrl(hash, quality, useVipPath = true)
+                    attemptSongUrl(hash, quality, useVipPath = true, recoveryBudget)
                 } else null
                 val primaryOutcome = primary?.getOrNull()
-                // 只有"拿到链接"才算会员协议成功；其余（试听/需购买/未认会员/账号级之外）
-                // 一律回落 v5/url，让 ppage_id 收藏解锁与降档链继续有机会。
+                primary?.exceptionOrNull()?.takeIf(::isPlaybackIdentityFailure)?.let {
+                    return@withContext Result.failure(it)
+                }
                 val needFallback = primaryOutcome !is SongUrlOutcome.Ok &&
-                    primaryOutcome !is SongUrlOutcome.AccountInvalid
-                val secondary = if (needFallback) attemptSongUrl(hash, quality, useVipPath = false) else null
-
+                    primaryOutcome !is SongUrlOutcome.VerificationRequired &&
+                    primaryOutcome !is SongUrlOutcome.SignatureRejected &&
+                    primaryOutcome !is SongUrlOutcome.TokenRejected
+                val secondary = if (needFallback) {
+                    attemptSongUrl(hash, quality, useVipPath = false, recoveryBudget)
+                } else null
+                secondary?.exceptionOrNull()?.takeIf(::isPlaybackIdentityFailure)?.let {
+                    return@withContext Result.failure(it)
+                }
+                if (recoveryBudget.currentAuthVersion != KugouApiService.authVersion()) {
+                    throw kotlinx.coroutines.CancellationException("认证状态已变化")
+                }
                 val outcome = secondary?.getOrNull() ?: primaryOutcome
                 if (outcome == null) {
                     // 两条都是传输层失败：原样返回（取消保传播、鉴权交上层开冷却窗）
@@ -2523,15 +2583,12 @@ object KugouRepository {
                     is SongUrlOutcome.Ok ->
                         Result.success(KugouResolvedPlayUrl(outcome.url, outcome.quality))
 
-                    SongUrlOutcome.AccountInvalid -> {
-                        QualityTrace.log(
-                            "RESOLVE", "path" to "account_invalid",
-                            "hash" to hash.lowercase(), "quality" to quality
-                        )
-                        Result.failure(
-                            KugouAuthInvalidException("song/url 登录态失效 hash=$hash quality=$quality")
-                        )
-                    }
+                    SongUrlOutcome.VerificationRequired ->
+                        Result.failure(KugouVerificationRequiredException("播放请求需要验证"))
+                    SongUrlOutcome.SignatureRejected ->
+                        Result.failure(KugouSignatureRejectedException("播放签名被拒绝"))
+                    SongUrlOutcome.TokenRejected ->
+                        Result.failure(KugouTokenRejectedException("播放凭据未被接受"))
 
                     is SongUrlOutcome.Blocked -> {
                         Log.w(TAG, "播放 URL 解析被拒 hash=$hash quality=$quality ${outcome.detail}")
@@ -2566,12 +2623,13 @@ object KugouRepository {
     private suspend fun attemptSongUrl(
         hash: String,
         quality: String,
-        useVipPath: Boolean
+        useVipPath: Boolean,
+        recoveryBudget: PlaybackRecoveryBudget
     ): Result<SongUrlOutcome> {
         val json = if (useVipPath) {
-            KugouApiService.getInstance().getSongUrlNew(hash, quality)
+            KugouApiService.getInstance().getSongUrlNew(hash, quality, recoveryBudget = recoveryBudget)
         } else {
-            KugouApiService.getInstance().getSongUrl(hash, quality)
+            KugouApiService.getInstance().getSongUrl(hash, quality, recoveryBudget = recoveryBudget)
         }
         val body = json.getOrNull()
             ?: return Result.failure(

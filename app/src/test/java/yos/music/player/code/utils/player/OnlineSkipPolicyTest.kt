@@ -45,15 +45,26 @@ class OnlineSkipPolicyTest {
         assertEquals(Decision.HOLD_AND_RETRY, decide(OnlineFailureKind.OTHER, 9))
     }
 
-    // ---------- 鉴权失效：第二首就是证据，不必刷满 ----------
+    // ---------- 已确认鉴权失败：立即原地退避 ----------
 
     @Test
-    fun authInvalidHoldsAfterTwoStrikes() {
-        // 第一首仍然先跳（可能是单首问题，也需要给分诊留一次样本）
-        assertEquals(Decision.SKIP_NEXT, decide(OnlineFailureKind.AUTH_INVALID, 0))
-        // 第二首：全账号失败的证据成立，跳与不跳结果一样 → 挂起退避
+    fun confirmedAuthInvalidHoldsWithoutSkippingForMoreEvidence() {
+        assertEquals(Decision.HOLD_AND_RETRY, decide(OnlineFailureKind.AUTH_INVALID, 0))
         assertEquals(Decision.HOLD_AND_RETRY, decide(OnlineFailureKind.AUTH_INVALID, 1))
-        assertEquals(Decision.HOLD_AND_RETRY, decide(OnlineFailureKind.AUTH_INVALID, 7))
+        assertEquals(Decision.HOLD_AND_RETRY, decide(OnlineFailureKind.AUTH_INVALID, 0, hasNext = false))
+    }
+
+    @Test
+    fun verificationSignatureAndUnconfirmedTokenNeverSkipSongs() {
+        for (kind in listOf(
+            OnlineFailureKind.VERIFICATION_REQUIRED,
+            OnlineFailureKind.SIGNATURE_REJECTED,
+            OnlineFailureKind.TOKEN_REJECTED,
+        )) {
+            assertEquals(Decision.HOLD_AND_RETRY, decide(kind, 0))
+            assertEquals(Decision.HOLD_AND_RETRY, decide(kind, 0, hasNext = false))
+            assertEquals(Decision.STOP, decide(kind, 0, round = 5))
+        }
     }
 
     @Test
@@ -83,7 +94,7 @@ class OnlineSkipPolicyTest {
         assertEquals(120_000L, OnlineSkipPolicy.backoffMs(3)!!)
         assertEquals(OnlineSkipPolicy.RETRY_BACKOFF_MS[rounds - 1], OnlineSkipPolicy.backoffMs(rounds)!!)
         assertNull(OnlineSkipPolicy.backoffMs(rounds + 1))
-        // 轮次用尽：从"等一会儿再试"降级成"停住"，用户的手动操作仍然能重新起一轮
+        // 轮次用尽后停住；鉴权类只在真实播放或账号变化后清预算。
         assertEquals(Decision.STOP, decide(OnlineFailureKind.AUTH_INVALID, 1, authWindow = true, round = rounds))
     }
 
@@ -126,7 +137,7 @@ class OnlineSkipPolicyTest {
 
     @Test
     fun limitsAreSane() {
-        assertTrue(OnlineSkipPolicy.AUTH_LIMIT <= OnlineSkipPolicy.TRANSIENT_LIMIT)
+        assertEquals(5, OnlineSkipPolicy.RETRY_BACKOFF_MS.size)
         assertTrue(OnlineSkipPolicy.TRANSIENT_LIMIT > 0)
     }
 }

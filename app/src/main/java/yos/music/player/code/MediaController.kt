@@ -98,6 +98,10 @@ import yos.music.player.data.objects.MainViewModelObject
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.data.repositories.IntentSource
 import yos.music.player.data.repositories.KugouAuthInvalidException
+import yos.music.player.data.repositories.KugouVerificationRequiredException
+import yos.music.player.data.repositories.KugouSignatureRejectedException
+import yos.music.player.data.repositories.KugouTokenRejectedException
+import yos.music.player.data.repositories.PlaybackRequestPurpose
 import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.ListeningGradeTracker
@@ -557,7 +561,7 @@ object MediaController {
             "state" to YosDiagnostics.stateLabel(state)
         )
         // 手动切歌是显式意图：作废上一轮的失败锁存（否则新队列第一首一失败就"达上限"）
-        OnlineSkipState.reset(fn)
+        OnlineSkipState.onUserIntent(fn)
         val rearm = state == Player.STATE_IDLE
         runCatching {
             if (forward) controller.seekToNextMediaItem() else controller.seekToPreviousMediaItem()
@@ -726,7 +730,7 @@ object MediaController {
         playNextRestore.clear()
         // 用户显式意图同样作废跳歌锁存：不清就会把"上一轮整队列失败"的计数算到新队列上，
         // 新队列第一首一失败就直接落进"达上限"分支（真机：用户重新点歌也救不回来）
-        OnlineSkipState.reset("user_prepare")
+        OnlineSkipState.onUserIntent("user_prepare")
         if (thisMusicList != playingMusicList.value) {
 
             var index = 0
@@ -1717,14 +1721,17 @@ class YosPlaybackService : MediaSessionService() {
         CrossfadeExo.attach(
             player,
             secondaryBuilder = {
-                ExoPlayer.Builder(this, renderFactory())
-                    .setAudioAttributes(audioAttributes, false)
-                    .setLoadControl(loadControl())
-                    // handleAudioBecomingNoisy 是 builder-only 配置，出生就设 true：过渡期拔
-                    // 耳机两个 player 一起暂停，crossfade 正常 abort，行为与单 player 一致
-                    .setHandleAudioBecomingNoisy(true)
-                    .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
-                    .build()
+                    lateinit var secondary: ExoPlayer
+                    secondary = ExoPlayer.Builder(this, renderFactory())
+                        .setAudioAttributes(audioAttributes, false)
+                        .setLoadControl(loadControl())
+                        .setHandleAudioBecomingNoisy(true)
+                        .setMediaSourceFactory(buildKugouMediaSourceFactory(this) {
+                            if (currentPlayer === secondary) PlaybackRequestPurpose.PLAYBACK
+                            else PlaybackRequestPurpose.CROSSFADE_PREFETCH
+                        })
+                        .build()
+                    secondary
             },
             onPromote = ::promoteSecondary,
         )
@@ -1763,10 +1770,6 @@ class YosPlaybackService : MediaSessionService() {
                         "pos" to p?.currentPosition,
                         "buf" to p?.bufferedPosition
                     )
-                    if (playbackState == Player.STATE_READY) {
-                        // 真开播了：上一轮的失败不再相关
-                        OnlineSkipState.reset("ready")
-                    }
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -1795,14 +1798,6 @@ class YosPlaybackService : MediaSessionService() {
                         }
                         val kind = classifyOnlineFailure(error)
                         val reason = userReasonOf(error, kind)
-                        // 确凿拒播（版权/付费拦截）：把结论写进可播性表，返回列表时该行置灰。
-                        // 鉴权/网络/超时不写——它们不是“这首歌不可播”的证据。
-                        if (kind == OnlineFailureKind.BLOCKED) {
-                            SongPlayabilityStore.markBlocked(
-                                failedItem.mediaId?.removePrefix("kugou-online-"),
-                                reason
-                            )
-                        }
                         when (OnlineSkipState.decide(kind, hasNext, KugouRepository.isAuthInvalidWindow())) {
                             OnlineSkipPolicy.Decision.SKIP_NEXT ->
                                 skipPastUnplayable(failedItem, reason)
@@ -1853,6 +1848,7 @@ class YosPlaybackService : MediaSessionService() {
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     super.onIsPlayingChanged(isPlaying)
+                    if (isPlaying) OnlineSkipState.reset("playing")
                     MediaViewModelObject.isPlaying.value = isPlaying
                     pushListeningOnline(isPlaying, currentPlayer?.currentMediaItem?.mediaId)
                     // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）
@@ -2148,6 +2144,9 @@ class YosPlaybackService : MediaSessionService() {
         val chain = generateSequence<Throwable>(error) { it.cause }.toList()
         return when {
             chain.any { it is KugouAuthInvalidException } -> OnlineFailureKind.AUTH_INVALID
+            chain.any { it is KugouVerificationRequiredException } -> OnlineFailureKind.VERIFICATION_REQUIRED
+            chain.any { it is KugouSignatureRejectedException } -> OnlineFailureKind.SIGNATURE_REJECTED
+            chain.any { it is KugouTokenRejectedException } -> OnlineFailureKind.TOKEN_REJECTED
             chain.any { it is KugouRepository.KugouPlayBlockedException } -> OnlineFailureKind.BLOCKED
             chain.any {
                 it is InterruptedException ||
@@ -2169,7 +2168,10 @@ class YosPlaybackService : MediaSessionService() {
      * （如 "Timed out waiting for 10000 ms"）漏给用户；确凿拒播用上游给的字段级原因。
      */
     private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String = when (kind) {
-        OnlineFailureKind.AUTH_INVALID -> "登录态失效，请重新登录账号"
+        OnlineFailureKind.AUTH_INVALID -> "登录凭据已失效，请重新登录账号"
+        OnlineFailureKind.VERIFICATION_REQUIRED -> "播放请求需要验证，暂时无法获取播放地址"
+        OnlineFailureKind.SIGNATURE_REJECTED -> "播放鉴权异常，稍后重试"
+        OnlineFailureKind.TOKEN_REJECTED -> "播放凭据暂未被接受，稍后重试"
         OnlineFailureKind.TIMEOUT -> "网络超时"
         OnlineFailureKind.NETWORK -> "网络异常"
         OnlineFailureKind.BLOCKED -> generateSequence<Throwable>(error) { it.cause }

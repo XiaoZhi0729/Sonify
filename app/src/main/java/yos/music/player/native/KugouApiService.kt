@@ -4,6 +4,7 @@ import android.util.Log
 import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import yos.music.player.code.utils.player.OnlineSkipState
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,7 +16,6 @@ import yos.music.player.data.objects.BlacklistState
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouVipState
 import yos.music.player.data.objects.MyPlaylistsCache
-import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouUpstreamError
 
 /**
@@ -92,30 +92,14 @@ class KugouApiService private constructor() {
         /** 从 MMKV 恢复上次登录态。POC 生命周期内 token 短暂有效，恢复后可能过期；
          *  但至少避免每次重装都重新扫码，过期时由业务侧重新登录即可。 */
         private fun restoreAuth() {
+            val expected = authSnapshot()
+            if (expected.version != 0L) return
             runCatching {
                 val store = MMKV.mmkvWithID(MMKV_UID)
-                val tok = store.decodeString(K_TOKEN)
-                val uid = store.decodeString(K_USERID)
-                val vt = store.decodeString(K_VIP)
-                Log.d(TAG, "restoreAuth: tok=${tok != null} uid=$uid vip=${vt != null}")
-                if (tok != null && uid != null) {
-                    token = tok
-                    userid = uid
-                    vipToken = vt?.takeIf { it.isNotEmpty() }
-                    // 同步全局可观察状态（UI 唯一观察源）
-                    KugouAccountState.apply(uid, vipToken != null)
-                    // 按账号重载本地已签标记（kugou_youth_signed_days_<uid>）
-                    KugouVipState.onAccountResolved(uid)
-                    Log.d(TAG, "Login state restored: userid=$uid, hasVip=${vipToken != null}")
-                } else {
-                    // 无可恢复登录态，显式归零（初始态即未登录，防御性写法）
-                    KugouAccountState.apply(null, false)
-                    KugouVipState.onAccountResolved(null)
-                    Log.d(TAG, "restoreAuth: nothing to restore (tok/uid missing)")
-                }
-            }.onFailure { e ->
-                Log.e(TAG, "restoreAuth FAILED: $e")
-            }
+                val tok = store.decodeString(K_TOKEN)?.takeIf { it.isNotBlank() }
+                val uid = store.decodeString(K_USERID)?.takeIf { it.isNotBlank() }
+                authSession.restore(expected, if (uid != null) tok else null, if (tok != null) uid else null, store.decodeString(K_VIP))
+            }.onFailure { Log.w(TAG, "Auth restore unavailable") }
         }
 
         private fun restoreDfid() {
@@ -127,89 +111,49 @@ class KugouApiService private constructor() {
         }
 
         // ---------- POC 登录态（内存态，仅本进程生命周期；敏感值不写日志、不进 UI） ----------
-        @Volatile var token: String? = null; private set
-        @Volatile var userid: String? = null; private set
-        @Volatile var vipToken: String? = null; private set
+        private val authSession = KugouAuthSession(
+            onChanged = ::publishAuth,
+            onRefresh = { result, version -> YosDiagnostics.log("AUTH_REFRESH", "result" to result.javaClass.simpleName, "version" to version) }
+        )
+        val token: String? get() = authSnapshot().token
+        val userid: String? get() = authSnapshot().userid
+        val vipToken: String? get() = authSnapshot().vipToken
+        fun authSnapshot(): AuthSnapshot = authSession.snapshot()
+        fun authVersion(): Long = authSnapshot().version
+        fun isLoggedIn(): Boolean = authSnapshot().isLoggedIn
+        fun hasVipToken(): Boolean = authSnapshot().hasVipToken
 
-        /** 只暴露“是否已登录”，不暴露敏感值。 */
-        fun isLoggedIn(): Boolean = token != null && userid != null
-
-        /**
-         * 是否持有会员凭据（只暴露布尔，不暴露明文）。
-         * 播放解析据此决定要不要先走会员协议 /song/url/new（priv_url）——
-         * 非会员账号发这条请求没有意义，只会多一次上游调用。
-         */
-        fun hasVipToken(): Boolean = vipToken != null
-
-        /**
-         * 冷启动补齐会员凭据：已登录且当前**没有** vip_token 时才刷新一次
-         * （对齐 md3Music refreshLogin）。返回是否真的发起了请求，便于日志核对。
-         */
         suspend fun refreshLoginIfMissingVip(): Boolean {
-            if (!isLoggedIn() || vipToken != null) return false
-            return getInstance().refreshLogin()
+            val expected = authSnapshot()
+            if (!expected.isLoggedIn || expected.hasVipToken) return false
+            return getInstance().refreshLogin(expected) is AuthRefreshResult.Committed
         }
-
-        /** 掩码显示用，如 "abc123…(len=42)"。 */
-        fun maskedToken(): String {
-            val t = token ?: return "-"
-            return if (t.length <= 6) "***" else "${t.take(6)}…(len=${t.length})"
+        fun maskedToken(): String = if (isLoggedIn()) "***" else "-"
+        fun authHeader(): String? = authSnapshot().header()
+        fun applyLogin(token: String, userid: String, vipToken: String) {
+            authSession.login(token, userid, vipToken)
         }
+        fun clearLogin() { authSession.clear() }
 
-        /** 与 Dart _onRequest 一致（kugou_api_client.dart:100-107）：
-         *  Authorization: <token>;<userid>;[vip_token]
-         *  Rust build_query（server.rs:662-673）会把它解析进 cookie → request.rs:409-410 读取。 */
-        fun authHeader(): String? {
-            val t = token ?: return null
-            val u = userid ?: return null
-            val parts = mutableListOf("token=$t", "userid=$u")
-            vipToken?.takeIf { it.isNotEmpty() }?.let { parts.add("vip_token=$it") }
-            return parts.joinToString(";")
-        }
-
-        fun applyLogin(token:String, userid: String, vipToken:String) {
-            this.token = token
-            this.userid = userid
-            this.vipToken = vipToken.takeIf { it.isNotEmpty() }
-            // 持久化，避免每次重装/重启都要重新扫码
+        // Persistence and observers run under the session lock, in generation order.
+        private fun publishAuth(snapshot: AuthSnapshot) {
             runCatching {
                 val store = MMKV.mmkvWithID(MMKV_UID)
-                store.encode(K_TOKEN, token)
-                store.encode(K_USERID, userid)
-                if (vipToken.isNotEmpty()) store.encode(K_VIP, vipToken) else store.removeValueForKey(K_VIP)
+                if (snapshot.isLoggedIn) {
+                    store.encode(K_TOKEN, snapshot.token)
+                    store.encode(K_USERID, snapshot.userid)
+                    snapshot.vipToken?.let { store.encode(K_VIP, it) } ?: store.removeValueForKey(K_VIP)
+                } else store.removeValuesForKeys(arrayOf(K_TOKEN, K_USERID, K_VIP))
             }
-            // 同步全局可观察状态（登录页/设置页立即变为已登录）
-            KugouAccountState.apply(userid, this.vipToken != null)
-            // 按账号重载本地已签标记：重登同一账号立即恢复"今日已签"显示，
-            // 无需等网络/重启（修复登出→重登显示"今日未签到"的 bug）
-            KugouVipState.onAccountResolved(userid)
-            // 不感兴趣黑名单是账号级数据：换账号必须丢弃上一个账号的缓存
+            KugouAccountState.apply(snapshot.userid, snapshot.hasVipToken)
+            KugouAccountState.updateAuthVersion(snapshot.version)
+            if (snapshot.isLoggedIn) KugouVipState.onAccountResolved(snapshot.userid) else KugouVipState.clear()
             BlacklistState.reset()
             MyPlaylistsCache.reset()
-            // 持久化留证（logcat 会被刷掉，诊断文件不会）：本次登录/刷新有没有拿到会员凭据。
-            // 这里是全部登录路径的唯一写入点，一条记录即可覆盖扫码/验证码/刷新三种来源。
-            YosDiagnostics.log(
-                "AUTH_APPLY", "userid" to userid,
-                "hasVipToken" to (this.vipToken != null), "tokenLen" to token.length
-            )
-            // 敏感值不落日志
-            Log.d(TAG, "Login state applied: userid=$userid, hasVip=${this.vipToken != null}")
-        }
-
-        fun clearLogin() {
-            token = null; userid = null; vipToken = null
-            runCatching {
-                val store = MMKV.mmkvWithID(MMKV_UID)
-                store.removeValuesForKeys(arrayOf(K_TOKEN, K_USERID, K_VIP))
-            }
-            // 同步全局可观察状态（dfid 与本地音乐/收藏数据不属于账号身份，保留不动）
-            KugouAccountState.clear()
-            // VIP 签到态同属账号身份：服务端派生态清空；本地已签日期按账号保留
-            // （仅切回匿名命名空间，重登同一账号由 onAccountResolved 恢复）
-            KugouVipState.clear()
-            BlacklistState.reset()
-            MyPlaylistsCache.reset()
-            Log.d(TAG, "Login state cleared")
+            OnlineSkipState.onAccountChanged()
+            YosDiagnostics.log("AUTH_APPLY", "version" to snapshot.version,
+                "loggedIn" to snapshot.isLoggedIn, "hasVipToken" to snapshot.hasVipToken)
+            Log.d(TAG, "Auth generation committed: version=${snapshot.version}")
         }
 
         fun saveDfid(d: String) {
@@ -281,7 +225,7 @@ class KugouApiService private constructor() {
             val response = httpGetOnce(path, params, extraHeaders)
             when {
                 response.first !in 200..299 -> Result.failure(
-                    IOException("HTTP ${response.first}: ${response.second.take(300)}")
+                    IOException("HTTP ${response.first}")
                 )
                 response.second.isEmpty() -> Result.failure(IOException("Empty response body"))
                 else -> Result.success(response)
@@ -293,12 +237,13 @@ class KugouApiService private constructor() {
         }
     }.getOrElse { throw it }
 
-    private fun httpGetOnce(
+    private suspend fun httpGetOnce(
         path: String,
         params: Map<String, String>,
         extraHeaders: Map<String, String> = emptyMap(),
         // true 时日志只记路径、不记 query：评论正文等用户内容不得进日志
-        redactLog: Boolean = false
+        redactLog: Boolean = false,
+        auth: AuthSnapshot = authSnapshot()
     ): Pair<Int, String> {
         val baseUrl = KugouNativeBridge.getBaseUrl()
         val builder = baseUrl.toHttpUrl().newBuilder()
@@ -311,20 +256,11 @@ class KugouApiService private constructor() {
         // 写成了字面量 "undefined"（server.rs:284），而该 cookie 只在"缺失时"补——于是上游收到的
         // 是 undefined，认不出概念版（也就认不出签到领的概念版会员）。带上真值即可覆盖。
         rb.addHeader("Cookie", "KUGOU_API_PLATFORM=$KUGOU_PLATFORM")
-        authHeader()?.let { rb.addHeader("Authorization", it) }
+        auth.header()?.let { rb.addHeader("Authorization", it) }
         extraHeaders.forEach { (k, v) -> rb.header(k, v) }
         val req = rb.build()
-        // 证据链要求：确认登录态确实通过 Authorization 头传给 Rust。
-        // 只记录“有无”及组成，不记录 token 明文。
-        val authDesc = if (req.header("Authorization") != null) {
-            "present(token,userid${if (vipToken != null) ",vip_token" else ""})"
-        } else "none"
-        Log.d(TAG, "GET ${if (redactLog) path else req.url} Authorization=$authDesc")
-        val response = client.newCall(req).execute()
-        val code = response.code
-        val body = response.body?.string() ?: ""
-        response.close()
-        return code to body
+        Log.d(TAG, "GET $path authenticated=${auth.isLoggedIn}")
+        return client.newCall(req).awaitResponseBody()
     }
 
     /**
@@ -339,10 +275,11 @@ class KugouApiService private constructor() {
         path: String,
         params: Map<String, String>,
         extraHeaders: Map<String, String> = emptyMap(),
-        maxRetries: Int = 1
+        maxRetries: Int = 1,
+        auth: AuthSnapshot = authSnapshot()
     ): Pair<Int, String> = retryResult(maxRetries) {
         try {
-            Result.success(httpGetOnce(path, params, extraHeaders))
+            Result.success(httpGetOnce(path, params, extraHeaders, auth = auth))
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Throwable) {
@@ -464,161 +401,69 @@ class KugouApiService private constructor() {
      * request.rs:409-410 读出 token/userid，userid 参与 sign_key 计算）。
      * 返回结构（实测）：未登录时 HTTP 502 + {error_code:31833, error:"illegal key"}；
      * 成功时 data 内含 url/play_url/fileSize/bitRate 等（KugouPlayUrl 字段）。
-     * 完整响应体分段写入 Logcat，保留对照证据。
+     * 响应只记录状态码；播放 URL 和凭据不得写入日志。
      */
-    suspend fun getSongUrl(hash: String, quality: String = "128"): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                if (!ensureServer()) {
-                    return@withContext Result.failure(Exception("Server not running"))
-                }
+    suspend fun getSongUrl(
+        hash: String,
+        quality: String = "128",
+        recoveryBudget: PlaybackRecoveryBudget = PlaybackRecoveryBudget()
+    ): Result<JSONObject> = playbackRequest(
+        "/song/url", mapOf("hash" to hash.lowercase(), "quality" to quality, "ppage_id" to PREFERRED_PPAGE_ID), recoveryBudget
+    )
 
-                Log.d(TAG, "Getting URL for hash=$hash quality=$quality loggedIn=${isLoggedIn()}")
-
-                val params = mapOf(
-                    "hash" to hash.lowercase(),
-                    "quality" to quality,
-                    // 收藏页解锁 ID：酷狗约定"歌曲被收藏后，即便无版权/需付费也可用该 page_id 解锁播放"。
-                    // 必须传**单个** 356753938——服务端缺省值是三个 ID 的串
-                    // （"356753938,823673182,967485191"），实测那个串解锁不了：同一首付费歌带缺省串
-                    // 回 `status:3 priv_status:0 pay_block_tpl:1`（无地址），带单 ID 回
-                    // `status:1 priv_status:1` + 完整地址。md3Music 也是显式传这一个（Dart
-                    // kugou_api_client.dart:1255-1267「已收藏无版权歌曲兜底」）。
-                    "ppage_id" to PREFERRED_PPAGE_ID,
-                )
-                // 播放路径的重试降为 1 次：这条链跑在 ExoPlayer Loader 线程上且外层
-                // 有 10s 全局截止（resolvePlayUrlBlocking），3 次重试 × readTimeout 15s
-                // 只会把整段准备时间拖到分钟级；瞬时失败交给重试一次 + 失败跳歌兜底。
-                // 用 httpGetAllowNonOk：非 2xx 的响应体必须拿得到（20028/illegal key 在体里）。
-                // 必须绕 apicache：Rust 的缓存键是 host+path+query、**不含 Authorization**
-                // （server.rs:246），登录前的 200 响应会在 2 分钟内喂给已登录请求，
-                // 是"同一首歌一会儿能播、一会儿被判无音源"的现成通道。
-                val (code, body) = httpGetAllowNonOk("/song/url", params, VIP_NO_CACHE_HEADERS, maxRetries = 1)
-
-                Log.d(TAG, "/song/url -> HTTP $code, body length=${body.length}, loggedIn=${isLoggedIn()}")
-                if (body.isNotEmpty()) {
-                    body.chunked(3500).forEachIndexed { idx, chunk ->
-                        Log.d(TAG, "/song/url body[$idx]: $chunk")
-                    }
-                }
-
-                // 上游风控"本次请求需要验证"(20028)：多为设备身份/sign_key 失效。对齐 md3Music
-                // kugou_api_client.dart:1112-1126：重注册设备后重试一次，有机会自愈（缺 dfid
-                // 的场景一次就好）；重试仍失败才当账号级失效处理（挂起而非逐首跳）。
-                // 注意两种 HTTP 形态都可能在体里带 20028，故先于状态码判断。
-                if (KugouUpstreamError.isNeedVerify(body)) {
-                    Log.w(TAG, "/song/url 需要验证(20028)，重注册设备后重试一次")
-                    registerDevice()
-                    val (code2, body2) = httpGetAllowNonOk("/song/url", params, VIP_NO_CACHE_HEADERS, maxRetries = 1)
-                    Log.d(TAG, "/song/url(重试) -> HTTP $code2, body length=${body2.length}")
-                    if (code2 in 200..299 && body2.isNotEmpty() &&
-                        !KugouUpstreamError.isNeedVerify(body2)
-                    ) {
-                        return@withContext Result.success(JSONObject(body2))
-                    }
-                    return@withContext Result.failure(
-                        KugouAuthInvalidException("/song/url 重试后仍需验证 HTTP $code2: ${body2.take(300)}")
-                    )
-                }
-
-                if (code !in 200..299) {
-                    // 鉴权失效单独开一类：它不是这一首的问题（逐首逐档重试只会把 502 刷成屏），
-                    // 也不是网络抖动（不值得退避重试）。判据见 [KugouUpstreamError.isAuthInvalid]。
-                    val authInvalid = KugouUpstreamError.isAuthInvalid(code, body)
-                    return@withContext Result.failure(
-                        if (authInvalid) KugouAuthInvalidException("/song/url HTTP $code: ${body.take(300)}")
-                        else IOException("/song/url HTTP $code: ${body.take(300)}")
-                    )
-                }
-                if (body.isEmpty()) {
-                    return@withContext Result.failure(IOException("Empty response body"))
-                }
-
-                Result.success(JSONObject(body))
-
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // 取消（切歌/超时）不是请求失败：吞掉它会把取消伪装成网络失败层层上报
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Get URL exception", e)
-                Result.failure(e)
-            }
-        }
-
-    /**
-     * 会员播放地址：Rust GET /song/url/new → 上游 /v6/priv_url。
-     *
-     * 与 [getSongUrl]（v5/url）的关键差别：priv_url 会把 **vip_token 作为
-     * `tracker_param.viptoken` 上传**、并把 `vip` 置成会员档（song_url_new.rs）；
-     * v5/url 只能把凭据放在 cookie 里，实测付费/VIP 歌在这条路上拿不到链接
-     * （真机同一 hash：/song/url 回 `status=2` 无 url，/song/url/new 出货）。
-     * md3Music 的 Dart 侧是同一策略——有 vip_token 就优先 priv_url
-     * （kugou_api_client.dart:964-977）。
-     *
-     * 响应里 url 可能是"按档位排列的数组"，但 Rust 侧 apply_quality 已按请求档挑好并
-     * 归一化成 `data.url`（字符串）+ `data.quality`，故判读方式与 [getSongUrl] 一致。
-     */
     suspend fun getSongUrlNew(
         hash: String,
         quality: String = "128",
         albumId: String? = null,
-        albumAudioId: String? = null
+        albumAudioId: String? = null,
+        recoveryBudget: PlaybackRecoveryBudget = PlaybackRecoveryBudget()
+    ): Result<JSONObject> = playbackRequest("/song/url/new", buildMap {
+        put("hash", hash.lowercase())
+        put("quality", quality)
+        albumId?.takeIf { it.isNotBlank() }?.let { put("album_id", it) }
+        albumAudioId?.takeIf { it.isNotBlank() }?.let { put("album_audio_id", it) }
+    }, recoveryBudget)
+
+    private suspend fun playbackRequest(
+        path: String, params: Map<String, String>, budget: PlaybackRecoveryBudget
     ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        var recoveryResult = "Cancelled"
         try {
-            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-
-            val params = buildMap {
-                put("hash", hash.lowercase())
-                put("quality", quality)
-                albumId?.takeIf { it.isNotBlank() }?.let { put("album_id", it) }
-                albumAudioId?.takeIf { it.isNotBlank() }?.let { put("album_audio_id", it) }
-            }
-            // 只记录"有无会员凭据"，不记录明文（与 authHeader 的取证口径一致）
-            Log.d(TAG, "GET /song/url/new hash=$hash quality=$quality hasVipToken=${vipToken != null}")
-
-            val (code, body) = httpGetAllowNonOk("/song/url/new", params, VIP_NO_CACHE_HEADERS, maxRetries = 1)
-            Log.d(TAG, "/song/url/new -> HTTP $code, body length=${body.length}")
-            if (body.isNotEmpty()) {
-                body.chunked(3500).forEachIndexed { idx, chunk ->
-                    Log.d(TAG, "/song/url/new body[$idx]: $chunk")
+            if (!ensureServer()) throw IOException("Playback server unavailable")
+            var requestAuth = authSession.snapshotForVersion(budget.currentAuthVersion)
+                ?: throw kotlinx.coroutines.CancellationException("Playback authentication generation changed")
+            var responseJson: JSONObject? = null
+            recoverKugouPlayback(
+                budget = budget,
+                authVersion = ::authVersion,
+                request = {
+                    val (code, body) = httpGetAllowNonOk(path, params, VIP_NO_CACHE_HEADERS, auth = requestAuth)
+                    responseJson = runCatching { JSONObject(body) }.getOrNull()
+                    PlaybackResponse(code, responseJson?.let { toPlainAny(it) as? Map<*, *> })
+                },
+                refresh = {
+                    refreshLogin(requestAuth).also { result ->
+                        if (result is AuthRefreshResult.Committed) requestAuth = result.snapshot
+                    }
+                },
+                register = { authSession.register(requestAuth) { registerDevice().isSuccess } },
+                sharedRefresh = {
+                    authSession.sharedRefresh(requestAuth.version).also { result ->
+                        if (result is AuthRefreshResult.Committed) requestAuth = result.snapshot
+                    }
                 }
-            }
-
-            // 20028 自愈与 v5 同款：重注册设备后重试一次，仍失败才当账号级失效
-            if (KugouUpstreamError.isNeedVerify(body)) {
-                Log.w(TAG, "/song/url/new 需要验证(20028)，重注册设备后重试一次")
-                registerDevice()
-                val (code2, body2) =
-                    httpGetAllowNonOk("/song/url/new", params, VIP_NO_CACHE_HEADERS, maxRetries = 1)
-                Log.d(TAG, "/song/url/new(重试) -> HTTP $code2, body length=${body2.length}")
-                if (code2 in 200..299 && body2.isNotEmpty() &&
-                    !KugouUpstreamError.isNeedVerify(body2)
-                ) {
-                    return@withContext Result.success(JSONObject(body2))
-                }
-                return@withContext Result.failure(
-                    KugouAuthInvalidException("/song/url/new 重试后仍需验证 HTTP $code2: ${body2.take(300)}")
-                )
-            }
-
-            if (code !in 200..299) {
-                val authInvalid = KugouUpstreamError.isAuthInvalid(code, body)
-                return@withContext Result.failure(
-                    if (authInvalid) KugouAuthInvalidException("/song/url/new HTTP $code: ${body.take(300)}")
-                    else IOException("/song/url/new HTTP $code: ${body.take(300)}")
-                )
-            }
-            if (body.isEmpty()) {
-                return@withContext Result.failure(IOException("Empty response body"))
-            }
-
-            Result.success(JSONObject(body))
-
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "Get URL(new) exception", e)
-            Result.failure(e)
+            )
+            recoveryResult = "Success"
+            Result.success(requireNotNull(responseJson))
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            recoveryResult = error.javaClass.simpleName
+            Log.w(TAG, "Playback request failed: ${error.javaClass.simpleName}")
+            Result.failure(error)
+        } finally {
+            if (budget.claimDiagnostic()) YosDiagnostics.log("PLAY_RECOVERY", "type" to budget.recoveryType,
+                "result" to recoveryResult, "replayed" to budget.replayed, "version" to budget.currentAuthVersion)
         }
     }
 
@@ -668,6 +513,7 @@ class KugouApiService private constructor() {
 
     /** 轮询检查。返回 data.status；status==4 时提取 token/userid 并保存（不写日志/UI）。 */
     suspend fun loginQrCheck(key: String): Result<Int> = withContext(Dispatchers.IO) {
+        val loginExpected = authSnapshot()
         try {
             val (code, body) = httpGetWithRetry("/login/qr/check", mapOf(
                 "key" to key,
@@ -678,11 +524,6 @@ class KugouApiService private constructor() {
             val data = json.optJSONObject("data") ?: json
             val status = data.optInt("status", -1)
             if (status == 4) {
-                // 登录响应必须留证：会员凭据（vip_token）到底有没有回、回在哪一层，
-                // 只有看这里的原始报文才能定性（历史现象：登录后 hasVip=false 无从追查）
-                body.chunked(3500).forEachIndexed { idx, chunk ->
-                    Log.d(TAG, "/login/qr/check body[$idx]: $chunk")
-                }
                 // 凭据可能落在 data 内、也可能只在顶层（Rust handle_qr_check 两处都写），两层都读，
                 // 避免"上游其实给了会员凭据、只是我们读错层级"。
                 val t = data.optString("token", "").ifEmpty { json.optString("token", "") }
@@ -695,10 +536,8 @@ class KugouApiService private constructor() {
                     "vip_token" to vt.isNotEmpty()
                 )
                 if (t.isNotEmpty() && u.isNotEmpty()) {
-                    applyLogin(t, u, vt)
-                    // 登录响应没带会员凭据时补一次刷新（对齐 md3Music refreshLogin）：
-                    // vip_token 是会员歌走 /song/url/new(priv_url) 的唯一凭据来源
-                    if (vipToken == null) refreshLogin()
+                    val applied = authSession.loginIfCurrent(loginExpected, t, u, vt)
+                    if (applied != null && !applied.hasVipToken) refreshLogin(applied)
                 }
             }
             Result.success(status)
@@ -719,53 +558,19 @@ class KugouApiService private constructor() {
      *
      * 只在"当前没有会员凭据"或显式需要时调用；失败不影响已登录态（token/userid 保留原值）。
      */
-    suspend fun refreshLogin(): Boolean = withContext(Dispatchers.IO) {
-        val t = token ?: return@withContext false
-        val u = userid ?: return@withContext false
-        try {
-            if (!ensureServer()) return@withContext false
-            val (code, body) = httpGetWithRetry(
-                "/login/token",
-                mapOf("token" to t, "userid" to u),
-                maxRetries = 1
+    suspend fun refreshLogin(): Boolean = refreshLogin(authSnapshot()) is AuthRefreshResult.Committed
+
+    private suspend fun refreshLogin(expected: AuthSnapshot): AuthRefreshResult = withContext(Dispatchers.IO) {
+        if (!expected.isLoggedIn) return@withContext AuthRefreshResult.Unavailable
+        authSession.refresh(expected) {
+            if (!ensureServer()) return@refresh AuthRefreshResult.Unavailable
+            val (code, body) = httpGetAllowNonOk(
+                "/login/token", mapOf("token" to expected.token.orEmpty(), "userid" to expected.userid.orEmpty()),
+                VIP_NO_CACHE_HEADERS, maxRetries = 1, auth = expected
             )
-            Log.d(TAG, "/login/token -> HTTP $code, body length=${body.length}")
-            if (body.isNotEmpty()) {
-                body.chunked(3500).forEachIndexed { idx, chunk ->
-                    Log.d(TAG, "/login/token body[$idx]: $chunk")
-                }
-            }
-            if (code !in 200..299 || body.isEmpty()) return@withContext false
-            val json = JSONObject(body)
-            if (json.optInt("status", 0) != 1) {
-                Log.d(
-                    TAG,
-                    "/login/token 未成功: status=${json.optInt("status", -1)} " +
-                        "error_code=${json.optInt("error_code", 0)}"
-                )
-                // 持久化留证：刷新被上游拒绝（未拿到新凭据）
-                YosDiagnostics.log(
-                    "AUTH_REFRESH_FAIL", "http" to code,
-                    "status" to json.optInt("status", -1),
-                    "error_code" to json.optInt("error_code", 0)
-                )
-                return@withContext false
-            }
-            val data = json.optJSONObject("data") ?: json
-            val nt = data.optString("token", "").ifEmpty { json.optString("token", "") }.ifEmpty { t }
-            val nu = data.optString("userid", "").ifEmpty { json.optString("userid", "") }.ifEmpty { u }
-            val nv = data.optString("vip_token", "").ifEmpty { json.optString("vip_token", "") }
-            // 刷新响应没带 vip_token 时保留原有凭据，绝不把它清空
-            applyLogin(nt, nu, nv.ifEmpty { vipToken.orEmpty() })
-            Log.d(TAG, "/login/token 刷新完成: hasVipToken=${vipToken != null}")
-            true
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "refreshLogin exception", e)
-            // 持久化留证：刷新请求本身失败（非 2xx / 超时），拿不到新凭据
-            YosDiagnostics.log("AUTH_REFRESH_FAIL", "why" to (e.message ?: e.javaClass.simpleName))
-            false
+            Log.d(TAG, "Refresh response HTTP $code")
+            val root = runCatching { toPlainAny(JSONObject(body)) as? Map<*, *> }.getOrNull()
+            parseAuthRefreshResponse(code, root)
         }
     }
 
@@ -782,9 +587,11 @@ class KugouApiService private constructor() {
             if (dfid.isEmpty()) return@withContext Result.failure(IOException("No dfid in response"))
             saveDfid(dfid)
             Result.success(dfid)
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
         } catch (e: Exception) {
-            Log.e(TAG, "registerDevice exception", e)
-            Result.failure(e)
+            Log.w(TAG, "Device registration failed")
+            Result.failure(IOException("Device registration unavailable"))
         }
     }
 
@@ -1901,6 +1708,7 @@ class KugouApiService private constructor() {
         code: String,
         userid: String? = null
     ): Result<PhoneLoginResult> = withContext(Dispatchers.IO) {
+        val loginExpected = authSnapshot()
         try {
             if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
             val params = mutableMapOf(
@@ -1912,14 +1720,9 @@ class KugouApiService private constructor() {
             httpGetVipBusiness("/login/cellphone", params).fold(
                 onSuccess = { body ->
                     Log.d(TAG, "/login/cellphone -> status=${body.optInt("status", 0)}, error_code=${body.optInt("error_code", 0)}")
-                    // 登录响应留证：会员凭据有没有回、回在哪一层（见 loginQrCheck 同款注释）
-                    val raw = body.toString()
-                    raw.chunked(3500).forEachIndexed { idx, chunk ->
-                        Log.d(TAG, "/login/cellphone body[$idx]: $chunk")
-                    }
                     when (val result = parsePhoneLoginResponse(toPlainAny(body))) {
                         is PhoneLoginResult.Success -> {
-                            applyLogin(result.token, result.userid, result.vipToken)
+                            val applied = authSession.loginIfCurrent(loginExpected, result.token, result.userid, result.vipToken)
                             // 持久化留证：验证码登录有没有带回会员凭据
                             YosDiagnostics.log(
                                 "LOGIN_CELL", "status" to body.optInt("status", 0),
@@ -1928,7 +1731,7 @@ class KugouApiService private constructor() {
                                 "vip_token" to result.vipToken.isNotEmpty()
                             )
                             // 登录响应没带会员凭据时补一次刷新（对齐 md3Music refreshLogin）
-                            if (vipToken == null) refreshLogin()
+                            if (applied != null && !applied.hasVipToken) refreshLogin(applied)
                             Result.success(result)
                         }
                         else -> Result.success(result)

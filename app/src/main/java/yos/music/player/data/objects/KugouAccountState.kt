@@ -19,6 +19,13 @@ import androidx.compose.runtime.setValue
  */
 object KugouAccountState {
 
+    var authVersion: Long by mutableStateOf(0L)
+        private set
+
+    fun updateAuthVersion(version: Long) {
+        authVersion = version
+    }
+
     var isLoggedIn by mutableStateOf(false)
         private set
 

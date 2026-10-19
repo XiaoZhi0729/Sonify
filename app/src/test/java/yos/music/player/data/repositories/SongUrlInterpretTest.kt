@@ -117,7 +117,7 @@ class SongUrlInterpretTest {
      * 真机取证（2026-10-14，带 App 自己的凭据）：`{"status":2,"error_code":20017,"priv_status":0}`。
      */
     @Test
-    fun status2WithTokenErrorCodeIsAccountInvalidNotBlocked() {
+    fun status2WithTokenErrorCodeIsTokenRejectedNotBlocked() {
         val outcome = interpretSongUrlBody(
             mapOf(
                 "status" to 2,
@@ -127,25 +127,79 @@ class SongUrlInterpretTest {
             ),
             requestedQuality = standard
         )
-        assertEquals(SongUrlOutcome.AccountInvalid, outcome)
+        assertEquals(SongUrlOutcome.TokenRejected, outcome)
     }
 
     @Test
-    fun tokenApiErrorMessageIsAccountInvalid() {
+    fun tokenApiErrorMessageIsTokenRejected() {
         val outcome = interpretSongUrlBody(
             mapOf("status" to 0, "error_code" to 20017, "message" to "token api error."),
             requestedQuality = standard
         )
-        assertEquals(SongUrlOutcome.AccountInvalid, outcome)
+        assertEquals(SongUrlOutcome.TokenRejected, outcome)
     }
 
     @Test
-    fun needVerifyIsAccountInvalid() {
+    fun needVerifyHasItsOwnOutcome() {
         val outcome = interpretSongUrlBody(
             mapOf("errcode" to 20028, "status" to 0),
             requestedQuality = standard
         )
-        assertEquals(SongUrlOutcome.AccountInvalid, outcome)
+        assertEquals(SongUrlOutcome.VerificationRequired, outcome)
+    }
+
+    @Test
+    fun signatureRejectionHasItsOwnOutcomeAcrossDataShapes() {
+        listOf(
+            mapOf("error_code" to 31833),
+            mapOf("data" to mapOf("error" to "illegal key")),
+            mapOf("data" to listOf(mapOf("error_code" to "31833")))
+        ).forEach {
+            assertEquals(SongUrlOutcome.SignatureRejected, interpretSongUrlBody(it, standard))
+        }
+    }
+
+    @Test
+    fun nestedRequestFailuresTakePrecedenceOverBuyAndCopyrightBlocks() {
+        listOf(
+            mapOf("errcode" to "20028") to SongUrlOutcome.VerificationRequired,
+            mapOf("error_code" to "31833") to SongUrlOutcome.SignatureRejected,
+            mapOf("message" to "TOKEN API ERROR.") to SongUrlOutcome.TokenRejected
+        ).forEach { (error, expected) ->
+            val data = error + mapOf(
+                "status" to 3,
+                "fail_process" to listOf("buy"),
+                "trans_param" to mapOf("pay_block_tpl" to 1, "cpy_map" to 2)
+            )
+            assertEquals(expected, interpretSongUrlBody(mapOf("data" to listOf(data)), standard))
+        }
+    }
+
+    @Test
+    fun validUrlsStillWinOverRequestErrorFields() {
+        listOf(20028, 31833, 20017).forEach { code ->
+            val body = mapOf("error_code" to code, "data" to mapOf("url" to "http://cdn/ok.mp3"))
+            assertEquals(SongUrlOutcome.Ok("http://cdn/ok.mp3", null), interpretSongUrlBody(body, standard))
+        }
+    }
+
+    @Test
+    fun bareStatus3DoesNotProveCopyrightOrPayBlocking() {
+        listOf(
+            mapOf("status" to 3),
+            mapOf("status" to "3", "priv_status" to 0),
+            mapOf("status" to 3, "trans_param" to mapOf("pay_block_tpl" to 0, "cpy_map" to "0")),
+            mapOf("data" to listOf(mapOf("status" to 3)))
+        ).forEach {
+            assertEquals(SongUrlOutcome.TierUnavailable, interpretSongUrlBody(it, standard))
+        }
+    }
+
+    @Test
+    fun explicitPayBlockAcceptsStringNumericFields() {
+        val body = mapOf("data" to mapOf("status" to "3", "trans_param" to mapOf("pay_block_tpl" to "1")))
+        val outcome = interpretSongUrlBody(body, standard) as SongUrlOutcome.Blocked
+        assertEquals("暂无可用音源（付费或权限限制）", outcome.reason)
     }
 
     /** 最关键的回归防线：认不出的空响应不产生任何"不可播"结论。 */

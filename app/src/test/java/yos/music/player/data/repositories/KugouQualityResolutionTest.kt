@@ -25,6 +25,29 @@ class KugouQualityResolutionTest {
     }
 
     @Test
+    fun cooldownStillUsesLowerQualityValidCache() {
+        KugouRepository.seedCachedUrlForTest(hash, KugouQuality.STANDARD, "https://cdn/128", KugouQuality.STANDARD)
+        KugouRepository.seedAuthCooldownForTest()
+
+        assertEquals("https://cdn/128", KugouRepository.resolvePlayUrlBlocking(hash, KugouQuality.LOSSLESS))
+        assertEquals(KugouQuality.STANDARD, KugouRepository.actualQualityOf(hash))
+    }
+
+    @Test
+    fun usableFallbackSurvivesLaterVerificationFailure() = kotlinx.coroutines.test.runTest {
+        var calls = 0
+        val budget = yos.music.player.native.PlaybackRecoveryBudget(initialAuthVersion = 0L)
+        val result = KugouRepository.resolvePlayUrlWithFallback(hash, KugouQuality.HIRES, budget) { _, _, observedBudget ->
+            assertTrue(observedBudget === budget)
+            calls++
+            if (calls == 1) Result.success(KugouResolvedPlayUrl("https://cdn/flac", KugouQuality.LOSSLESS))
+            else Result.failure(KugouVerificationRequiredException("verification"))
+        }
+        assertEquals("https://cdn/flac", result.getOrThrow().url)
+        assertEquals(2, calls)
+    }
+
+    @Test
     fun cacheHitReportsStampedTierNotRequestedTier() {
         // "high" 键里装的其实是一条 FLAC 流（降级链在低档精确命中后的历史留痕）
         KugouRepository.seedCachedUrlForTest(hash, KugouQuality.HIRES, "https://cdn/flac-stream", KugouQuality.LOSSLESS)

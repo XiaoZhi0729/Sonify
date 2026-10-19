@@ -29,6 +29,10 @@ import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.QualityIntentResolver
 import yos.music.player.data.repositories.QualityVerdict
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.data.repositories.PlaybackRequestPurpose
+import yos.music.player.data.repositories.KugouVerificationRequiredException
+import yos.music.player.data.repositories.KugouSignatureRejectedException
+import yos.music.player.data.repositories.KugouTokenRejectedException
 import java.io.File
 import java.io.IOException
 import java.net.Proxy
@@ -56,7 +60,8 @@ class KugouResolvingDataSource(
     private val directUpstream: DataSource,
     /** 直连通道的磁盘缓存版本（与代理通道共用同一份 SimpleCache 与 cacheKey）。 */
     private val directCachedUpstream: DataSource?,
-    private val appContext: Context
+    private val appContext: Context,
+    private val purpose: () -> PlaybackRequestPurpose = { PlaybackRequestPurpose.PLAYBACK }
 ) : DataSource {
 
     /**
@@ -83,7 +88,7 @@ class KugouResolvingDataSource(
             val decision = QualityIntentResolver.resolve(hash, appContext)
             resolveStartedAt = SystemClock.elapsedRealtime()
             val realUrl = try {
-                KugouRepository.resolvePlayUrlBlocking(hash, decision.tier, decision.source)
+                KugouRepository.resolvePlayUrlBlocking(hash, decision.tier, decision.source, purpose())
             } catch (e: IOException) {
                 YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
                 // 确定性失败（鉴权失效/版权付费拦截）不等退避重试：见 asFatalIfDeterministic
@@ -194,7 +199,12 @@ class KugouResolvingDataSource(
      * cause 原样保留，服务侧分诊仍按因果链认得出它属于哪一类。
      */
     private fun asFatalIfDeterministic(e: IOException): IOException =
-        if (KugouUpstreamError.hasAuthInvalidCause(e) || isBlockedByUpstream(e)) {
+        if (KugouUpstreamError.hasAuthInvalidCause(e) || isBlockedByUpstream(e) ||
+            generateSequence<Throwable>(e) { it.cause }.any {
+                it is KugouVerificationRequiredException || it is KugouSignatureRejectedException ||
+                    it is KugouTokenRejectedException
+            }
+        ) {
             Loader.UnexpectedLoaderException(e)
         } else {
             e
@@ -312,7 +322,8 @@ internal object OnlineProxyHealth {
 @OptIn(UnstableApi::class)
 class KugouResolvingDataSourceFactory(
     private val upstream: DataSource.Factory,
-    appContext: Context
+    appContext: Context,
+    private val purpose: () -> PlaybackRequestPurpose = { PlaybackRequestPurpose.PLAYBACK }
 ) : DataSource.Factory {
     private val appContext = appContext.applicationContext
 
@@ -357,7 +368,8 @@ class KugouResolvingDataSourceFactory(
             cached(upstream),
             directFactory.createDataSource(),
             cached(directFactory),
-            appContext
+            appContext,
+            purpose
         )
     }
 }
@@ -481,7 +493,10 @@ object OnlineAudioCache {
 
 /** 供 ExoPlayer.Builder 使用的媒体源工厂：默认媒体源 + 惰性解析数据源。 */
 @OptIn(UnstableApi::class)
-fun buildKugouMediaSourceFactory(context: Context): DefaultMediaSourceFactory =
+fun buildKugouMediaSourceFactory(
+    context: Context,
+    purpose: () -> PlaybackRequestPurpose = { PlaybackRequestPurpose.PLAYBACK }
+): DefaultMediaSourceFactory =
     DefaultMediaSourceFactory(context).setDataSourceFactory(
         KugouResolvingDataSourceFactory(
             // 主通道（默认走系统代理，与改动前同一 HttpURLConnection）：连接超时 8s→5s，
@@ -491,7 +506,8 @@ fun buildKugouMediaSourceFactory(context: Context): DefaultMediaSourceFactory =
                 context,
                 DefaultHttpDataSource.Factory().setConnectTimeoutMs(5_000)
             ),
-            context
+            context,
+            purpose
         )
     )
 
