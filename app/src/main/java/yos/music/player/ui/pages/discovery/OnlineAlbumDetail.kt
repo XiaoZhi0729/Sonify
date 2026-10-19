@@ -266,11 +266,19 @@ fun OnlineAlbumDetail(
 
     LaunchedEffect(Unit) {
         // 首屏优先：TTL 内的磁盘缓存先渲染（零网络），随后静默 revalidate
-        OnlineAlbumCache.read(context, album.albumId)?.let { cached ->
-            if (cached.isNotEmpty()) {
+        val cached = runCatching { OnlineAlbumCache.read(context, album.albumId) }.getOrNull()
+        if (!cached.isNullOrEmpty()) {
+            // 缓存对象是 Gson 产物，字段可能为空：映射失败就整份作废，
+            // 绝不让异常穿过 LaunchedEffect（未捕获会直接杀进程）
+            val cachedQueue = runCatching {
+                cached.map { KugouRepository.toQueueMediaItem(it) }
+            }.getOrNull()
+            if (cachedQueue != null) {
                 tracks.value = cached
-                queue.value = cached.map { KugouRepository.toQueueMediaItem(it) }
+                queue.value = cachedQueue
                 status.value = "ok"
+            } else {
+                OnlineAlbumCache.delete(context, album.albumId)
             }
         }
         load(silent = tracks.value.isNotEmpty())

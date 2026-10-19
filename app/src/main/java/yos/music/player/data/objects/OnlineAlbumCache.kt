@@ -2,6 +2,7 @@ package yos.music.player.data.objects
 
 import android.content.Context
 import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import com.google.gson.reflect.TypeToken
 import yos.music.player.data.repositories.KugouNewSong
 import java.io.File
@@ -15,7 +16,49 @@ object OnlineAlbumCache {
     private const val TTL_MS = 12 * 60 * 60 * 1000L
 
     private val gson = Gson()
-    private val listType = object : TypeToken<List<KugouNewSong>>() {}.type
+    private val writeType = object : TypeToken<List<KugouNewSong>>() {}.type
+
+    /**
+     * 读盘专用 DTO：字段一律可空。
+     *
+     * Gson 用 Unsafe/反射直接写字段，绕过 Kotlin 构造器与非空校验；磁盘 JSON 缺键
+     * （旧版本混淆键名、损坏、被改）时 `KugouNewSong` 的非空字段运行期会是 null。
+     * 把可空性放进类型系统，`dto.hash == null` 才是编译器与 R8 都折叠不掉的真实判空
+     * —— 对非空类型属性写 `it.hash == null` 会被折叠成 false（v0.2.0 崩溃即由此而来）。
+     */
+    private data class CachedTrack(
+        @SerializedName("hash") val hash: String? = null,
+        @SerializedName("name") val name: String? = null,
+        @SerializedName("author") val author: String? = null,
+        @SerializedName("albumName") val albumName: String? = null,
+        @SerializedName("durationMs") val durationMs: Long = 0L,
+        @SerializedName("artworkUrl") val artworkUrl: String? = null
+    )
+
+    private val readType = object : TypeToken<List<CachedTrack?>>() {}.type
+
+    private fun CachedTrack?.toSongOrNull(): KugouNewSong? {
+        val dto = this ?: return null
+        val hash = dto.hash?.takeIf { it.isNotBlank() } ?: return null
+        val name = dto.name?.takeIf { it.isNotBlank() } ?: return null
+        val author = dto.author?.takeIf { it.isNotBlank() } ?: return null
+        return KugouNewSong(
+            hash = hash,
+            name = name,
+            author = author,
+            albumName = dto.albumName?.takeIf { it.isNotBlank() },
+            durationMs = dto.durationMs,
+            artworkUrl = dto.artworkUrl?.takeIf { it.isNotBlank() }
+        )
+    }
+
+    /** 纯函数，便于单测：解析 + 逐条清洗；整份不可用（全毒/JSON 损坏）返回 null。 */
+    internal fun parseCached(json: String): List<KugouNewSong>? {
+        val parsed = runCatching { gson.fromJson<List<CachedTrack?>>(json, readType) }.getOrNull()
+            ?: return null
+        val tracks = parsed.mapNotNull { it.toSongOrNull() }
+        return if (tracks.isEmpty() && parsed.isNotEmpty()) null else tracks
+    }
 
     @Volatile
     private var dir: File? = null
@@ -37,22 +80,28 @@ object OnlineAlbumCache {
             return null
         }
         val json = runCatching { f.readText() }.getOrNull() ?: return null
-        f.setLastModified(System.currentTimeMillis())
-        val parsed = runCatching { gson.fromJson<List<KugouNewSong>>(json, listType) }.getOrNull()
-        if (parsed == null || parsed.any { it.hash == null || it.name == null }) {
-            // Gson 不校验 Kotlin 非空：跨构建混淆键名漂移或损坏缓存会让字段为 null，
-            // 回流 UI 即 NPE。整文件作废，重新走网络。
+        val tracks = parseCached(json)
+        if (tracks == null) {
+            // 整份毒化（旧版混淆键名 / 损坏）：作废，重新走网络
             f.delete()
             return null
         }
-        return parsed
+        // 只有校验通过才续期 TTL —— 否则毒化条目会被每次读取续命，永不过期
+        f.setLastModified(System.currentTimeMillis())
+        return tracks
+    }
+
+    /** 单条作废（不牵连同目录下其它专辑/歌单缓存）。 */
+    fun delete(context: Context, key: String) {
+        if (key.isBlank()) return
+        runCatching { fileFor(context, key).delete() }
     }
 
     fun write(context: Context, key: String, tracks: List<KugouNewSong>) {
         if (key.isBlank()) return
         runCatching {
             val f = fileFor(context, key)
-            f.writeText(gson.toJson(tracks, listType))
+            f.writeText(gson.toJson(tracks, writeType))
             f.setLastModified(System.currentTimeMillis())
         }
     }
@@ -70,10 +119,8 @@ object OnlineAlbumCache {
             dir(context).listFiles()
                 ?.filter { it.isFile && it.name.startsWith("al_") && it.name.endsWith(".json") }
                 ?.flatMap { f ->
-                    runCatching { gson.fromJson<List<KugouNewSong>>(f.readText(), listType) }
-                        .getOrNull() ?: emptyList()
+                    runCatching { parseCached(f.readText()) }.getOrNull() ?: emptyList()
                 }
-                ?.filter { t -> runCatching { t.hash.isNotBlank() && t.name.isNotBlank() }.getOrDefault(false) }
                 ?: emptyList()
         }.getOrDefault(emptyList())
 }
