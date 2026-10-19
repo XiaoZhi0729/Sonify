@@ -61,6 +61,42 @@ class LiquidDropdownLifecycleTest {
     }
 
     @Test
+    fun manyClosedFallbackMenusDoNotAllocateWindows() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        val expandedMenu = mutableStateOf<Int?>(null)
+        var dismissed = 0
+        compose.setContent {
+            YosMusicTheme(darkTheme = false) {
+                CompositionLocalProvider(LocalTitleOverlayHost provides null) {
+                    repeat(64) { index ->
+                        LiquidDropdownLayout(
+                            expanded = expandedMenu.value == index,
+                            anchorBounds = IntRect(40, 100, 80, 140),
+                            onDismissRequest = { expandedMenu.value = null },
+                            onDismissFinished = { dismissed++ },
+                        ) { Text("Song actions $index") }
+                    }
+                }
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(0, popupWindowCount())
+            assertEquals(0, dismissed)
+        }
+        listOf(0, 63, 0).forEachIndexed { cycle, index ->
+            compose.runOnIdle { expandedMenu.value = index }
+            compose.waitForIdle()
+            compose.runOnIdle { assertEquals(1, popupWindowCount()) }
+            compose.runOnIdle { expandedMenu.value = null }
+            compose.waitForIdle()
+            compose.runOnIdle {
+                assertEquals(0, popupWindowCount())
+                assertEquals(cycle + 1, dismissed)
+            }
+        }
+    }
+
+    @Test
     fun hostSlotIsRetainedForExitAndReopeningCancelsDismiss() {
         val expanded = mutableStateOf(false)
         val host = TitleOverlayHost()
