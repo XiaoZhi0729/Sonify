@@ -48,6 +48,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
@@ -1157,12 +1159,14 @@ fun LiquidDropdownRow(
                 bottom = if (isLast) 8.dp else 0.dp,
             )
             .clip(YosRoundedCornerShape(17.dp))
-            // 参考实现行容器透明（liquidGlassDropdownColors 的 container/selected
-            // 均为 Transparent）：选中态只靠文字与勾着色，没有高亮色块；
-            // 行高内容自适应（MinHeight 56dp 只用于对话框模式）
-            .drawBehind {
+            // 按压层明确以与行容器相同的形状裁剪，避免透明反馈绘制到圆角外侧。
+            .drawWithContent {
+                drawContent()
                 if (pressed) {
-                    drawRect(contentColor.copy(alpha = 0.10f))
+                    drawRoundRect(
+                        color = contentColor.copy(alpha = 0.10f),
+                        cornerRadius = CornerRadius(17.dp.toPx()),
+                    )
                 }
             }
             .clickable(

@@ -142,6 +142,10 @@ import yos.music.player.ui.navigation.artistIdentityRgb
 import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.widgets.basic.circleEdgeLight
+import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
+import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.TitleOverlayHost
+import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
@@ -611,7 +615,12 @@ fun ArtistDetail(
         }
     }
 
-    CompositionLocalProvider(LocalContentColor provides contentColor) {
+    val overlayHost = remember { TitleOverlayHost() }
+    CompositionLocalProvider(
+        LocalContentColor provides contentColor,
+        LocalTitlePageBackdrop provides pageBackdrop,
+        LocalTitleOverlayHost provides overlayHost,
+    ) {
     val bgDrawHolder = remember { longArrayOf(Long.MIN_VALUE) }
     BoxWithConstraints(
         Modifier.fillMaxSize()
@@ -1283,6 +1292,10 @@ fun ArtistDetail(
                     }
                 }
             }
+        }
+        // 弹层必须在页面录制层外，避免玻璃采样包含自身。
+        Box(Modifier.fillMaxSize().zIndex(2f)) {
+            TitleOverlayHostSlot(overlayHost)
         }
     }
     }
