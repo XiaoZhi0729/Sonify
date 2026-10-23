@@ -71,21 +71,27 @@ class OnlineSkipStateTest {
     }
 
     @Test
-    fun userIntentCancelsOldTaskAndPreservesAccountBudgetAcrossFailureKinds() {
+    fun userIntentCancelsOldTaskAndRestartsAccountBackoff() {
         val runtime = FakeRuntime()
         repeat(5) {
             assertEquals(Decision.HOLD_AND_RETRY,
                 runtime.session.decide(OnlineFailureKind.SIGNATURE_REJECTED, true, false))
+            // 每次失败都从 30s 这一档开始：轮次不会被前几次点歌累积
+            assertEquals(1, runtime.session.retryRounds)
+            assertEquals(30_000L, runtime.waits.last())
             val stale = runtime.tasks.last()
+            val rearmedBefore = runtime.rearmed
             runtime.session.onUserIntent()
+            assertEquals(0, runtime.session.retryRounds)
             assertTrue(stale.cancelled)
             stale.action()
             runtime.advanceBy(60_000L)
-            assertEquals(it + 1, runtime.session.retryRounds)
+            // 被取消的旧任务不得生效
+            assertEquals(rearmedBefore, runtime.rearmed)
         }
-        assertEquals(Decision.STOP,
-            runtime.session.decide(OnlineFailureKind.NETWORK, true, false))
-        assertEquals(0, runtime.rearmed)
+        // 点歌不会把预算烧到 STOP：账号类失败仍然原地退避，用户也可以继续点
+        assertEquals(Decision.HOLD_AND_RETRY,
+            runtime.session.decide(OnlineFailureKind.SIGNATURE_REJECTED, true, false))
     }
 
     @Test
@@ -130,15 +136,17 @@ class OnlineSkipStateTest {
     }
 
     @Test
-    fun authWindowKeepsItsBudgetAfterWindowClosesAndUserActs() {
+    fun authWindowKeepsAccountRecoveryStickyButUserIntentRestartsBackoff() {
         val runtime = FakeRuntime()
         assertEquals(Decision.HOLD_AND_RETRY,
             runtime.session.decide(OnlineFailureKind.NETWORK, true, true))
         runtime.session.onUserIntent()
         runtime.advanceBy(60_000L)
+        // 冷却窗关闭后账号恢复标记仍生效（NETWORK 也走原地退避），但轮次已按点歌重置
         assertEquals(Decision.HOLD_AND_RETRY,
             runtime.session.decide(OnlineFailureKind.OTHER, true, false))
-        assertEquals(2, runtime.session.retryRounds)
+        assertEquals(1, runtime.session.retryRounds)
+        assertEquals(30_000L, runtime.waits.last())
     }
 
     @Test

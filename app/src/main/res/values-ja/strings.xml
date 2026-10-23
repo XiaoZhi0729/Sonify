@@ -30,6 +30,19 @@
     <string name="settings_listening_refresh">サーバーから再取得</string>
     <string name="kugou_login_status_logged_in">ログイン済み</string>
     <string name="kugou_login_status_not_logged_in">未ログイン</string>
+    <string name="kugou_login_credentials_rejected">ログイン認証の有効期限が切れました</string>
+    <string name="kugou_login_credentials_rejected_desc">タップして再ログイン</string>
+    <string name="playback_block_title">再生がブロックされました</string>
+    <string name="playback_block_message_verify">KuGou は再生URLを返す前に本人確認を求めています。認証が完了すると自動的に再生を再開します。</string>
+    <string name="playback_block_message_none">KuGou は一時的に再生URLを拒否しており、認証手段も提供していません。再ログインするか、しばらくしてから再試行してください。</string>
+    <string name="playback_block_action_verify">認証する</string>
+    <string name="playback_block_action_login">再ログイン</string>
+    <string name="playback_block_action_retry">再試行</string>
+    <string name="playback_block_chip">再生ブロック中 · タップで対処</string>
+    <string name="playback_block_no_entry">このリクエストに利用可能な認証手段がありません</string>
+    <string name="playback_block_rejected">認証に失敗しました。もう一度お試しください</string>
+    <string name="kugou_vip_captcha_title">セキュリティ認証</string>
+    <string name="kugou_vip_captcha_close">キャンセル</string>
     <string name="kugou_login_userid">アカウント：%1$s</string>
     <string name="kugou_login_hint">KuGouアカウントにログインしてオンライン音楽を利用</string>
     <string name="kugou_login_qr_desc">KuGouまたはKuGouコンセプト版アプリでスキャン</string>
@@ -456,4 +469,13 @@
     <string name="song_menu_cancel_not_interested">興味なしを解除</string>
     <string name="song_menu_not_interested_removed">「興味なし」を解除しました</string>
     <string name="song_menu_login_required">先に Kugou アカウントにログインしてください</string>
+
+    <string name="playlist_collect_add">プレイリストを保存</string>
+    <string name="playlist_collect_remove">保存を解除</string>
+    <string name="playlist_collect_own">自分のプレイリストです</string>
+    <string name="playlist_collect_missing_gid">元のプレイリストIDがありません。検索またはおすすめから開き直してください</string>
+    <string name="playlist_collect_load_failed">読み込みに失敗しました。タップして再試行</string>
+    <string name="playlist_collect_failed">保存の変更に失敗しました。再試行してください</string>
+    <string name="playlist_uncollect_confirm">「%1$s」の保存を解除しますか？</string>
+    <string name="playlist_read_only">このプレイリストは編集できません</string>
 </resources>

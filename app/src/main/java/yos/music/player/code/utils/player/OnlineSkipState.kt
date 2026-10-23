@@ -56,7 +56,7 @@ object OnlineSkipState {
         YosDiagnostics.log("SKIP_RESET", "why" to reason)
     }
 
-    /** 取消旧曲目的任务；普通失败全清，账号相关失败保留已消耗总轮次。主线程调用。 */
+    /** 取消旧曲目的任务并把退避轮次归零（轮次只记自动重试，不记用户点了几首）。主线程调用。 */
     fun onUserIntent(reason: String) {
         session.onUserIntent()
         YosDiagnostics.log("SKIP_USER_INTENT", "why" to reason, "round" to session.retryRounds)

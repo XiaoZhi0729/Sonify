@@ -79,6 +79,44 @@ class KugouPlaybackRecoveryTest {
         assertTrue(scenario(listOf(PlaybackResponse(200, verification), PlaybackResponse(200, success))).isSuccess)
     }
 
+    /**
+     * 回归真机事故：`/login/token` 在本移植版缺 t1 cookie，对**正常账号**也回 20018。
+     * 曾经拿它当证据，结果把能正常播放/收藏的账号连续两天误报成"凭据已失效"。
+     * 20028 分支必须完全不看刷新结果：刷新被拒也只能是"需要验证"。
+     */
+    @Test fun verificationNeverTreatsRefreshRejectionAsAuthInvalid() = runTest {
+        for (refreshed in listOf(
+            AuthRefreshResult.Rejected,
+            AuthRefreshResult.VerificationRequired,
+            AuthRefreshResult.Unavailable,
+            AuthRefreshResult.Committed(AuthSnapshot(2, "t", "u", null)),
+        )) {
+            val error = scenario(
+                listOf(PlaybackResponse(200, verification), PlaybackResponse(200, verification)),
+                refreshed = refreshed
+            ).exceptionOrNull()
+            assertTrue(error is KugouVerificationRequiredException)
+        }
+        // 单次 20028 + 设备已注册：直接是"需要验证"，不会去刷新、也不会判登录失效
+        val single = scenario(listOf(PlaybackResponse(200, verification)), registered = false,
+            onRefresh = { fail("20028 must not probe /login/token") }).exceptionOrNull()
+        assertTrue(single is KugouVerificationRequiredException)
+    }
+
+    @Test fun verificationExceptionCarriesTheUpstreamEventId() = runTest {
+        val withEvent = mapOf("errcode" to 20028, "status" to 0, "ssaCode" to "gz_tx_event_1")
+        val error = scenario(listOf(PlaybackResponse(200, withEvent)), registered = false).exceptionOrNull()
+        assertTrue(error is KugouVerificationRequiredException)
+        assertEquals("gz_tx_event_1", (error as KugouVerificationRequiredException).eventId)
+
+        // 真机 /song/url 的 20028 只有 edt（不是验证入口）：eventId 必须为空，edt 要原样带出
+        val withoutEvent = mapOf("errcode" to 20028, "status" to 0, "edt" to "hLnL98Qpft3bYZWh")
+        val noEvent = scenario(listOf(PlaybackResponse(200, withoutEvent)), registered = false).exceptionOrNull()
+        assertTrue(noEvent is KugouVerificationRequiredException)
+        assertNull((noEvent as KugouVerificationRequiredException).eventId)
+        assertEquals("hLnL98Qpft3bYZWh", noEvent.edt)
+    }
+
     @Test fun illegalKeyNeverBlindlyRefreshes() = runTest {
         for (httpCode in listOf(200, 502)) {
             val error = scenario(listOf(PlaybackResponse(httpCode, mapOf("error_code" to 31833))),
@@ -91,6 +129,7 @@ class KugouPlaybackRecoveryTest {
     @Test fun oneBudgetLimitsRecoveryAcrossProtocolAndQualityFallbacks() = runTest {
         val budget = PlaybackRecoveryBudget(1)
         assertTrue(scenario(listOf(PlaybackResponse(200, verification), PlaybackResponse(200, success)), budget).isSuccess)
+        // 同一逻辑解析里的恢复预算已用尽：再回 token 被拒时不再刷新、直接归为 token 拒绝
         val error = scenario(listOf(PlaybackResponse(200, token)), budget,
             onRefresh = { fail("shared budget must not refresh again") }).exceptionOrNull()
         assertTrue(error is KugouTokenRejectedException)

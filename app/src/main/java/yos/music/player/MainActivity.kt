@@ -270,10 +270,34 @@ class MainActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         installSplashScreen()
         enableEdgeToEdge()
+        // debug 验收钩子：adb shell am start ... --es debug_block edt|eventid|none
+        // 直接拉起"被风控"说明框，用来截图核对文案与按钮（release 包不编译这段）。
+        if (BuildConfig.DEBUG) {
+            intent?.getStringExtra("debug_block")?.let { mode ->
+                val challenge = when (mode) {
+                    "eventid" -> yos.music.player.data.objects.PlaybackBlockState.Challenge.EventId
+                    "edt" -> yos.music.player.data.objects.PlaybackBlockState.Challenge.EdtFallback
+                    else -> yos.music.player.data.objects.PlaybackBlockState.Challenge.None
+                }
+                yos.music.player.data.objects.PlaybackBlockState.raise(
+                    mediaId = "debug-block",
+                    title = "Debug",
+                    challenge = challenge,
+                    eventId = if (mode == "eventid") "debug_event_id" else null,
+                    edt = if (mode == "edt") "debug_edt" else null,
+                    now = android.os.SystemClock.elapsedRealtime()
+                )
+            }
+        }
         setContent {
             YosMusicTheme {
                 ProvideRawWindowInsets {
                     yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
+                    // 20028 二次验证弹窗：挂在根组合，播放链路触发时也能弹（Dialog 自带独立窗口，
+                    // 不参与下面这棵树的布局与测量）。显示与否只看 pendingCaptcha。
+                    yos.music.player.data.objects.KugouVipState.pendingCaptcha?.let { pending ->
+                        yos.music.player.ui.widgets.basic.KugouVerifyCaptchaDialog(pending)
+                    }
                     val context = LocalContext.current
                     val density = LocalDensity.current
                     // 播放壳玻璃的消融探针。默认值就是"修好后该有的样子"，开关只做消融，
@@ -875,6 +899,18 @@ class MainActivity : BaseActivity() {
                             }
                             animatePlayerTo(0f)
                         }
+
+                        // 风控（20028）说明框：状态驱动，单点挂载。真正的滑块由根组合的
+                        // KugouVerifyCaptchaDialog 负责（pendingCaptcha 驱动），这里只发起。
+                        yos.music.player.ui.widgets.basic.PlaybackBlockPrompt(
+                            onOpenLogin = openLoginFromPlayer,
+                            onRetry = {
+                                yos.music.player.code.MediaController.retryCurrentPlayback("block_retry")
+                            },
+                            onVerified = {
+                                yos.music.player.code.MediaController.resumeAfterVerified()
+                            }
+                        )
 
                         val showNowPlaying = remember("MainActivity_showNowPlaying") {
                             derivedStateOf {

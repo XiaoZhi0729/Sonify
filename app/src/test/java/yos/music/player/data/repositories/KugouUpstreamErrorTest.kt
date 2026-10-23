@@ -127,6 +127,42 @@ class KugouUpstreamErrorTest {
     }
 
     @Test
+    fun readsVerificationEventIdOnlyFromExplicitFields() {
+        assertEquals("gz_tx_event_1", KugouUpstreamError.verificationEventId(mapOf("eventid" to "gz_tx_event_1")))
+        assertEquals("x", KugouUpstreamError.verificationEventId(mapOf("data" to mapOf("ssaCode" to "x"))))
+        assertEquals("y", KugouUpstreamError.verificationEventId(
+            mapOf("data" to listOf(mapOf("event_id" to "y")))
+        ))
+        // 真机 /song/url 的 20028 只有 edt（不是验证入口）：不许拿别的字段冒充
+        assertNull(
+            KugouUpstreamError.verificationEventId(
+                mapOf("errcode" to 20028, "status" to 0, "error" to "本次请求需要验证", "edt" to "hLnL98Qpft3bYZWh")
+            )
+        )
+        assertNull(KugouUpstreamError.verificationEventId(mapOf("eventid" to "   ")))
+    }
+
+    @Test
+    fun readsTheOneTimeEdtWithoutConfusingItWithEventId() {
+        assertEquals("abc", KugouUpstreamError.verificationEdt(mapOf("edt" to "abc")))
+        assertEquals("x", KugouUpstreamError.verificationEdt(mapOf("data" to mapOf("edt" to "x"))))
+        // 只有 eventid 时不能凭空造出 edt
+        assertNull(KugouUpstreamError.verificationEdt(mapOf("eventid" to "gz_tx_event_1")))
+        assertNull(KugouUpstreamError.verificationEdt(mapOf("edt" to "   ")))
+        assertNull(KugouUpstreamError.verificationEdt(emptyMap<String, Any>()))
+    }
+
+    @Test
+    fun readsTheUpstreamErrorCodeFromEitherLayer() {
+        assertEquals(20028, KugouUpstreamError.errorCodeOf(mapOf("errcode" to "20028")))
+        assertEquals(31833, KugouUpstreamError.errorCodeOf(mapOf("data" to mapOf("error_code" to 31833))))
+        assertEquals(20018, KugouUpstreamError.errorCodeOf(mapOf("data" to listOf(mapOf("errcode" to 20018)))))
+        assertNull(KugouUpstreamError.errorCodeOf(mapOf("status" to 1)))
+        // 有数据的层级优先：顶层只放业务字段时不要把 status 当错误码
+        assertNull(KugouUpstreamError.errorCodeOf(mapOf("status" to 0, "data" to mapOf("url" to "x"))))
+    }
+
+    @Test
     fun needVerifyDoesNotSwallowOtherFailures() {
         // 版权/付费拦截不是"需要验证"
         assertFalse(KugouUpstreamError.isNeedVerify("""{"status":3,"priv_status":0,"error_code":0}"""))

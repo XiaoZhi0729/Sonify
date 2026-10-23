@@ -127,6 +127,20 @@ fun KugouLogin(navController: NavController) =
 
                         if (KugouAccountState.isLoggedIn) {
                             // ---------- 已登录 ----------
+                            // 凭据已被服务端明确拒绝（/login/token 回 20018）：界面仍显示已登录，
+                            // 但播放会一路 20028。这里给出唯一有效出口——重新登录。
+                            if (KugouAccountState.credentialsRejected) {
+                                GroupSpacer()
+                                RoundColumn {
+                                    DefaultItem(
+                                        title = stringResource(id = R.string.kugou_login_credentials_rejected),
+                                        desc = stringResource(id = R.string.kugou_login_credentials_rejected_desc),
+                                        titleHighLight = true,
+                                        // 凭据已是废凭据：直接清掉并回到扫码登录，不弹"退出登录"确认
+                                        onClick = { KugouApiService.clearLogin() }
+                                    )
+                                }
+                            }
                             GroupSpacer()
                             val useridText = stringResource(
                                 id = R.string.kugou_login_userid,

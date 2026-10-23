@@ -185,15 +185,20 @@ internal class OnlineSkipSession(
         cancelPending = null
     }
 
-    /** 手动意图总会取消旧任务；鉴权类的已用轮次不因点歌而补回。 */
+    /**
+     * 手动意图总会取消旧任务，并把退避轮次归零——[retryRounds] 记的是"自动重试用掉了几次"，
+     * 不该由用户点了几首歌来消耗。旧实现保留轮次，真机后果是：账号被 20028/鉴权拒绝时，
+     * 用户连点 5 首就把 30s→60s→2min→4min→4min 全烧完，第 6 次直接 STOP，
+     * 之后既不自愈也不再重试。
+     *
+     * 账号级的"已被判定异常"标记不清：[accountRecoveryActive] 只有真实播放推进
+     * 或换账号才算解除，否则下一首网络失败会被误判成可跳过的逐首拦截。
+     */
     fun onUserIntent() {
-        if (accountRecoveryActive) {
-            cancelRearm()
-            failureCount = 0
-            latchedAt = null
-        } else {
-            reset()
-        }
+        cancelRearm()
+        failureCount = 0
+        latchedAt = null
+        retryRounds = 0
     }
 
     /** 真实播放已推进，或账号发生变化，才允许清除鉴权恢复预算。 */

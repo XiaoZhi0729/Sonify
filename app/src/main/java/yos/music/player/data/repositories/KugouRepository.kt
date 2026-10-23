@@ -14,6 +14,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -2482,6 +2484,28 @@ object KugouRepository {
     /** 正在做阶梯探测的 hash：同一首不并发重复问（切歌与打开面板可能同时触发）。 */
     private val ladderProbing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** 正在解析中的 hash（播放 / 预取 / 行探测共用），档位阶梯据此让路。 */
+    private val onlineResolving = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * `/song/url` 的全局最小间隔（含会员协议）。
+     *
+     * 连点切歌会在一秒内发出数条解析请求，这种突发正是上游风控的典型触发面；真机日志里
+     * 20028 首次出现紧跟在"2 秒内连切 5 首"之后。串行 + 300ms 间隔把突发摊平，
+     * 代价是单曲解析多几十毫秒——比被上游判成异常设备便宜得多。
+     */
+    private val songUrlGate = Mutex()
+    private var lastSongUrlAtMs = 0L
+    private const val SONG_URL_MIN_GAP_MS = 300L
+
+    private suspend fun awaitSongUrlSlot() {
+        songUrlGate.withLock {
+            val wait = SONG_URL_MIN_GAP_MS - (System.currentTimeMillis() - lastSongUrlAtMs)
+            if (wait in 1 until SONG_URL_MIN_GAP_MS) kotlinx.coroutines.delay(wait)
+            lastSongUrlAtMs = System.currentTimeMillis()
+        }
+    }
+
     /** 本会话内"问过但服务端没回写档位"的档：不再重试，也不据此置灰。 */
     private val ladderAskedBlind = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
 
@@ -2499,6 +2523,17 @@ object KugouRepository {
     suspend fun probeAllQualities(hash: String) {
         val lower = hash.lowercase()
         if (isAuthInvalidWindow()) return
+        // 凭据被拒 / 正在等用户完成安全验证时，任何额外探测都是纯噪声
+        if (yos.music.player.data.objects.KugouAccountState.credentialsRejected) return
+        if (yos.music.player.data.objects.KugouVipState.pendingCaptcha != null) return
+        // 播放侧正在解析这一首时先等它落地（≤1.5s）：同一首同时问两次只会放大上游风控命中率，
+        // 而且播放那次解析本身就会把真实档位写进能力表。
+        var waited = 0
+        while (onlineResolving.contains(lower) && waited < 1500) {
+            kotlinx.coroutines.delay(100)
+            waited += 100
+        }
+        if (onlineResolving.contains(lower)) return
         val recoveryBudget = PlaybackRecoveryBudget()
         if (!ladderProbing.add(lower)) return
         try {
@@ -2550,6 +2585,11 @@ object KugouRepository {
         recoveryBudget: PlaybackRecoveryBudget = PlaybackRecoveryBudget()
     ): Result<KugouResolvedPlayUrl> =
         withContext(Dispatchers.IO) {
+            val resolvingKey = hash.lowercase()
+            // 同一首的解析可能同时来自播放线程、交叉淡入预取、档位探测、可见行探测。
+            // 并发问同一个接口对上游是纯噪声（真机 20028 窗口里正是成串重复请求），
+            // 这里只登记"正在解析"，让档位探测让路（见 probeAllQualities）。
+            onlineResolving.add(resolvingKey)
             try {
                 val primary = if (KugouApiService.hasVipToken()) {
                     attemptSongUrl(hash, quality, useVipPath = true, recoveryBudget)
@@ -2612,6 +2652,8 @@ object KugouRepository {
             } catch (e: Exception) {
                 Log.e(TAG, "resolvePlayUrl exception", e)
                 Result.failure(e)
+            } finally {
+                onlineResolving.remove(resolvingKey)
             }
         }
 
@@ -2626,6 +2668,7 @@ object KugouRepository {
         useVipPath: Boolean,
         recoveryBudget: PlaybackRecoveryBudget
     ): Result<SongUrlOutcome> {
+        awaitSongUrlSlot()
         val json = if (useVipPath) {
             KugouApiService.getInstance().getSongUrlNew(hash, quality, recoveryBudget = recoveryBudget)
         } else {

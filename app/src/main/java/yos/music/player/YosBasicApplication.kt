@@ -121,6 +121,10 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             yos.music.player.data.repositories.PerSongQualityIntent.version.intValue
             yos.music.player.data.repositories.NetworkObserver.version.intValue
             yos.music.player.data.repositories.KugouRepository.actualQualityVersion.intValue
+            // 音质面板第五个订阅源（能力表版本）：播放即探测在 IO 线程首次触碰它就会把
+            // mutableIntStateOf 创建在"未应用的快照"里，主线程随后重组读取即抛
+            // "Reading a state that was created after the snapshot was taken"（真机冷启动必崩）。
+            yos.music.player.data.repositories.SongQualityCapabilityStore.version.intValue
             // 本曲覆盖表现在跨重启保留了：在主线程把它读进内存，避免首帧组合时才去碰磁盘
             yos.music.player.data.repositories.PerSongQualityIntent.preload()
             // 解析地址缓存同样跨重启保留：30 分钟内重启可免去第一首的 /song/url 解析
@@ -168,6 +172,9 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // 会员凭据补齐：登录响应可能不带 vip_token（付费歌因此被上游按 priv_status=0 拒绝），
         // 这里在冷启动后补一次刷新（对齐 md3Music refreshLogin）。仅"已登录且当前没有会员凭据"
         // 时才发请求，不会给每次冷启动都加一次上游调用；失败静默（登录态不受影响）。
+        //
+        // 注意：这条刷新的返回值**不能**用来提示"登录失效"。本移植版的 /login/token 缺 t1
+        // cookie，对任何账号都回 20018；曾据此弹过"凭据已失效"，真机上正常账号被连续误报两天。
         CoroutineScope(Dispatchers.IO).launch {
             runCatching { delay(3000) }
             runCatching { yos.music.player.native.KugouApiService.refreshLoginIfMissingVip() }

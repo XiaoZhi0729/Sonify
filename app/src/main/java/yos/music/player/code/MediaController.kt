@@ -131,6 +131,45 @@ object MediaController {
     @Stable
     var mediaSession: MediaSession? = null
 
+    private val shuffleNavigationHistory = ShuffleNavigationHistory()
+
+    /**
+     * UI 动作：重备并续播当前曲（风控提示里的「重试」）。
+     *
+     * 错误态下光 `play()` 不会重新加载，必须 `prepare()`；同时先清掉失败锁存，
+     * 否则刚重备就被上一轮预算判成"又失败"，直接进 STOP。
+     */
+    fun retryCurrentPlayback(reason: String) {
+        OnlineSkipState.onUserIntent(reason)
+        runCatching { mediaControl?.prepare() }
+        runCatching { mediaControl?.fadePlay() }
+    }
+
+    /** UI 动作：验证通过后继续播当前曲（清退避预算，视为账号级失败已解除）。 */
+    fun resumeAfterVerified() {
+        OnlineSkipState.reset("verified")
+        runCatching { mediaControl?.prepare() }
+        runCatching { mediaControl?.fadePlay() }
+    }
+
+    /**
+     * 服务侧转场回调同步随机路径游标：手动 seek 后确认位置，自然播放/外部命令
+     * 若偏离路径则以实际曲目重锚。非随机模式直接清空。
+     */
+    internal fun syncShuffleHistory(controller: Player?, mediaId: String?) {
+        if (controller?.shuffleModeEnabled != true) {
+            shuffleNavigationHistory.clear()
+            return
+        }
+        shuffleNavigationHistory.observe(
+            (0 until controller.mediaItemCount).mapNotNull { controller.getMediaItemAt(it).mediaId },
+            mediaId
+        )
+    }
+
+    /** 随机关闭：手动切歌回到 Media3 原语义，旧轮次路径不再有意义。 */
+    internal fun clearShuffleHistory() = shuffleNavigationHistory.clear()
+
     // ---------- 倍速播放 ----------
 
     /**
@@ -1754,6 +1793,8 @@ class YosPlaybackService : MediaSessionService() {
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    // 换曲 = 上一次拦截的上下文已失效（说明框/胶囊都该收掉）
+                    yos.music.player.data.objects.PlaybackBlockState.clear()
                     // 抽到 handleTrackSwitched：扶正后副 player 不会再有 transition 事件，
                     // promote 事务需要手动补发同一套处理
                     handleTrackSwitched(mediaItem, reason)
@@ -1798,6 +1839,10 @@ class YosPlaybackService : MediaSessionService() {
                         }
                         val kind = classifyOnlineFailure(error)
                         val reason = userReasonOf(error, kind)
+                        if (kind == OnlineFailureKind.VERIFICATION_REQUIRED) {
+                            // 只写全局状态（说明弹窗 + 播放页胶囊都读它）；验证动作交给 UI
+                            raisePlaybackBlock(error)
+                        }
                         when (OnlineSkipState.decide(kind, hasNext, KugouRepository.isAuthInvalidWindow())) {
                             OnlineSkipPolicy.Decision.SKIP_NEXT ->
                                 skipPastUnplayable(failedItem, reason)
@@ -1843,12 +1888,21 @@ class YosPlaybackService : MediaSessionService() {
                 override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                     super.onShuffleModeEnabledChanged(shuffleModeEnabled)
                     CrossfadeExo.abort("shuffle_mode")
+                    // 随机关闭后手动切歌回到 Media3 原语义：旧轮次路径不再有意义
+                    if (!shuffleModeEnabled) yos.music.player.code.MediaController.clearShuffleHistory()
                     MediaViewModelObject.shuffleModeEnabled.value = shuffleModeEnabled
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     super.onIsPlayingChanged(isPlaying)
-                    if (isPlaying) OnlineSkipState.reset("playing")
+                    if (isPlaying) {
+                        OnlineSkipState.reset("playing")
+                        // 真的出声了 = 拦截已解除（也可能只是换了一首能播的）：收掉提示
+                        yos.music.player.data.objects.PlaybackBlockState.clear()
+                        // 真的出声了 = 凭据显然还有效：撤掉"登录已失效"的误报
+                        //（该状态只在 /song/url 回 token 拒绝时置位，可能是瞬时判定）。
+                        yos.music.player.data.objects.KugouAccountState.onPlaybackSucceeded()
+                    }
                     MediaViewModelObject.isPlaying.value = isPlaying
                     pushListeningOnline(isPlaying, currentPlayer?.currentMediaItem?.mediaId)
                     // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）
@@ -2169,7 +2223,12 @@ class YosPlaybackService : MediaSessionService() {
      */
     private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String = when (kind) {
         OnlineFailureKind.AUTH_INVALID -> "登录凭据已失效，请重新登录账号"
-        OnlineFailureKind.VERIFICATION_REQUIRED -> "播放请求需要验证，暂时无法获取播放地址"
+        // 20028 可能是"登录凭据被拒"的包装（/login/token 同时回 20018）。若冷启动刷新
+        // 已经确证过凭据被拒，就别再说"稍后自动重试"——那句话会让用户一直等。
+        OnlineFailureKind.VERIFICATION_REQUIRED ->
+            if (yos.music.player.data.objects.KugouAccountState.credentialsRejected)
+                "登录凭据已失效，请重新登录账号"
+            else "播放请求需要验证，暂时无法获取播放地址"
         OnlineFailureKind.SIGNATURE_REJECTED -> "播放鉴权异常，稍后重试"
         OnlineFailureKind.TOKEN_REJECTED -> "播放凭据暂未被接受，稍后重试"
         OnlineFailureKind.TIMEOUT -> "网络超时"
@@ -2178,6 +2237,47 @@ class YosPlaybackService : MediaSessionService() {
             .filterIsInstance<KugouRepository.KugouPlayBlockedException>()
             .firstOrNull()?.userReason ?: "暂无可用音源"
         OnlineFailureKind.OTHER -> "播放失败"
+    }
+
+    /**
+     * 20028 被风控：这里只"举手"，**不**自己弹验证。
+     *
+     * 说明弹窗与播放页胶囊都由 [yos.music.player.data.objects.PlaybackBlockState] 驱动，
+     * 验证动作在 UI 协程里执行——绝不能在 Media3 Loader 线程上等用户拖滑块。
+     *
+     * 三种验证入口按可信度降级：eventid（可直接换验证码）→ edt（拿它试一试）→ 无入口
+     * （只能重新登录/重试）。
+     */
+    private fun raisePlaybackBlock(error: PlaybackException) {
+        val cause = generateSequence<Throwable>(error) { it.cause }
+            .filterIsInstance<yos.music.player.data.repositories.KugouVerificationRequiredException>()
+            .firstOrNull() ?: return
+        val challenge = when {
+            !cause.eventId.isNullOrEmpty() -> yos.music.player.data.objects.PlaybackBlockState.Challenge.EventId
+            !cause.edt.isNullOrEmpty() -> yos.music.player.data.objects.PlaybackBlockState.Challenge.EdtFallback
+            else -> yos.music.player.data.objects.PlaybackBlockState.Challenge.None
+        }
+        val item = currentPlayer?.currentMediaItem
+        val auto = yos.music.player.data.objects.PlaybackBlockState.raise(
+            mediaId = item?.mediaId,
+            title = item?.mediaMetadata?.title?.toString(),
+            challenge = challenge,
+            eventId = cause.eventId,
+            edt = cause.edt,
+            now = android.os.SystemClock.elapsedRealtime()
+        )
+        YosDiagnostics.log(
+            "VERIFY_BLOCK",
+            "mediaId" to item?.mediaId,
+            "challenge" to when (challenge) {
+                yos.music.player.data.objects.PlaybackBlockState.Challenge.EventId -> "eventid"
+                yos.music.player.data.objects.PlaybackBlockState.Challenge.EdtFallback -> "edt"
+                yos.music.player.data.objects.PlaybackBlockState.Challenge.None -> "none"
+            },
+            "auto" to auto
+        )
+        // 冷却中不再弹窗，但用户在后台/锁屏时也要知道为什么没声
+        if (auto) Toast.makeText(this, "播放被风控拦截，点开查看处理方式", Toast.LENGTH_SHORT).show()
     }
 
     /** 跳下一首：非阻塞告知歌名与原因；错误态下光 seek 不触发加载，必须 prepare+play。 */

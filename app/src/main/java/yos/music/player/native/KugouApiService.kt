@@ -113,7 +113,11 @@ class KugouApiService private constructor() {
         // ---------- POC 登录态（内存态，仅本进程生命周期；敏感值不写日志、不进 UI） ----------
         private val authSession = KugouAuthSession(
             onChanged = ::publishAuth,
-            onRefresh = { result, version -> YosDiagnostics.log("AUTH_REFRESH", "result" to result.javaClass.simpleName, "version" to version) }
+            // 稳定标签：Release 的类名每次构建都会被 R8 改写（旧报告里的 nv/uc2 全是混淆名），
+            // 诊断文件必须跨版本可读。
+            onRefresh = { result, version ->
+                YosDiagnostics.log("AUTH_REFRESH", "result" to authRefreshLabelOf(result), "version" to version)
+            }
         )
         val token: String? get() = authSnapshot().token
         val userid: String? get() = authSnapshot().userid
@@ -123,6 +127,12 @@ class KugouApiService private constructor() {
         fun isLoggedIn(): Boolean = authSnapshot().isLoggedIn
         fun hasVipToken(): Boolean = authSnapshot().hasVipToken
 
+        /**
+         * 冷启动补会员凭据。返回 true 表示刷新成功拿到新凭据。
+         *
+         * 失败**不代表**登录失效：本移植版的 /login/token 缺 t1 cookie，对正常账号也回
+         * 20018（见 [refreshLogin]）。因此这里只返回布尔、不改任何用户可见状态。
+         */
         suspend fun refreshLoginIfMissingVip(): Boolean {
             val expected = authSnapshot()
             if (!expected.isLoggedIn || expected.hasVipToken) return false
@@ -150,7 +160,10 @@ class KugouApiService private constructor() {
             if (snapshot.isLoggedIn) KugouVipState.onAccountResolved(snapshot.userid) else KugouVipState.clear()
             BlacklistState.reset()
             MyPlaylistsCache.reset()
+            yos.music.player.data.objects.CollectedPlaylistsObject.reset()
             OnlineSkipState.onAccountChanged()
+            // 换账号/退出登录：上一次拦截的上下文（说明框、胶囊）一并作废
+            yos.music.player.data.objects.PlaybackBlockState.clear()
             YosDiagnostics.log("AUTH_APPLY", "version" to snapshot.version,
                 "loggedIn" to snapshot.isLoggedIn, "hasVipToken" to snapshot.hasVipToken)
             Log.d(TAG, "Auth generation committed: version=${snapshot.version}")
@@ -162,6 +175,26 @@ class KugouApiService private constructor() {
                 val store = MMKV.mmkvWithID(MMKV_UID)
                 store.encode(K_DFID, d)
             }
+        }
+
+        /**
+         * 是否已有可复用的设备身份（dfid）。
+         *
+         * 有值时 `/register/dev` 必然命中后端 `device_info.json` 缓存、不会真的重注册——
+         * 这正是"20028 后重注册设备再重试"变成空转的原因（见 register_dev.rs 的早退分支）。
+         * 判定只读本进程镜像，不需要额外请求。
+         */
+        fun hasPersistedDeviceIdentity(): Boolean = !dfid.isNullOrBlank()
+
+        /** 刷新结果的稳定名字：Release 类名每次构建都会被 R8 改写，诊断日志不能跟着变。 */
+        internal fun authRefreshLabelOf(result: AuthRefreshResult): String = when (result) {
+            is AuthRefreshResult.Committed -> "Committed"
+            is AuthRefreshResult.Updated -> "Updated"
+            AuthRefreshResult.Rejected -> "Rejected"
+            AuthRefreshResult.VerificationRequired -> "VerificationRequired"
+            AuthRefreshResult.SignatureRejected -> "SignatureRejected"
+            AuthRefreshResult.Unavailable -> "Unavailable"
+            AuthRefreshResult.Superseded -> "Superseded"
         }
         @Volatile private var dfid: String? = null
     }
@@ -446,7 +479,17 @@ class KugouApiService private constructor() {
                         if (result is AuthRefreshResult.Committed) requestAuth = result.snapshot
                     }
                 },
-                register = { authSession.register(requestAuth) { registerDevice().isSuccess } },
+                // 设备身份已经持久化时，/register/dev 只会回缓存 dfid（backend register_dev.rs
+                // 命中 device_info.json 就早退），重放请求与首次逐字节相同，必然再次 20028。
+                // 这种空转不再消耗一次恢复预算，直接让判定落到"需要验证/需要重登"。
+                register = {
+                    if (hasPersistedDeviceIdentity()) {
+                        YosDiagnostics.log("REG_DEV", "path" to "skipped_cached")
+                        false
+                    } else {
+                        authSession.register(requestAuth) { registerDevice().isSuccess }
+                    }
+                },
                 sharedRefresh = {
                     authSession.sharedRefresh(requestAuth.version).also { result ->
                         if (result is AuthRefreshResult.Committed) requestAuth = result.snapshot
@@ -458,13 +501,34 @@ class KugouApiService private constructor() {
         } catch (cancel: kotlinx.coroutines.CancellationException) {
             throw cancel
         } catch (error: Exception) {
-            recoveryResult = error.javaClass.simpleName
+            // 不能记 simpleName：Release 包会被 R8 改名，且每次构建都不同（上一版是 tc2，
+            // 这一版就是 uc2）。诊断文件必须跨版本可读，所以按类型给稳定标签。
+            recoveryResult = stableFailureLabel(error)
+            // 只有恢复流程真正判定 AuthInvalid（业务接口自己回 token 拒绝）才升级成
+            // "登录失效"。绝不能拿 /login/token 的 Rejected 当证据——见 refreshLogin 的注释。
+            if (error is yos.music.player.data.repositories.KugouAuthInvalidException) {
+                YosDiagnostics.log("AUTH_INVALID", "source" to "playback_token_rejected")
+                KugouAccountState.onCredentialsRejected()
+            }
             Log.w(TAG, "Playback request failed: ${error.javaClass.simpleName}")
             Result.failure(error)
         } finally {
             if (budget.claimDiagnostic()) YosDiagnostics.log("PLAY_RECOVERY", "type" to budget.recoveryType,
-                "result" to recoveryResult, "replayed" to budget.replayed, "version" to budget.currentAuthVersion)
+                "result" to recoveryResult, "replayed" to budget.replayed, "version" to budget.currentAuthVersion,
+                "verify" to budget.verificationSummary())
         }
+    }
+
+    /** 播放失败归因的稳定名字：R8 会改类名，诊断日志不能跟着变。 */
+    private fun stableFailureLabel(error: Throwable): String = when (error) {
+        is yos.music.player.data.repositories.KugouAuthInvalidException -> "AuthInvalid"
+        is yos.music.player.data.repositories.KugouVerificationRequiredException -> "VerificationRequired"
+        is yos.music.player.data.repositories.KugouSignatureRejectedException -> "SignatureRejected"
+        is yos.music.player.data.repositories.KugouTokenRejectedException -> "TokenRejected"
+        is yos.music.player.data.repositories.KugouRepository.KugouPlayBlockedException -> "Blocked"
+        is kotlinx.coroutines.CancellationException -> "Cancelled"
+        is java.io.IOException -> "IOException"
+        else -> error.javaClass.simpleName
     }
 
     // ---------- QR 登录（复用 md3Music Rust 现有路由，不重新实现协议） ----------
@@ -572,12 +636,21 @@ class KugouApiService private constructor() {
             val root = runCatching { toPlainAny(JSONObject(body)) as? Map<*, *> }.getOrNull()
             parseAuthRefreshResponse(code, root)
         }
+        // 注意：这里的 Rejected **不是**登录失效的证据。
+        // Rust 的 /login/token（login.rs:582）要从 cookie 里取 t1 参与签名，而本 App 只在
+        // 请求头里带 token/userid、从不持久化 t1，所以这个接口对任何账号都会回 20018
+        // "token api error"（真机两天实测：账号能正常播放/收藏，它照样回 Rejected）。
+        // 登录失效只能由"业务接口自己回 20017–20020/31833"来确证，见 recoverKugouPlayback。
     }
 
     /** 设备注册：GET /register/dev -> data.dfid（Dart registerDevice 对应，kugou_api_client.dart:390-400）。 */
     suspend fun registerDevice(): Result<String> = withContext(Dispatchers.IO) {
         try {
             if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            // 后端（register_dev.rs）只在本地没有 dfid 时才真的访问上游。用同一个判据标注
+            // 本次走的路径——耗时不可靠：本地 HTTP 往返 40~70ms，和真实上游注册同一量级。
+            val cacheHit = hasPersistedDeviceIdentity()
+            val startedAt = System.currentTimeMillis()
             val (code, body) = httpGetWithRetry("/register/dev", emptyMap())
             Log.d(TAG, "/register/dev -> HTTP $code")
             if (code !in 200..299) return@withContext Result.failure(IOException("HTTP $code"))
@@ -586,6 +659,11 @@ class KugouApiService private constructor() {
             val dfid = data.optString("dfid", "")
             if (dfid.isEmpty()) return@withContext Result.failure(IOException("No dfid in response"))
             saveDfid(dfid)
+            YosDiagnostics.log(
+                "REG_DEV",
+                "path" to if (cacheHit) "cache" else "upstream",
+                "ms" to (System.currentTimeMillis() - startedAt)
+            )
             Result.success(dfid)
         } catch (cancel: kotlinx.coroutines.CancellationException) {
             throw cancel

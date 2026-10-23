@@ -6,8 +6,12 @@ import java.io.IOException
 class KugouAuthInvalidException(detail: String) :
     IOException("鉴权已确认失效: $detail")
 
-class KugouVerificationRequiredException(detail: String) :
-    IOException("请求需要安全验证: $detail")
+/** [eventId] 是上游 20028 附带的二次验证凭据；[edt] 是另一种一次性凭据（真机 /song/url 常见）。 */
+class KugouVerificationRequiredException(
+    detail: String,
+    val eventId: String? = null,
+    val edt: String? = null
+) : IOException("请求需要安全验证: $detail")
 
 class KugouSignatureRejectedException(detail: String) :
     IOException("请求签名被拒绝: $detail")
@@ -86,6 +90,42 @@ object KugouUpstreamError {
         is String -> value.trim().toIntOrNull()
         else -> null
     }
+
+    /** 响应体里的 error_code（顶层或 data 层首个可识别值），只用于诊断与恢复判定。 */
+    fun errorCodeOf(root: Map<*, *>): Int? {
+        val nodes = listOfNotNull(root, dataNodeOf(root))
+        return nodes.flatMap { node -> codeFields.mapNotNull { numOf(node[it]) } }.firstOrNull()
+    }
+
+    /**
+     * 20028 响应携带的二次验证凭据（酷狗 `eventid`，Dart 侧叫 ssaCode）。
+     * 只认明确字段名，不做模糊匹配——认不出就当没有，也绝不拿别的字段冒充验证入口。
+     */
+    fun verificationEventId(root: Map<*, *>): String? {
+        val keys = listOf("eventid", "event_id", "ssaCode", "ssa_code")
+        return listOfNotNull(root, dataNodeOf(root)).firstNotNullOfOrNull { node ->
+            keys.firstNotNullOfOrNull { key ->
+                (node[key] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            }
+        }
+    }
+
+    private fun dataNodeOf(root: Map<*, *>): Map<*, *>? = when (val raw = root["data"]) {
+        is Map<*, *> -> raw
+        is List<*> -> raw.firstOrNull() as? Map<*, *>
+        else -> null
+    }
+
+    /**
+     * 20028 响应里的 `edt`（真机 /song/url 常见形态：只有 edt、没有 eventid）。
+     *
+     * 它原本是请求签名用的一次性凭据，能不能当 eventid 喂给 /get/verify/info 属于**未验证的猜测**，
+     * 所以这里只把它当作"可以试一试的备选"，由上层决定要不要试、试失败就降级。
+     */
+    fun verificationEdt(root: Map<*, *>): String? =
+        listOfNotNull(root, dataNodeOf(root)).firstNotNullOfOrNull { node ->
+            (node["edt"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        }
 
     /**
      * 兼容旧调用签名，但单个 HTTP 状态/响应体不足以确证鉴权失效。

@@ -250,6 +250,7 @@ import yos.music.player.ui.widgets.basic.LiquidDropdownProgress
 import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.OptionDialog
+import yos.music.player.ui.widgets.basic.PlaybackBlockChip
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.isBlocked
@@ -1349,6 +1350,15 @@ fun NowPlaying(
                                             .padding(bottom = portraitBottomCompensation),
                                         onWhile = onWhileAction)
                                 }
+
+                                // 风控拦截常驻胶囊：叠在控件带顶部，**不参与纵向布局**——
+                                // 出现/消失都不会把 PlayerControl 挤动（这是本项目反复踩过的坑）。
+                                // 没有拦截时 PlaybackBlockChip 直接不组合。
+                                PlaybackBlockChip(
+                                    Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = 8.dp)
+                                )
 
                                 // 翻译按钮改成覆盖层，不再作为 Column 的首个子项：
                                 // 之前它只在歌词页出现，会把下方 PlayerControl 的可用高度挤掉

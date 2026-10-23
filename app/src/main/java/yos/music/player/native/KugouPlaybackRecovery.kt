@@ -159,7 +159,18 @@ class PlaybackRecoveryBudget(val initialAuthVersion: Long = KugouApiService.auth
     internal var recoveryType: String? = null
         private set
     private var diagnosticEmitted = false
+    /** 20028 的诊断证据：错误码 + 是否带 eventid（不落 eventid 明文，避免诊断文件保存一次性凭据）。 */
+    private var verificationCode: Int? = null
+    private var verificationHasEventId = false
     @Synchronized internal fun recordRecovery(type: String) { if (recoveryType == null) recoveryType = type }
+    @Synchronized internal fun recordVerification(root: Map<*, *>?, eventId: String?) {
+        root ?: return
+        if (verificationCode == null) verificationCode = KugouUpstreamError.errorCodeOf(root)
+        if (eventId != null) verificationHasEventId = true
+    }
+    internal fun verificationSummary(): String? =
+        if (verificationCode == null && !verificationHasEventId) null
+        else "code=${verificationCode ?: "-"} eventid=${if (verificationHasEventId) "yes" else "no"}"
     @Synchronized internal fun claimDiagnostic(): Boolean = if (diagnosticEmitted || recoveryType == null) false else {
         diagnosticEmitted = true
         true
@@ -261,9 +272,22 @@ internal suspend fun recoverKugouPlayback(
         when (type) {
             KugouUpstreamErrorType.SignatureRejected -> throw KugouSignatureRejectedException("Playback signature rejected")
             KugouUpstreamErrorType.VerificationRequired -> {
-                if (!budget.consume() || !register()) throw KugouVerificationRequiredException("Playback verification required")
+                // 20028 = 上游要二次安全验证（风控）。**不要**拿 /login/token 的返回结果来
+                // 判"是不是登录失效"：本移植版的 /login/token 缺 t1 cookie，对任何账号都回
+                // 20018（Rejected），把它当证据会把正常账号误报成"凭据失效"（真机事故）。
+                // 登录失效的唯一确证路径是业务接口自己回 20017–20020（见 TokenRejected 分支）。
+                val eventId = response.root?.let { KugouUpstreamError.verificationEventId(it) }
+                val edt = response.root?.let { KugouUpstreamError.verificationEdt(it) }
+                budget.recordVerification(response.root, eventId)
+                if (!budget.consume() || !register()) {
+                    throw KugouVerificationRequiredException("Playback verification required", eventId, edt)
+                }
             }
             KugouUpstreamErrorType.TokenRejected -> {
+                // 判"登录失效"的唯一确证证据就在这里：**业务接口自己**（/song/url）回了
+                // 20017–20020 / "token api error"。刷新只是补齐凭据的尝试——本移植版的
+                // /login/token 缺 t1 cookie，几乎必然回 Rejected，因此它的结果不能反过来
+                // 当作"失效证据"（20028 分支已经完全不看它）。
                 if (refreshed) throw KugouAuthInvalidException("Playback token rejected after refresh")
                 if (!budget.consume()) throw KugouTokenRejectedException("Playback token rejected; recovery budget exhausted")
                 when (val result = refresh()) {

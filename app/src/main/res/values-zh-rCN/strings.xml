@@ -25,6 +25,17 @@
     <string name="settings_online_kugou_account">酷狗账号</string>
     <string name="kugou_login_status_logged_in">已登录</string>
     <string name="kugou_login_status_not_logged_in">未登录</string>
+    <string name="kugou_login_credentials_rejected">登录凭据已失效</string>
+    <string name="kugou_login_credentials_rejected_desc">点击重新登录</string>
+    <string name="playback_block_title">播放被风控拦截</string>
+    <string name="playback_block_message_verify">酷狗要求先完成一次人机验证，才会返回播放地址。验证通过后会自动继续播放。</string>
+    <string name="playback_block_message_none">酷狗暂时拒绝返回播放地址，且没有提供可完成的验证入口。可以重新登录后再试，或稍后重试。</string>
+    <string name="playback_block_action_verify">去验证</string>
+    <string name="playback_block_action_login">重新登录</string>
+    <string name="playback_block_action_retry">重试</string>
+    <string name="playback_block_chip">播放被拦截 · 点击处理</string>
+    <string name="playback_block_no_entry">该请求没有可用的验证入口</string>
+    <string name="playback_block_rejected">验证未通过，请重试</string>
     <string name="kugou_login_userid">账号：%1$s</string>
     <string name="kugou_login_hint">登录酷狗账号以使用在线音乐服务</string>
     <string name="kugou_login_qr_desc">用酷狗或酷狗概念版 APP 扫一扫</string>
@@ -562,4 +573,13 @@
     <string name="nowplaying_comments_copied">已复制</string>
     <string name="song_recognition_no_sound">没有拾到声音，请检查麦克风后重试</string>
     <string name="nowplaying_comments_unavailable">当前歌曲暂不支持评论</string>
+
+    <string name="playlist_collect_add">收藏歌单</string>
+    <string name="playlist_collect_remove">取消收藏</string>
+    <string name="playlist_collect_own">这是你自己的歌单</string>
+    <string name="playlist_collect_missing_gid">缺少有效的原始歌单标识，请从搜索或推荐重新打开</string>
+    <string name="playlist_collect_load_failed">歌单加载失败，点按重试</string>
+    <string name="playlist_collect_failed">收藏操作失败，请重试</string>
+    <string name="playlist_uncollect_confirm">取消收藏“%1$s”？</string>
+    <string name="playlist_read_only">此歌单不可编辑</string>
 </resources>

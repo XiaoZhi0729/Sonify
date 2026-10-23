@@ -25,6 +25,17 @@
     <string name="settings_online_kugou_account">Kugou Account</string>
     <string name="kugou_login_status_logged_in">Logged in</string>
     <string name="kugou_login_status_not_logged_in">Not logged in</string>
+    <string name="kugou_login_credentials_rejected">Login credentials have expired</string>
+    <string name="kugou_login_credentials_rejected_desc">Tap to sign in again</string>
+    <string name="playback_block_title">Playback blocked</string>
+    <string name="playback_block_message_verify">Kugou requires a quick human verification before it hands over the playback URL. Playback resumes automatically once you pass it.</string>
+    <string name="playback_block_message_none">Kugou is temporarily refusing the playback URL and offered no verification step. Try signing in again, or retry later.</string>
+    <string name="playback_block_action_verify">Verify</string>
+    <string name="playback_block_action_login">Sign in again</string>
+    <string name="playback_block_action_retry">Retry</string>
+    <string name="playback_block_chip">Playback blocked · Tap to fix</string>
+    <string name="playback_block_no_entry">No usable verification step for this request</string>
+    <string name="playback_block_rejected">Verification failed, please try again</string>
     <string name="kugou_login_userid">Account: %1$s</string>
     <string name="kugou_login_hint">Sign in to your Kugou account for online music</string>
     <string name="kugou_login_qr_desc">Scan with the Kugou or Kugou Concept app</string>
@@ -562,4 +573,13 @@
     <string name="nowplaying_comments_copied">Copied</string>
     <string name="song_recognition_no_sound">No sound was picked up. Check the microphone and try again</string>
     <string name="nowplaying_comments_unavailable">Comments are not available for this song</string>
+
+    <string name="playlist_collect_add">Save Playlist</string>
+    <string name="playlist_collect_remove">Unsave Playlist</string>
+    <string name="playlist_collect_own">This is your own playlist</string>
+    <string name="playlist_collect_missing_gid">The original playlist ID is unavailable. Please reopen it from search or recommendations.</string>
+    <string name="playlist_collect_load_failed">Could not load playlists. Tap to retry</string>
+    <string name="playlist_collect_failed">Could not update saved playlists. Please try again.</string>
+    <string name="playlist_uncollect_confirm">Unsave "%1$s"?</string>
+    <string name="playlist_read_only">This playlist is read-only</string>
 </resources>

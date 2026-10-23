@@ -18,6 +18,27 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
+ * 20028 二次验证的结果。播放侧据此决定"续播 / 保持提示 / 降级成重新登录"，
+ * 不能只给一个 Boolean——"用户取消"和"上游没给验证入口"要分开处理。
+ */
+enum class CaptchaOutcome {
+    /** 验证通过，可以重放原请求。 */
+    Verified,
+
+    /** 用户关闭弹窗 / 3 分钟超时。 */
+    Cancelled,
+
+    /** 验证类型不是腾讯滑块（如短信 v_type=32），本 App 暂不支持。 */
+    Unsupported,
+
+    /** 换不出验证码格式：eventid/edt 无效，等于没有可完成的验证入口。 */
+    NoChallenge,
+
+    /** 提交了验证码但服务端没通过（可让用户再试一次）。 */
+    Rejected
+}
+
+/**
  * 酷狗 VIP / 签到业务仓库（对齐 md3Music kugou_provider.dart L1367-1830 的签到子集）。
  *
  * 双签到语义（与 EchoMusic/kgcheckin 一致）：
@@ -95,7 +116,7 @@ object KugouVipRepository {
                 if (ok) return true to msg
                 if (ssaCode != null && !verifyAttempted) {
                     verifyAttempted = true
-                    val verified = handleVerifyCaptcha(ssaCode)
+                    val verified = handleVerifyCaptcha(ssaCode) == CaptchaOutcome.Verified
                     if (!verified) return false to "签到需要安全验证，验证未完成"
                     continue
                 }
@@ -290,26 +311,33 @@ object KugouVipRepository {
 
     /**
      * 20028 处理：获取验证码格式（v_type/txappid）→ 交由 UI 弹腾讯滑块 → 提交验证。
-     * 返回 true 表示验证通过（可重试原请求）；false 表示取消/失败/类型不支持。
      * 目前仅支持 v_type=23（腾讯滑块），其他类型对齐 md3Music 暂不支持。
+     *
+     * 播放链路复用这个入口（原先是私有的，导致 20028 只有签到能完成验证）。
+     * [challenge] 可以是 eventid，也可以是 edt（真机 /song/url 只有后者）——
+     * 能不能换出验证码格式由上游决定，换不出就返回 [CaptchaOutcome.NoChallenge]。
      */
-    private suspend fun handleVerifyCaptcha(eventid: String): Boolean {
-        val info = api.getVerifyInfo(eventid).getOrNull() ?: return false
-        val data = info.optJSONObject("data") ?: return false
+    suspend fun verifyWithCaptcha(challenge: String): CaptchaOutcome = handleVerifyCaptcha(challenge)
+
+    private suspend fun handleVerifyCaptcha(challenge: String): CaptchaOutcome {
+        val info = api.getVerifyInfo(challenge).getOrNull() ?: return CaptchaOutcome.NoChallenge
+        val data = info.optJSONObject("data") ?: return CaptchaOutcome.NoChallenge
         val vType = data.optInt("v_type", 23)
         val txappid = data.optString("txappid", "")
-        if (txappid.isEmpty()) return false
+        if (txappid.isEmpty()) return CaptchaOutcome.NoChallenge
         if (vType != 23) {
             Log.w(TAG, "unsupported verify v_type=$vType")
-            return false
+            return CaptchaOutcome.Unsupported
         }
 
         val verifycode = KugouVipState.awaitCaptcha(
-            KugouVipState.PendingCaptcha(eventid = eventid, vType = vType, txappid = txappid)
-        ) ?: return false
+            KugouVipState.PendingCaptcha(eventid = challenge, vType = vType, txappid = txappid)
+        ) ?: return CaptchaOutcome.Cancelled
 
-        val result = api.verifyUserInfo(eventid, vType, verifycode).getOrNull() ?: return false
-        return result.optInt("status", -1) == 1 || result.optInt("error_code", Int.MIN_VALUE) == 0
+        val result = api.verifyUserInfo(challenge, vType, verifycode).getOrNull()
+            ?: return CaptchaOutcome.Rejected
+        val ok = result.optInt("status", -1) == 1 || result.optInt("error_code", Int.MIN_VALUE) == 0
+        return if (ok) CaptchaOutcome.Verified else CaptchaOutcome.Rejected
     }
 
     // ==================== 解析 ====================

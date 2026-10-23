@@ -25,6 +25,19 @@
     <string name="settings_online_kugou_account">酷狗帳號</string>
     <string name="kugou_login_status_logged_in">已登入</string>
     <string name="kugou_login_status_not_logged_in">未登入</string>
+    <string name="kugou_login_credentials_rejected">登入憑據已失效</string>
+    <string name="kugou_login_credentials_rejected_desc">點擊重新登入</string>
+    <string name="playback_block_title">播放被風控攔截</string>
+    <string name="playback_block_message_verify">酷狗要求先完成一次人機驗證，才會回傳播放位址。驗證通過後會自動繼續播放。</string>
+    <string name="playback_block_message_none">酷狗暫時拒絕回傳播放位址，且沒有提供可完成的驗證入口。可以重新登入後再試，或稍後重試。</string>
+    <string name="playback_block_action_verify">去驗證</string>
+    <string name="playback_block_action_login">重新登入</string>
+    <string name="playback_block_action_retry">重試</string>
+    <string name="playback_block_chip">播放被攔截 · 點擊處理</string>
+    <string name="playback_block_no_entry">此請求沒有可用的驗證入口</string>
+    <string name="playback_block_rejected">驗證未通過，請重試</string>
+    <string name="kugou_vip_captcha_title">安全驗證</string>
+    <string name="kugou_vip_captcha_close">取消驗證</string>
     <string name="kugou_login_userid">帳號：%1$s</string>
     <string name="kugou_login_hint">登入酷狗帳號以使用線上音樂服務</string>
     <string name="kugou_login_qr_desc">用酷狗或酷狗概念版 APP 掃一掃</string>
@@ -456,4 +469,13 @@
     <string name="song_menu_cancel_not_interested">取消不感興趣</string>
     <string name="song_menu_not_interested_removed">已取消不感興趣</string>
     <string name="song_menu_login_required">請先登入酷狗帳號</string>
+
+    <string name="playlist_collect_add">收藏歌單</string>
+    <string name="playlist_collect_remove">取消收藏</string>
+    <string name="playlist_collect_own">這是你自己的歌單</string>
+    <string name="playlist_collect_missing_gid">缺少有效的原始歌單識別碼，請從搜尋或推薦重新開啟</string>
+    <string name="playlist_collect_load_failed">歌單載入失敗，點按重試</string>
+    <string name="playlist_collect_failed">收藏操作失敗，請重試</string>
+    <string name="playlist_uncollect_confirm">取消收藏「%1$s」？</string>
+    <string name="playlist_read_only">此歌單不可編輯</string>
 </resources>
