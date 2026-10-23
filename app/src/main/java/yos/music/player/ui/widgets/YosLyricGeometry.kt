@@ -2,6 +2,14 @@ package yos.music.player.ui.widgets
 
 import kotlin.math.roundToInt
 
+// 顶部遮罩与歌词库共用几何，当前行必须落在渐隐终点下方。
+internal const val LYRIC_ACTIVE_ANCHOR_FRACTION = 0.12f
+internal const val LYRIC_TOP_FADE_INSET_DP = 32f
+
+internal fun lyricTopMaskEndPx(viewportHeightPx: Float, insetPx: Float): Float =
+    (viewportHeightPx.coerceAtLeast(0f) * LYRIC_ACTIVE_ANCHOR_FRACTION - insetPx)
+        .coerceAtLeast(0f)
+
 /**
  * 竖屏控件可见时，歌词可视区域占可用高度的比例。
  *

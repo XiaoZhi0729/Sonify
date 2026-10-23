@@ -1,0 +1,169 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.mocharealm.accompanist",
+    "module": "lyrics-ui",
+    "version": "2.0.0-rc.2-patched9",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "metadataApiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.platform.type": "common"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "src-metadata.jar",
+          "url": "lyrics-ui-2.0.0-rc.2-patched9.jar",
+          "size": 795,
+          "sha512": "689cbfda13f87c565fc2ab2b063f44dba90e7b0a3f5ac967f020a153b298826bbecba7077067eef8ed78de2e3eb769c0bc35b9fbbc089d6ef9e7a6f7c6fea2d5",
+          "sha256": "19fab11b0068797bd3265ce4b10ef5bacff6fb2197af5db347e7bf26ef6d3ee7",
+          "sha1": "e7726e3ac4f5ff8a3ef66ccd8e9838d33fdc29b9",
+          "md5": "f7c44b096eed461bbea5ac8d32e0bfc1"
+        }
+      ]
+    },
+    {
+      "name": "metadataSourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "common"
+      },
+      "files": [
+        {
+          "name": "src-kotlin-sources.jar",
+          "url": "lyrics-ui-2.0.0-rc.2-patched9-sources.jar",
+          "size": 111533,
+          "sha512": "ad01a90a6d80f5b1509db44356d4b0078b10220d85f00c90b2dbc1814983c33ffe7cfb17545b7eb42652aa766610c8632a1151ee802263c07a85916fb2ea1a95",
+          "sha256": "94cf837ea9a5e5f93833ff2447e3793b0aeed4d914309cf077887229eb02798e",
+          "sha1": "c2d8e93b3e0e62768500d1444d0a9e87b949e57b",
+          "md5": "028586f2981b28b5f7131f033ff4a0ed"
+        }
+      ]
+    },
+    {
+      "name": "androidApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-android/2.0.0-rc.2-patched9/lyrics-ui-android-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-android",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    },
+    {
+      "name": "androidRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-android/2.0.0-rc.2-patched9/lyrics-ui-android-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-android",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    },
+    {
+      "name": "androidSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-android/2.0.0-rc.2-patched9/lyrics-ui-android-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-android",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    },
+    {
+      "name": "jvmApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-jvm/2.0.0-rc.2-patched9/lyrics-ui-jvm-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-jvm",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    },
+    {
+      "name": "jvmRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-jvm/2.0.0-rc.2-patched9/lyrics-ui-jvm-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-jvm",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    },
+    {
+      "name": "jvmSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../lyrics-ui-jvm/2.0.0-rc.2-patched9/lyrics-ui-jvm-2.0.0-rc.2-patched9.module",
+        "group": "com.mocharealm.accompanist",
+        "module": "lyrics-ui-jvm",
+        "version": "2.0.0-rc.2-patched9"
+      }
+    }
+  ]
+}

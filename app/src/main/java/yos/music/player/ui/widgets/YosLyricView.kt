@@ -149,7 +149,7 @@ import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsFade
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLineText
 
 // ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
-// 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由 YosLyricView 顶层按当前封面更新。
+// 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由歌词页按当前封面更新。
 private const val LyricSungCoverMix = 0.3f
 
 private object LyricCoverTint {
@@ -232,9 +232,38 @@ fun YosLyricViewLib(
 ) {
     val entries = lrcEntriesLambda()
     val otherSideForLines = MediaViewModelObject.otherSideForLines
-    val style = mainTextStyle()
-    val textColor = lerp(Color.White, LyricCoverTint.color.value, LyricSungCoverMix)
+    val renderStyleRevision by LyricRenderWarmup.renderStyleRevision
+    val style = remember(renderStyleRevision) { lyricMainTextStyle() }
     val context = LocalContext.current
+    val lyricCoverUri = MediaViewModelObject.bitmap.value
+    LaunchedEffect(lyricCoverUri) {
+        LyricCoverTint.color.value = Color.White
+        if (lyricCoverUri == null) return@LaunchedEffect
+
+        val tintArgb = runCatching {
+            val result = context.imageLoader.execute(
+                ImageRequest.Builder(context)
+                    .data(lyricCoverUri)
+                    .size(96)
+                    .allowHardware(false)
+                    .build()
+            )
+            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@runCatching null
+            withContext(Dispatchers.Default) {
+                val palette = Palette.from(bitmap).generate()
+                val fallback = 0
+                listOf(
+                    palette.getLightVibrantColor(fallback),
+                    palette.getVibrantColor(fallback),
+                    palette.getLightMutedColor(fallback),
+                    palette.getMutedColor(fallback),
+                ).firstOrNull { it != fallback }
+            }
+        }.getOrNull()
+        LyricCoverTint.color.value =
+            if (tintArgb != null && tintArgb != 0) Color(tintArgb) else Color.White
+    }
+    val textColor = lerp(Color.White, LyricCoverTint.color.value, LyricSungCoverMix)
 
     val lyrics = remember(entries) {
         buildSyncedLyrics(entries, otherSideForLines)
@@ -368,8 +397,8 @@ fun YosLyricViewLib(
                     useBlurEffect = blurLambda(),
                     showTranslation = translationLambda(),
                     showPhonetic = false,
-                    anchor = LyricsAnchor.Fraction(0.0618f),
-                    topFade = LyricsFade.ToAnchor(16.dp),
+                    anchor = LyricsAnchor.Fraction(LYRIC_ACTIVE_ANCHOR_FRACTION),
+                    topFade = LyricsFade.ToAnchor(LYRIC_TOP_FADE_INSET_DP.dp),
                     bottomFade = LyricsFade.Fraction(0.5f),
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
@@ -377,6 +406,8 @@ fun YosLyricViewLib(
                     preparedLyrics = preparedLyrics,
                     // 场景缓存：切页回来复用排版 + 渲染资源 + 已栅格化的行，等同页面常驻
                     sceneCacheKey = "$cacheKey|${textColor.value}",
+                    // 折行方式：开=均衡（各行等长），关=首行塞满（平台 first-fit 行为）
+                    lineBalance = lineBalanceSetting,
                 )
             }
         }

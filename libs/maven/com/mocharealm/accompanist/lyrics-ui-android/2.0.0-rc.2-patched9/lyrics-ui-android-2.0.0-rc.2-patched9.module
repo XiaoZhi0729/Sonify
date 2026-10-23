@@ -1,0 +1,158 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../lyrics-ui/2.0.0-rc.2-patched9/lyrics-ui-2.0.0-rc.2-patched9.module",
+    "group": "com.mocharealm.accompanist",
+    "module": "lyrics-ui",
+    "version": "2.0.0-rc.2-patched9",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "androidApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "src.aar",
+          "url": "lyrics-ui-android-2.0.0-rc.2-patched9.aar",
+          "size": 629578,
+          "sha512": "802841c46c219c2b740c66f9775a73e0f2d6809bfb676f2913dde7129ed71f25f020a9db77bc66cb3c65569323c2c665c4b10ab56583cb9e455409696b00f65c",
+          "sha256": "5d77dc244395efddc761336dc330b3a34626374eeec1978a8e19d9aaa5295e7e",
+          "sha1": "fbf947f3121605a203a219d3584cfa961f8866ee",
+          "md5": "6505e4d4ae87ec9898dfddc4b8caaa42"
+        }
+      ]
+    },
+    {
+      "name": "androidRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.runtime",
+          "module": "runtime",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.foundation",
+          "module": "foundation",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.material3",
+          "module": "material3",
+          "version": {
+            "requires": "1.9.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.ui",
+          "module": "ui",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.components",
+          "module": "components-ui-tooling-preview",
+          "version": {
+            "requires": "1.12.0"
+          }
+        },
+        {
+          "group": "com.mocharealm.gaze",
+          "module": "capsule",
+          "version": {
+            "requires": "2.1.1-patch2"
+          }
+        },
+        {
+          "group": "com.mocharealm.accompanist",
+          "module": "lyrics-core",
+          "version": {
+            "requires": "0.5.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.compose.components",
+          "module": "components-resources",
+          "version": {
+            "requires": "1.12.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "src.aar",
+          "url": "lyrics-ui-android-2.0.0-rc.2-patched9.aar",
+          "size": 629578,
+          "sha512": "802841c46c219c2b740c66f9775a73e0f2d6809bfb676f2913dde7129ed71f25f020a9db77bc66cb3c65569323c2c665c4b10ab56583cb9e455409696b00f65c",
+          "sha256": "5d77dc244395efddc761336dc330b3a34626374eeec1978a8e19d9aaa5295e7e",
+          "sha1": "fbf947f3121605a203a219d3584cfa961f8866ee",
+          "md5": "6505e4d4ae87ec9898dfddc4b8caaa42"
+        }
+      ]
+    },
+    {
+      "name": "androidSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "android",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "androidJvm"
+      },
+      "files": [
+        {
+          "name": "src-android-sources.jar",
+          "url": "lyrics-ui-android-2.0.0-rc.2-patched9-sources.jar",
+          "size": 118742,
+          "sha512": "3de0e8cd3f85ddb6078dc20dcd94a4168a339694b649b5782c5450edace96238287b44657f4979a7a82a6996176eb81237a2daf7765be0ce837b605c773ffa27",
+          "sha256": "bfb0cff140bf1babc33aebaad69b08473a1ff7c3a30bb089f9f12efc2104c206",
+          "sha1": "7485bc2cab6b2927b635dba73fa6eddafcbd95db",
+          "md5": "a62872b3725559bd8a571f953742e048"
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,9 @@ package yos.music.player.code.utils.lrc
 
 import android.content.Context
 import android.content.res.Configuration
+import androidx.annotation.MainThread
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -313,6 +316,17 @@ object LyricLayoutSpec {
     }
 }
 
+internal class LyricRenderStyleRevision {
+    private val revision = mutableIntStateOf(0)
+
+    val state: State<Int> = revision
+
+    @MainThread
+    fun advance() {
+        revision.intValue++
+    }
+}
+
 /**
  * 歌词排版预热：歌词数据一发布就在后台把整首歌词的排版算好塞进 [LyricPreparedCache]，
  * 用户打开歌词页时直接命中，不再现场测量（那是「打开卡一下再闪现」的直接原因）。
@@ -328,6 +342,9 @@ object LyricLayoutSpec {
 object LyricRenderWarmup {
     /** 发布后稍等再算：切歌瞬间还要起播/出封面，把 CPU 让出去。 */
     private const val SETTLE_DELAY_MS = 400L
+
+    private val styleRevision = LyricRenderStyleRevision()
+    val renderStyleRevision: State<Int> = styleRevision.state
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -401,6 +418,7 @@ object LyricRenderWarmup {
                     showPhonetic = true,
                     fontScale = fontScale,
                     translationStyle = styles.translation,
+                    lineBalance = SettingsLibrary.LyricLineBalance,
                 )
             }.getOrNull()
             val elapsed = System.currentTimeMillis() - startedAt
@@ -424,7 +442,9 @@ object LyricRenderWarmup {
      * 歌词页之前算好，避免每次改样式都要走一次冷排版（空一帧 / 闪一下 / 卡一下）。
      * 没有正在显示的歌词时直接跳过：切歌后发布歌词时会用当时的设置重新预热。
      */
+    @MainThread
     fun onRenderStyleChanged(context: Context?) {
+        styleRevision.advance()
         val mediaIdKey = MediaViewModelObject.lyricMediaId.value ?: return
         val entries = MediaViewModelObject.lrcEntries.value
         if (entries.isEmpty()) return
