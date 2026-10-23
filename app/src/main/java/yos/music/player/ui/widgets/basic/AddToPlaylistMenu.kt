@@ -267,13 +267,18 @@ fun SongAddToPlaylistButton(
                 onPlayNext = {
                     expanded = false
                     scope.launch {
-                        val ok = runCatching { MediaController.playNext(music) }.isSuccess
-                        Toast.makeText(
-                            context,
-                            if (ok) R.string.song_menu_play_next_done
-                            else R.string.song_menu_play_next_failed,
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        // playNext 自己吞掉并记录异常，只有协程取消才会抛出——那不是失败
+                        val message = when (MediaController.playNext(music)) {
+                            MediaController.PlayNextOutcome.Added ->
+                                R.string.song_menu_play_next_done
+                            MediaController.PlayNextOutcome.Cancelled ->
+                                R.string.song_menu_play_next_cancelled
+                            MediaController.PlayNextOutcome.StartedPlayback ->
+                                R.string.song_menu_play_next_started
+                            MediaController.PlayNextOutcome.Failed ->
+                                R.string.song_menu_play_next_failed
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }
                 },
                 onNotInterested = {
@@ -459,7 +464,11 @@ private fun AddToPlaylistPageContent(
                         if (isNextInQueue) R.drawable.ic_song_menu_plus_circle_fill
                         else R.drawable.ic_song_menu_plus_circle
                     ),
-                    label = stringResource(R.string.song_menu_play_next),
+                    // 已在下一首时按钮变成「取消」语义：再点一次把这一条从播放列表移除
+                    label = stringResource(
+                        if (isNextInQueue) R.string.song_menu_play_next_cancel
+                        else R.string.song_menu_play_next
+                    ),
                     onClick = onPlayNext,
                     modifier = Modifier.weight(1f),
                 )
@@ -749,8 +758,10 @@ private fun TopActionButton(
         Spacer(modifier = Modifier.height(5.dp))
         Text(
             text = label,
-            fontSize = 12.sp,
-            lineHeight = 14.sp,
+            // 顶部三个动作的文案最长到 5 字（「下一首播放」），12sp 在 216dp 面板里
+            // 三等分后只有约 57dp 可用宽度，会走到省略号，所以统一压到 11sp。
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
             color = contentColor.copy(alpha = 0.9f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

@@ -52,6 +52,7 @@ import com.blankj.utilcode.util.ResourceUtils.getDrawable
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -104,6 +105,7 @@ import yos.music.player.data.repositories.KugouTokenRejectedException
 import yos.music.player.data.repositories.PlaybackRequestPurpose
 import yos.music.player.data.repositories.KugouQuality
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.data.repositories.KugouRepository.withPlayableUri
 import yos.music.player.data.repositories.ListeningGradeTracker
 import yos.music.player.data.repositories.ListenReportService
 import yos.music.player.data.repositories.SongPlayabilityStore
@@ -132,6 +134,9 @@ object MediaController {
     var mediaSession: MediaSession? = null
 
     private val shuffleNavigationHistory = ShuffleNavigationHistory()
+
+    /** 队列编辑后等待 controller 时间线回推的上限；超时只记诊断，不判失败。 */
+    private const val QUEUE_APPLY_TIMEOUT_MS = 300L
 
     /**
      * UI 动作：重备并续播当前曲（风控提示里的「重试」）。
@@ -418,19 +423,24 @@ object MediaController {
      * 持久化条件与 prepare 保持一致（无条件落盘）：本地库为空的设备（如无本地音乐的平板）
      * 也必须持久化队列，否则编辑后重启丢队列。
      */
-    private suspend fun syncQueueSnapshot() = withContext(Dispatchers.Main) {
+    private suspend fun syncQueueSnapshot(extra: YosMediaItem? = null) = withContext(Dispatchers.Main) {
         val controller = mediaControl ?: return@withContext
         val timeline = controller.currentTimeline
         // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem），timeline 读回的
         // 重建值缺时长等字段：按 mediaId 与编辑前的队列快照合并取完整条目。
         // 再退一步查库：车载蓝牙歌词会把条目 title 改写成歌词行，快照缺失时
         // 直接用 rebuilt 会把这个临时标题持久化进队列。
+        // extra 是刚插入、快照和库里都还没有的条目（如搜索结果里的歌）。
         val known = playingMusicList.value.orEmpty().associateBy { it.mediaId }
+            .toMutableMap()
+            .apply { extra?.mediaId?.let { put(it, extra) } }
         val library = MusicLibrary.songs.associateBy { it.mediaId }
         val newList = if (timeline.isEmpty) emptyList()
         else (0 until timeline.windowCount).map { i ->
             val rebuilt = timeline.getWindow(i, Timeline.Window()).mediaItem.toYosMediaItem()
-            known[rebuilt.mediaId] ?: library[rebuilt.mediaId] ?: rebuilt
+            // 归一化后落盘：历史快照里的 uri=null 条目（旧版「下一首」原样入队）就此自愈，
+            // 否则重启恢复时仍会把不可播条目塞回队列。
+            (known[rebuilt.mediaId] ?: library[rebuilt.mediaId] ?: rebuilt).withPlayableUri()
         }
         playingMusicList.value = newList
         MusicLibrary.updatePlayList(PlayListV1(mainMusicList, newList))
@@ -443,81 +453,122 @@ object MediaController {
         if (from !in 0 until count || to !in 0 until count || from == to) return@withContext
         // 重排会改动"下一首"是谁，副 player 里备好的那首可能就是错的：直接作废，不赌
         CrossfadeExo.abort("queue_move")
-        // 手动重排后，之前记录的还原位置不再可信
-        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "moveQueueItem")
         controller.moveMediaItem(from, to)
         syncQueueSnapshot()
     }
 
-    /** 「下一首播放」插入前的队列位置：null = 新插入的副本（取消时直接移除）。 */
-    private data class PlayNextRestore(val originalIndex: Int?)
-
-    /** mediaId → 操作前位置；再次点击同一首的「下一首」时用来还原。 */
-    private val playNextRestore = mutableMapOf<String, PlayNextRestore>()
+    /** 「下一首播放」的结果；菜单按它选文案，不再靠"有没有抛异常"判断。 */
+    enum class PlayNextOutcome { Added, Cancelled, StartedPlayback, Failed }
 
     /**
-     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首，再点一次则取消并还原到
-     * 操作前的位置（原本不在队列里的则移除插入项）。
+     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首，再点一次则取消——
+     * **从播放列表里移除「下一首」这个位置上的条目**（不是按 mediaId 另找一首）。
      *
      * 三处必须显式处理：
      * - 随机关闭：Media3 的 shuffle order 与时间线索引互相独立，`addMediaItem(index)`
      *   只分配时间线索引，新歌在 shuffle order 里仍是随机位置，不能保证成为"下一首"；
      *   与项目「任何播放入口必须显式关随机」的既有约定一致。
      * - 单曲循环改列表循环：否则当前曲播完会重播自己，违背"下一首播放"。
-     * - 先改快照再插 timeline：`syncQueueSnapshot` 用 timeline 重建值兜底会丢
-     *   duration/author（发布条目不带自有 extras），新条目必须先在快照里。
+     * - 队列编辑走 controller 的直连 API（与队列页拖拽 `moveQueueItem` 同一条路），
+     *   不绕自定义 session command：那条路要多一次异步往返，事后校验一旦有时序偏差
+     *   就只能抛异常，界面上表现为"添加失败"，而队列其实可能已经改对了。
      */
-    suspend fun playNext(item: YosMediaItem) = withContext(Dispatchers.Main) {
-        val controller = mediaControl ?: return@withContext
-        val mediaId = item.mediaId ?: return@withContext
-        if (controller.mediaItemCount == 0) {
-            // 队列为空没有"下一首"，直接起播
-            prepare(item, listOf(item))
-            return@withContext
+    suspend fun playNext(source: YosMediaItem): PlayNextOutcome {
+        // 菜单拿到的是列表行的展示条目（uri=null）：入队前补回 kugou:// 占位符，
+        // 否则播到它必报 FileDataSource ENOENT，还会把快照和时间线搞错位。
+        val item = source.withPlayableUri()
+        return try {
+            withContext(Dispatchers.Main) { playNextOnMain(item) }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            // 之前调用方用 runCatching 把异常整个吞掉，几种完全不同的失败在界面上长得一模一样。
+            YosDiagnostics.log("PLAY_NEXT_FAIL", "mediaId" to item.mediaId, "err" to error.toString())
+            PlayNextOutcome.Failed
         }
-        // 插入会改变"下一首"是谁，副 player 预取的那首作废
-        CrossfadeExo.abort("play_next")
-        if (controller.shuffleModeEnabled) controller.shuffleModeEnabled = false
-        if (controller.repeatMode == REPEAT_MODE_ONE) controller.repeatMode = REPEAT_MODE_ALL
-        YosDiagnostics.log("SRC", "fn" to "playNext", "mediaId" to mediaId)
+    }
 
-        val currentIndex = controller.currentMediaItemIndex
-        val existingIndex = (0 until controller.mediaItemCount).firstOrNull {
-            controller.getMediaItemAt(it).mediaId == mediaId
-        }
-
-        // 已经是下一首：再点一次 = 取消，还原到操作前的位置（新插入的则移除）
-        if (existingIndex == currentIndex + 1) {
-            val restore = playNextRestore.remove(mediaId) ?: return@withContext
-            val original = restore.originalIndex
-            if (original == null) {
-                controller.removeMediaItem(existingIndex)
-            } else {
-                val to = original.coerceIn(0, controller.mediaItemCount - 1)
-                controller.moveMediaItem(existingIndex, to)
+    private suspend fun playNextOnMain(item: YosMediaItem): PlayNextOutcome =
+        withContext(Dispatchers.Main) {
+            val controller = mediaControl ?: return@withContext PlayNextOutcome.Failed
+            val mediaId = item.mediaId ?: return@withContext PlayNextOutcome.Failed
+            if (controller.mediaItemCount == 0) {
+                // 队列为空没有"下一首"，直接起播
+                prepare(item, listOf(item))
+                return@withContext PlayNextOutcome.StartedPlayback
             }
-            syncQueueSnapshot()
-            return@withContext
+            // 插入会改变"下一首"是谁，副 player 预取的那首作废
+            CrossfadeExo.abort("play_next")
+            if (controller.shuffleModeEnabled) controller.shuffleModeEnabled = false
+            if (controller.repeatMode == REPEAT_MODE_ONE) controller.repeatMode = REPEAT_MODE_ALL
+            YosDiagnostics.log("SRC", "fn" to "playNext", "mediaId" to mediaId)
+
+            val currentIndex = controller.currentMediaItemIndex
+            if (currentIndex == C.INDEX_UNSET) return@withContext PlayNextOutcome.Failed
+            val nextIndex = currentIndex + 1
+            val nextMediaId = if (nextIndex < controller.mediaItemCount) {
+                controller.getMediaItemAt(nextIndex).mediaId
+            } else null
+
+            // 已经是下一首：再点一次 = 取消。移除的是**「下一首」这个位置上的条目**，
+            // 不按 mediaId 重新查找——同一首歌在队列里出现多次时，按 mediaId 找会删掉
+            // 别的副本，用户看到的是"点了它，删掉的却是另一行的歌"。
+            if (nextMediaId == mediaId) {
+                val countBefore = controller.mediaItemCount
+                controller.removeMediaItem(nextIndex)
+                awaitQueueApplied(controller) { it.mediaItemCount < countBefore }
+                syncQueueSnapshot()
+                return@withContext PlayNextOutcome.Cancelled
+            }
+
+            val existingIndex = (0 until controller.mediaItemCount).firstOrNull {
+                controller.getMediaItemAt(it).mediaId == mediaId
+            }
+            if (existingIndex != null && existingIndex != currentIndex) {
+                // 移到当前曲之后：from<current 时当前曲会左移一位，目标位置取 current
+                val to = if (existingIndex < currentIndex) currentIndex else currentIndex + 1
+                controller.moveMediaItem(existingIndex, to)
+                awaitNextIs(controller, mediaId)
+                syncQueueSnapshot()
+                return@withContext PlayNextOutcome.Added
+            }
+
+            // 不在队列，或就是当前曲（插副本实现"再播一次"）
+            val insertIndex = nextIndex.coerceIn(0, controller.mediaItemCount)
+            controller.addMediaItem(insertIndex, item.toMediaItem())
+            awaitNextIs(controller, mediaId)
+            // 快照按 mediaId 合并；新条目只有这里手里有完整字段
+            syncQueueSnapshot(extra = item)
+            PlayNextOutcome.Added
         }
 
-        if (existingIndex != null && existingIndex != currentIndex) {
-            playNextRestore[mediaId] = PlayNextRestore(existingIndex)
-            // 移到当前曲之后：from<current 时当前曲会左移一位，目标位置取 current
-            val to = if (existingIndex < currentIndex) currentIndex else currentIndex + 1
-            controller.moveMediaItem(existingIndex, to)
-            syncQueueSnapshot()
-            return@withContext
-        }
+    private fun MediaController.nextMediaId(): String? {
+        val index = getNextMediaItemIndex()
+        return if (index == C.INDEX_UNSET) null else getMediaItemAt(index).mediaId
+    }
 
-        // 不在队列，或就是当前曲（插副本实现"再播一次"）
-        playNextRestore[mediaId] = PlayNextRestore(null)
-        val insertIndex = (currentIndex + 1).coerceIn(0, controller.mediaItemCount)
-        val snapshot = playingMusicList.value.orEmpty().toMutableList()
-        if (insertIndex <= snapshot.size) snapshot.add(insertIndex, item)
-        playingMusicList.value = snapshot
-        controller.addMediaItem(insertIndex, item.toMediaItem())
-        syncQueueSnapshot()
+    private suspend fun awaitNextIs(controller: MediaController, mediaId: String) {
+        awaitQueueApplied(controller) { it.nextMediaId() == mediaId }
+    }
+
+    /**
+     * 队列编辑是异步会话命令：controller 的时间线要等会话回推后才更新，立刻读会拿到旧值。
+     * 这里只等一个有限窗口再同步快照；超时也照常继续——等待只用来对齐快照，**不作为失败**。
+     */
+    private suspend fun awaitQueueApplied(
+        controller: MediaController,
+        predicate: (MediaController) -> Boolean,
+    ): Boolean {
+        var waited = 0L
+        while (true) {
+            if (predicate(controller)) return true
+            if (waited >= QUEUE_APPLY_TIMEOUT_MS) break
+            delay(10)
+            waited += 10
+        }
+        YosDiagnostics.log("QUEUE_EDIT_LATE", "waited" to QUEUE_APPLY_TIMEOUT_MS)
+        return false
     }
 
     /**
@@ -528,7 +579,6 @@ object MediaController {
         val controller = mediaControl ?: return@withContext
         // 同上：删到目的那首就会突然换曲，不如退回硬切
         CrossfadeExo.abort("queue_remove")
-        playNextRestore.clear()
         YosDiagnostics.log("SRC", "fn" to "removeQueueItems", "n" to indices.size)
         indices
             .filter { it in 0 until controller.mediaItemCount }
@@ -547,7 +597,6 @@ object MediaController {
             val currentMediaId = controller.currentMediaItem?.mediaId
             // 排序是整时线重建，副 player 手里那首与新顺序不再对应
             CrossfadeExo.abort("queue_sort")
-            playNextRestore.clear()
             YosDiagnostics.log("SRC", "fn" to "sortQueue")
             val sorted = if (descending) current.sortedWith(comparator.reversed())
             else current.sortedWith(comparator)
@@ -765,19 +814,28 @@ object MediaController {
         // 用户主动开播（点任意一首歌、恢复上次播放）：一切在途的平滑过渡作废——本功能
         // 只服务"自然播完自动进下一首"，手动路径一律硬切
         CrossfadeExo.abort("prepare")
-        // 新队列不再保留上一轮「下一首播放」的还原位置
-        playNextRestore.clear()
         // 用户显式意图同样作废跳歌锁存：不清就会把"上一轮整队列失败"的计数算到新队列上，
         // 新队列第一首一失败就直接落进"达上限"分支（真机：用户重新点歌也救不回来）
         OnlineSkipState.onUserIntent("user_prepare")
-        if (thisMusicList != playingMusicList.value) {
+        // 旧版「下一首」把 uri=null 的展示条目直接写进了队列（并持久化）：这里统一补回
+        // kugou:// 占位符，否则这些条目既播不了（FileDataSource ENOENT）又会让快照与
+        // 播放器时间线错位。归一化后的列表照常落盘，自带自愈。
+        val normalizedList = if (thisMusicList.any { it.uri == null }) {
+            thisMusicList.map { it.withPlayableUri() }
+        } else thisMusicList
+        if (normalizedList != playingMusicList.value) {
 
             var index = 0
 
-            val itemList = thisMusicList.mapIndexed { thisIndex, it ->
-                if (it.uri == music.uri) {
-                    index = thisIndex
+            val itemList = normalizedList.mapIndexed { thisIndex, it ->
+                // 按 mediaId 定位：展示条目的 uri 可能是 null，用 uri 比较会把
+                // 所有 uri=null 的条目都当成同一首（首页命中谁就跳到谁）。
+                val sameSong = if (it.mediaId != null) {
+                    it.mediaId == music.mediaId
+                } else {
+                    it.uri != null && it.uri == music.uri
                 }
+                if (sameSong) index = thisIndex
 
                 it.toMediaItem()
             }
@@ -792,7 +850,7 @@ object MediaController {
             if (!play && playingMusicList.value == null) {
                 // 必须在 Main 线程写入:IO 线程写 snapshot state 会让主线程
                 // measure 中的 LazyColumn 当帧读到新列表,而 key 快照还是旧的(越界崩溃)
-                withContext(Dispatchers.Main) { playingMusicList.value = thisMusicList }
+                withContext(Dispatchers.Main) { playingMusicList.value = normalizedList }
                 //refresh(music)
                 withContext(Dispatchers.Main) {
                     mediaControl?.shuffleModeEnabled = shuffleModeEnabled
@@ -800,7 +858,7 @@ object MediaController {
                     mediaControl?.let { YosPlaybackService().setCustomButtons(it) }
                 }
             } else {
-                withContext(Dispatchers.Main) { playingMusicList.value = thisMusicList }
+                withContext(Dispatchers.Main) { playingMusicList.value = normalizedList }
             }
 
             if (play) {
@@ -823,7 +881,20 @@ object MediaController {
 
         } else {
             println("prepare 调用非切列表")
-            val index = thisMusicList.indexOf(music)
+            // 队列页点击走这里：索引必须按 mediaId 在**同一份**列表里定位。
+            // 展示条目 uri 可能为 null，用 equals 兜底只在没有 mediaId 时才有意义。
+            val index = normalizedList.indexOfFirst {
+                it.mediaId != null && it.mediaId == music.mediaId
+            }.takeIf { it >= 0 } ?: normalizedList.indexOf(music)
+            if (index < 0) {
+                // 不在当前队列里（列表与快照失配的残留状态）：重建队列比 seek(-1) 安全
+                YosDiagnostics.log(
+                    "PREPARE_MISS",
+                    "mediaId" to music.mediaId,
+                    "q" to normalizedList.size
+                )
+                return@prepare
+            }
             ensureOnlineLyric(music)
             withContext(Dispatchers.Main) {
                 mediaControl?.seekToDefaultPosition(index)

@@ -25,6 +25,7 @@ import yos.music.player.UriTypeAdapter
 import yos.music.player.code.MediaController
 import yos.music.player.data.NormalSaver
 import yos.music.player.data.SongListSaver
+import yos.music.player.data.repositories.KugouRepository.withPlayableUri
 
 /*@Parcelize
 @Stable
@@ -233,10 +234,13 @@ object MusicLibrary {
     }
 
     fun YosMediaItem.toMediaItem(): MediaItem {
+        // 纯展示条目（uri=null）也要能进队列：在线歌按 mediaId 补回 kugou:// 占位符，
+        // 否则 MediaItem 没有 localConfiguration，播到它必报 FileDataSource ENOENT。
+        val source = withPlayableUri()
         return MediaItem.Builder()
-            .setUri(this.uri)
-            .setMediaId(this.mediaId!!)
-            .setMimeType(this.mimeType)
+            .setUri(source.uri)
+            .setMediaId(source.mediaId!!)
+            .setMimeType(source.mimeType)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(this.title)

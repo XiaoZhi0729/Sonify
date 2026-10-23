@@ -461,8 +461,11 @@
     <string name="song_menu_play">再生</string>
     <string name="song_menu_favorite_failed">操作に失敗しました。もう一度お試しください</string>
     <string name="song_menu_play_next">次へ</string>
+    <string name="song_menu_play_next_cancel">次の曲を解除</string>
     <string name="song_menu_play_next_done">次の曲に追加しました</string>
     <string name="song_menu_play_next_failed">追加に失敗しました</string>
+    <string name="song_menu_play_next_cancelled">プレイリストから削除しました</string>
+    <string name="song_menu_play_next_started">キューが空のため再生します</string>
     <string name="song_menu_not_interested">興味なし</string>
     <string name="song_menu_not_interested_done">「興味なし」に設定しました</string>
     <string name="song_menu_not_interested_failed">設定に失敗しました</string>

@@ -14,6 +14,7 @@ import com.google.common.util.concurrent.MoreExecutors
 import com.google.gson.GsonBuilder
 import com.google.gson.TypeAdapter
 import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
 import com.google.gson.stream.JsonWriter
 import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,7 @@ import yos.music.player.data.libraries.PlayList
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.YosStringWrapper
+import yos.music.player.data.repositories.KugouRepository.withPlayableUri
 import yos.music.player.data.objects.CacheSongIndex
 import yos.music.player.data.objects.MediaViewModelObject
 import kotlin.system.exitProcess
@@ -276,8 +278,13 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                             if (playListData.playingMusicList != null) {
                                 // 该协程在 IO 线程;state 写入须回到 Main,避免主线程
                                 // 组合/measure 中途读到换帧数据(见 PlayingList 越界崩溃)
+                                // 历史快照里有旧版「下一首」写入的 uri=null 条目：恢复时补回
+                                // kugou:// 占位符，否则恢复出来的队列与播放器时间线仍然错位。
+                                val restored = playListData.playingMusicList.map {
+                                    it.withPlayableUri()
+                                }
                                 withContext(Dispatchers.Main) {
-                                    playingMusicList.value = playListData.playingMusicList
+                                    playingMusicList.value = restored
                                 }
                             }
                         }
@@ -317,11 +324,20 @@ class ImmutableListTypeAdapter<T> : JsonSerializer<ImmutableList<T>>,
 
 class UriTypeAdapter : TypeAdapter<Uri>() {
     override fun write(out: JsonWriter, value: Uri?) {
-        out.value(value.toString())
+        // 以前 null 会被写成字符串 "null"（Kotlin 的 Any?.toString()），读回来变成
+        // Uri.parse("null")：既不是 null 又指向不存在的文件，播放时 FileDataSource ENOENT。
+        if (value == null) out.nullValue() else out.value(value.toString())
     }
 
-    override fun read(`in`: JsonReader): Uri {
-        return Uri.parse(`in`.nextString())
+    override fun read(`in`: JsonReader): Uri? {
+        if (`in`.peek() == JsonToken.NULL) {
+            `in`.nextNull()
+            return null
+        }
+        val raw = `in`.nextString()
+        // 兼容旧数据：历史快照里存的是字面量 "null" / 空串，一律按缺失处理。
+        if (raw.isBlank() || raw == "null") return null
+        return Uri.parse(raw)
     }
 }
 

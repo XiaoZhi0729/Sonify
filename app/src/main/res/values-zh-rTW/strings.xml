@@ -461,8 +461,11 @@
     <string name="song_menu_play">播放</string>
     <string name="song_menu_favorite_failed">操作失敗，請稍後再試</string>
     <string name="song_menu_play_next">下一首</string>
+    <string name="song_menu_play_next_cancel">取消下一首</string>
     <string name="song_menu_play_next_done">已加入下一首</string>
     <string name="song_menu_play_next_failed">加入失敗，請稍後再試</string>
+    <string name="song_menu_play_next_cancelled">已從播放列表移除</string>
+    <string name="song_menu_play_next_started">播放佇列為空，已直接播放</string>
     <string name="song_menu_not_interested">不感興趣</string>
     <string name="song_menu_not_interested_done">已標記為不感興趣</string>
     <string name="song_menu_not_interested_failed">標記失敗，請稍後再試</string>

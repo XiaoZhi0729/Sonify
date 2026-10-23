@@ -470,6 +470,27 @@ object KugouRepository {
     /** 在线歌曲队列占位符 URI：kugou://song/<hash>（真实 CDN URL 由数据源在 open() 时解析）。 */
     fun placeholderUri(hash: String): Uri = Uri.parse("$PLACEHOLDER_SCHEME://song/${hash.lowercase()}")
 
+    /**
+     * 队列/播放器必须拿到带可播 URI 的条目。
+     *
+     * 列表页的在线行来自 [toDisplayMediaItem]，那是**纯展示**条目（`uri = null`）：点播放时
+     * 页面会用 [toQueueMediaItem] 另行构建可播条目。但右键菜单的「下一首」拿到的是展示条目，
+     * 原样送进 Media3 队列会得到没有 localConfiguration 的 MediaItem——播到它时 ExoPlayer
+     * 走 FileDataSource 报 ENOENT，被跳歌兜底当成网络异常跳过；同时队列快照里有它、
+     * 播放器时间线里没有，索引从此错位（点第 N 首播第 N+1 首）。
+     */
+    fun YosMediaItem.withPlayableUri(): YosMediaItem {
+        // 旧版序列化把 null 写成字面量 "null"，读回来是 Uri.parse("null")：
+        // 它不是 null，但既不能播（FileDataSource ENOENT）也没法判定为缺失。
+        val current = uri?.toString()
+        if (!current.isNullOrBlank() && current != "null") return this
+        val id = mediaId ?: return this
+        if (!id.startsWith("kugou-online-")) return this
+        val hash = id.removePrefix("kugou-online-").lowercase()
+        if (hash.isEmpty()) return this
+        return copy(uri = placeholderUri(hash))
+    }
+
     /** 封面 URL 归一化：酷狗图片 URL 含 {size} 占位符，对齐 Dart _resolveArtworkUri 替换为 400。
      * 并统一升级为 https：自建歌单封面实测大量位于 c1.kgimg.com，而应用网络安全配置
      * 仅对 kugou.com 系域名放行明文 HTTP，http 的 kgimg.com 封面会被系统拦截导致

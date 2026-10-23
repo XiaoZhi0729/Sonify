@@ -444,8 +444,11 @@
     <string name="song_menu_play">Play</string>
     <string name="song_menu_favorite_failed">Action failed. Please try again.</string>
     <string name="song_menu_play_next">Play Next</string>
+    <string name="song_menu_play_next_cancel">Cancel Play Next</string>
     <string name="song_menu_play_next_done">Added to play next</string>
     <string name="song_menu_play_next_failed">Failed to add. Please try again.</string>
+    <string name="song_menu_play_next_cancelled">Removed from the playlist</string>
+    <string name="song_menu_play_next_started">Queue was empty, playing now</string>
     <string name="song_menu_not_interested">Not Interested</string>
     <string name="song_menu_not_interested_done">Marked as not interested</string>
     <string name="song_menu_not_interested_failed">Failed to mark. Please try again.</string>
