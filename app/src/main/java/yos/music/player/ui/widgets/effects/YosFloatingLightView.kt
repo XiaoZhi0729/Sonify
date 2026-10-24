@@ -90,10 +90,9 @@ fun YosFloatingLight(
     }
 
     YosWrapper {
+        // 用户裁定：压暗层在所有子页面（含歌词页）恒显示，不再随 nowPage 撤掉。
         val lossEffect = remember("YosFloatingLight_lossEffect") {
-            derivedStateOf {
-                nowPage() != NowPlayingPage.Lyric
-            }
+            derivedStateOf { true }
         }
 
         val useBackground = remember("YosFloatingLight_useBackground") {
