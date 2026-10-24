@@ -43,13 +43,13 @@ import androidx.core.graphics.drawable.toBitmap
 import coil.compose.rememberAsyncImagePainter
 import coil.imageLoader
 import coil.request.ImageRequest
-import com.google.android.renderscript.Toolkit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
+import yos.music.player.ui.widgets.effects.gaussianBlur
 import kotlin.math.roundToInt
 
 /**
@@ -325,8 +325,8 @@ private object FullScreenCoverBlurCache {
 }
 
 /**
- * 模糊副本：同图 128px 载入 → `Toolkit.blur(radius = 25)`（与播放页背景同一套 RenderScript
- * Toolkit，但**不做**饱和度/压暗——压暗由两道渐隐负责）。结果按 URL 缓存，切歌只付一次。
+ * 模糊副本：同图 128px 载入 → `gaussianBlur(radius = 25)`（框架 ScriptIntrinsicBlur，
+ * 与原 Toolkit.blur 同算法；不做饱和度/压暗——压暗由两道渐隐负责）。结果按 URL 缓存，切歌只付一次。
  * 任何一步失败都返回 null：那一帧只画渐隐，不阻塞封面。
  */
 @Composable
@@ -352,7 +352,7 @@ private fun rememberBlurredCover(url: Any?, enabled: Boolean): ImageBitmap? {
                         ImageRequest.Builder(context)
                             .data(url)
                             .size(FullScreenCoverBlurSourcePx)
-                            // Toolkit.blur 只吃 ARGB_8888，且不吃硬件位图
+                            // 源位图保持 ARGB_8888 + 非硬件位图，供 gaussianBlur 直接读取
                             .bitmapConfig(Bitmap.Config.ARGB_8888)
                             .allowHardware(false)
                             .memoryCacheKey("$url|fullscreen-blur-source")
@@ -362,8 +362,8 @@ private fun rememberBlurredCover(url: Any?, enabled: Boolean): ImageBitmap? {
                     ?.toBitmap()
                     ?: return@runCatching null
                 // 注意：source 是 Coil 内存缓存持有的那份位图（toBitmap 不复制），
-                // 绝不能 recycle —— 只交给 GC；只有 Toolkit 新产出的这张才归我们。
-                Toolkit.blur(source, FullScreenCoverBlurRadius).asImageBitmap()
+                // 绝不能 recycle —— 只交给 GC；只有 gaussianBlur 新产出的这张才归我们。
+                gaussianBlur(context, source, FullScreenCoverBlurRadius.toFloat()).asImageBitmap()
             }.getOrNull()
         }
         if (baked != null) FullScreenCoverBlurCache.put(key, baked)
@@ -382,7 +382,7 @@ private fun rememberBlurredCover(url: Any?, enabled: Boolean): ImageBitmap? {
  * `false`（当前）= 不画模糊副本，封面下方直接是**外壳那张播放页背景**（`YosFloatingLight`，
  * 32px 上采样 + 饱和度×3 的"提取色"），两段由封面底边那 10dp 延伸段的淡出接起来
  * （[FullScreenCoverBottomExtensionDp]）。
- * `true` = 恢复参考实现那层 1.72×层宽的模糊副本（需要 [FullScreenCoverBlurRadius] 那套）。
+ * `true` = 恢复参考实现那层 1.72×层宽的模糊副本（[gaussianBlur] 那套）。
  */
 internal const val FullScreenCoverShowBlurLayer = false
 
@@ -453,7 +453,7 @@ internal const val FullScreenCoverSharpScale = 1.12f
 /** 模糊副本方框边长 = 1.72×层宽（四边各溢出 0.36×层宽）。 */
 internal const val FullScreenCoverBlurScale = 1.72f
 
-/** 模糊半径与模糊源边长（与 Flamingo 逐项一致；Toolkit.blur 的半径是 Int）。 */
+/** 模糊半径与模糊源边长（与 Flamingo 逐项一致）。 */
 internal const val FullScreenCoverBlurRadius = 25
 internal const val FullScreenCoverBlurSourcePx = 128
 

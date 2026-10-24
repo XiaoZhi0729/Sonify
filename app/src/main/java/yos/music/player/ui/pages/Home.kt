@@ -180,7 +180,7 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                         .build()
                     val loaded = context.imageLoader.execute(request).drawable?.toBitmap()
                         ?: return@runCatching null
-                    val mask = imageResolve(BitmapResolver.bitmapCompress(loaded, lowQuality = true))
+                    val mask = imageResolve(context, BitmapResolver.bitmapCompress(loaded, lowQuality = true))
                     // loaded 是 Coil 单例 ImageLoader 内存缓存里的共享 Bitmap（toBitmap() 不复制），
                     // recycle 会污染缓存，导致 AsyncImage 在下一帧绘制时崩溃（recycled bitmap）
                     recommendMaskCache[cacheKey] = mask
