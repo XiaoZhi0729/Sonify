@@ -47,6 +47,18 @@
 -keep class yos.music.player.data.objects.ArtistCachedDetail { <fields>; }
 -keep class yos.music.player.data.objects.ArtistCachedPalette { <fields>; }
 -keep class yos.music.player.data.repositories.KugouArtistDetailData { <fields>; }
+# Private cache DTOs are instantiated only through Gson reflection. Without exact roots, R8 full
+# mode concludes that non-null instances are impossible and rewrites conversion into an unconditional
+# ClassCastException. Keep this narrow rather than retaining every @SerializedName model.
+-keep class yos.music.player.data.objects.OnlinePlaylistCache$CachedTrack {
+    <fields>;
+    public <init>();
+}
+-keep class yos.music.player.data.objects.OnlineAlbumCache$CachedTrack {
+    <fields>;
+    public <init>();
+}
+
 # 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }
 

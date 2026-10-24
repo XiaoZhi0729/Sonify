@@ -165,16 +165,19 @@ private fun LazyItemScope.ArtistItem(
                 val shape = CircleShape
 
                     val density = LocalDensity.current
+                    val imgContext = LocalContext.current
                     AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(data = songs.getOrNull(0)?.thumb).crossfade(true)
-                            .error(R.drawable.songcredits_monogram_person)
-                            .placeholder(R.drawable.songcredits_monogram_person)
-                            .fallback(R.drawable.songcredits_monogram_person)
-                            .allowHardware(true)
-                            .precision(Precision.INEXACT)
-                            .size(128)
-                            .build(),
+                        model = remember(songs.getOrNull(0)?.thumb) {
+                            ImageRequest.Builder(imgContext)
+                                    .data(data = songs.getOrNull(0)?.thumb).crossfade(true)
+                                    .error(R.drawable.songcredits_monogram_person)
+                                    .placeholder(R.drawable.songcredits_monogram_person)
+                                    .fallback(R.drawable.songcredits_monogram_person)
+                                    .allowHardware(true)
+                                    .precision(Precision.INEXACT)
+                                    .size(128)
+                                    .build()
+        },
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = modifier
@@ -186,13 +189,13 @@ private fun LazyItemScope.ArtistItem(
                                 this.shape = shape
                             }
                             .drawWithCache {
+                                                                val outline = shape.createOutline(
+                                    Size(size.width, size.height),
+                                    LayoutDirection.Ltr,
+                                    density
+                                )
                                 onDrawWithContent {
                                     drawContent()
-                                    val outline = shape.createOutline(
-                                        Size(size.width, size.height),
-                                        LayoutDirection.Ltr,
-                                        density
-                                    )
                                     drawOutline(
                                         outline = outline,
                                         color = Color.DarkGray.copy(alpha = 0.08f),

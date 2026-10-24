@@ -116,7 +116,9 @@ fun AlbumInfo(
                 }
             }
         } else {
-            val songs = MusicLibrary.Album[albumName.value].sortedWith(compareBy<YosMediaItem>{ it.trackNumber?:0 }.thenBy { it.title })
+            val songs = remember(albumName.value) {
+                MusicLibrary.Album[albumName.value].sortedWith(compareBy<YosMediaItem>{ it.trackNumber?:0 }.thenBy { it.title })
+            }
 
             /*Box(Modifier.height(56.dp), contentAlignment = Alignment.CenterStart) {
                 Icon(

@@ -22,7 +22,7 @@
 # ASCII only: PowerShell 5.1 reads UTF-8-without-BOM as ANSI and mangles literals.
 param(
     [string]$Serial = "",
-    [string]$Pkg = "yos.music.player.oss",
+    [string]$Pkg = "com.sonify.music",
     [int]$TapX = 640,
     [int]$TapY = 2400,
     [int]$Reps = 3,

@@ -27,6 +27,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.REPEAT_MODE_ALL
 import androidx.media3.common.Player.REPEAT_MODE_OFF
@@ -85,6 +86,7 @@ import yos.music.player.code.utils.player.FadeExo.fadePlay
 import yos.music.player.code.utils.player.OnlineFailureKind
 import yos.music.player.code.utils.player.OnlineSkipPolicy
 import yos.music.player.code.utils.player.OnlineSkipState
+import yos.music.player.code.utils.player.ShuffleNavigationHistory
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.coverCacheKey
 import yos.music.player.data.libraries.MusicLibrary
@@ -641,24 +643,81 @@ object MediaController {
             return
         }
         val state = runCatching { controller.playbackState }.getOrDefault(-1)
+        val beforeIndex = runCatching { controller.currentMediaItemIndex }.getOrDefault(-1)
+        val beforeId = runCatching { controller.currentMediaItem?.mediaId }.getOrNull()
+        val rearm = state == Player.STATE_IDLE
         YosDiagnostics.log(
             "SRC",
+            "phase" to "before",
             "fn" to fn,
-            "idx" to runCatching { controller.currentMediaItemIndex }.getOrDefault(-1),
+            "idx" to beforeIndex,
             "q" to runCatching { controller.mediaItemCount }.getOrDefault(-1),
-            "state" to YosDiagnostics.stateLabel(state)
+            "mediaId" to beforeId,
+            "state" to YosDiagnostics.stateLabel(state),
+            "pwr" to runCatching { controller.playWhenReady }.getOrDefault(false),
+            "playing" to runCatching { controller.isPlaying }.getOrDefault(false),
+            "shuffle" to runCatching { controller.shuffleModeEnabled }.getOrDefault(false),
+            "repeat" to runCatching { controller.repeatMode }.getOrDefault(-1),
+            "hasPrev" to runCatching { controller.hasPreviousMediaItem() }.getOrDefault(false),
+            "hasNext" to runCatching { controller.hasNextMediaItem() }.getOrDefault(false),
+            "rearm" to rearm
         )
         // 手动切歌是显式意图：作废上一轮的失败锁存（否则新队列第一首一失败就"达上限"）
         OnlineSkipState.onUserIntent(fn)
-        val rearm = state == Player.STATE_IDLE
         runCatching {
-            if (forward) controller.seekToNextMediaItem() else controller.seekToPreviousMediaItem()
+            if (controller.shuffleModeEnabled && controller.mediaItemCount > 1) {
+                val queueIds = (0 until controller.mediaItemCount).mapNotNull {
+                    controller.getMediaItemAt(it).mediaId
+                }
+                val currentId = controller.currentMediaItem?.mediaId
+                val targetId = if (currentId == null) null else if (forward) {
+                    shuffleNavigationHistory.next(queueIds, currentId)
+                } else {
+                    shuffleNavigationHistory.previous(queueIds, currentId)
+                }
+                val targetIndex = targetId?.let { id ->
+                    (0 until controller.mediaItemCount).firstOrNull {
+                        controller.getMediaItemAt(it).mediaId == id
+                    }
+                }
+                if (targetIndex != null) {
+                    YosDiagnostics.log(
+                        "SRC", "fn" to fn, "phase" to "shuffle_target",
+                        "targetId" to targetId, "targetIdx" to targetIndex
+                    )
+                    CrossfadeExo.abort("shuffle_manual_skip")
+                    // 与 seekToNext/PreviousMediaItem 一致：从目标曲默认位置起播
+                    controller.seekToDefaultPosition(targetIndex)
+                }
+            } else {
+                shuffleNavigationHistory.clear()
+                if (forward) controller.seekToNextMediaItem() else controller.seekToPreviousMediaItem()
+            }
             if (rearm) {
                 controller.prepare()
                 controller.fadePlay()
             }
+            YosDiagnostics.log(
+                "SRC",
+                "phase" to "after",
+                "fn" to fn,
+                "idx" to runCatching { controller.currentMediaItemIndex }.getOrDefault(-1),
+                "q" to runCatching { controller.mediaItemCount }.getOrDefault(-1),
+                "mediaId" to runCatching { controller.currentMediaItem?.mediaId }.getOrNull(),
+                "state" to YosDiagnostics.stateLabel(
+                    runCatching { controller.playbackState }.getOrDefault(-1)
+                ),
+                "pwr" to runCatching { controller.playWhenReady }.getOrDefault(false),
+                "playing" to runCatching { controller.isPlaying }.getOrDefault(false),
+                "shuffle" to runCatching { controller.shuffleModeEnabled }.getOrDefault(false),
+                "repeat" to runCatching { controller.repeatMode }.getOrDefault(-1),
+                "rearm" to rearm
+            )
         }.onFailure { e ->
-            YosDiagnostics.log("SRC_ERR", "fn" to fn, "why" to e.toString())
+            YosDiagnostics.log(
+                "SRC_ERR", "fn" to fn, "errClass" to e.javaClass.simpleName,
+                "why" to (e.message ?: e.toString())
+            )
         }
         // 重备是“不是自然播完”的推进：副 player 里备着的可能正是那首坏曲
         if (rearm) CrossfadeExo.abort("user_skip_rearm")
@@ -1864,8 +1923,9 @@ class YosPlaybackService : MediaSessionService() {
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    // 换曲 = 上一次拦截的上下文已失效（说明框/胶囊都该收掉）
-                    yos.music.player.data.objects.PlaybackBlockState.clear()
+                    // 换曲 = 上一次拦截的上下文已失效；但队列重建/重备**同一首**也会派发
+                    // transition（reason=PLAYLIST_CHANGED），那种不能把说明框收掉。
+                    yos.music.player.data.objects.PlaybackBlockState.clearIfOtherTrack(mediaItem?.mediaId)
                     // 抽到 handleTrackSwitched：扶正后副 player 不会再有 transition 事件，
                     // promote 事务需要手动补发同一套处理
                     handleTrackSwitched(mediaItem, reason)
@@ -1880,7 +1940,14 @@ class YosPlaybackService : MediaSessionService() {
                         "STATE",
                         "s" to YosDiagnostics.stateLabel(playbackState),
                         "pos" to p?.currentPosition,
-                        "buf" to p?.bufferedPosition
+                        "buf" to p?.bufferedPosition,
+                        "idx" to p?.currentMediaItemIndex,
+                        "q" to p?.mediaItemCount,
+                        "mediaId" to p?.currentMediaItem?.mediaId,
+                        "pwr" to p?.playWhenReady,
+                        "playing" to p?.isPlaying,
+                        "shuffle" to p?.shuffleModeEnabled,
+                        "repeat" to p?.repeatMode
                     )
                 }
 
@@ -2058,11 +2125,12 @@ class YosPlaybackService : MediaSessionService() {
                 controller: MediaSession.ControllerInfo
             ): MediaSession.ConnectionResult {
                 YosDiagnostics.log("SVC_CMD", "cmd" to "connect", "from" to controller.packageName)
-                val sessionCommands =
-                    MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                    val sessionCommands =
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                         .add(SessionCommand(shuffleMode, Bundle.EMPTY))
                         .add(SessionCommand(repeatMode, Bundle.EMPTY))
                         .build()
+
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                     .setAvailableSessionCommands(sessionCommands)
                     .build()
@@ -2498,9 +2566,15 @@ class YosPlaybackService : MediaSessionService() {
      * 封面预载、在线档位探测。扶正时手动补调，与自然换曲走同一份代码。
      */
     private fun handleTrackSwitched(mediaItem: MediaItem?, transitionReason: Int) {
+        yos.music.player.code.MediaController.syncShuffleHistory(mediaControl, mediaItem?.mediaId)
         YosDiagnostics.log(
             "TRANSITION",
             "mediaId" to mediaItem?.mediaId,
+            "idx" to currentPlayer?.currentMediaItemIndex,
+            "q" to currentPlayer?.mediaItemCount,
+            "state" to currentPlayer?.let { YosDiagnostics.stateLabel(it.playbackState) },
+            "shuffle" to currentPlayer?.shuffleModeEnabled,
+            "repeat" to currentPlayer?.repeatMode,
             // 直记 media3 原值：本版本的 reason 常量集与旧 ExoPlayer 不一致（没有
             // UNKNOWN/MANUAL），拿记忆里的表去翻译会把 auto/repeat 说成别的
             "reason" to transitionReason

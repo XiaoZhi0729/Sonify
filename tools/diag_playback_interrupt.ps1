@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$Pkg = 'yos.music.player'
+$Pkg = 'com.sonify.music'
 
 $Adb = (Get-Command adb).Source
 if ($Adb -match 'Windows\\System(32|WOW64)') { throw "bad adb copy: $Adb" }

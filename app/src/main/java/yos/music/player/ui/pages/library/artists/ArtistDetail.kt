@@ -83,11 +83,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import yos.music.player.code.utils.artist.HeroBakeCache
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -110,7 +110,9 @@ import coil.request.ImageRequest
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
+import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
@@ -141,7 +143,6 @@ import yos.music.player.ui.navigation.ArtistArtworkColors
 import yos.music.player.ui.navigation.artistIdentityRgb
 import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.PageScrimTransition
-import yos.music.player.ui.widgets.basic.circleEdgeLight
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
@@ -157,10 +158,12 @@ import yos.music.player.data.objects.FollowedArtistsObject
 import yos.music.player.data.objects.KugouFollowedArtist
 import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.libraries.SettingsLibrary
+import android.util.Log
 import android.widget.Toast
 import yos.music.player.ui.widgets.basic.TitleBar
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.LiquidTopBarButton
+import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 
 /**
  * 歌手详情页（Apple Music 艺人页式排版）：
@@ -302,12 +305,9 @@ fun ArtistDetail(
     // 浅 0xFFF2F2F4/深 0xFF1B1B1D，倒影淡出带半透明透出它 = 用户看到的「过渡带从上到下
     // 发白/发黑」）。协程采集→普通状态→绘制期直读的方案也失败，说明断链与数据源无关；
     // 捕获值走重组→modifier-diff 强制重绘，不依赖绘制期观察。
-    val bg = bgColorState.value
-    val bgLogHolder = remember { longArrayOf(Long.MIN_VALUE) }
-    if (bgLogHolder[0] != bg.hashCode().toLong()) {
-        bgLogHolder[0] = bg.hashCode().toLong()
-        android.util.Log.d("HeroTrack", "bgCompose=$bg resolved=$hasResolvedArtwork")
-    }
+    // 注意：动画色 bgColorState **不在本作用域读**。这里读一次就等于让整个页面（两个
+    // Pager、全部歌曲行、顶栏）在 600ms 底色渐变期间逐帧重组。需要它的三个绘制点各自
+    // 通过 ArtistBackdropFill / artistTopBarMaterial 在叶子组合里读，见文件末尾。
     val contentColor = if (hasResolvedArtwork) artworkColors.content
     else if (isDark) Color.White else Color(0xFF161616)
     // 底栏渐隐遮罩（NavPageVisual 底部渐变）与本页共享同一个注册色，注册的是
@@ -331,17 +331,15 @@ fun ArtistDetail(
     androidx.compose.runtime.SideEffect {
         paletteKey?.let { ArtistBackdrop.bind(resolvedId.value, it) }
     }
-    val seedDraw: ContentDrawScope.() -> Unit = remember(bg) {
-        {
-            drawRect(
-                color = bg,
-                size = Size(size.width * 3f, size.height * 3f),
-                topLeft = Offset(-size.width, -size.height)
-            )
-            drawContent()
-        }
-    }
-    val pageBackdrop = rememberLayerBackdrop(onDraw = seedDraw)
+    // 采样种子必须用**目标色**而不是逐帧动画值：底色 600ms 渐变期间每帧换种子会重建
+    // LayerBackdrop，把整页（列表 + 倒影层，平板约 5.6M px）的录制层反复重录。
+    // 与 OnlineAlbumDetail / OnlinePlaylistDetail 同一写法，见 rememberTitleBackdrop 的注释。
+    val pageBackdrop = rememberTitleBackdrop(artworkColors.accent)
+    // 顶栏返回钮的采样源 = 页面原始内容 + 顶栏材质表面（与 TitleBar 同一套做法）：
+    // 顶栏材质把自己的绘制结果导出进 barSurfaceBackdrop，圆钮采样组合层，
+    // 钮内画面才是它背后真正的顶栏表面而不是栏下原始内容。
+    val barSurfaceBackdrop = rememberLayerBackdrop()
+    val barGlassBackdrop = rememberCombinedBackdrop(pageBackdrop, barSurfaceBackdrop)
     val listState = rememberLazyListState()
     // Both pager counts and their item keys use the same immutable list snapshot.
     val pagerState = androidx.compose.runtime.key(songsState) {
@@ -727,13 +725,8 @@ fun ArtistDetail(
         // BoxWithConstraints 的子项按声明序叠放，本层作为第一个子项铺在内容之下。
         // （不能写成容器自身的 .background(bg)：gate 依赖 bakedHero，而 bakedHero 依赖
         //  maxWidth 派生的烘焙几何，只能在 BoxWithConstraints 作用域内求值。）
-        val backdropFill = bg
-        val backdropFillAlpha = backdropAlpha
-        Box(
-            Modifier
-                .fillMaxSize()
-                .drawBehind { drawRect(color = backdropFill, alpha = backdropFillAlpha) }
-        )
+        // 全屏底色层：动画色在叶子组合里读（见 ArtistBackdropFill），避免渐变期整页重组。
+        ArtistBackdropFill(bgColorState, backdropAlpha)
         // Hero item 视口偏移：横竖屏切换的全树重测会让「绘制期 lambda 直接读
         // derivedStateOf(layoutInfo)」的观察链断链——层冻结在失效前一帧（列表已滚走、
         // 合成图钉在屏幕上，而同一 layoutInfo 的组合期读者如小标题仍正常）。改为协程层
@@ -741,16 +734,10 @@ fun ArtistDetail(
         // 绘制期只读普通状态；层本体另由组合期 heroScrolledOut 门禁移除，杜绝僵尸层。
         val heroViewportTop = remember { mutableStateOf<Int?>(null) }
         LaunchedEffect(listState) {
-            var lastLogged = Int.MIN_VALUE
             snapshotFlow {
                 listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
             }.collect { v ->
                 heroViewportTop.value = v
-                val cur = v ?: Int.MIN_VALUE
-                if (lastLogged == Int.MIN_VALUE || cur - lastLogged !in -199..199) {
-                    android.util.Log.d("HeroTrack", "collector heroTop=$v")
-                    lastLogged = cur
-                }
             }
         }
         LaunchedEffect(avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
@@ -814,17 +801,19 @@ fun ArtistDetail(
         }
         @Composable fun HeroPhoto(modifier: Modifier) {
             AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(detail.value?.avatarUrl)
-                    // 不设占位/兜底图：解码期间保持透明，透出页面底色（缓存命中即取色），
-                    // 避免白色人形图标在解码窗口里闪一下。加载失败（onError）另行回落到
-                    // 身份派生色 + monogram，仍不落白色人形。
-                    .allowHardware(false)
-                    .size(1024)
-                    // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
-                    .memoryCacheKey("artist-hero:${detail.value?.avatarUrl}")
-                    .diskCacheKey(detail.value?.avatarUrl)
-                    .build(),
+                model = remember(detail.value?.avatarUrl) {
+                    ImageRequest.Builder(context)
+                        .data(detail.value?.avatarUrl)
+                        // 不设占位/兜底图：解码期间保持透明，透出页面底色（缓存命中即取色），
+                        // 避免白色人形图标在解码窗口里闪一下。加载失败（onError）另行回落到
+                        // 身份派生色 + monogram，仍不落白色人形。
+                        .allowHardware(false)
+                        .size(1024)
+                        // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
+                        .memoryCacheKey("artist-hero:${detail.value?.avatarUrl}")
+                        .diskCacheKey(detail.value?.avatarUrl)
+                        .build()
+                },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = modifier,
@@ -867,24 +856,20 @@ fun ArtistDetail(
             // 采集/绘制链再出任何异常，也不可能残留「合成图钉在背景上」的僵尸层。
             // 烘焙未完成时（平板竖屏调色板未就绪提前退出）也不挂空层，防止半透明空 graphicsLayer 显示为白色渐变。
             if (!isLandscape && !heroScrolledOut.value && bakedHero != null) {
-                val lastLoggedAlpha = remember { floatArrayOf(Float.NaN) }
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .offset { IntOffset(0, heroViewportTop.value ?: 0) }
                         .height(heroHeight + bandHeight)
                         .graphicsLayer {
                             val o = heroViewportTop.value
+                            // translationY 而非 Modifier.offset：offset 是布局阶段修饰符，
+                            // 滚动时它每帧变化 → 每帧重新放置并让父级布局失效；这个层只
+                            // 需要视觉位移，放进 graphicsLayer 后滚动期间不再触发布局。
+                            translationY = (o ?: 0).toFloat()
                             val scrollA = if (o == null) 0f
                             else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
                             // 再乘背景揭示门 alpha：倒影随照片/提取色同帧渐入，不再突然叠上来。
-                            val a = scrollA * backdropAlpha
-                            alpha = a
-                            val last = lastLoggedAlpha[0]
-                            if (last.isNaN() || a - last > 0.05f || last - a > 0.05f) {
-                                android.util.Log.d("HeroTrack", "layer alpha=$a o=$o")
-                                lastLoggedAlpha[0] = a
-                            }
+                            alpha = scrollA * backdropAlpha
                         }
                         .drawWithContent {
                             // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制
@@ -942,6 +927,8 @@ fun ArtistDetail(
                         // 底衬为浅色时不可读，随图淡入与现状等价且避免「照片没来名字先飘着」。
                         Box(
                             Modifier.fillMaxWidth().height(heroHeight)
+                                .measureProbe("HeroPortrait")
+                                .drawProbe("HeroPortrait")
                                 .graphicsLayer { alpha = backdropAlpha }
                         ) {
                             // 优先：无可用头像（无 url / 加载失败 / 解码失败）→ 身份派生色 + 首字母。
@@ -950,7 +937,8 @@ fun ArtistDetail(
                             if (noUsableAvatar) {
                                 ArtistMonogramHero(
                                     name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                                    background = bg,
+                                    // 无头像分支才会走到：这里读动画色只影响本 item，不波及整页
+                                    background = bgColorState.value,
                                     content = contentColor
                                 )
                             } else if (bakedHero == null) {
@@ -1110,7 +1098,8 @@ fun ArtistDetail(
                                 songCount = count,
                                 underlayColor = bgColorState.value,
                                 sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope
+                                animatedVisibilityScope = animatedVisibilityScope,
+                                probeName = "LatestAlbum"
                             ) { selected ->
                                 // 防抖：转场窗口内忽略第二下误触（见 NavGuard）
                                 NavGuard.run {
@@ -1136,7 +1125,8 @@ fun ArtistDetail(
                             error = hotError.value,
                             pagerState = hotPagerState,
                             onRetry = { hotRetry.value += 1 },
-                            onPlayAt = { playAt(hotSongs.value, it) }
+                            onPlayAt = { playAt(hotSongs.value, it) },
+                            probeName = "HotSongs"
                         )
                     }
                     item("AlbumsHeader") {
@@ -1153,6 +1143,7 @@ fun ArtistDetail(
                             onRetry = { albumsRetry.value += 1 },
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
+                            probeName = "Albums",
                             onOpen = { album ->
                                 // 防抖：记录本次入口时间戳，堵住「第二下落到详情页歌手名链接」的穿透
                                 NavGuard.run {
@@ -1176,7 +1167,8 @@ fun ArtistDetail(
                             error = songsState.loadError.value,
                             pagerState = pagerState,
                             onRetry = { songsState.requestNextPage() },
-                            onPlayAt = { playAt(songs, it) }
+                            onPlayAt = { playAt(songs, it) },
+                            probeName = "AllSongs"
                         )
                     }
                 } else if (headerLoading.value) {
@@ -1191,12 +1183,20 @@ fun ArtistDetail(
 
         // 顶栏浮层：材质和设置页 TitleBar 保持一致；采样消费者位于内容录制层之外。
         // 液态玻璃分支维持「一滚动就浮现」；普通（非玻璃）分支与标题同源：Hero 完全滚出才浮现。
-        val barVisible = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        // 必须 derivedStateOf：直接读 firstVisibleItemScrollOffset 会让这个作用域每滚 1px
+        // 重组一次（两个 Pager + 全部歌曲行都在里面）；这里只关心「是否已离开顶部」这一位。
+        val barVisible by remember(listState) {
+            derivedStateOf {
+                listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+            }
+        }
         val barVisibleNoGlass = heroScrolledOut.value
         val barAlpha by animateFloatAsState(if (barVisible) 1f else 0f, tween(150), label = "artistBarAlpha")
         Box(
             Modifier
                 .fillMaxWidth()
+                .measureProbe("TopBar")
+                .drawProbe("TopBar")
                 .zIndex(1f)
         ) {
             androidx.compose.animation.AnimatedVisibility(
@@ -1208,19 +1208,11 @@ fun ArtistDetail(
                 Spacer(
                     Modifier
                         .then(
-                            if (SettingsLibrary.BarBlurEffect) {
-                                yos.music.player.ui.widgets.basic.titleBarProgressiveBlur(
-                                    backdrop = pageBackdrop,
-                                    tintColor = bgColorState.value
-                                )
-                            } else {
-                                Modifier.drawPlainBackdrop(
-                                    backdrop = pageBackdrop,
-                                    shape = { androidx.compose.ui.graphics.RectangleShape },
-                                    effects = { blur(14.dp.toPx()) },
-                                    onDrawSurface = { drawRect(bg.copy(alpha = 0.7f)) }
-                                )
-                            }
+                            artistTopBarMaterial(
+                                backdrop = pageBackdrop,
+                                colorState = bgColorState,
+                                exportedBackdrop = barSurfaceBackdrop
+                            )
                         )
                         .fillMaxSize()
                 )
@@ -1238,7 +1230,8 @@ fun ArtistDetail(
                         if (SettingsLibrary.BarBlurEffect) {
                             LiquidTopBarButton(
                                 onClick = { navController.popBackStack() },
-                                backdrop = pageBackdrop,
+                                // 采样"页面内容 + 顶栏材质表面"的组合层，见 barGlassBackdrop 注释
+                                backdrop = barGlassBackdrop,
                                 icon = painterResource(id = R.drawable.ic_back),
                                 contentDescription = stringResource(R.string.artist_detail_back),
                                 iconSize = 18.dp,
@@ -1337,6 +1330,8 @@ private fun ArtistTabletLandscapeHeader(
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
+            .measureProbe("HeroLandscape")
+            .drawProbe("HeroLandscape")
             .statusBarsPadding()
             .padding(top = 14.dp, bottom = 8.dp)
             .padding(horizontal = 18.dp)
@@ -1348,17 +1343,19 @@ private fun ArtistTabletLandscapeHeader(
             verticalAlignment = Alignment.Top
         ) {
             AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(if (avatarRevealed) avatarUrl else null)
-                    .error(R.drawable.songcredits_monogram_person)
-                    .placeholder(R.drawable.songcredits_monogram_person)
-                    .fallback(R.drawable.songcredits_monogram_person)
-                    .allowHardware(false)
-                    .size(1024)
-                    // 与竖向 Hero 同键，命中内存缓存即刻显示
-                    .memoryCacheKey("artist-hero:$avatarUrl")
-                    .diskCacheKey(avatarUrl)
-                    .build(),
+                model = remember(avatarUrl, avatarRevealed) {
+                    ImageRequest.Builder(context)
+                        .data(if (avatarRevealed) avatarUrl else null)
+                        .error(R.drawable.songcredits_monogram_person)
+                        .placeholder(R.drawable.songcredits_monogram_person)
+                        .fallback(R.drawable.songcredits_monogram_person)
+                        .allowHardware(false)
+                        .size(1024)
+                        // 与竖向 Hero 同键，命中内存缓存即刻显示
+                        .memoryCacheKey("artist-hero:$avatarUrl")
+                        .diskCacheKey(avatarUrl)
+                        .build()
+                },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.size(coverSize).clip(YosRoundedCornerShape(7.dp))
@@ -1488,4 +1485,51 @@ internal fun sampleArtistBottomColor(bitmap: android.graphics.Bitmap, heroAspect
     }
     if (total == 0.0) return null
     return AndroidColor.rgb((red / total).toInt(), (green / total).toInt(), (blue / total).toInt())
+}
+
+/**
+ * 全屏底色层。
+ *
+ * 动画色**只在这里读**：如果在 [ArtistDetail] 的组合期读一次 `bgColorState.value`，
+ * 600ms 底色渐变期间每一帧都会让整个页面重组（两个 Pager、全部歌曲行、顶栏一起），
+ * 平板实测 p90 组合+测量 91ms。收进这个叶子组合后，渐变期只有它自己重组。
+ */
+@Composable
+private fun ArtistBackdropFill(
+    colorState: androidx.compose.runtime.State<Color>,
+    alpha: Float
+) {
+    val color = colorState.value
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind { drawRect(color = color, alpha = alpha) }
+    )
+}
+
+/**
+ * 顶栏材质（渐进模糊 / 普通模糊 + 0.7 底色）。
+ * 同样把动画色读取收进叶子组合，理由见 [ArtistBackdropFill]。
+ */
+@Composable
+private fun artistTopBarMaterial(
+    backdrop: LayerBackdrop,
+    colorState: androidx.compose.runtime.State<Color>,
+    exportedBackdrop: LayerBackdrop
+): Modifier {
+    val tint = colorState.value
+    return if (SettingsLibrary.BarBlurEffect) {
+        yos.music.player.ui.widgets.basic.titleBarProgressiveBlur(
+            backdrop = backdrop,
+            tintColor = tint,
+            exportedBackdrop = exportedBackdrop
+        )
+    } else {
+        Modifier.drawPlainBackdrop(
+            backdrop = backdrop,
+            shape = { androidx.compose.ui.graphics.RectangleShape },
+            effects = { blur(14.dp.toPx()) },
+            onDrawSurface = { drawRect(tint.copy(alpha = 0.7f)) }
+        )
+    }
 }

@@ -65,11 +65,22 @@ import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.CollectedPlaylistsObject
+import yos.music.player.data.objects.MyPlaylistsCache
+import yos.music.player.data.repositories.KugouPlaylist
+import yos.music.player.data.repositories.playlistSourceIdentity
+import yos.music.player.ui.UI
+import yos.music.player.native.KugouApiService
+import android.widget.Toast
 import yos.music.player.data.objects.OnlinePlaylistCache
 import yos.music.player.data.repositories.KugouPlaylistTrack
 import yos.music.player.data.repositories.KugouRepository
@@ -86,6 +97,7 @@ import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
+import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -167,7 +179,8 @@ fun OnlinePlaylistDetail(
         return
     }
 
-    val tracks = remember("OnlinePlaylistDetail_tracks") {
+    val selected = requireNotNull(routeSelection)
+    val tracks = remember(playlistId, KugouAccountState.userid) {
         mutableStateOf<List<KugouPlaylistTrack>>(emptyList())
     }
     // "loading" | "ok" | "empty" | "error:<msg>"
@@ -178,12 +191,77 @@ fun OnlinePlaylistDetail(
     val refreshing = remember("OnlinePlaylistDetail_refreshing") { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val accountUserid = KugouAccountState.userid
+    val selectionAccount = remember(playlistId) { accountUserid }
+    val userEntry = remember(playlistId, accountUserid) { mutableStateOf<KugouPlaylist?>(null) }
+    val editAllowed = source == PlaylistSelection.Source.User && accountUserid != null &&
+        accountUserid == selectionAccount &&
+        (selected.ownerUserid.isNullOrBlank() || selected.ownerUserid == accountUserid) &&
+        (userEntry.value?.canEditTracks ?: (selected.canEditTracks == true || playlistId.orEmpty().startsWith("local_")))
+    val sourceGid = validPlaylistCollectionGid(
+        userEntry.value?.sourceGid?.takeIf { it.isNotBlank() }
+            ?: selected.sourceGid
+            ?: playlistId.takeIf { source == PlaylistSelection.Source.Recommend }
+    )
+    val sourceOwner = sourceGid?.let { playlistSourceIdentity(it)?.userid }
+        ?: selected.ownerUserid?.takeIf { it.isNotBlank() }
+    val isOwnPublicPlaylist = sourceOwner != null && sourceOwner == accountUserid
+    val collected = sourceGid?.let(CollectedPlaylistsObject::contains) == true ||
+        (userEntry.value?.isCollectedPlaylist == true &&
+            (!CollectedPlaylistsObject.loaded.value || sourceGid == null))
+    val collectBusy = remember(playlistId, accountUserid) { mutableStateOf(false) }
+    val collectionBusy = collectBusy.value ||
+        (sourceGid != null && sourceGid in CollectedPlaylistsObject.busy.value)
+    val collectEnabled = !collectionBusy && !CollectedPlaylistsObject.loading.value && !isOwnPublicPlaylist
+    val collectDescription = stringResource(
+        if (isOwnPublicPlaylist) R.string.playlist_collect_own
+        else if (collected) R.string.playlist_collect_remove else R.string.playlist_collect_add
+    )
+
+    fun toggleCollect() {
+        if (collectionBusy) return
+        if (!KugouAccountState.isLoggedIn) {
+            navController.navigate(UI.Settings.KugouLogin)
+            return
+        }
+        if (isOwnPublicPlaylist) return
+        if (sourceGid == null) {
+            Toast.makeText(context, R.string.playlist_collect_missing_gid, Toast.LENGTH_SHORT).show()
+            return
+        }
+        collectBusy.value = true
+        scope.launch {
+            try {
+                if (accountUserid != KugouAccountState.userid) return@launch
+                CollectedPlaylistsObject.toggle(sourceGid, playlistName, coverUrl, songCount ?: 0)
+                    .onFailure {
+                        Toast.makeText(context, it.message ?: context.getString(R.string.playlist_collect_failed), Toast.LENGTH_SHORT).show()
+                    }
+            } finally {
+                collectBusy.value = false
+            }
+        }
+    }
+
+    LaunchedEffect(playlistId, accountUserid) {
+        if (accountUserid == null) return@LaunchedEffect
+        if (source == PlaylistSelection.Source.User) {
+            MyPlaylistsCache.get().onSuccess { list ->
+                if (accountUserid == KugouAccountState.userid) {
+                    userEntry.value = list.firstOrNull { it.listid == playlistId || it.gid == playlistId }
+                }
+            }
+        }
+        CollectedPlaylistsObject.ensureLoaded()
+    }
     // 首屏缓存键：来源 + 歌单 id（自有/推荐/挂起 id 命名空间不同）
-    val pageCacheKey = "${source?.name.orEmpty()}:${playlistId.orEmpty()}"
+    val pageCacheKey = if (source == PlaylistSelection.Source.User) {
+        "${accountUserid.orEmpty()}:${source.name}:${playlistId.orEmpty()}"
+    } else "${source?.name.orEmpty()}:${playlistId.orEmpty()}"
 
     // ---- 挂起歌单（创建中/创建失败）：selection.id 是 PendingPlaylistStore 的 localId ----
-    val pendingEntry = remember("OnlinePlaylistDetail_pending") {
-        mutableStateOf(PendingPlaylistStore.get(playlistId.orEmpty()))
+    val pendingEntry = remember(playlistId, accountUserid) {
+        mutableStateOf(PendingPlaylistStore.get(playlistId.orEmpty())?.takeIf { it.userid == accountUserid })
     }
     val isPendingPlaylist = source == PlaylistSelection.Source.User && pendingEntry.value != null
     // 展示列表 = 服务端歌曲 + 挂起条目未补发的待加歌（绑定真实 listid 前详情页也有内容、可播）
@@ -192,7 +270,12 @@ fun OnlinePlaylistDetail(
             if (!op.startsWith("A|")) return@mapNotNull null
             val p = op.split('|')
             if (p.size < 3) return@mapNotNull null
-            KugouPlaylistTrack(hash = p[2], name = p[1], artist = "", album = null, durationMs = 0, coverUrl = null)
+            KugouPlaylistTrack(
+                hash = p[2], name = p[1],
+                artist = p.getOrNull(5).orEmpty(),
+                album = null, durationMs = 0,
+                coverUrl = p.getOrNull(6)?.takeIf { it.isNotBlank() }
+            )
         }?.filter { q -> tracks.value.none { it.hash == q.hash } } ?: emptyList()
         tracks.value + queued
     } else {
@@ -208,15 +291,27 @@ fun OnlinePlaylistDetail(
     // 添加歌曲弹层 / 待删除歌曲（长按行触发，仅自有歌单）
     val showAddDialog = remember("OnlinePlaylistDetail_add") { mutableStateOf(false) }
     val removeTarget = remember("OnlinePlaylistDetail_remove") { mutableStateOf<KugouPlaylistTrack?>(null) }
-    // 长按移除（仅自有歌单；推荐歌单不传 → 行保持普通点击）
-    val removeAt: ((Int) -> Unit)? = if (source == PlaylistSelection.Source.User) {
+    val removeBusy = remember(playlistId, accountUserid) { mutableStateOf(false) }
+    LaunchedEffect(accountUserid, editAllowed) {
+        showAddDialog.value = false
+        removeTarget.value = null
+    }
+    // 编辑权限对确认弹层与写操作共同生效。
+    val removeAt: ((Int) -> Unit)? = if (editAllowed && !removeBusy.value) {
         { index -> removeTarget.value = displayTracks.getOrNull(index) }
     } else null
 
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
+    // 串行化：loadTracks 有 5 个触发入口（首进/静默revalidate/下拉刷新/重试/挂起歌单补拉），
+    // 无门控时会并发两套"逐页串行"的完整歌单拉取。全部 withLock 排队：既杜绝并发重复拉取，
+    // 又保证加歌等变更触发的重拉不被丢弃（首版 tryLock 丢弃语义曾致新歌不显示）。
+    val loadMutex = remember { Mutex() }
 
     fun loadTracks(pullRefresh: Boolean = false, silent: Boolean = false) {
+        val requestAuthVersion = KugouApiService.authVersion()
+        fun requestActive() = requestAuthVersion == KugouApiService.authVersion() &&
+            accountUserid == KugouAccountState.userid
         if (pullRefresh) {
             refreshing.value = true
         } else if (!silent) {
@@ -224,9 +319,13 @@ fun OnlinePlaylistDetail(
             loadProgress.value = ""
         }
         scope.launch {
+            // 串行而非丢弃：加歌后的重拉必须真跑一次（在跑的那次带回的是加歌前的旧列表，
+            // 丢弃并入 = 新歌永远不出现）。withLock 排队等待，同一时刻只有一套逐页拉取。
+            loadMutex.withLock {
             val onProgress: (Int, Int) -> Unit = { loaded, total ->
                 // 回调在 IO 线程，切回主线程更新状态；仅在未拉完时显示进度
                 scope.launch {
+                    if (!requestActive()) return@launch
                     loadProgress.value = if (total > 0 && loaded < total) {
                         progressFormat.format(loaded, total)
                     } else {
@@ -239,16 +338,31 @@ fun OnlinePlaylistDetail(
                 // 挂起歌单未绑定真实 listid：先展示空列表（待加歌来自 ops 队列）
                 isPendingPlaylist && entry?.isBound != true -> Result.success(emptyList())
                 isPendingPlaylist && entry != null -> KugouRepository.getPlaylistSongs(entry.realListid, onProgress)
-                source == PlaylistSelection.Source.User ->
-                    KugouRepository.getPlaylistSongs(playlistId.orEmpty(), onProgress)
+                source == PlaylistSelection.Source.User && validPlaylistCollectionGid(playlistId) != null ->
+                    KugouRepository.getPlaylistSongsByGcid(playlistId.orEmpty(), onProgress)
+                source == PlaylistSelection.Source.User -> {
+                    val accountTracks = KugouRepository.getPlaylistSongs(playlistId.orEmpty(), onProgress)
+                    val originalGid = validPlaylistCollectionGid(
+                        userEntry.value?.sourceGid?.takeIf { it.isNotBlank() } ?: selected.sourceGid
+                    )
+                    val isReadOnlyCollection = userEntry.value?.isCollectedPlaylist == true ||
+                        selected.canEditTracks == false
+                    if (isReadOnlyCollection && originalGid != null && accountTracks.getOrNull().isNullOrEmpty()) {
+                        // A cloud collection row can precede its account-side track mirror.
+                        KugouRepository.getPlaylistSongsByGcid(originalGid, onProgress)
+                    } else accountTracks
+                }
                 source == PlaylistSelection.Source.Recommend ->
                     KugouRepository.getPlaylistSongsByGcid(playlistId.orEmpty(), onProgress)
                 else -> Result.failure(IllegalStateException("Missing playlist selection"))
             }
+            if (!requestActive()) return@launch
             result
                 .onSuccess { list ->
                     tracks.value = list
-                    status.value = if (list.isEmpty()) "empty" else "ok"
+                    // 挂起歌单的待加歌在 ops 队列里（服务端列表为空是常态），不能误报空态
+                    val hasQueuedAdds = pendingEntry.value?.ops?.any { it.startsWith("A|") } == true
+                    status.value = if (list.isEmpty() && !hasQueuedAdds) "empty" else "ok"
                     // 服务器曲目列表落盘（挂起歌单不缓存）
                     if (list.isNotEmpty() && !isPendingPlaylist) {
                         OnlinePlaylistCache.write(context, pageCacheKey, list)
@@ -261,7 +375,8 @@ fun OnlinePlaylistDetail(
                         status.value = "error:${e.message}"
                     }
                 }
-            refreshing.value = false
+                refreshing.value = false
+            }
         }
     }
 
@@ -280,7 +395,7 @@ fun OnlinePlaylistDetail(
         }
     }
 
-    LaunchedEffect(source, playlistId, KugouSyncCoordinator.playlistsRevision.value) {
+    LaunchedEffect(source, playlistId, accountUserid, KugouSyncCoordinator.playlistsRevision.value) {
         // 首屏优先：TTL 内的磁盘缓存先渲染（零网络），随后静默 revalidate。挂起歌单不读缓存。
         if (tracks.value.isEmpty() && !isPendingPlaylist) {
             OnlinePlaylistCache.read(context, pageCacheKey)?.let { cached ->
@@ -293,14 +408,17 @@ fun OnlinePlaylistDetail(
         loadTracks(silent = tracks.value.isNotEmpty())
     }
 
-    // 挂起歌单对账轮询：绑定真实 listid（含创建失败后的重试）→ 等 ops 补发完 → 拉真实歌曲
-    LaunchedEffect(playlistId) {
+    // 挂起歌单对账跟踪（事件驱动，替代 4s 轮询）：store 的 update()/delete() 覆盖全部
+    // 变更路径并发出 Change 事件。绑定 → 等 ops 补发完（本地读，沿用原节奏）→ 拉真实歌曲。
+    LaunchedEffect(playlistId, accountUserid) {
         val localId = playlistId.orEmpty()
-        if (PendingPlaylistStore.get(localId) == null) return@LaunchedEffect
-        var wasUnbound = PendingPlaylistStore.get(localId)?.isBound == false
-        while (true) {
-            delay(4_000L)
-            var fresh = PendingPlaylistStore.get(localId) ?: break
+        val initial = PendingPlaylistStore.get(localId) ?: return@LaunchedEffect
+        if (initial.userid != accountUserid || accountUserid == null) return@LaunchedEffect
+        pendingEntry.value = initial
+        var wasUnbound = !initial.isBound
+        PendingPlaylistStore.changesFor(localId).first { change ->
+            // 条目被删除：终止跟踪（原轮询 break 语义）
+            var fresh = change.entry ?: return@first true
             pendingEntry.value = fresh
             if (fresh.isBound) {
                 // 等挂起的加删歌补发完再拉真实列表，避免竞态（补发中拉取会缺最后几首）
@@ -308,13 +426,14 @@ fun OnlinePlaylistDetail(
                 while (fresh.ops.isNotEmpty() && waited < 30_000) {
                     delay(2_000L)
                     waited += 2_000
-                    fresh = PendingPlaylistStore.get(localId) ?: break
+                    fresh = PendingPlaylistStore.get(localId) ?: return@first true
                     pendingEntry.value = fresh
                 }
                 if (wasUnbound) loadTracks()
-                break
+                return@first true
             }
             wasUnbound = true
+            return@first false
         }
     }
 
@@ -363,6 +482,7 @@ fun OnlinePlaylistDetail(
     // 跨窗口 Popup 采不到本页的 layerBackdrop，玻璃材质会退化成实色面板。
     val overlayHost = remember { TitleOverlayHost() }
     val menuOpen = remember("OnlinePlaylistDetail_menu") { mutableStateOf(false) }
+    LaunchedEffect(accountUserid) { menuOpen.value = false }
 
     CompositionLocalProvider(
         LocalContentColor provides contentColor,
@@ -403,14 +523,17 @@ fun OnlinePlaylistDetail(
                                     stringResource(id = R.string.online_playlists_song_unit),
                                 intro = playlistIntro,
                                 accentColor = contentColor,
-                                // 第三个圆钮：自有歌单「添加歌曲」（推荐歌单没有加歌能力，不显示）
-                                trailingIcon = if (source == PlaylistSelection.Source.User) {
+                                collected = if (!editAllowed) collected else null,
+                                onToggleCollect = if (!editAllowed) ({ toggleCollect() }) else null,
+                                collectEnabled = collectEnabled,
+                                collectDescription = collectDescription,
+                                trailingIcon = if (editAllowed) {
                                     R.drawable.ic_add
                                 } else null,
                                 trailingIconDescription = stringResource(
                                     id = R.string.online_playlist_add_songs
                                 ),
-                                onTrailingClick = if (source == PlaylistSelection.Source.User) {
+                                onTrailingClick = if (editAllowed) {
                                     { showAddDialog.value = true }
                                 } else null,
                                 onPlayAll = {
@@ -451,10 +574,23 @@ fun OnlinePlaylistDetail(
                                         playAt(list.indices.random())
                                     }
                                 },
-                                onAddSongs = if (source == PlaylistSelection.Source.User) {
+                                onAddSongs = if (editAllowed) {
                                     { showAddDialog.value = true }
-                                } else null
+                                } else null,
+                                collected = collected,
+                                collectEnabled = collectEnabled,
+                                collectDescription = collectDescription,
+                                onToggleCollect = { toggleCollect() }
                             )
+                        }
+                    }
+
+                    if (!editAllowed && CollectedPlaylistsObject.error.value != null) {
+                        item("CollectionRetry") {
+                            TextButton(
+                                enabled = !CollectedPlaylistsObject.loading.value && !collectionBusy,
+                                onClick = { CollectedPlaylistsObject.ensureLoaded(force = true) }
+                            ) { Text(stringResource(R.string.playlist_collect_load_failed), color = contentColor) }
                         }
                     }
 
@@ -508,8 +644,15 @@ fun OnlinePlaylistDetail(
                         }
                     }
 
+                    if (status.value.startsWith("error:")) {
+                        item("TracksRetry") {
+                            TextButton(onClick = { loadTracks() }) {
+                                Text(stringResource(R.string.artist_detail_retry), color = contentColor)
+                            }
+                        }
+                    }
                     item("Status") {
-                        if (status.value == "empty") {
+                        if (status.value == "empty" && displayTracks.isEmpty()) {
                             // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛）
                             Box(
                                 modifier = Modifier
@@ -584,9 +727,10 @@ fun OnlinePlaylistDetail(
                                         .fillMaxWidth()
                                         // 缩进对齐封面右缘（行 padding 22 + 封面 52 + 间距 14 = 88dp）
                                         .padding(start = 88.dp, end = 16.dp)
-                                        .alpha(0.15f)
+                                        // 颜色 alpha 代替 Modifier.alpha(0.15f)：实心矩形不需要离屏层，
+                                        // 后者每行每帧一次 saveLayer（trace: "alpha caused saveLayer 1169x2"）。
                                         .height(0.5.dp)
-                                        .background(LocalContentColor.current)
+                                        .background(LocalContentColor.current.copy(alpha = 0.15f))
                                 )
                             }
                         }
@@ -687,15 +831,16 @@ fun OnlinePlaylistDetail(
     }
 
     // 删歌确认弹层（长按歌曲行触发，仅自有歌单）
-    removeTarget.value?.let { target ->
+    removeTarget.value?.takeIf { editAllowed }?.let { target ->
         SonifyDialog(
-            onDismissRequest = { removeTarget.value = null },
+            onDismissRequest = { if (!removeBusy.value) removeTarget.value = null },
             title = stringResource(id = R.string.online_playlist_track_remove),
             message = stringResource(id = R.string.online_playlist_track_remove_confirm, target.name),
             positiveContent = stringResource(id = R.string.common_ok),
             onPositive = {
+                if (!editAllowed || removeBusy.value || accountUserid != KugouAccountState.userid) return@SonifyDialog
+                removeBusy.value = true
                 val t = target
-                removeTarget.value = null
                 scope.launch {
                     val entry = pendingEntry.value
                     val result = if (entry != null) {
@@ -703,6 +848,9 @@ fun OnlinePlaylistDetail(
                     } else {
                         KugouRepository.removeTrackFromPlaylist(playlistId.orEmpty(), t.fileId, t.hash)
                     }
+                    if (accountUserid != KugouAccountState.userid) return@launch
+                    removeBusy.value = false
+                    removeTarget.value = null
                     result
                         .onSuccess {
                             if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
@@ -721,21 +869,33 @@ fun OnlinePlaylistDetail(
             },
             negativeContent = stringResource(id = R.string.common_cancel),
             onNegative = { removeTarget.value = null },
-            destructive = true
+            destructive = true,
+            positiveEnabled = !removeBusy.value,
+            negativeEnabled = !removeBusy.value,
+            dismissEnabled = !removeBusy.value,
+            closeOnPositive = false
         )
     }
 
     // 添加歌曲弹层（搜索 → 点按加入歌单；挂起歌单先进同步队列）
-    if (showAddDialog.value) {
+    if (showAddDialog.value && editAllowed) {
         AddSongsDialog(
             onDismiss = { showAddDialog.value = false },
-            onAdd = { song ->
+            onAdd = add@{ song ->
+                if (!editAllowed || accountUserid != KugouAccountState.userid) {
+                    return@add Result.failure(IllegalStateException(context.getString(R.string.playlist_read_only)))
+                }
                 val entry = pendingEntry.value
                 val result = if (entry != null) {
-                    PendingPlaylistStore.addSong(entry.localId, song.name, song.hash)
+                    PendingPlaylistStore.addSong(
+                        entry.localId, song.name, song.hash,
+                        artist = song.author,
+                        coverUrl = song.artworkUrl.orEmpty()
+                    )
                 } else {
                     KugouRepository.addTracksToPlaylist(playlistId.orEmpty(), song.name, song.hash)
                 }
+                if (accountUserid != KugouAccountState.userid) return@add result
                 result
                     .onSuccess {
                         if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
@@ -752,6 +912,9 @@ fun OnlinePlaylistDetail(
 /**
  * 封面共享元素 key（入口卡片与详情页封面配对）。
  */
+internal fun validPlaylistCollectionGid(value: String?): String? =
+    value?.takeIf { playlistSourceIdentity(it) != null }
+
 internal fun sharedPlaylistCoverKey(
     source: PlaylistSelection.Source?,
     id: String?
@@ -768,9 +931,8 @@ private fun OnlineDetailDivider(modifier: Modifier = Modifier) =
         modifier = modifier
             .fillMaxWidth()
             .padding(start = 18.dp, end = 16.dp)
-            .alpha(0.2f)
             .height(0.5.dp)
-            .background(LocalContentColor.current)
+            .background(LocalContentColor.current.copy(alpha = 0.2f))
     )
 
 /**
@@ -793,7 +955,11 @@ private fun PlaylistHeaderCompact(
     playEnabled: Boolean,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
-    onAddSongs: (() -> Unit)?
+    onAddSongs: (() -> Unit)?,
+    collected: Boolean,
+    collectEnabled: Boolean,
+    collectDescription: String,
+    onToggleCollect: () -> Unit
 ) {
     Column(
         Modifier
@@ -890,7 +1056,18 @@ private fun PlaylistHeaderCompact(
                             onAddSongs()
                         }
                     }
-                } else null
+                } else {
+                    {
+                        ArtistCollectButton(
+                            collected = collected,
+                            enabled = collectEnabled,
+                            iconTint = contentColor,
+                            containerColor = contentColor.copy(alpha = 0.18f),
+                            description = collectDescription,
+                            onClick = onToggleCollect
+                        )
+                    }
+                }
             )
         }
 

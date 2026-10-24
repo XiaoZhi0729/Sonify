@@ -50,4 +50,23 @@ class OnlineAlbumCacheParseTest {
         assertEquals(1234L, list[0].durationMs)
         assertEquals("AL", list[0].albumName)
     }
+
+    @Test
+    fun `mixed entries retain valid songs`() {
+        val json = """[
+            {"hash":"BAD","name":"","author":"A"},
+            {"hash":"H1","name":"N1","author":"A1"}]"""
+        val list = OnlineAlbumCache.parseCached(json)!!
+
+        assertEquals(1, list.size)
+        assertEquals("H1", list[0].hash)
+    }
+
+    @Test
+    fun `empty array remains a valid empty cache`() {
+        val list = OnlineAlbumCache.parseCached("[]")
+
+        org.junit.Assert.assertNotNull(list)
+        assertEquals(0, list!!.size)
+    }
 }

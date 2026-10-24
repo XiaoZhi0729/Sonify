@@ -15,7 +15,12 @@ data class PlaylistSelection(
     val cover: String,
     val songCount: Int,
     /** 歌单简介：仅精选歌单列表接口携带；null/空表示无简介（详情页不显示） */
-    val intro: String? = null
+    val intro: String? = null,
+    /** 原始 collection gid；与账号内 listid/gid 分开传递。 */
+    val sourceGid: String? = null,
+    /** null 保持旧路由兼容，详情页会从当前账号完整列表解析权限。 */
+    val canEditTracks: Boolean? = null,
+    val ownerUserid: String? = null
 ) {
     enum class Source { User, Recommend }
 
@@ -25,7 +30,10 @@ data class PlaylistSelection(
         name = name,
         cover = cover,
         count = songCount,
-        intro = intro
+        intro = intro,
+        sourceGid = sourceGid,
+        canEditTracks = canEditTracks,
+        ownerUserid = ownerUserid
     )
 
     fun toArguments(): Bundle = Bundle().apply {
@@ -35,6 +43,9 @@ data class PlaylistSelection(
         putString(UI.OnlinePlaylistCoverArg, cover)
         putInt(UI.OnlinePlaylistCountArg, songCount)
         intro?.let { putString(UI.OnlinePlaylistIntroArg, it) }
+        sourceGid?.let { putString(UI.OnlinePlaylistSourceGidArg, it) }
+        canEditTracks?.let { putString(UI.OnlinePlaylistCanEditArg, it.toString()) }
+        ownerUserid?.let { putString(UI.OnlinePlaylistOwnerArg, it) }
     }
 
     companion object {
@@ -52,7 +63,10 @@ data class PlaylistSelection(
                 name = values[UI.OnlinePlaylistNameArg],
                 cover = values[UI.OnlinePlaylistCoverArg],
                 count = values[UI.OnlinePlaylistCountArg]?.toIntOrNull(),
-                intro = values[UI.OnlinePlaylistIntroArg]
+                intro = values[UI.OnlinePlaylistIntroArg],
+                sourceGid = values[UI.OnlinePlaylistSourceGidArg],
+                canEditTracks = values[UI.OnlinePlaylistCanEditArg]?.toBooleanStrictOrNull(),
+                ownerUserid = values[UI.OnlinePlaylistOwnerArg]
             )
         }
 
@@ -63,7 +77,10 @@ data class PlaylistSelection(
                 name = it.getString(UI.OnlinePlaylistNameArg),
                 cover = it.getString(UI.OnlinePlaylistCoverArg),
                 count = it.getInt(UI.OnlinePlaylistCountArg, 0),
-                intro = it.getString(UI.OnlinePlaylistIntroArg)
+                intro = it.getString(UI.OnlinePlaylistIntroArg),
+                sourceGid = it.getString(UI.OnlinePlaylistSourceGidArg),
+                canEditTracks = it.getString(UI.OnlinePlaylistCanEditArg)?.toBooleanStrictOrNull(),
+                ownerUserid = it.getString(UI.OnlinePlaylistOwnerArg)
             )
         }
 
@@ -73,7 +90,10 @@ data class PlaylistSelection(
             name: String?,
             cover: String?,
             count: Int?,
-            intro: String? = null
+            intro: String? = null,
+            sourceGid: String? = null,
+            canEditTracks: Boolean? = null,
+            ownerUserid: String? = null
         ): PlaylistSelection? {
             val parsedSource = source?.let { runCatching { Source.valueOf(it) }.getOrNull() }
             val parsedId = id.orEmpty()
@@ -84,7 +104,10 @@ data class PlaylistSelection(
                 name = name.orEmpty(),
                 cover = cover.orEmpty(),
                 songCount = count ?: 0,
-                intro = intro?.takeIf { it.isNotBlank() }
+                intro = intro?.takeIf { it.isNotBlank() },
+                sourceGid = sourceGid?.takeIf { it.isNotBlank() },
+                canEditTracks = canEditTracks,
+                ownerUserid = ownerUserid?.takeIf { it.isNotBlank() }
             )
         }
     }
@@ -99,6 +122,22 @@ fun playlistArguments() = listOf(
     // intro 必须声明为可选：toRoute() 在 intro 为 null（User 歌单）时不拼该参数，
     // 若视为必填，NavDeepLink 匹配会因"缺必填参数"失败并抛 destination cannot be found
     navArgument(UI.OnlinePlaylistIntroArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument(UI.OnlinePlaylistSourceGidArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    // NavType.BoolType 不支持 nullable，字符串保留 unknown / false / true 三态。
+    navArgument(UI.OnlinePlaylistCanEditArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument(UI.OnlinePlaylistOwnerArg) {
         type = NavType.StringType
         nullable = true
         defaultValue = null

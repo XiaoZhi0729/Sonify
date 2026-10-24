@@ -89,6 +89,7 @@ import dev.chrisbanes.haze.hazeSource
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
@@ -345,8 +346,6 @@ fun rememberTitleBackdrop(pageColorOverride: Color? = null): LayerBackdrop {
     val pageColor = pageColorOverride
         ?: LocalTitlePageColor.current
         ?: (Color.White withNight Color.Black)
-    // onDraw 必须是稳定实例：rememberLayerBackdrop 以 onDraw 为 remember key，
-    // 每次重组传新 lambda 会重建 LayerBackdrop，让采样层反复失效。
     val onDraw: ContentDrawScope.() -> Unit = remember(pageColor) {
         {
             drawRect(
@@ -921,7 +920,9 @@ fun TitleBar(
     onBack: (() -> Unit)?,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
     showSmallTitle: State<Boolean>,
-    backdrop: Backdrop,
+    // 页面内容录制层（见 rememberTitleBackdrop）。必须是 LayerBackdrop：顶栏材质要把
+    // 自己的绘制结果导出成第二个层，供栏内玻璃圆钮采样。
+    backdrop: LayerBackdrop,
     // 顶栏背景（模糊+渐变）与玻璃按钮的可见时机。默认与小标题同拍；
     // Base 页传入"任何滚动即出现"的状态（Nexio 式常驻顶栏），让大标题从玻璃下穿过。
     barBackgroundVisible: State<Boolean>? = null,
@@ -956,6 +957,14 @@ fun TitleBar(
         launch { glassBackdropAlpha.animateTo(target, tween(150)) }
         launch { glassShadowAlpha.animateTo(target, tween(150)) }
     }
+    // 顶栏玻璃圆钮的采样源 = 页面原始内容 + 顶栏材质表面。
+    // 顶栏材质把自己的绘制结果（模糊 / 页面底色 / 尾部淡出）导出进 barSurfaceBackdrop，
+    // 圆钮再采样两者的组合：钮内画面与它背后真正的顶栏表面一致，而不是栏下原始内容
+    // （只采样原始内容会让钮内比周围更清晰、且缺顶栏底色）。
+    // 两个层都必须在 AnimatedVisibility 之外创建：材质节点会随进出场挂载/卸载，
+    // 而圆钮始终持有这个采样源。
+    val barSurfaceBackdrop = rememberLayerBackdrop()
+    val barGlassBackdrop = rememberCombinedBackdrop(backdrop, barSurfaceBackdrop)
     val backIcon = painterResource(id = R.drawable.ic_back)
     Box(
         modifier = Modifier
@@ -979,7 +988,11 @@ fun TitleBar(
                             // 真·渐进模糊：半径随 Y 从 12dp 连续收到 0，并向栏下多延伸
                             // 40dp 作为淡出尾巴（见 titleBarProgressiveBlur）。
                             // 这样淡出不会被顶栏底边裁断，过渡长度也更接近原参考实现。
-                            titleBarProgressiveBlur(backdrop = backdrop, tintColor = pageColor)
+                            titleBarProgressiveBlur(
+                                backdrop = backdrop,
+                                tintColor = pageColor,
+                                exportedBackdrop = barSurfaceBackdrop
+                            )
                         } else {
                             // 关闭"工具栏液态玻璃"：顶栏改为 Haze 磨砂——采样顶栏下方内容做
                             // 均匀模糊，并叠一层半透明页面底色（与 Haze 底栏/迷你条同源），
@@ -1019,7 +1032,9 @@ fun TitleBar(
                                 // 按住可拖动（高光跟手 + 倾斜 + 松手回弹）。图标着色见 LiquidTopBarButton。
                                 LiquidTopBarButton(
                                     onClick = onBack,
-                                    backdrop = backdrop,
+                                    // 采样"页面内容 + 顶栏材质表面"的组合层，
+                                    // 而不是栏下原始内容，见 barGlassBackdrop 注释。
+                                    backdrop = barGlassBackdrop,
                                     icon = backIcon,
                                     contentDescription = null,
                                     iconSize = 18.dp,
@@ -1091,7 +1106,7 @@ fun TitleBar(
                             if (SettingsLibrary.BarBlurEffect) {
                                 CompositionLocalProvider(
                                     LocalTitleBarGlass provides TitleBarGlassContext(
-                                        backdrop = backdrop,
+                                        backdrop = barGlassBackdrop,
                                         backdropAlpha = { glassBackdropAlpha.value },
                                         shadowAlpha = { glassShadowAlpha.value }
                                     )

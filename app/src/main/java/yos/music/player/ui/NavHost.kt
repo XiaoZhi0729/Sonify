@@ -41,13 +41,19 @@ interface UI {
         const val OnlinePlaylistCoverArg = "cover"
         const val OnlinePlaylistCountArg = "count"
         const val OnlinePlaylistIntroArg = "intro"
+        const val OnlinePlaylistSourceGidArg = "sourceGid"
+        const val OnlinePlaylistCanEditArg = "canEditTracks"
+        const val OnlinePlaylistOwnerArg = "ownerUserid"
         const val OnlinePlaylistDetailPattern =
             "$OnlinePlaylistDetail?$OnlinePlaylistSourceArg={$OnlinePlaylistSourceArg}" +
                     "&$OnlinePlaylistIdArg={$OnlinePlaylistIdArg}" +
                     "&$OnlinePlaylistNameArg={$OnlinePlaylistNameArg}" +
                     "&$OnlinePlaylistCoverArg={$OnlinePlaylistCoverArg}" +
                     "&$OnlinePlaylistCountArg={$OnlinePlaylistCountArg}" +
-                    "&$OnlinePlaylistIntroArg={$OnlinePlaylistIntroArg}"
+                    "&$OnlinePlaylistIntroArg={$OnlinePlaylistIntroArg}" +
+                    "&$OnlinePlaylistSourceGidArg={$OnlinePlaylistSourceGidArg}" +
+                    "&$OnlinePlaylistCanEditArg={$OnlinePlaylistCanEditArg}" +
+                    "&$OnlinePlaylistOwnerArg={$OnlinePlaylistOwnerArg}"
 
         fun onlinePlaylistDetailRoute(
             source: String,
@@ -55,7 +61,10 @@ interface UI {
             name: String,
             cover: String,
             count: Int?,
-            intro: String? = null
+            intro: String? = null,
+            sourceGid: String? = null,
+            canEditTracks: Boolean? = null,
+            ownerUserid: String? = null
         ): String = buildString {
             append(OnlinePlaylistDetail)
             append("?")
@@ -70,6 +79,15 @@ interface UI {
             }
             intro?.let {
                 append("&").append(OnlinePlaylistIntroArg).append("=").append(routeEncode(it))
+            }
+            sourceGid?.let {
+                append("&").append(OnlinePlaylistSourceGidArg).append("=").append(routeEncode(it))
+            }
+            canEditTracks?.let {
+                append("&").append(OnlinePlaylistCanEditArg).append("=").append(it)
+            }
+            ownerUserid?.let {
+                append("&").append(OnlinePlaylistOwnerArg).append("=").append(routeEncode(it))
             }
         }
 

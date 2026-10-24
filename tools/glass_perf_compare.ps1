@@ -1,7 +1,7 @@
 # Liquid-glass smoothness comparison: our app vs a reference app on the same device.
 #
 # Usage:
-#   powershell -File tools\glass_perf_compare.ps1 -Serial 192.168.1.4:37789 -Pkg yos.music.player.oss
+#   powershell -File tools\glass_perf_compare.ps1 -Serial 192.168.1.4:37789 -Pkg com.sonify.music
 #   powershell -File tools\glass_perf_compare.ps1 -FindLabel "香草"          # locate a package by label
 #   powershell -File tools\glass_perf_compare.ps1 -Serial <s> -Pkg <refpkg> -ShellTap 0
 #

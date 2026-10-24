@@ -12,6 +12,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.effect
@@ -64,11 +65,16 @@ private const val TINT_MAX_ALPHA = 0.8f
  * @param backdrop 顶栏采样源（见 [rememberTitleBackdrop]）
  * @param tintColor 渐变用页面底色；必须与页面实际背景一致（见 [LocalTitlePageColor]），
  * 否则顶栏渐变会与页面出现色差
+ * @param exportedBackdrop 非空时把本层**绘制后的结果**（模糊 + 底色 + 淡出，不含节点内容）
+ * 同时录进这个层。顶栏上的玻璃圆钮用它做采样源：圆钮背后的真实像素是这层材质，
+ * 而不是 [backdrop] 里的原始内容；只采样原始内容会让钮内画面比周围更清晰、且缺顶栏底色。
+ * 录制块与节点的绘制同帧、按节点局部坐标对齐，故与圆钮采样位置天然一致。
  */
 @Composable
 fun titleBarProgressiveBlur(
     backdrop: Backdrop,
-    tintColor: Color
+    tintColor: Color,
+    exportedBackdrop: LayerBackdrop? = null
 ): Modifier {
     val effects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
         remember(tintColor) {
@@ -131,7 +137,8 @@ fun titleBarProgressiveBlur(
         .drawPlainBackdrop(
             backdrop = backdrop,
             shape = { RectangleShape },
-            effects = effects
+            effects = effects,
+            exportedBackdrop = exportedBackdrop
         )
 }
 

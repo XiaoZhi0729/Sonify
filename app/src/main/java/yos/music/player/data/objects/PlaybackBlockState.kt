@@ -115,6 +115,23 @@ object PlaybackBlockState {
     }
 
     /**
+     * 曲目过渡时调用：**只有真的换了另一首**才作废。
+     *
+     * 为什么不能无条件 clear：`setMediaItems`（启动恢复队列、重建播放列表）与重备同一曲
+     * 都会派发 onMediaItemTransition，但它们指向同一首。旧实现无条件清理，导致说明框
+     * 刚弹出就被启动恢复的 transition 收掉，表现为"闪一下就没了"（真机已复现）。
+     *
+     * [mediaId] 为 null 表示队列被清空/当前曲目未知 → 作废；block 归属未知（调试钩子、
+     * 事件早于曲目落地）→ 保留，交给播放成功或用户操作结束。
+     */
+    fun clearIfOtherTrack(mediaId: String?) {
+        val current = block ?: return
+        val blocked = current.mediaId ?: return
+        if (mediaId != null && mediaId == blocked) return
+        clear()
+    }
+
+    /**
      * 验证入口用不了（edt 也换不出 txappid / 类型不支持）：降级成"没有入口"，
      * 下次打开说明框就显示「重新登录 / 重试」，而不是继续给一个点了没用的「去验证」。
      */

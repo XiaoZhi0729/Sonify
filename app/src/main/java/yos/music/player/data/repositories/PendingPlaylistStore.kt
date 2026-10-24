@@ -6,10 +6,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import yos.music.player.native.KugouApiService
 
 /**
  * 挂起歌单日志（创建中歌单的单一事实源）。
@@ -26,6 +30,13 @@ import java.util.UUID
  */
 object PendingPlaylistStore {
 
+    /** 条目变更事件（update/delete 是全部变更路径的必经点）。entry=null 表示条目已删除。
+     *  事件驱动替代详情页的 4s 对账轮询。 */
+    data class Change(val localId: String, val entry: PendingPlaylist?)
+
+    private val changes = MutableSharedFlow<Change>(extraBufferCapacity = 128)
+    fun changesFor(localId: String): Flow<Change> = changes.filter { it.localId == localId }
+
     private const val TAG = "PendingPlaylistStore"
     private const val KEY_JOURNAL = "journal"
 
@@ -39,6 +50,7 @@ object PendingPlaylistStore {
     data class PendingPlaylist(
         val localId: String,
         val name: String,
+        val userid: String = "",
         val realListid: String = "",
         val failed: Boolean = false,
         val createdAt: Long = System.currentTimeMillis(),
@@ -57,6 +69,7 @@ object PendingPlaylistStore {
                 JSONObject()
                     .put("localId", e.localId)
                     .put("name", e.name)
+                    .put("userid", e.userid)
                     .put("realListid", e.realListid)
                     .put("failed", e.failed)
                     .put("createdAt", e.createdAt)
@@ -66,7 +79,11 @@ object PendingPlaylistStore {
         mmkv.encode(KEY_JOURNAL, arr.toString())
     }
 
-    fun all(): List<PendingPlaylist> {
+    fun all(): List<PendingPlaylist> = readAll().filter {
+        it.userid.isNotBlank() && it.userid == KugouApiService.userid
+    }
+
+    private fun readAll(): List<PendingPlaylist> {
         val raw = mmkv.decodeString(KEY_JOURNAL) ?: return emptyList()
         return runCatching {
             val arr = JSONArray(raw)
@@ -76,6 +93,7 @@ object PendingPlaylistStore {
                 PendingPlaylist(
                     localId = o.optString("localId"),
                     name = o.optString("name"),
+                    userid = o.optString("userid"),
                     realListid = o.optString("realListid"),
                     failed = o.optBoolean("failed", false),
                     createdAt = o.optLong("createdAt", 0L),
@@ -90,7 +108,8 @@ object PendingPlaylistStore {
     fun get(localId: String): PendingPlaylist? = all().firstOrNull { it.localId == localId }
 
     private fun update(entry: PendingPlaylist) {
-        persist(all().filterNot { it.localId == entry.localId } + entry)
+        persist(readAll().filterNot { it.localId == entry.localId } + entry)
+        changes.tryEmit(Change(entry.localId, entry))
     }
 
     // ---------------- 生命周期 ----------------
@@ -99,7 +118,8 @@ object PendingPlaylistStore {
     fun registerCreated(name: String): PendingPlaylist {
         val entry = PendingPlaylist(
             localId = "local_" + UUID.randomUUID().toString(),
-            name = name
+            name = name,
+            userid = KugouApiService.userid.orEmpty()
         )
         update(entry)
         scheduleReconcile(entry.localId)
@@ -108,16 +128,29 @@ object PendingPlaylistStore {
 
     /** 用户删除挂起条目（列表页长按删除）。取消对账由找不到条目自然终止。 */
     fun delete(localId: String) {
-        persist(all().filterNot { it.localId == localId })
+        persist(readAll().filterNot { it.localId == localId })
+        changes.tryEmit(Change(localId, null))
     }
 
     /** FAILED 后一键重试创建：重新提交 /playlist/add，成功则回到 PENDING 重新对账。 */
     suspend fun retryCreate(localId: String): Result<Unit> {
         val entry = get(localId) ?: return Result.failure(IllegalStateException("挂起歌单不存在"))
-        return KugouRepository.createMyPlaylist(entry.name).map {
-            update(entry.copy(failed = false, createdAt = System.currentTimeMillis()))
-            scheduleReconcile(localId)
+        if (!belongsToCurrentAccount(entry)) {
+            return Result.failure(IllegalStateException("挂起歌单不属于当前账号"))
         }
+        val auth = KugouApiService.authSnapshot()
+        return KugouRepository.createMyPlaylist(entry.name).fold(
+            onSuccess = {
+                if (KugouApiService.authVersion() != auth.version || !belongsToCurrentAccount(entry)) {
+                    Result.failure(IllegalStateException("账号状态已变化，请重试"))
+                } else {
+                    update(entry.copy(failed = false, createdAt = System.currentTimeMillis()))
+                    scheduleReconcile(localId)
+                    Result.success(Unit)
+                }
+            },
+            onFailure = { Result.failure(it) }
+        )
     }
 
     // ---------------- 对账 ----------------
@@ -127,10 +160,13 @@ object PendingPlaylistStore {
      * 幂等：已绑定或条目已删除时直接返回。列表页合并时也会调用（提前命中）。
      */
     fun scheduleReconcile(localId: String) {
+        val authVersion = KugouApiService.authVersion()
         scope.launch {
             repeat(RECONCILE_ATTEMPTS) { attempt ->
                 delay(RECONCILE_INTERVAL_MS)
+                if (KugouApiService.authVersion() != authVersion) return@launch
                 val entry = get(localId) ?: return@launch
+                if (!belongsToCurrentAccount(entry)) return@launch
                 if (entry.isBound) return@launch
                 if (tryBind(entry)) return@launch
                 Log.d(TAG, "reconcile #$attempt miss: ${entry.name}")
@@ -148,9 +184,15 @@ object PendingPlaylistStore {
     /** 尝试立即绑定（列表页拿到最新 /user/playlist 时调用）。返回是否绑定成功。 */
     suspend fun tryBind(entry: PendingPlaylist): Boolean {
         if (entry.isBound) return true
-        val match = KugouRepository.getMyPlaylists().getOrNull()
-            ?.firstOrNull { it.name == entry.name } ?: return false
-        val realId = match.listid.ifEmpty { match.gid }
+        if (!belongsToCurrentAccount(entry)) return false
+        val auth = KugouApiService.authSnapshot()
+        val match = KugouRepository.getAllUserPlaylistEntries(auth).getOrNull()
+            ?.firstOrNull { it.name == entry.name && it.canEditTracks && it.type == 0 }
+            ?: return false
+        if (KugouApiService.authVersion() != auth.version || !belongsToCurrentAccount(entry) || get(entry.localId) == null) {
+            return false
+        }
+        val realId = match.listid
         if (realId.isEmpty()) return false
         val bound = entry.copy(realListid = realId)
         update(bound)
@@ -161,8 +203,11 @@ object PendingPlaylistStore {
 
     /** 按序补发 ops；单条失败保留余下（含失败条）等下次合并/重试。 */
     private suspend fun flushOps(entry: PendingPlaylist) {
+        if (!belongsToCurrentAccount(entry)) return
+        val authVersion = KugouApiService.authVersion()
         var remaining = entry.ops
         for (op in entry.ops) {
+            if (authVersion != KugouApiService.authVersion() || !belongsToCurrentAccount(entry)) return
             val ok = when (op.substringBefore('|')) {
                 "A" -> {
                     val parts = op.split('|')
@@ -183,7 +228,9 @@ object PendingPlaylistStore {
             }
             remaining = remaining - op
         }
-        if (remaining != entry.ops) update(entry.copy(ops = remaining))
+        if (remaining != entry.ops && authVersion == KugouApiService.authVersion() && belongsToCurrentAccount(entry)) {
+            update(entry.copy(ops = remaining))
+        }
     }
 
     // ---------------- 详情页加/删歌 ----------------
@@ -192,8 +239,18 @@ object PendingPlaylistStore {
      * 加歌：已绑定 → 服务端直调；未绑定 → 入 ops 队列（绑定后自动补发）。
      * 调用方负责去重提示（同 hash 的待加操作重复会失败）。
      */
-    suspend fun addSong(localId: String, title: String, hash: String): Result<Unit> {
+    suspend fun addSong(
+        localId: String,
+        title: String,
+        hash: String,
+        // 挂起期展示/播放用的完整资料（旧条目缺这两段时展示端回落为原行为）
+        artist: String = "",
+        coverUrl: String = ""
+    ): Result<Unit> {
         val entry = get(localId) ?: return Result.failure(IllegalStateException("歌单不存在"))
+        if (!belongsToCurrentAccount(entry)) {
+            return Result.failure(IllegalStateException("挂起歌单不属于当前账号"))
+        }
         if (entry.ops.any { it.startsWith("A|") && it.split('|').getOrNull(2) == hash }) {
             return Result.failure(IllegalStateException("歌曲已在歌单中"))
         }
@@ -201,7 +258,7 @@ object PendingPlaylistStore {
             KugouRepository.addTracksToPlaylist(entry.realListid, title, hash)
         } else {
             val id = KugouRepository.songIdentityFor(hash)
-            update(entry.copy(ops = entry.ops + "A|$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}"))
+            update(entry.copy(ops = entry.ops + "A|$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}|$artist|$coverUrl"))
             Result.success(Unit)
         }
     }
@@ -209,6 +266,9 @@ object PendingPlaylistStore {
     /** 删歌：已绑定 → 服务端直调（fileid 优先）；未绑定 → 删除队列先撤同 hash 的待加，否则入删除队列。 */
     suspend fun removeSong(localId: String, hash: String, fileId: Long = 0): Result<Unit> {
         val entry = get(localId) ?: return Result.failure(IllegalStateException("歌单不存在"))
+        if (!belongsToCurrentAccount(entry)) {
+            return Result.failure(IllegalStateException("挂起歌单不属于当前账号"))
+        }
         if (!entry.isBound) {
             val queued = entry.ops.firstOrNull { it.startsWith("A|") && it.split('|').getOrNull(2) == hash }
             return if (queued != null) {
@@ -221,4 +281,7 @@ object PendingPlaylistStore {
         }
         return KugouRepository.removeTrackFromPlaylist(entry.realListid, fileId, hash)
     }
+
+    private fun belongsToCurrentAccount(entry: PendingPlaylist): Boolean =
+        entry.userid.isNotBlank() && entry.userid == KugouApiService.userid
 }

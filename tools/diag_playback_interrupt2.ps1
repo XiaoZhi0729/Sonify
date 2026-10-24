@@ -1,6 +1,6 @@
 # diag2.ps1 - time-windowed history for screen-off playback interruption
 param(
-    [string]$Pkg = 'yos.music.player.oss',
+    [string]$Pkg = 'com.sonify.music',
     [string]$Date = (Get-Date).ToString('yyyy-MM-dd'),
     [string]$FromEpoch = '',
     [string]$ToEpoch = '',

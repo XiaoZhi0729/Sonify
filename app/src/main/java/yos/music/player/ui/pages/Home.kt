@@ -208,13 +208,13 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                         this.shape = shape
                     }
                     .drawWithCache {
+                                                val outline = shape.createOutline(
+                            Size(size.width, size.height),
+                            LayoutDirection.Ltr,
+                            density
+                        )
                         onDrawWithContent {
                             drawContent()
-                            val outline = shape.createOutline(
-                                Size(size.width, size.height),
-                                LayoutDirection.Ltr,
-                                density
-                            )
                             drawOutline(
                                 outline = outline,
                                 color = Color.DarkGray.copy(alpha = 0.08f),
@@ -229,12 +229,15 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                         }
                     }
                     .clickable(onClick = onClick)) {
+                val imgContext = LocalContext.current
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data(data = music.thumb)
-                        .size(540)
-                        .crossfade(true).error(R.drawable.placeholder_music_default_artwork)
-                        .placeholder(R.drawable.placeholder_music_default_artwork)
-                        .fallback(R.drawable.placeholder_music_default_artwork).build(),
+                    model = remember(music.thumb) {
+                        ImageRequest.Builder(imgContext).data(data = music.thumb)
+                            .size(540)
+                            .crossfade(true).error(R.drawable.placeholder_music_default_artwork)
+                            .placeholder(R.drawable.placeholder_music_default_artwork)
+                            .fallback(R.drawable.placeholder_music_default_artwork).build()
+                    },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -249,9 +252,12 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                     contentColor = Color.White
                 ) {
                     maskBitmap.value?.let { bitmap ->
+                        val imgContext = LocalContext.current
                         AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(data = bitmap).crossfade(true).build(),
+                            model = remember(bitmap) {
+                                ImageRequest.Builder(imgContext)
+                                    .data(data = bitmap).crossfade(true).build()
+                            },
                             contentDescription = null,
                             contentScale = ContentScale.FillWidth,
                             modifier = Modifier

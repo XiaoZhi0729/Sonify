@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
@@ -163,7 +164,9 @@ LaunchedEffect(Unit) {
 
             Text(
                 text = music.artistsName ?: defaultArtistsName,
-                modifier = Modifier.alpha(0.5f),
+                // 用颜色 alpha 代替 Modifier.alpha(0.5f)：后者会给每行文字套一个离屏图层，
+                // 逐帧重绘时每行多一次 saveLayer（trace: "alpha caused saveLayer *x57"）。
+                color = LocalContentColor.current.copy(alpha = 0.5f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 fontSize = 13.sp,

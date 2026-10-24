@@ -38,6 +38,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.CollectedPlaylistsObject
+import android.widget.Toast
 import yos.music.player.data.repositories.KugouPlaylist
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.PendingPlaylistStore
@@ -57,7 +60,7 @@ import yos.music.player.ui.widgets.basic.preloadRawCover
 /**
  * 我的在线歌单列表页（正式 UI，视觉已归一）。
  *
- * 数据链：KugouRepository.getMyPlaylists() → /user/playlist（API 层已绕 apicache，
+ * 数据链：KugouRepository.getAllUserPlaylistEntries() → /user/playlist（API 层已绕 apicache，
  * 否则新建/删除后 2 分钟内刷新拿到的是旧缓存）。
  *
  * 变更一致性（真机实测酷狗 cloudlist 有 ~5-8 秒传播延迟，官方客户端同样如此）：
@@ -77,7 +80,8 @@ import yos.music.player.ui.widgets.basic.preloadRawCover
 private val playlistCoverCache: MMKV by lazy { MMKV.mmkvWithID("kugou_playlist_cover_cache") }
 
 /** 删除传播挂起存储：删除已提交但云端尚未消失（~5s）期间跨页面/跨冷启存续。 */
-private val playlistDeletePending: MMKV by lazy { MMKV.mmkvWithID("kugou_playlist_pending_del") }
+private val playlistDeletePending: MMKV
+    get() = MMKV.mmkvWithID("kugou_playlist_pending_del_${KugouAccountState.userid.orEmpty()}")
 
 /** 挂起删除安全 TTL：超过即视为云端已收敛（正常 8 秒对账就会清掉）。 */
 private const val PENDING_DEL_TTL_MS = 90_000L
@@ -105,7 +109,7 @@ private fun writePendingDeletes(ids: Set<String>, names: Set<String>) {
     playlistDeletePending.encode("names", names.joinToString("\n") { "$it|$now" })
 }
 
-private fun playlistKey(pl: KugouPlaylist): String = pl.listid.ifEmpty { pl.gid }
+private fun playlistKey(pl: KugouPlaylist): String = pl.listid.ifEmpty { pl.gid }.ifEmpty { pl.sourceGid }
 
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -116,24 +120,26 @@ fun OnlinePlaylists(
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val openOnlinePlaylist = onOpenOnlinePlaylist ?: { selection: PlaylistSelection -> navController.navigate(selection.toRoute()) }
-    val playlists = rememberPageData<List<KugouPlaylist>>("OnlinePlaylists_list") { emptyList() }
+    val context = LocalContext.current
+    val accountUserid = KugouAccountState.userid
+    val playlists = rememberPageData<List<KugouPlaylist>>("OnlinePlaylists_list_${accountUserid.orEmpty()}") { emptyList() }
     // "loading" | "ok" | "empty" | "error:<msg>"
-    val status = remember("OnlinePlaylists_status") { mutableStateOf(if (playlists.value.isEmpty()) "loading" else "ok") }
+    val status = remember(accountUserid, "OnlinePlaylists_status") { mutableStateOf(if (playlists.value.isEmpty()) "loading" else "ok") }
     val scope = rememberCoroutineScope()
     // 挂起删除（MMKV 落盘，跨页面/冷启存续；load() 合并时自动收敛清除）
-    val pendingDel = remember("OnlinePlaylists_pending_del") { mutableStateOf(readPendingDeletes()) }
+    val pendingDel = remember(accountUserid, "OnlinePlaylists_pending_del") { mutableStateOf(readPendingDeletes()) }
     // 「创建中」歌单日志快照（行徽标与点击行为依赖它；load/create/delete 后刷新）
-    val journal = remember("OnlinePlaylists_journal") { mutableStateOf(PendingPlaylistStore.all()) }
+    val journal = remember(accountUserid, "OnlinePlaylists_journal") { mutableStateOf(PendingPlaylistStore.all().filter { it.userid == accountUserid && !accountUserid.isNullOrBlank() }) }
 
     // 新建歌单弹层
     val showCreateDialog = remember("OnlinePlaylists_create") { mutableStateOf(false) }
     val newPlaylistName = remember("OnlinePlaylists_create_name") { mutableStateOf("") }
-    val creating = remember("OnlinePlaylists_creating") { mutableStateOf(false) }
+    val creating = remember(accountUserid, "OnlinePlaylists_creating") { mutableStateOf(false) }
     // 弹层内错误文案（status 行不适用于弹层场景）
     val createError = remember("OnlinePlaylists_create_error") { mutableStateOf<String?>(null) }
     // 长按待删除的歌单（null = 不弹确认框）
     val deleteTarget = remember("OnlinePlaylists_delete") { mutableStateOf<KugouPlaylist?>(null) }
-    val deleting = remember("OnlinePlaylists_deleting") { mutableStateOf(false) }
+    val deleting = remember(accountUserid, "OnlinePlaylists_deleting") { mutableStateOf(false) }
 
     /**
      * [silent] = true：静默刷新——不置 "loading"（不出现加载中）、不清空/闪动列表、
@@ -142,18 +148,24 @@ fun OnlinePlaylists(
      * 「加载中」与列表整体消失/封面抖动。
      */
     fun load(autoOpenIndex: Int? = null, silent: Boolean = false) {
+        if (accountUserid.isNullOrBlank()) {
+            status.value = "empty"
+            return
+        }
         if (!silent) {
             if (status.value == "loading") return
             status.value = "loading"
         }
         scope.launch {
-            KugouRepository.getMyPlaylists()
+            if (accountUserid.isNullOrBlank() || accountUserid != KugouAccountState.userid) return@launch
+            KugouRepository.getAllUserPlaylistEntries()
                 .onSuccess { rawList ->
+                    if (accountUserid != KugouAccountState.userid) return@onSuccess
                     // 空的系统「默认收藏」歌单（is_def==1 且 count==0）默认隐藏：它是酷狗
                     // 账号级系统歌单（与「我喜欢」is_def==2 成对，注册时服务端自动创建），
                     // 空壳显示出来只会造成困惑；一旦有歌（count>0）照常出现。
                     // 只按 is_def 判定，勿用名字匹配（酷狗可能返回同名普通歌单）。
-                    val visibleRaw = rawList.filterNot { it.isDef == 1 && it.songCount == 0 }
+                    val visibleRaw = CollectedPlaylistsObject.mergeEntries(rawList).filterNot { it.source == 2 || (it.isDef == 1 && it.songCount == 0) }
                     // 先立即填充上次解析出的封面（MMKV 落盘）：「我喜欢」等系统歌单
                     // /user/playlist 不返回封面，进页瞬间行 coverUrl 为空会先闪兜底占位图，
                     // 种子数据消掉空窗；下方后台兜底仍会重跑，结果变化时行内热更新
@@ -176,7 +188,7 @@ fun OnlinePlaylists(
                     // ---- 「创建中」歌单合并（journal 为单一事实源） ----
                     // 名字已出现在服务端 → 后台绑定真实 listid（并补发详情页暂存的加删歌）；
                     // 未出现（传播中/已失败）→ 追加可点击的挂起行
-                    journal.value = PendingPlaylistStore.all()
+                    journal.value = PendingPlaylistStore.all().filter { it.userid == accountUserid && !accountUserid.isNullOrBlank() }
                     journal.value.filter { !it.isBound }.forEach { entry ->
                         if (list.any { it.name == entry.name }) {
                             scope.launch { PendingPlaylistStore.tryBind(entry) }
@@ -197,13 +209,14 @@ fun OnlinePlaylists(
                     // 三级都无则保持空（占位图展示，不伪造 URL）
                     scope.launch {
                         visibleRaw.filter { it.coverUrl.isEmpty() }.forEach { pl ->
+                            if (accountUserid != KugouAccountState.userid) return@forEach
                             var cover = KugouRepository.resolvePlaylistCover(pl)
                             if (cover.isNullOrEmpty()) {
                                 cover = KugouRepository.resolvePlaylistCoverFromTracks(
                                     pl.listid.ifEmpty { pl.gid }
                                 )
                             }
-                            if (!cover.isNullOrEmpty()) {
+                            if (!cover.isNullOrEmpty() && accountUserid == KugouAccountState.userid) {
                                 playlistCoverCache.encode(pl.listid.ifEmpty { pl.gid }, cover)
                                 playlists.value = playlists.value.map {
                                     if (it.listid == pl.listid && it.gid == pl.gid) it.copy(coverUrl = cover) else it
@@ -221,10 +234,13 @@ fun OnlinePlaylists(
                             openOnlinePlaylist(
                                 PlaylistSelection(
                                     source = PlaylistSelection.Source.User,
-                                    id = list[idx].listid.ifEmpty { list[idx].gid },
+                                    id = playlistKey(list[idx]),
                                     name = list[idx].name,
                                     cover = list[idx].coverUrl,
-                                    songCount = list[idx].songCount
+                                    songCount = list[idx].songCount,
+                                    sourceGid = list[idx].sourceGid.takeIf { it.isNotBlank() },
+                                    canEditTracks = list[idx].canEditTracks || list[idx].listid.startsWith("local_"),
+                                    ownerUserid = if (list[idx].isCollectedPlaylist) list[idx].listCreateUserid else accountUserid
                                 )
                             )
                         }
@@ -241,7 +257,7 @@ fun OnlinePlaylists(
     fun scheduleReconcile() {
         scope.launch {
             delay(8_000L)
-            if (status.value != "loading") {
+            if (accountUserid == KugouAccountState.userid && status.value != "loading") {
                 status.value = "idle"
                 load()
             }
@@ -250,18 +266,19 @@ fun OnlinePlaylists(
 
     fun createPlaylist() {
         val name = newPlaylistName.value.trim()
-        if (name.isEmpty() || creating.value) return
+        if (name.isEmpty() || creating.value || accountUserid == null || accountUserid != KugouAccountState.userid) return
         creating.value = true
         scope.launch {
             KugouRepository.createMyPlaylist(name)
                 .onSuccess { created ->
+                    if (accountUserid != KugouAccountState.userid) return@onSuccess
                     showCreateDialog.value = false
                     newPlaylistName.value = ""
                     // 登记挂起日志：行立即可点击进详情页（挂起模式），加删歌自动暂存补发
                     val entry = PendingPlaylistStore.registerCreated(
                         name = created.name.ifEmpty { name }
                     )
-                    journal.value = PendingPlaylistStore.all()
+                    journal.value = PendingPlaylistStore.all().filter { it.userid == accountUserid && !accountUserid.isNullOrBlank() }
                     playlists.value = playlists.value + KugouPlaylist(
                         listid = entry.localId,
                         gid = "",
@@ -282,13 +299,21 @@ fun OnlinePlaylists(
     }
 
     fun deletePlaylist(pl: KugouPlaylist) {
-        if (deleting.value) return
+        if (deleting.value || accountUserid != KugouAccountState.userid) return
+        if (pl.isCollectedPlaylist && validPlaylistCollectionGid(pl.sourceGid) == null) {
+            Toast.makeText(context, R.string.playlist_collect_missing_gid, Toast.LENGTH_SHORT).show()
+            return
+        }
         deleting.value = true
         scope.launch {
-            if (pl.listid.startsWith("local_")) {
+            if (pl.isCollectedPlaylist) {
+                CollectedPlaylistsObject.uncollect(pl)
+                    .onSuccess { playlists.value = playlists.value.filterNot { it.isCollectedPlaylist && it.sourceGid == pl.sourceGid } }
+                    .onFailure { Toast.makeText(context, it.message ?: context.getString(R.string.playlist_collect_failed), Toast.LENGTH_SHORT).show() }
+            } else if (pl.listid.startsWith("local_")) {
                 // 挂起条目：撤日志 + 本地移除即可（若云端最终建成了，下次刷新会以普通行出现）
                 PendingPlaylistStore.delete(pl.listid)
-                journal.value = PendingPlaylistStore.all()
+                journal.value = PendingPlaylistStore.all().filter { it.userid == accountUserid && !accountUserid.isNullOrBlank() }
                 playlists.value = playlists.value.filter { it !== pl }
             } else {
                 KugouRepository.deleteMyPlaylist(pl)
@@ -313,7 +338,11 @@ fun OnlinePlaylists(
     // 歌单/收藏等云端变化（含返回本页时重新进入组合）触发对账：
     // 已有数据 → 静默刷新（不置 loading、不清空列表，仅在有变化时原位更新内容，
     // 避免返回时出现「加载中」与列表整体消失/封面抖动）；无数据（首次进入）→ 常规加载。
-    LaunchedEffect(KugouSyncCoordinator.playlistsRevision.value) {
+    LaunchedEffect(accountUserid, KugouSyncCoordinator.playlistsRevision.value) {
+        if (accountUserid == null) {
+            status.value = "empty"
+            return@LaunchedEffect
+        }
         if (playlists.value.isEmpty()) {
             status.value = "idle"
             load()
@@ -322,14 +351,32 @@ fun OnlinePlaylists(
         }
     }
 
+    LaunchedEffect(accountUserid) {
+        showCreateDialog.value = false
+        deleteTarget.value = null
+        pendingDel.value = readPendingDeletes()
+        journal.value = PendingPlaylistStore.all().filter { it.userid == accountUserid && !accountUserid.isNullOrBlank() }
+        if (accountUserid != null) CollectedPlaylistsObject.ensureLoaded()
+    }
+    // Read the observable entries here so optimistic changes update an already visible list.
+    val collectionEntries = CollectedPlaylistsObject.entries.value
+    val displayPlaylists = remember(playlists.value, collectionEntries) {
+        CollectedPlaylistsObject.mergeEntries(playlists.value)
+            .filterNot { it.source == 2 || (it.isDef == 1 && it.songCount == 0) }
+    }
+
     Title(
         title = stringResource(id = R.string.page_online_playlists_title),
         topRightIcon = Icons.Filled.Add,
         onTopRightIcon = {
-            createError.value = null
-            showCreateDialog.value = true
+            if (accountUserid == null) navController.navigate(UI.Settings.KugouLogin)
+            else {
+                createError.value = null
+                showCreateDialog.value = true
+            }
         },
         onRefresh = {
+            CollectedPlaylistsObject.ensureLoaded(force = true)
             status.value = "idle"
             load()
         },
@@ -340,14 +387,14 @@ fun OnlinePlaylists(
     ) {
         item("Status") {
             OnlineStatusItem(
-                status = status.value,
+                status = if (displayPlaylists.isNotEmpty() && status.value == "empty") "ok" else status.value,
                 loadingText = stringResource(id = R.string.online_playlists_loading),
                 emptyText = stringResource(id = R.string.online_playlists_empty)
             )
         }
 
         itemsIndexed(
-            playlists.value,
+            displayPlaylists,
             key = { _, pl -> playlistKey(pl).ifEmpty { pl.name } }
         ) { index, pl ->
             val context = LocalContext.current
@@ -385,13 +432,16 @@ fun OnlinePlaylists(
                                         id = playlistId,
                                         name = pl.name,
                                         cover = pl.coverUrl,
-                                        songCount = pl.songCount
+                                        songCount = pl.songCount,
+                                        sourceGid = pl.sourceGid.takeIf { it.isNotBlank() },
+                                        canEditTracks = pl.canEditTracks || isLocalPending,
+                                        ownerUserid = if (pl.isCollectedPlaylist) pl.listCreateUserid else accountUserid
                                     )
                                 )
                             }
                         },
                         // 长按删除：系统歌单（is_def != 0）不响应
-                        onLongClick = { if (pl.isDef == 0) deleteTarget.value = pl }
+                        onLongClick = { if (pl.isCollectedPlaylist || (pl.isDef == 0 && pl.canEditTracks)) deleteTarget.value = pl }
                     )
                     .padding(horizontal = 22.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -434,7 +484,7 @@ fun OnlinePlaylists(
                 }
             }
 
-            if (index < playlists.value.size - 1) {
+            if (index < displayPlaylists.size - 1) {
                 OnlineListItemDivider()
             }
         }
@@ -479,8 +529,8 @@ fun OnlinePlaylists(
     deleteTarget.value?.let { target ->
         SonifyDialog(
             onDismissRequest = { if (!deleting.value) deleteTarget.value = null },
-            title = stringResource(id = R.string.online_playlists_delete),
-            message = stringResource(id = R.string.online_playlists_delete_confirm, target.name),
+            title = stringResource(id = if (target.isCollectedPlaylist) R.string.playlist_collect_remove else R.string.online_playlists_delete),
+            message = stringResource(id = if (target.isCollectedPlaylist) R.string.playlist_uncollect_confirm else R.string.online_playlists_delete_confirm, target.name),
             positiveContent = stringResource(id = R.string.common_ok),
             onPositive = { deletePlaylist(target) },
             negativeContent = stringResource(id = R.string.common_cancel),

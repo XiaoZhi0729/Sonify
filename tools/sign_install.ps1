@@ -11,7 +11,7 @@
 # Exit code 0 = installed. ASCII only (PowerShell 5.1 reads UTF-8-without-BOM as ANSI).
 param(
     [string]$Serial = "",
-    [string]$Pkg = "yos.music.player.oss",
+    [string]$Pkg = "com.sonify.music",
     # Names the copied artifact `_glass_release_debugsigned.ApK`, matching the existing convention.
     [string]$Tag = "manual",
     [switch]$SkipBuild,

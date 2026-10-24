@@ -108,7 +108,8 @@ fun DetailPageHeader(
     trailingIconDescription: String? = null,
     trailingEnabled: Boolean = true,
     onTrailingClick: (() -> Unit)? = null,
-    collectEnabled: Boolean = true
+    collectEnabled: Boolean = true,
+    collectDescription: String? = null
 ) {
     BoxWithConstraints(modifier) {
         // 封面随屏宽自适应；窄平板钳到下限 130dp，宽平板钳到上限 300dp
@@ -259,7 +260,8 @@ fun DetailPageHeader(
                                     iconSize = 22.dp,
                                     iconTint = accentColor ?: Color.Unspecified,
                                     containerColor = accentColor?.copy(alpha = 0.18f),
-                                    enabled = collectEnabled
+                                    enabled = collectEnabled,
+                                    description = collectDescription
                                 ) {
                                     onToggleCollect()
                                 }

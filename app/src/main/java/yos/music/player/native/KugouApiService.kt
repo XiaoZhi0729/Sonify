@@ -205,6 +205,11 @@ class KugouApiService private constructor() {
         .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
+    private val mutationClient by lazy {
+        client.newBuilder().retryOnConnectionFailure(false)
+            .followRedirects(false).followSslRedirects(false).build()
+    }
+
     private val jsonMediaType = "application/json".toMediaType()
 
     /**
@@ -276,7 +281,8 @@ class KugouApiService private constructor() {
         extraHeaders: Map<String, String> = emptyMap(),
         // true 时日志只记路径、不记 query：评论正文等用户内容不得进日志
         redactLog: Boolean = false,
-        auth: AuthSnapshot = authSnapshot()
+        auth: AuthSnapshot = authSnapshot(),
+        singleAttempt: Boolean = false
     ): Pair<Int, String> {
         val baseUrl = KugouNativeBridge.getBaseUrl()
         val builder = baseUrl.toHttpUrl().newBuilder()
@@ -293,7 +299,7 @@ class KugouApiService private constructor() {
         extraHeaders.forEach { (k, v) -> rb.header(k, v) }
         val req = rb.build()
         Log.d(TAG, "GET $path authenticated=${auth.isLoggedIn}")
-        return client.newCall(req).awaitResponseBody()
+        return (if (singleAttempt) mutationClient else client).newCall(req).awaitResponseBody()
     }
 
     /**
@@ -728,24 +734,25 @@ class KugouApiService private constructor() {
      *   Rust user.rs:605 cookie_or_param_str 两者都会读）
      * 返回结构：data.info[]（KugouPlaylistBrief 字段：specialid/specialname/imgurl/songcount/listid/global_collection_id/type）。
      */
-    suspend fun getMyPlaylists(page: Int = 1, pageSize: Int = 30): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-                val params = mutableMapOf("page" to page.toString(), "pagesize" to pageSize.toString())
-                userid?.let { params["userid"] = it }
-                // 必须绕 apicache（Rust 缓存所有 200 响应 2 分钟）：否则新建/删除歌单后
-                // 重新拉列表拿到的是旧缓存，用户会以为操作没生效（真机已复现）
-                val (code, body) = httpGetWithRetry("/user/playlist", params, VIP_NO_CACHE_HEADERS)
-                Log.d(TAG, "/user/playlist -> HTTP $code, body length=${body.length}, loggedIn=${isLoggedIn()}")
-                body.chunked(3500).forEachIndexed { i, c -> Log.d(TAG, "/user/playlist body[$i]: $c") }
-                if (code !in 200..299) return@withContext Result.failure(IOException("/user/playlist HTTP $code: ${body.take(200)}"))
-                Result.success(JSONObject(body))
-            } catch (e: Exception) {
-                Log.e(TAG, "getMyPlaylists exception", e)
-                Result.failure(e)
+    suspend fun getMyPlaylists(
+        page: Int = 1, pageSize: Int = 30, auth: AuthSnapshot = authSnapshot()
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) throw IOException("Server not running")
+            if (!auth.isLoggedIn || authSnapshot().version != auth.version) {
+                throw kotlinx.coroutines.CancellationException("Playlist authentication changed")
             }
+            val params = mapOf("page" to page.toString(), "pagesize" to pageSize.toString(), "userid" to auth.userid.orEmpty())
+            val (code, body) = httpGetAllowNonOk("/user/playlist", params, VIP_NO_CACHE_HEADERS, auth = auth)
+            if (authSnapshot().version != auth.version) throw kotlinx.coroutines.CancellationException("Playlist authentication changed")
+            if (code !in 200..299) throw IOException("歌单读取 HTTP $code")
+            Result.success(JSONObject(body))
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            Result.failure(error)
         }
+    }
 
     /**
      * 自己歌单的歌曲列表（对齐 Dart getPlaylistSongsByListid，kugou_api_client.dart:1529-1551）。
@@ -837,44 +844,44 @@ class KugouApiService private constructor() {
      *   GET /playlist/tracks/add?listid&data（Rust playlist.rs:329 → /cloudlist.service/v6/add_song）
      * data 格式（md3Music 已验证协议）："歌名|hash|albumId|mixsongid"，多首逗号分隔。
      */
-    suspend fun addPlaylistTracks(listid: String, data: String): Result<JSONObject> =
+    suspend fun addPlaylistTracks(listid: String, data: String, auth: AuthSnapshot = authSnapshot()): Result<JSONObject> =
+        playlistWriteOnce("/playlist/tracks/add", mapOf("listid" to listid, "data" to data), auth)
+
+    suspend fun deletePlaylistTracks(listid: String, fileids: String, auth: AuthSnapshot = authSnapshot()): Result<JSONObject> =
+        playlistWriteOnce("/playlist/tracks/del", mapOf("listid" to listid, "fileids" to fileids), auth)
+
+    /** Mutations never replay after transport failure, redirects, or credential refresh. */
+    private suspend fun playlistWriteOnce(path: String, params: Map<String, String>, auth: AuthSnapshot): Result<JSONObject> =
         withContext(Dispatchers.IO) {
             try {
-                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-                if (!isLoggedIn()) return@withContext Result.failure(Exception("未登录酷狗账号"))
-                val params = mutableMapOf("listid" to listid, "data" to data)
-                userid?.let { params["userid"] = it }
-                val (code, body) = httpGetOnce("/playlist/tracks/add", params)
-                Log.d(TAG, "/playlist/tracks/add -> HTTP $code, body=${body.take(500)}")
-                if (code !in 200..299) return@withContext Result.failure(IOException("/playlist/tracks/add HTTP $code: ${body.take(200)}"))
-                Result.success(JSONObject(body))
-            } catch (e: Exception) {
-                Log.e(TAG, "addPlaylistTracks exception", e)
-                Result.failure(e)
+                if (!auth.isLoggedIn) throw IllegalStateException("未登录酷狗账号")
+                if (!ensureServer()) throw IOException("Server not running")
+                if (authSnapshot().version != auth.version) throw kotlinx.coroutines.CancellationException("Playlist authentication changed")
+                val (code, body) = httpGetOnce(path, params + ("userid" to auth.userid.orEmpty()),
+                    VIP_NO_CACHE_HEADERS, redactLog = true, auth = auth, singleAttempt = true)
+                if (authSnapshot().version != auth.version) throw kotlinx.coroutines.CancellationException("Playlist authentication changed")
+                val json = runCatching { JSONObject(body) }.getOrNull()
+                    ?: throw yos.music.player.data.repositories.PlaylistMutationUnknownException("操作结果未知，请等待云端对账")
+                if (code !in 200..299 && yos.music.player.data.repositories.playlistBusinessOutcome(toPlainAny(json) as Map<*, *>) !=
+                    yos.music.player.data.repositories.PlaylistBusinessOutcome.FAILURE) {
+                    throw yos.music.player.data.repositories.PlaylistMutationUnknownException("操作结果未知 HTTP $code")
+                }
+                Result.success(json)
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                Result.failure(error)
             }
         }
 
-    /**
-     * 歌单移除歌曲（严格对齐 Dart deletePlaylistTracks，kugou_api_client.dart:2586-2594）。
-     *   GET /playlist/tracks/del?listid&fileids（Rust playlist.rs:379 → /cloudlist.service/v4/delete_songs）
-     * fileids：数字 fileid 优先；Rust 对非数字项自动降级为 {fileid:0, hash}，故 hash 可作兜底；多首逗号分隔。
-     */
-    suspend fun deletePlaylistTracks(listid: String, fileids: String): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-                if (!isLoggedIn()) return@withContext Result.failure(Exception("未登录酷狗账号"))
-                val params = mutableMapOf("listid" to listid, "fileids" to fileids)
-                userid?.let { params["userid"] = it }
-                val (code, body) = httpGetOnce("/playlist/tracks/del", params)
-                Log.d(TAG, "/playlist/tracks/del -> HTTP $code, body=${body.take(500)}")
-                if (code !in 200..299) return@withContext Result.failure(IOException("/playlist/tracks/del HTTP $code: ${body.take(200)}"))
-                Result.success(JSONObject(body))
-            } catch (e: Exception) {
-                Log.e(TAG, "deletePlaylistTracks exception", e)
-                Result.failure(e)
-            }
-        }
+    suspend fun collectPlaylist(name: String, sourceGid: String, sourceUserid: String, sourceListid: String,
+        auth: AuthSnapshot = authSnapshot()): Result<JSONObject> = playlistWriteOnce("/playlist/add", mapOf(
+        "name" to name, "type" to "1", "source" to "1", "list_create_gid" to sourceGid,
+        "list_create_userid" to sourceUserid, "list_create_listid" to sourceListid
+    ), auth)
+
+    suspend fun uncollectPlaylist(listid: String, auth: AuthSnapshot = authSnapshot()): Result<JSONObject> =
+        playlistWriteOnce("/playlist/del", mapOf("listid" to listid, "type" to "0"), auth)
 
     /** 专辑详情（对齐 Dart getAlbumDetail，kugou_api_client.dart:2722）：GET /album/detail?album_id=<id>。 */
     suspend fun getAlbumDetail(albumId: String): Result<JSONObject> = withContext(Dispatchers.IO) {

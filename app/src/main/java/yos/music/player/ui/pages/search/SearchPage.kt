@@ -597,6 +597,7 @@ fun SearchPage(
                                 source = PlaylistSelection.Source.Recommend,
                                 id = playlist.globalCollectionId
                                     ?: playlist.specialId.toString(),
+                                sourceGid = playlist.globalCollectionId,
                                 name = playlist.name,
                                 cover = playlist.cover ?: "",
                                 songCount = playlist.songCount
@@ -917,17 +918,20 @@ private fun ArtistResultRow(artist: KugouArtistBrief, onClick: () -> Unit) {
             .padding(horizontal = 22.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+            val imgContext = LocalContext.current
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(avatarUrl.value)
-                .crossfade(true)
-                .error(R.drawable.songcredits_monogram_person)
-                .placeholder(R.drawable.songcredits_monogram_person)
-                .fallback(R.drawable.songcredits_monogram_person)
-                .allowHardware(true)
-                .precision(Precision.INEXACT)
-                .size(128)
-                .build(),
+            model = remember(avatarUrl.value) {
+        ImageRequest.Builder(imgContext)
+                        .data(avatarUrl.value)
+                        .crossfade(true)
+                        .error(R.drawable.songcredits_monogram_person)
+                        .placeholder(R.drawable.songcredits_monogram_person)
+                        .fallback(R.drawable.songcredits_monogram_person)
+                        .allowHardware(true)
+                        .precision(Precision.INEXACT)
+                        .size(128)
+                        .build()
+        },
             contentDescription = artist.name,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -938,13 +942,13 @@ private fun ArtistResultRow(artist: KugouArtistBrief, onClick: () -> Unit) {
                     shape = CircleShape
                 }
                 .drawWithCache {
+                                        val outline = CircleShape.createOutline(
+                        Size(size.width, size.height),
+                        LayoutDirection.Ltr,
+                        density
+                    )
                     onDrawWithContent {
                         drawContent()
-                        val outline = CircleShape.createOutline(
-                            Size(size.width, size.height),
-                            LayoutDirection.Ltr,
-                            density
-                        )
                         drawOutline(
                             outline = outline,
                             color = Color.DarkGray.copy(alpha = 0.08f),

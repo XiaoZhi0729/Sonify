@@ -106,6 +106,40 @@ class PlaybackBlockStateTest {
         assertTrue(raise("a", PlaybackBlockState.Challenge.None, now = 2L))
     }
 
+    /**
+     * 回归真机事故：启动恢复队列 / 重建播放列表走 setMediaItems，会派发
+     * reason=PLAYLIST_CHANGED 的 transition。旧实现无条件 clear，说明框刚弹出就消失
+     * （用户看到"闪一下就没了"）。
+     */
+    @Test
+    fun queueRebuildForTheSameTrackKeepsThePrompt() {
+        raise("a", PlaybackBlockState.Challenge.EdtFallback, now = 1L)
+        PlaybackBlockState.clearIfOtherTrack("a")
+        assertTrue(PlaybackBlockState.block != null)
+        assertTrue(PlaybackBlockState.promptRequested)
+
+        // 真的换到另一首才作废
+        PlaybackBlockState.clearIfOtherTrack("b")
+        assertNull(PlaybackBlockState.block)
+        assertFalse(PlaybackBlockState.promptRequested)
+    }
+
+    @Test
+    fun unknownQueueKeepsThePromptButMissingOwnerIsLeftAlone() {
+        raise("a", PlaybackBlockState.Challenge.None, now = 1L)
+        // 队列被清空（mediaId=null）→ 上下文没了，作废
+        PlaybackBlockState.clearIfOtherTrack(null)
+        assertNull(PlaybackBlockState.block)
+
+        // block 归属未知（调试钩子/事件早于曲目落地）：任何 transition 都不自动收
+        PlaybackBlockState.raise(
+            mediaId = null, title = "t", challenge = PlaybackBlockState.Challenge.None,
+            eventId = null, edt = null, now = 2L
+        )
+        PlaybackBlockState.clearIfOtherTrack("a")
+        assertTrue(PlaybackBlockState.block != null)
+    }
+
     private fun raise(
         mediaId: String,
         challenge: PlaybackBlockState.Challenge,

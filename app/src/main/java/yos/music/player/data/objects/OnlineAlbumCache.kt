@@ -53,12 +53,11 @@ object OnlineAlbumCache {
     }
 
     /** 纯函数，便于单测：解析 + 逐条清洗；整份不可用（全毒/JSON 损坏）返回 null。 */
-    internal fun parseCached(json: String): List<KugouNewSong>? {
-        val parsed = runCatching { gson.fromJson<List<CachedTrack?>>(json, readType) }.getOrNull()
-            ?: return null
+    internal fun parseCached(json: String): List<KugouNewSong>? = runCatching {
+        val parsed = gson.fromJson<List<CachedTrack?>>(json, readType) ?: return@runCatching null
         val tracks = parsed.mapNotNull { it.toSongOrNull() }
-        return if (tracks.isEmpty() && parsed.isNotEmpty()) null else tracks
-    }
+        if (tracks.isEmpty() && parsed.isNotEmpty()) null else tracks
+    }.getOrNull()
 
     @Volatile
     private var dir: File? = null

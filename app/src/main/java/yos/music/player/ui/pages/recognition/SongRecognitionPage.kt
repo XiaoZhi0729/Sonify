@@ -283,10 +283,12 @@ private fun ResultCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (!song.coverUrl.isNullOrEmpty()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(song.coverUrl)
-                        .crossfade(true)
-                        .build(),
+                    model = remember(song.coverUrl) {
+                        ImageRequest.Builder(context)
+                            .data(song.coverUrl)
+                            .crossfade(true)
+                            .build()
+                    },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier

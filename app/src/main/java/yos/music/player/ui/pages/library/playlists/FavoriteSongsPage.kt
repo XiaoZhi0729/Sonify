@@ -43,14 +43,15 @@ fun FavoriteSongsPage(
     scrimTransition: PageScrimTransition? = null
 ) {
     val loggedIn = KugouAccountState.isLoggedIn
-    val selection = remember("FavoriteSongsPage_selection") { mutableStateOf<PlaylistSelection?>(null) }
+    val accountUserid = KugouAccountState.userid
+    val selection = remember(accountUserid) { mutableStateOf<PlaylistSelection?>(null) }
     val failed = remember("FavoriteSongsPage_failed") { mutableStateOf(false) }
 
     // 已有内容时的重新进入/对账走静默路径：不清空 selection（清空会卸载
     // OnlinePlaylistDetail，导致每次点 Tab 闪一次整屏 loading、列表滚动位置归零），
     // 也不把瞬时失败打成错误态；只有首次加载或登出才切 loading / error 分支。
     // 歌曲列表本身由 OnlinePlaylistDetail 的 playlistsRevision 静默 revalidate 更新。
-    LaunchedEffect(loggedIn, KugouSyncCoordinator.favoritesRevision.value) {
+    LaunchedEffect(loggedIn, accountUserid, KugouSyncCoordinator.favoritesRevision.value) {
         val silent = selection.value != null
         if (!loggedIn) {
             selection.value = null
@@ -80,7 +81,10 @@ fun FavoriteSongsPage(
             id = listid,
             name = fav.name,
             cover = cover,
-            songCount = fav.songCount
+            songCount = fav.songCount,
+            sourceGid = fav.sourceGid.takeIf { it.isNotBlank() },
+            canEditTracks = fav.canEditTracks,
+            ownerUserid = accountUserid
         )
         failed.value = false
     }
@@ -104,7 +108,7 @@ fun FavoriteSongsPage(
         }
 
         // key(id)：歌单身份真变了（如换账号）才重建详情页状态，避免残留上一份列表走静默路径
-        else -> key(sel.id) {
+        else -> key(accountUserid, sel.id) {
             OnlinePlaylistDetail(
                 navController = navController,
                 selection = sel,

@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 
 if ($Tid -eq 0) {
     # Main thread of the app: tid == tgid, and the comm is truncated to 15 chars by the kernel.
-    $m = Select-String -Path $Trace -Pattern '^\s*\S*sic\.player\.oss-\s*(\d+)\s+\(\s*(\d+)\)' |
+    $m = Select-String -Path $Trace -Pattern '^\s*\S*sonify\S*-\s*(\d+)\s+\(\s*(\d+)\)' |
         Select-Object -First 1
     if (-not $m) { throw "app main thread not found in $Trace" }
     $Tid = [int]$m.Matches[0].Groups[1].Value

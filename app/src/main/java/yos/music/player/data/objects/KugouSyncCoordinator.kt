@@ -80,6 +80,7 @@ object KugouSyncCoordinator {
         notifyArtistsChanged()
         CollectedAlbumsObject.ensureLoaded(force = true)
         notifyAlbumsChanged()
+        CollectedPlaylistsObject.ensureLoaded(force = true)
     }
 
     fun refreshAllAsync() {
@@ -93,6 +94,7 @@ object KugouSyncCoordinator {
             while (isActive) {
                 delay(intervalMs)
                 if (resyncFavoritesIfChanged()) notifyFavoritesChanged()
+                CollectedPlaylistsObject.ensureLoaded(force = true)
             }
         }
     }

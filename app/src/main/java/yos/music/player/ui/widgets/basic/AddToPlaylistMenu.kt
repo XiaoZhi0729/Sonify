@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -80,6 +81,7 @@ import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.BlacklistState
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.MyPlaylistsCache
 import yos.music.player.data.repositories.FavoriteRepository
 import yos.music.player.data.repositories.KugouPlaylist
@@ -147,6 +149,7 @@ fun SongAddToPlaylistButton(
     // 锚点仍由外层未变换的 Box 捕获，变换只作用在内层图标。
     val follow = rememberLiquidDropdownFollowState()
 
+    val menuAccount = KugouAccountState.userid
     var expanded by remember { mutableStateOf(false) }
     var retainedForExit by remember { mutableStateOf(false) }
     val menuActive = expanded || retainedForExit
@@ -169,6 +172,11 @@ fun SongAddToPlaylistButton(
     val anchor = remember { SongMenuAnchor() }
     var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
     val heightCap = if (menuActive) rememberAddToPlaylistHeightCap(anchorBounds) else 290.dp
+
+    LaunchedEffect(menuAccount) {
+        expanded = false
+        retainedForExit = false
+    }
 
     // 打开菜单时后台加载黑名单状态（歌单列表由面板自己按需加载）
     LaunchedEffect(expanded) {
@@ -563,18 +571,25 @@ fun AddToPlaylistPickerPanel(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val accountUserid = KugouAccountState.userid
     // 首帧直接吃内存缓存：重复打开不再闪加载行
-    val cachedOptions = remember {
+    val cachedOptions = remember(accountUserid) {
         MyPlaylistsCache.peek()?.let(::buildPlaylistOptions)
     }
     var loading by remember { mutableStateOf(cachedOptions == null) }
     var loginRequired by remember { mutableStateOf(false) }
     var loadFailed by remember { mutableStateOf(false) }
-    var options by remember { mutableStateOf(cachedOptions ?: emptyList()) }
+    var options by remember(accountUserid) { mutableStateOf(cachedOptions ?: emptyList()) }
     var confirmTarget by remember { mutableStateOf<PlaylistOption?>(null) }
     var adding by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    var retry by remember { mutableStateOf(0) }
+    val pickerAccount = remember { accountUserid }
+    LaunchedEffect(accountUserid) {
+        confirmTarget = null
+        if (pickerAccount != accountUserid) onDismiss()
+    }
+    LaunchedEffect(accountUserid, retry) {
         // 有缓存时列表已经在屏幕上，后台静默刷新；只有完全没数据才显示加载行
         loading = options.isEmpty()
         loginRequired = false
@@ -586,7 +601,7 @@ fun AddToPlaylistPickerPanel(
             return@LaunchedEffect
         }
         MyPlaylistsCache.get()
-            .onSuccess { options = buildPlaylistOptions(it) }
+            .onSuccess { if (accountUserid == KugouAccountState.userid) options = buildPlaylistOptions(it) }
             .onFailure {
                 // 刷新失败时保留缓存内容，只有本来就没数据才显示失败行
                 if (options.isEmpty()) loadFailed = true
@@ -626,7 +641,14 @@ fun AddToPlaylistPickerPanel(
             when {
                 loading -> PickerStatusRow(R.string.add_to_playlist_loading)
                 loginRequired -> PickerStatusRow(R.string.add_to_playlist_login_required)
-                loadFailed -> PickerStatusRow(R.string.add_to_playlist_load_failed)
+                loadFailed -> LiquidDropdownRow(
+                    text = stringResource(R.string.playlist_collect_load_failed),
+                    selected = false,
+                    onClick = { retry++ },
+                    isFirst = true,
+                    isLast = true,
+                    showSelectedIcon = false
+                )
                 options.isEmpty() -> PickerStatusRow(R.string.add_to_playlist_empty)
                 else -> options.forEachIndexed { index, option ->
                     LiquidDropdownRow(
@@ -681,14 +703,19 @@ fun AddToPlaylistPickerPanel(
             ),
             positiveContent = stringResource(R.string.common_ok),
             onPositive = {
-                if (adding) return@SonifyDialog
+                if (adding || accountUserid != KugouAccountState.userid || options.none { it.key == target.key }) return@SonifyDialog
                 adding = true
                 scope.launch {
                     val result = if (target.pendingLocalId != null) {
-                        PendingPlaylistStore.addSong(target.pendingLocalId, songTitle, hash)
+                        PendingPlaylistStore.addSong(
+                            target.pendingLocalId, songTitle, hash,
+                            artist = song.artistsName ?: defaultArtistsName,
+                            coverUrl = song.thumb?.toString().orEmpty()
+                        )
                     } else {
                         KugouRepository.addTracksToPlaylist(target.key, songTitle, hash)
                     }
+                    if (accountUserid != KugouAccountState.userid) return@launch
                     adding = false
                     confirmTarget = null
                     result
@@ -838,19 +865,20 @@ private fun PickerStatusRow(textRes: Int) {
  */
 private fun Modifier.fadeTopEdge(fade: Dp): Modifier = this
     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
-        drawContent()
+    .drawWithCache {
+        // 渐变只依赖 fade/density，cache 块建一次；写在 draw 里曾是每帧新建 Brush
         val fadePx = fade.toPx()
-        if (fadePx > 0f) {
-            drawRect(
-                brush = Brush.verticalGradient(
-                    0f to Color.Transparent,
-                    1f to Color.Black,
-                    startY = 0f,
-                    endY = fadePx,
-                ),
-                blendMode = BlendMode.DstIn,
-            )
+        val brush = if (fadePx > 0f) Brush.verticalGradient(
+            0f to Color.Transparent,
+            1f to Color.Black,
+            startY = 0f,
+            endY = fadePx,
+        ) else null
+        onDrawWithContent {
+            drawContent()
+            if (brush != null) {
+                drawRect(brush = brush, blendMode = BlendMode.DstIn)
+            }
         }
     }
 
@@ -861,6 +889,7 @@ private fun Modifier.fadeTopEdge(fade: Dp): Modifier = this
  */
 private fun buildPlaylistOptions(playlists: List<KugouPlaylist>): List<PlaylistOption> {
     val remote = playlists
+        .filter { it.canEditTracks }
         .filterNot { it.isDef == 1 && it.songCount == 0 }
         .mapNotNull { playlist ->
             val key = playlist.listid.ifEmpty { playlist.gid }
@@ -869,7 +898,7 @@ private fun buildPlaylistOptions(playlists: List<KugouPlaylist>): List<PlaylistO
         }
     val remoteNames = remote.mapTo(HashSet()) { it.name }
     val pending = PendingPlaylistStore.all()
-        .filter { !it.failed && !it.isBound && it.name !in remoteNames }
+        .filter { !KugouAccountState.userid.isNullOrBlank() && it.userid == KugouAccountState.userid && !it.failed && !it.isBound && it.name !in remoteNames }
         .map { PlaylistOption(it.localId, it.name, 0, pendingLocalId = it.localId) }
     return pending + remote
 }

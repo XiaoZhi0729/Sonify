@@ -13,6 +13,27 @@ class YosLyricGeometryTest {
     private val contentPaddingPx = 16
 
     @Test
+    fun topMaskEndsBeforeActiveLineForDifferentHeightsAndDensities() {
+        for (density in listOf(1f, 2.75f, 3.5f)) {
+            for (heightDp in listOf(100f, 400f, 650f, 900f)) {
+                val viewportPx = heightDp * density
+                val anchorPx = viewportPx * LYRIC_ACTIVE_ANCHOR_FRACTION
+                val endPx = lyricTopMaskEndPx(viewportPx, LYRIC_TOP_FADE_INSET_DP * density)
+                val expected = ((heightDp * LYRIC_ACTIVE_ANCHOR_FRACTION - LYRIC_TOP_FADE_INSET_DP).coerceAtLeast(0f)) * density
+                assertEquals(expected, endPx, 0.001f)
+                assertTrue("height=$heightDp density=$density", endPx <= anchorPx)
+            }
+        }
+    }
+
+    @Test
+    fun collapsedTopMaskNeverHasANegativeEnd() {
+        assertEquals(0f, lyricTopMaskEndPx(0f, 16f), 0f)
+        assertEquals(0f, lyricTopMaskEndPx(-100f, 16f), 0f)
+        assertEquals(0f, lyricTopMaskEndPx(100f, 16f), 0f)
+    }
+
+    @Test
     fun obstructionZeroMatchesLegacyCentering() {
         // 横屏（无底部遮挡，obstruction=0）时末句落点必须与旧公式逐像素一致，行为零变化。
         val expected = (viewportHeight / 2 - lastLineHeight / 2).coerceAtLeast(0)

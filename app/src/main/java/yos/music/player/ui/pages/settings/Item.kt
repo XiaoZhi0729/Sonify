@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -185,9 +186,8 @@ fun LabelItem(
         if (!superLink && showArrow) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_action_next), contentDescription = title,
-                modifier = Modifier
-                    .height(11.dp)
-                    .alpha(0.3f), tint = MaterialTheme.colorScheme.onBackground
+                modifier = Modifier.height(11.dp),
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
             )
         }
     }
@@ -293,7 +293,7 @@ fun DefaultItem(
                     text = desc,
                     fontSize = 13.2.sp,
                     lineHeight = 16.2.sp,
-                    modifier = Modifier.alpha(0.5f),
+                    color = LocalContentColor.current.copy(alpha = 0.5f),
                 )
             }
         }

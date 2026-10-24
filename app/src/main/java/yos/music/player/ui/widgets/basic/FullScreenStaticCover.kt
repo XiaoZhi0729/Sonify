@@ -101,20 +101,22 @@ internal fun FullScreenStaticCover(
     val url = albumUrl()
     val blurred = rememberBlurredCover(url, enabled = FullScreenCoverShowBlurLayer)
     val painter = rememberAsyncImagePainter(
-        model = ImageRequest.Builder(context)
-            .data(url)
-            // 静态封面没有进度驱动，crossfade 只会让切歌时多一层淡入。
-            .crossfade(false)
-            .error(R.drawable.placeholder_music_default_artwork)
-            .fallback(R.drawable.placeholder_music_default_artwork)
-            .placeholder(R.drawable.placeholder_music_default_artwork)
-            // 与外壳 morph 层同缓存槽（cover|RAW）→ 命中同一份位图
-            .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
-            .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
-            .allowHardware(true)
-            .precision(coil.size.Precision.EXACT)
-            .size(coil.size.Size.ORIGINAL)
-            .build()
+        model = remember(url) {
+            ImageRequest.Builder(context)
+                .data(url)
+                // 静态封面没有进度驱动，crossfade 只会让切歌时多一层淡入。
+                .crossfade(false)
+                .error(R.drawable.placeholder_music_default_artwork)
+                .fallback(R.drawable.placeholder_music_default_artwork)
+                .placeholder(R.drawable.placeholder_music_default_artwork)
+                // 与外壳 morph 层同缓存槽（cover|RAW）→ 命中同一份位图
+                .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
+                .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
+                .allowHardware(true)
+                .precision(coil.size.Precision.EXACT)
+                .size(coil.size.Size.ORIGINAL)
+                .build()
+        }
     )
 
     BoxWithConstraints(
@@ -138,15 +140,15 @@ internal fun FullScreenStaticCover(
         )
 
         // 2) 高清封面。节点尺寸必须 requiredSize：size() 会被父约束钳到层宽，
-        //    方框就退回 1.0×层宽，横向溢出消失。
+        //    方框就退回 1.0×层宽，横向溢出消失。外层高度包含底边延伸段，
+        //    否则内层画布会被父约束居中，导致方图上移 5dp、延伸段只露一半。
         Box(
             Modifier
-                .requiredSize(sharpSide)
+                .requiredSize(sharpSide, sharpCanvasHeight)
                 .align(Alignment.TopCenter)
                 // 坐标上报与手势挂在**未变换**的外层节点：morph 落点读的是布局坐标，
                 // 变换层若在外层，按压尚未回位就切页会把倾斜/缩放渗进 morph 源矩形。
-                // 外层保持 1.12×层宽的**正方形**（底边延伸段只加在内层画布上），
-                // 外壳 morph 的 album 端点因此不受延伸段影响。
+                // 宽度仍是 1.12×层宽；morph 端点只读 width，延伸段只改变报告高度。
                 .onGloballyPositioned { coordsOnChanged(it) }
                 .coverArtworkGesture(
                     state = coverState,
@@ -158,7 +160,7 @@ internal fun FullScreenStaticCover(
                 Modifier
                     // 内层画布比方图高 10dp：方图按 ContentScale.Crop 铺满整块画布，
                     // 底边因此多出这一段，再由 drawFullScreenCoverBottomFade 淡掉。
-                    // 它向下溢出外层方框 10dp（Box 不裁剪），页面级 clipToBounds 兜底。
+                    // 外层节点同样包含这 10dp，避免超出父约束时被垂直居中。
                     .requiredSize(sharpSide, sharpCanvasHeight)
                     .align(Alignment.TopCenter)
                     .graphicsLayer {

@@ -85,18 +85,27 @@ data class KugouPlaylistBrief(
  * 这类条目归「资料库›专辑」页，不进「我的在线歌单」。
  * [listCreateListid] 创建时传入的 list_create_listid（收藏专辑时=albumId），是 albumId 的首选来源。 */
 data class KugouPlaylist(
-    val listid: String,
-    val gid: String,
-    val name: String,
-    val coverUrl: String,
-    val songCount: Int,
-    val isDef: Int = 0,
-    val type: Int = 0,
-    val source: Int = 0,
-    val listCreateListid: String = "",
-    /** /user/playlist 的 specialid：收藏专辑条目在缺少 list_create_listid 时用它取 albumId。 */
-    val specialId: String = ""
-)
+    @SerializedName("listid") val listid: String,
+    @SerializedName("gid") val gid: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("coverUrl") val coverUrl: String,
+    @SerializedName("songCount") val songCount: Int,
+    @SerializedName("isDef") val isDef: Int = 0,
+    @SerializedName("type") val type: Int = 0,
+    @SerializedName("source") val source: Int = 0,
+    @SerializedName("listCreateListid") val listCreateListid: String = "",
+    @SerializedName("specialId") val specialId: String = "",
+    @SerializedName("listCreateUserid") val listCreateUserid: String = "",
+    @SerializedName("listCreateGid") val listCreateGid: String = "",
+    @SerializedName("isEdit") val isEdit: Boolean? = null
+) {
+    val isCollectedPlaylist: Boolean get() = type == 1 && (source == 1 || source == 3)
+    /** The original source gid is separate from this account's listid (the delete target). */
+    val sourceGid: String get() = if (!isCollectedPlaylist) gid else
+        listCreateGid
+    val canEditTracks: Boolean get() = type != 1 && !isCollectedPlaylist && source != 2 &&
+        (isEdit ?: (type == 0 && (source == 0 || source == 1)))
+}
 
 /** 精选歌单（/top/playlist 实测：data.special_list[]；封面 imgurl/flexible_cover 含 {size}）。
  *  globalCollectionId 是取歌唯一 ID（specialId 仅展示/标识，不可用于 /playlist/track/all/new，
@@ -287,7 +296,9 @@ internal fun parseSpecialPlaylists(
 /** 歌单内歌曲（领域模型）。字段按 /playlist/track/all/new 真机实测：
  *  hash、name（可能为"歌手 - 歌名.mp3"形式）、singerinfo[].name、timelen（毫秒）、
  *  album 系双写、封面在 trans_param.union_cover（含 {size} 占位符）。
- *  fileId/mixsongId/albumId 真机实测存在，供收藏增删协议使用（fileid 删除优先，hash 兜底）。 */
+ *  fileId/mixsongId/albumId 真机实测存在，供收藏增删协议使用（fileid 删除优先，hash 兜底）。
+ *  sort/collecttime 实测存在：sort 是服务端手动排列位置（0 = 最新/最上），显示顺序以它为准
+ *  （见 [PlaylistTrackOrder]）；collecttime 是收藏时间（unix 秒），仅作并列次键。 */
 // @SerializedName 冻结缓存 JSON 键名：Gson 反射用运行时字段名，release 混淆后写成 a/b/c，
 // 与 debug（原名）及跨版本互相读不出，字段整体为 null（2026-10-13 启动崩溃循环根因之一）
 data class KugouPlaylistTrack(
@@ -299,7 +310,9 @@ data class KugouPlaylistTrack(
     @SerializedName("coverUrl") val coverUrl: String?,
     @SerializedName("fileId") val fileId: Long = 0,
     @SerializedName("mixsongId") val mixsongId: Long = 0,
-    @SerializedName("albumId") val albumId: Long = 0
+    @SerializedName("albumId") val albumId: Long = 0,
+    @SerializedName("sort") val sortOrder: Int = PLAYLIST_SORT_MISSING,
+    @SerializedName("collecttime") val collectTime: Long = 0
 )
 
 /** 在线歌词结果：LRC（行级）+ KRC（逐字，可能为 null）+ 翻译/音译。 */
@@ -1799,47 +1812,58 @@ object KugouRepository {
      * 云端添加收藏（纯服务端调用，不改状态）。
      * 严格复用 md3Music 协议：data = "歌名|hash|albumId|mixsongid" → /playlist/tracks/add。
      */
-    suspend fun cloudAddFavorite(hash: String, title: String): Result<Unit> {
-        val fav = findMyFavoritePlaylist()
-            ?: return Result.failure(IllegalStateException("未找到系统「我喜欢」歌单（is_def=2）"))
-        val id = songIdentity[hash.lowercase()]
-        val data = "$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}"
-        return KugouApiService.getInstance()
-            .addPlaylistTracks(fav.listid.ifEmpty { fav.gid }, data)
-            .map { Unit }
+    private suspend fun writablePlaylist(
+        requestedListid: String, auth: yos.music.player.native.AuthSnapshot
+    ): String {
+        requirePlaylistAuth(auth)
+        require(requestedListid.isNotBlank()) { "缺少账号 listid" }
+        // Unbound local entries belong to PendingPlaylistStore; never send local ids or source gids upstream.
+        require(!requestedListid.startsWith("local_")) { "歌单仍在创建，请通过挂起歌单入口操作" }
+        val entry = getAllUserPlaylistEntries(auth).getOrThrow().firstOrNull { it.listid == requestedListid }
+            ?: throw IllegalArgumentException("当前账号中不存在该歌单")
+        require(entry.canEditTracks) { "该歌单不可编辑歌曲" }
+        requirePlaylistAuth(auth)
+        return entry.listid
     }
 
-    /**
-     * 云端移除收藏（纯服务端调用，不改状态）。
-     * 严格复用 md3Music 协议：fileid 优先、hash 兜底（Rust 两种均支持）→ /playlist/tracks/del。
-     */
-    suspend fun cloudRemoveFavorite(hash: String): Result<Unit> {
-        val fav = findMyFavoritePlaylist()
-            ?: return Result.failure(IllegalStateException("未找到系统「我喜欢」歌单（is_def=2）"))
-        val fileId = songIdentity[hash.lowercase()]?.fileId ?: 0
-        val fileids = if (fileId > 0) fileId.toString() else hash
-        return KugouApiService.getInstance()
-            .deletePlaylistTracks(fav.listid.ifEmpty { fav.gid }, fileids)
-            .map { Unit }
-    }
+    suspend fun cloudAddFavorite(hash: String, title: String): Result<Unit> =
+        writePlaylistTracks(null, title, hash, null, favorite = true)
 
-    /** 向任意自有歌单加歌（/playlist/tracks/add，协议 name|hash|albumId|mixsongId）。 */
-    suspend fun addTracksToPlaylist(listid: String, title: String, hash: String): Result<Unit> {
-        // songIdentityFor 会回源 MMKV：进程重启后内存表为空时仍能拿到 albumId/mixsongId，
-        // 避免退化成 0|0 导致加歌失败（与 PendingPlaylistStore.addSong 同口径）。
-        val id = songIdentityFor(hash)
-        val data = "$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}"
-        return KugouApiService.getInstance()
-            .addPlaylistTracks(listid, data)
-            .map { Unit }
-    }
+    /** All track writes share the ownership/editability check, including the system favorite entry. */
+    suspend fun cloudRemoveFavorite(hash: String): Result<Unit> =
+        writePlaylistTracks(null, "", hash, songIdentity[hash.lowercase()]?.fileId ?: 0, favorite = true)
 
-    /** 从任意自有歌单删歌（/playlist/tracks/del，fileid 优先、hash 兜底）。 */
-    suspend fun removeTrackFromPlaylist(listid: String, fileId: Long, hash: String): Result<Unit> {
-        val fileids = if (fileId > 0) fileId.toString() else hash
-        return KugouApiService.getInstance()
-            .deletePlaylistTracks(listid, fileids)
-            .map { Unit }
+    suspend fun addTracksToPlaylist(listid: String, title: String, hash: String): Result<Unit> =
+        writePlaylistTracks(listid, title, hash, null)
+
+    suspend fun removeTrackFromPlaylist(listid: String, fileId: Long, hash: String): Result<Unit> =
+        writePlaylistTracks(listid, "", hash, fileId)
+
+    private suspend fun writePlaylistTracks(
+        listid: String?, title: String, hash: String, removeFileId: Long?, favorite: Boolean = false
+    ): Result<Unit> {
+        val auth = KugouApiService.authSnapshot()
+        return try {
+            requirePlaylistAuth(auth)
+            val requested = if (favorite) getAllUserPlaylistEntries(auth).getOrThrow()
+                .firstOrNull { it.isDef == 2 && !it.isCollectedPlaylist }?.listid
+                ?: throw IllegalStateException("未找到系统「我喜欢」歌单") else listid.orEmpty()
+            val target = writablePlaylist(requested, auth)
+            val api = KugouApiService.getInstance()
+            val result = if (removeFileId != null) {
+                api.deletePlaylistTracks(target, if (removeFileId > 0) removeFileId.toString() else hash, auth)
+            } else {
+                val id = songIdentityFor(hash)
+                api.addPlaylistTracks(target, "$title|$hash|${id?.albumId ?: 0}|${id?.mixsongId ?: 0}", auth)
+            }
+            requirePlaylistAuth(auth)
+            requirePlaylistBusiness(result.getOrThrow())
+            Result.success(Unit)
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
     }
 
     /**
@@ -2804,6 +2828,133 @@ object KugouRepository {
         }
     }
 
+    /** Complete account entries, including album entries; callers apply their own source filter. */
+    suspend fun getAllUserPlaylistEntries(
+        auth: yos.music.player.native.AuthSnapshot = KugouApiService.authSnapshot(),
+        pageSize: Int = 100
+    ): Result<List<KugouPlaylist>> = withContext(Dispatchers.IO) {
+        if (!auth.isLoggedIn) return@withContext Result.failure(IllegalStateException("未登录酷狗账号"))
+        loadAllUserPlaylistPages(pageSize) { page ->
+            requirePlaylistAuth(auth)
+            KugouApiService.getInstance().getMyPlaylists(page, pageSize, auth).mapCatching { json ->
+                requirePlaylistAuth(auth)
+                if (playlistBusinessOutcome(toPlainAny(json) as Map<*, *>) == PlaylistBusinessOutcome.FAILURE) {
+                    throw PlaylistBusinessException("获取歌单失败")
+                }
+                val entries = parsePlaylists(json) ?: throw IOException("歌单响应缺少列表字段")
+                val data = json.optJSONObject("data") ?: json
+                val array = data.optJSONArray("info") ?: data.optJSONArray("list") ?: data.optJSONArray("special_list")
+                    ?: throw IOException("歌单响应缺少列表字段")
+                if (array.length() != entries.size || entries.any { it.listid == "null" || it.gid == "null" }) {
+                    throw IOException("歌单响应包含无效条目，无法保证完整性")
+                }
+                UserPlaylistPage(entries, parseOptionalInt(data.toFieldMap(), "total", "total_count", "count"))
+            }
+        }
+    }
+
+    internal fun requirePlaylistAuth(auth: yos.music.player.native.AuthSnapshot) {
+        if (!auth.isLoggedIn || KugouApiService.authSnapshot().version != auth.version) {
+            throw kotlinx.coroutines.CancellationException("歌单账号已变化")
+        }
+    }
+
+    private fun requirePlaylistBusiness(json: JSONObject) {
+        when (playlistBusinessOutcome(toPlainAny(json) as Map<*, *>)) {
+            PlaylistBusinessOutcome.SUCCESS -> Unit
+            PlaylistBusinessOutcome.FAILURE -> throw PlaylistBusinessException(
+                json.optString("errmsg").ifBlank { json.optString("error").ifBlank { "歌单操作失败" } })
+            PlaylistBusinessOutcome.UNKNOWN -> throw PlaylistMutationUnknownException("云端未确认操作结果，请等待对账")
+        }
+    }
+
+    /** Source identity must come from the gid or an exact detail record, never the current account. */
+    private suspend fun resolvePlaylistSource(sourceGid: String): PlaylistSourceIdentity {
+        playlistSourceIdentity(sourceGid)?.let { return it }
+        val json = KugouApiService.getInstance().getPlaylistDetail(sourceGid).getOrThrow()
+        val data = json.opt("data")
+        val candidates = when (data) {
+            is JSONArray -> (0 until data.length()).mapNotNull { data.optJSONObject(it) }
+            is JSONObject -> {
+                val array = data.optJSONArray("info") ?: data.optJSONArray("list")
+                if (array != null) (0 until array.length()).mapNotNull { array.optJSONObject(it) } else listOf(data)
+            }
+            else -> emptyList()
+        }
+        val exact = candidates.firstOrNull { it.optString("global_collection_id") == sourceGid }
+            ?: throw IllegalArgumentException("无法确认歌单来源身份")
+        val uid = exact.optString("list_create_userid").takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+            ?: exact.optString("userid").takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+        val lid = exact.optString("list_create_listid").takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+            ?: exact.optString("listid").takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+        return PlaylistSourceIdentity(sourceGid, uid ?: throw IllegalArgumentException("缺少来源 userid"),
+            lid ?: throw IllegalArgumentException("缺少来源 listid"))
+    }
+
+    suspend fun collectPlaylist(
+        sourceGid: String, name: String,
+        auth: yos.music.player.native.AuthSnapshot = KugouApiService.authSnapshot()
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            requirePlaylistAuth(auth)
+            require(sourceGid.isNotBlank()) { "缺少来源 gid" }
+            val source = resolvePlaylistSource(sourceGid)
+            require(source.userid != auth.userid) { "不能收藏自己创建的歌单" }
+            requirePlaylistAuth(auth)
+            val response = KugouApiService.getInstance().collectPlaylist(name, source.gid, source.userid, source.listid, auth)
+            val json = response.getOrElse { throw PlaylistMutationUnknownException("收藏结果未知，请等待云端对账", it) }
+            requirePlaylistAuth(auth)
+            requirePlaylistBusiness(json)
+            // Only listid/id is an account entry id. gid is never a delete target.
+            val data = json.optJSONObject("data")
+            Result.success(listOfNotNull(data, json).firstNotNullOfOrNull { envelope ->
+                listOf("listid", "list_id", "ListId").firstNotNullOfOrNull { key ->
+                    envelope.optString(key).takeIf { it.toLongOrNull()?.let { id -> id > 0 } == true }
+                }
+            }.orEmpty())
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            if (error is PlaylistMutationUnknownException) {
+                val found = getAllUserPlaylistEntries(auth).getOrNull()?.firstOrNull {
+                    it.isCollectedPlaylist && it.sourceGid == sourceGid && it.listid.isNotBlank()
+                }
+                if (found != null) return@withContext Result.success(found.listid)
+            }
+            Result.failure(error)
+        }
+    }
+
+    suspend fun uncollectPlaylist(
+        entry: KugouPlaylist,
+        auth: yos.music.player.native.AuthSnapshot = KugouApiService.authSnapshot()
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            requirePlaylistAuth(auth)
+            require(entry.isCollectedPlaylist && entry.sourceGid.isNotBlank()) { "不是可取消收藏的歌单条目" }
+            val current = getAllUserPlaylistEntries(auth).getOrThrow().firstOrNull {
+                it.isCollectedPlaylist && it.sourceGid == entry.sourceGid &&
+                    (entry.listid.isBlank() || it.listid == entry.listid)
+            } ?: throw IllegalStateException("收藏记录尚未同步，请刷新后重试")
+            require(current.listid.isNotBlank() && current.listid != "0") { "收藏条目缺少账号 listid" }
+            requirePlaylistAuth(auth)
+            val json = KugouApiService.getInstance().uncollectPlaylist(current.listid, auth).getOrElse {
+                throw PlaylistMutationUnknownException("取消收藏结果未知，请等待云端对账", it)
+            }
+            requirePlaylistBusiness(json)
+            Result.success(Unit)
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            if (error is PlaylistMutationUnknownException) {
+                val all = getAllUserPlaylistEntries(auth).getOrNull()
+                if (all != null && all.none { it.isCollectedPlaylist && it.sourceGid == entry.sourceGid &&
+                        (entry.listid.isBlank() || it.listid == entry.listid) }) return@withContext Result.success(Unit)
+            }
+            Result.failure(error)
+        }
+    }
+
     /**
      * 解析 /user/playlist 响应为领域模型。缺少列表字段返回 null（与「空列表」区分）。
      * 抽成独立函数是为了让「我的歌单」与「收藏的专辑」两条链路共用同一套字段解析，
@@ -2839,7 +2990,14 @@ object KugouRepository {
                     // 2 = 收藏的专辑（/playlist/add type=1&source=2 创建）
                     source = p.optInt("source", 0),
                     listCreateListid = p.optString("list_create_listid", ""),
-                    specialId = p.optString("specialid", "")
+                    specialId = p.optString("specialid", ""),
+                    listCreateUserid = p.optString("list_create_userid", "").takeUnless { it == "null" }.orEmpty(),
+                    listCreateGid = p.optString("list_create_gid", "").takeUnless { it == "null" }.orEmpty(),
+                    isEdit = when (p.opt("is_edit")?.toString()) {
+                        "1", "true" -> true
+                        "0", "false" -> false
+                        else -> null
+                    }
                 )
             }.getOrNull()
         }.filter { it.listid.isNotEmpty() || it.gid.isNotEmpty() }
@@ -3102,9 +3260,10 @@ object KugouRepository {
      * 响应带 data.count 总数；单页请求会导致百首歌单只入队前 30 首，
      * 故按页拉全（pagesize=200，对齐 Dart playlist_page.dart 全量策略），
      * 上限 9999 首防异常响应无限翻页。
-     * 顺序：普通歌单服务端即存储顺序，原样返回；系统歌单（is_def != 0：「默认收藏」is_def==1、
-     * 「我喜欢」is_def==2）服务端返回顺序与普通歌单不同，统一反转成「最新添加在最前」
-     * （与「我喜欢」同一逻辑，对齐 MD3 playlist_page 的显示语义），仅命中系统歌单，不影响其他歌单。
+     * 顺序：以 payload 自带的 `sort` 字段升序为准（0 = 最新/最上，即酷狗客户端从上到下的顺序，
+     * 见 [PlaylistTrackOrder]）。服务端数组是按 collecttime 旧→新返回的，两者并不等价——实测
+     * 100 首里 48 首位置不同，靠「是否系统歌单」整体反转去猜只能对一半。
+     * `sort` 缺失（精选歌单 schema / 旧缓存）才退回旧逻辑：系统歌单（is_def != 0）反转成最新在前。
      * 实测字段：timelen 单位毫秒；歌手在 singerinfo[].name；
      * name 可能为"歌手 - 歌名.mp3"形式，展示前去除扩展名与歌手前缀。
      */
@@ -3148,16 +3307,15 @@ object KugouRepository {
                     if (batch.size < pageSize || (total in 0..maxSongs && all.size >= total)) break
                     page++
                 }
-                // 仅当请求的就是系统歌单（is_def != 0：「默认收藏」1、「我喜欢」2）时反转
-                // （listid/gid 与 findSystemPlaylistIds 同源归一化，PlaylistSelection.id 也是
-                // listid.ifEmpty { gid }，可直接比对）。老资历用户的收藏也可能落在「默认收藏」，
-                // 故两类系统歌单走同一反转逻辑，保证顺序一致（最新添加在最前）。
-                // findSystemPlaylistIds 失败返回空集，不阻断正常加载。
-                val systemIds = runCatching { findSystemPlaylistIds() }.getOrDefault(emptySet())
-                val ordered = if (listid in systemIds) {
-                    all.asReversed()
-                } else {
-                    all
+                // 主路径：payload 的 sort 升序（酷狗客户端顺序）。排序信息来自响应本身，
+                // 不再依赖 findSystemPlaylistIds() 那次额外请求——它失败时会静默返回空集，
+                // 让整份列表在两个方向之间跳。
+                val ordered = PlaylistTrackOrder.byServerSort(all) ?: run {
+                    // 兜底：sort 缺失。系统歌单（is_def != 0：「默认收藏」1、「我喜欢」2）服务端
+                    // 数组是 collecttime 旧→新，反转成「最新添加在最前」。findSystemPlaylistIds
+                    // 失败返回空集，此时保持服务端顺序，不阻断正常加载。
+                    val systemIds = runCatching { findSystemPlaylistIds() }.getOrDefault(emptySet())
+                    if (listid in systemIds) all.asReversed() else all
                 }
                 Result.success(ordered.take(maxSongs))
             } catch (e: Exception) {
@@ -3510,7 +3668,10 @@ suspend fun getRecommendPlaylistSongCount(globalCollectionId: String): Result<In
                     ),
                     fileId = fileId,
                     mixsongId = mixsongId,
-                    albumId = albumIdNum
+                    albumId = albumIdNum,
+                    // 显示顺序的唯一依据（见 PlaylistTrackOrder）；collecttime 仅并列次键
+                    sortOrder = s.optInt("sort", PLAYLIST_SORT_MISSING),
+                    collectTime = s.optLong("collecttime", 0)
                 ).also {
                     // 顺带登记歌曲身份（收藏增删协议需要）
                     registerSongIdentity(hash, albumIdNum, mixsongId, fileId)

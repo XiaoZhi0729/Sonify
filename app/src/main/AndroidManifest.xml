@@ -43,6 +43,9 @@
         android:enableOnBackInvokedCallback="true"
         android:largeHeap="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <!-- 性能专项：允许 shell 侧 Perfetto / simpleperf 采集应用级数据（API 29+ 生效）。
+             不改变运行时代码路径；发版前如需收紧可移除。 -->
+        <profileable android:shell="true" />
         <!-- ColorOS-Live-Lyrics-Bridge 接入协议 §10：声明参与 OPlus 媒体历史/黑名单策略，
              防止部分 ColorOS 在媒体会话进入 OPlus 管线前过滤外部播放器包。 -->
         <meta-data

@@ -163,9 +163,10 @@ internal fun ArtistSongSection(
     error: String?,
     pagerState: PagerState,
     onRetry: () -> Unit,
-    onPlayAt: (Int) -> Unit
+    onPlayAt: (Int) -> Unit,
+    probeName: String = ""
 ) {
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().measureProbe(probeName).drawProbe(probeName)) {
         when {
             songs.isNotEmpty() -> SongsPagerSection(songs, pagerState, onPlayAt)
             loading -> ArtistSongsSkeleton()
@@ -188,9 +189,19 @@ internal fun SongsPagerSection(
     pagerState: PagerState,
     onPlayAt: (Int) -> Unit
 ) {
-    val displaySongs = remember(songs) { songs.map { KugouRepository.toDisplayMediaItem(it) } }
+    val displaySongs = remember(songs) {
+        val t0 = System.nanoTime()
+        val r = songs.map { KugouRepository.toDisplayMediaItem(it) }
+        val ms = (System.nanoTime() - t0) / 1_000_000.0
+        if (ms >= 2.0) android.util.Log.w("ArtistPerf", "mapDisplay n=${songs.size} ${"%.1f".format(ms)}ms")
+        r
+    }
     val pageKeys = remember(songs) {
-        songs.chunked(4).mapIndexed { index, column -> "artist-page-$index-${column.first().hash}" }
+        val t0 = System.nanoTime()
+        val r = songs.chunked(4).mapIndexed { index, column -> "artist-page-$index-${column.first().hash}" }
+        val ms = (System.nanoTime() - t0) / 1_000_000.0
+        if (ms >= 2.0) android.util.Log.w("ArtistPerf", "pageKeys n=${songs.size} ${"%.1f".format(ms)}ms")
+        r
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val startInset = 20.dp
@@ -206,13 +217,21 @@ internal fun SongsPagerSection(
             contentPadding = PaddingValues(start = startInset, end = endInset),
             verticalAlignment = Alignment.Top,
             key = { page -> pageKeys.getOrElse(page) { "artist-page-$page-empty" } },
-            beyondViewportPageCount = 1
+            // 0 而非 1：每页 4 行 MusicList（每行带 ShadowImage 离屏层），预组合前后各一页
+            // 意味着单个 Pager 常驻 12 行、本页两个 Pager 共 24 行。滑动时这些行的组合/
+            // 布局在单帧内成批发生（实测平板 p90 组合+测量 91ms）。翻页动画由 Pager 自己
+            // 处理，预组合只为「翻页瞬间不空」，代价远大于收益。
+            beyondViewportPageCount = 0
         ) { page ->
-            Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().measureProbe("Page$page").drawProbe("Page$page")) {
                 repeat(4) { row ->
                     val index = page * 4 + row
                     val item = displaySongs.getOrNull(index) ?: return@repeat
-                    MusicList(item, horizontalPadding = 0.dp) { onPlayAt(index) }
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.fillMaxWidth().measureProbe("Row$row").drawProbe("Row$row")
+                    ) {
+                        MusicList(item, horizontalPadding = 0.dp) { onPlayAt(index) }
+                    }
                     if (row < 3 && index + 1 < songs.size) {
                         OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
                     }
@@ -278,9 +297,10 @@ internal fun ArtistAlbumsSection(
     onRetry: () -> Unit,
     onOpen: (KugouNewAlbum) -> Unit,
     sharedTransitionScope: SharedTransitionScope? = null,
-    animatedVisibilityScope: AnimatedVisibilityScope? = null
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    probeName: String = ""
 ) {
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().measureProbe(probeName).drawProbe(probeName)) {
         when {
             albums.isNotEmpty() -> ArtistAlbumRail(
                 albums = albums,
@@ -341,7 +361,8 @@ private fun ArtistAlbumRail(
         // key 带下标：上游偶发重复 albumId 时，纯 albumId 作 key 会触发 Pager 的
         // 「Key was already used」崩溃；旧 LazyRow 的 key 同样带下标，行为保持一致。
         key = { page -> "artist-album-$page-${albums[page].albumId}" },
-        beyondViewportPageCount = 1
+        // 同上：专辑横排也去掉前后页预组合（卡片带阴影离屏层，成本同样成批落在单帧）
+        beyondViewportPageCount = 0
     ) { page ->
         val album = albums[page]
         NewAlbumCard(
@@ -366,6 +387,7 @@ internal fun ArtistLatestAlbumCard(
     underlayColor: Color,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    probeName: String = "",
     onOpen: (KugouNewAlbum) -> Unit
 ) {
     val isDark = isFlamingoInDarkMode()
@@ -392,6 +414,8 @@ internal fun ArtistLatestAlbumCard(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .measureProbe(probeName)
+            .drawProbe(probeName)
             .padding(horizontal = 20.dp, vertical = 6.dp)
             .dropShadow(shape, 0.16f, ShadowType.Small)
             .clip(shape)

@@ -46,13 +46,15 @@ fun Modifier.dropShadow(
     val offsetX = shadowType.offsetX * width + (width * (1f - shadowType.areaWeight)) / 2
     val offsetY = shadowType.offsetY * height + (height * (1f - shadowType.areaWeight)) / 2
 
-    onDrawBehind {
-        if (blurPx > 0) {
-            paint.asFrameworkPaint().apply {
-                maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
-            }
+    // maskFilter 只依赖 blurPx（size 决定），cache 块里设一次；
+    // 写在 onDrawBehind 里曾是每次绘制新建 BlurMaskFilter（列表滚动热路径）。
+    if (blurPx > 0) {
+        paint.asFrameworkPaint().apply {
+            maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
         }
+    }
 
+    onDrawBehind {
             val canvas = this.drawContext.canvas
         canvas.save()
             canvas.translate(

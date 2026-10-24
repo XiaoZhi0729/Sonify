@@ -20,7 +20,7 @@
 param(
     [string]$Serial = "",
     [int]$SettleMs = 2500,
-    [string]$Pkg = "yos.music.player.oss",
+    [string]$Pkg = "com.sonify.music",
     # Dot-source the helpers without running the cases: ". tools\quality_case_runner.ps1 -HelpersOnly".
     # Ad-hoc work used to carve the header out with Substring and Invoke-Expression it - but that
     # header contains the param() block, so executing it silently reset $Serial to "" and every adb

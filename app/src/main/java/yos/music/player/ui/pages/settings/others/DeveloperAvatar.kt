@@ -70,9 +70,9 @@ private fun Modifier.avatarFace(): Modifier = this
         shape = CircleShape
     }
     .drawWithCache {
+        val outline = CircleShape.createOutline(size, layoutDirection, this)
         onDrawWithContent {
             drawContent()
-            val outline = CircleShape.createOutline(size, layoutDirection, this)
             drawOutline(
                 outline = outline,
                 color = Color.Gray.copy(alpha = 0.1f),

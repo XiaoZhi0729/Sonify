@@ -1803,17 +1803,20 @@ private fun CommentAvatar(url: String?, size: Dp) {
         contentAlignment = Alignment.Center
     ) {
         if (!url.isNullOrBlank()) {
+                val imgContext = LocalContext.current
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(url)
-                    .crossfade(true)
-                    .error(R.drawable.songcredits_monogram_person)
-                    .placeholder(R.drawable.songcredits_monogram_person)
-                    .fallback(R.drawable.songcredits_monogram_person)
-                    .allowHardware(true)
-                    .precision(Precision.INEXACT)
-                    .size(if (size >= 32.dp) 128 else 72)
-                    .build(),
+                model = remember(url) {
+        ImageRequest.Builder(imgContext)
+                            .data(url)
+                            .crossfade(true)
+                            .error(R.drawable.songcredits_monogram_person)
+                            .placeholder(R.drawable.songcredits_monogram_person)
+                            .fallback(R.drawable.songcredits_monogram_person)
+                            .allowHardware(true)
+                            .precision(Precision.INEXACT)
+                            .size(if (size >= 32.dp) 128 else 72)
+                            .build()
+        },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

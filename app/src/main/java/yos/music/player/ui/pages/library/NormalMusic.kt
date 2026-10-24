@@ -271,9 +271,8 @@ fun NormalMusic(navController: NavController) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(start = 88.dp, end = 16.dp)
-                                        .alpha(0.15f)
                                         .height(0.5.dp)
-                                        .background(Color.Black withNight Color.White)
+                                        .background((Color.Black withNight Color.White).copy(alpha = 0.15f))
                                 )
                             }
                         }
@@ -394,7 +393,6 @@ private fun SongsSortMenuDivider() =
         modifier = Modifier
             .padding(start = 22.dp, end = 14.dp)
             .padding(vertical = 5.dp)
-            .alpha(0.1f)
             .height(0.65.dp)
-            .background(Color.Black withNight Color.White)
+            .background((Color.Black withNight Color.White).copy(alpha = 0.1f))
     )

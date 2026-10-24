@@ -66,6 +66,48 @@ class AppNavigationTest {
     }
 
     @Test
+    fun playlistSelectionPreservesExplicitReadonlyMetadata() {
+        val original = PlaylistSelection(
+            source = PlaylistSelection.Source.User,
+            id = "account-list-42",
+            name = "A + B & 夜歌",
+            cover = "",
+            songCount = 7,
+            intro = "收藏 / 简介?",
+            sourceGid = "collection_3_123_456_0",
+            canEditTracks = false,
+            ownerUserid = "123"
+        )
+        assertEquals(original, PlaylistSelection.fromRoute(original.toRoute()))
+        assertEquals(false, PlaylistSelection.fromRoute(original.toRoute())?.canEditTracks)
+    }
+
+    @Test
+    fun playlistSelectionKeepsUnknownPermissionsForLegacyRoutes() {
+        val parsed = PlaylistSelection.fromRoute(
+            "OnlinePlaylistDetail?source=User&playlistId=42&name=Legacy&cover="
+        )
+        assertNull(parsed?.sourceGid)
+        assertNull(parsed?.canEditTracks)
+        assertNull(parsed?.ownerUserid)
+        assertEquals(parsed, PlaylistSelection.fromRoute(parsed?.toRoute()))
+    }
+
+    @Test
+    fun playlistSelectionPreservesEditableMetadata() {
+        val original = PlaylistSelection(
+            source = PlaylistSelection.Source.User,
+            id = "42",
+            name = "Own",
+            cover = "",
+            songCount = 0,
+            canEditTracks = true,
+            ownerUserid = "789"
+        )
+        assertEquals(original, PlaylistSelection.fromRoute(original.toRoute()))
+    }
+
+    @Test
     fun playlistSelectionRejectsMissingIdentity() {
         assertNull(PlaylistSelection.fromRoute("OnlinePlaylistDetail?source=User"))
     }

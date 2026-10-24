@@ -230,6 +230,15 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // 状态、主线程读取时抛 "Reading a state that was created after the snapshot was taken"。
         runCatching { yos.music.player.data.libraries.MusicLibrary.recentlyPlayed }
 
+        // 迷你播放器在 MediaSession 异步连接前就会组合；先用上次保存的条目填充标题和封面，
+        // 避免首帧显示默认占位。媒体会话连接后仍按下方恢复流程校正当前条目，不会因此自动播放。
+        runCatching {
+            MusicLibrary.loadPlayStatus().music?.let { lastMusic ->
+                yos.music.player.code.MediaController.musicPlaying.value = lastMusic
+                MediaViewModelObject.bitmap.value = lastMusic.thumb
+            }
+        }
+
         // 缓存元数据索引回填（只跑一次）：把存量缓存（本功能上线前已缓存的歌）用
         // 歌单/专辑首屏缓存 + 已存队列 + 最近播放补上 hash→歌名/歌手/封面，供设置页按曲清理显示歌名。
         CoroutineScope(Dispatchers.IO).launch {

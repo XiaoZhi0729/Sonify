@@ -238,6 +238,8 @@ import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.YosLyricScrollState
 import yos.music.player.ui.widgets.YosLyricViewLib
 import yos.music.player.ui.widgets.LAST_LINE_OBSTRUCTION_FRACTION
+import yos.music.player.ui.widgets.LYRIC_TOP_FADE_INSET_DP
+import yos.music.player.ui.widgets.lyricTopMaskEndPx
 import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.audio.MusicQualityIndicator
 import yos.music.player.ui.widgets.basic.AddToPlaylistPickerPanel
@@ -2455,64 +2457,52 @@ internal fun Lyric(
                         blendMode = BlendMode.Plus
                     }
                     val rect = Rect(0f, 0f, size.width, size.height)
-                    val colors = if (weightLambda()) {
-                        listOf(
-                            Color.Transparent,
-                            Color(0x59000000),
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color(0x59000000),
-                            Color(0x21000000),
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent,
-                            Color.Transparent
+                    val topFadeEnd = lyricTopMaskEndPx(
+                        size.height, LYRIC_TOP_FADE_INSET_DP.dp.toPx(),
+                    )
+                    val topGradient = if (topFadeEnd > 0f) {
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black),
+                            startY = 0f,
+                            endY = topFadeEnd,
+                        )
+                    } else null
+                    val bottomGradient = if (weightLambda()) {
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black,
+                                Color(0x59000000),
+                                Color(0x21000000),
+                                Color.Transparent,
+                            ),
+                            startY = size.height * (7f / 17f),
+                            endY = size.height * (10f / 17f),
                         )
                     } else {
-                        listOf(
-                            // 顶部淡出（4 项 / 20% 区域）
-                            Color.Transparent,
-                            Color(0x59000000),
-                            Color.Black,
-                            Color.Black,
-                            // 中段实色（歌词主体完全可见，12 项 / 60% 区域）
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            Color.Black,
-                            // 底部淡出（4 项 / 20% 区域，与顶部对称）
-                            Color(0x59000000),
-                            Color(0x3F000000),
-                            Color(0x21000000),
-                            Color.Transparent
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black,
+                                Color(0x59000000),
+                                Color(0x3F000000),
+                                Color(0x21000000),
+                                Color.Transparent,
+                            ),
+                            startY = size.height * (15f / 19f),
+                            endY = size.height,
                         )
                     }
-                    val gradient = Brush.verticalGradient(colors)
 
                     onDrawWithContent {
                         val canvas = this.drawContext.canvas
                         canvas.saveLayer(rect, overlayPaint)
                         drawContent()
-                        drawRect(
-                            brush = gradient,
-                            blendMode = BlendMode.DstIn
-                        )
+                        topGradient?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+                        bottomGradient?.let {
+                            drawRect(
+                                brush = it,
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
                         canvas.restore()
                     }
                 }
@@ -4305,6 +4295,7 @@ internal fun PlayerControl(
                         Row(
                             Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = playButtonSize + 20.dp)
                                 .padding(vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically

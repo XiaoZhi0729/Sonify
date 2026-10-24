@@ -110,6 +110,7 @@ internal fun ArtistCollectButton(
     iconTint: Color = Color.Unspecified,
     containerColor: Color? = null,
     motionEffects: Boolean = true,
+    description: String? = null,
     onClick: () -> Unit
 ) {
     ArtistRoundShell(
@@ -125,7 +126,7 @@ internal fun ArtistCollectButton(
     ) { dim ->
         CollectIconMorph(
             collected = collected,
-            contentDescription = stringResource(
+            contentDescription = description ?: stringResource(
                 id = if (collected) {
                     R.string.album_collect_remove
                 } else {

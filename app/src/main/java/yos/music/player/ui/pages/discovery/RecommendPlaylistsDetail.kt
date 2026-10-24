@@ -137,6 +137,7 @@ fun RecommendPlaylistsDetail(
                         PlaylistSelection(
                             source = PlaylistSelection.Source.Recommend,
                             id = playlist.globalCollectionId,
+                            sourceGid = playlist.globalCollectionId,
                             name = playlist.name,
                             cover = playlist.artworkUrl,
                             songCount = DiscoveryObject.recommendPlaylistSongCounts[playlist.globalCollectionId]

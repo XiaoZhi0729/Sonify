@@ -5,6 +5,7 @@ import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.google.gson.reflect.TypeToken
 import yos.music.player.data.repositories.KugouPlaylistTrack
+import yos.music.player.data.repositories.PLAYLIST_SORT_MISSING
 import java.io.File
 
 /**
@@ -35,7 +36,9 @@ object OnlinePlaylistCache {
         @SerializedName("coverUrl") val coverUrl: String? = null,
         @SerializedName("fileId") val fileId: Long = 0L,
         @SerializedName("mixsongId") val mixsongId: Long = 0L,
-        @SerializedName("albumId") val albumId: Long = 0L
+        @SerializedName("albumId") val albumId: Long = 0L,
+        @SerializedName("sort") val sortOrder: Int? = null,
+        @SerializedName("collecttime") val collectTime: Long? = null
     )
 
     private val readType = object : TypeToken<List<CachedTrack?>>() {}.type
@@ -54,17 +57,18 @@ object OnlinePlaylistCache {
             coverUrl = dto.coverUrl?.takeIf { it.isNotBlank() },
             fileId = dto.fileId,
             mixsongId = dto.mixsongId,
-            albumId = dto.albumId
+            albumId = dto.albumId,
+            sortOrder = dto.sortOrder ?: PLAYLIST_SORT_MISSING,
+            collectTime = dto.collectTime ?: 0L
         )
     }
 
     /** 纯函数，便于单测：解析 + 逐条清洗；整份不可用（全毒/JSON 损坏）返回 null。 */
-    internal fun parseCached(json: String): List<KugouPlaylistTrack>? {
-        val parsed = runCatching { gson.fromJson<List<CachedTrack?>>(json, readType) }.getOrNull()
-            ?: return null
+    internal fun parseCached(json: String): List<KugouPlaylistTrack>? = runCatching {
+        val parsed = gson.fromJson<List<CachedTrack?>>(json, readType) ?: return@runCatching null
         val tracks = parsed.mapNotNull { it.toTrackOrNull() }
-        return if (tracks.isEmpty() && parsed.isNotEmpty()) null else tracks
-    }
+        if (tracks.isEmpty() && parsed.isNotEmpty()) null else tracks
+    }.getOrNull()
 
     @Volatile
     private var dir: File? = null
@@ -74,8 +78,10 @@ object OnlinePlaylistCache {
             dir ?: File(context.filesDir, DIR_NAME).also { it.mkdirs() }.also { dir = it }
         }
 
+    // 键前缀带版本：v2 起曲目携带 sort（显示顺序依据），v1 落盘的 JSON 没有它，
+    // 读出来会排不出顺序。改了曲目顺序语义就必须升版本，别让旧文件蒙对一次。
     private fun fileFor(context: Context, key: String): File =
-        File(dir(context), "pl_" + key.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".json")
+        File(dir(context), "pl_v2_" + key.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".json")
 
     fun read(context: Context, key: String): List<KugouPlaylistTrack>? {
         if (key.isBlank()) return null
@@ -88,6 +94,11 @@ object OnlinePlaylistCache {
         val json = runCatching { f.readText() }.getOrNull() ?: return null
         val tracks = parseCached(json)
         if (tracks == null) {
+            f.delete()
+            return null
+        }
+        // 无 sort 的旧格式还原不出顺序：整份作废，交给网络重新拉
+        if (tracks.isNotEmpty() && tracks.all { it.sortOrder == PLAYLIST_SORT_MISSING }) {
             f.delete()
             return null
         }

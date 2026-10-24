@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -63,7 +64,7 @@ fun LibraryOverview(
 ) {
     val openLibrarySongs = onOpenLibrarySongs ?: { navController.toUI(UI.NormalMusic) }
     SettingBackground {
-        val folders = folders.sortedBy { it.name }
+        val folders = remember(folders) { folders.sortedBy { it.name } }
     Title(title = stringResource(id = R.string.settings_library_overview),
         onBack = {
             navController.popBackStack()

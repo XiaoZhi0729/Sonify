@@ -443,6 +443,9 @@ internal fun NowPlayingLandscape(
     }
 }
 
+internal fun tabletLandscapeFittedCoverSize(targetSize: Dp, availableHeight: Dp): Dp =
+    minOf(targetSize, (availableHeight - 8.dp).coerceAtLeast(0.dp))
+
 /**
  * 横屏媒体列（平板）：封面 + 标题 + 控件（进度/时间/传输/音量），固定宽度、左对齐。
  * 所在容器的 start padding 由 [NowPlayingLandscape] 动画控制（居中 ↔ 左对齐）。
@@ -484,16 +487,23 @@ private fun LandscapeMediaColumn(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 封面（保留播放/暂停呼吸缩放）
-        LandscapeAlbumCover(
-            coverSize = coverSize,
-            breathInsetMax = breathInsetMax,
-            isPlayingStatusLambda = isPlayingStatusLambda,
-            thisMusicPlayingLambda = thisMusicPlayingLambda,
-            albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
-            albumCoverSuppressed = albumCoverSuppressed,
-            onCoverClick = onCoverClick
-        )
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            val fittedCoverSize = tabletLandscapeFittedCoverSize(coverSize, maxHeight)
+            LandscapeAlbumCover(
+                coverSize = fittedCoverSize,
+                breathInsetMax = breathInsetMax,
+                isPlayingStatusLambda = isPlayingStatusLambda,
+                thisMusicPlayingLambda = thisMusicPlayingLambda,
+                albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
+                albumCoverSuppressed = albumCoverSuppressed,
+                onCoverClick = onCoverClick
+            )
+        }
 
         // 标题/歌手 + 收藏等（与进度条左右缘对齐：补偿 PlayerControl 内部 25dp padding）
         LandscapeTitleBlock(

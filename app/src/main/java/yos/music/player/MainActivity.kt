@@ -55,6 +55,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -280,7 +281,9 @@ class MainActivity : BaseActivity() {
                     else -> yos.music.player.data.objects.PlaybackBlockState.Challenge.None
                 }
                 yos.music.player.data.objects.PlaybackBlockState.raise(
-                    mediaId = "debug-block",
+                    // 归属未知：启动时播放器还在恢复队列，这里给真实 mediaId 会被
+                    // 那次 PLAYLIST_CHANGED 立刻清掉，演示就看不到弹窗了。
+                    mediaId = null,
                     title = "Debug",
                     challenge = challenge,
                     eventId = if (mode == "eventid") "debug_event_id" else null,
@@ -1904,24 +1907,18 @@ class MainActivity : BaseActivity() {
                                             // Background remains mounted while the shell morphs, so album changes never expose a transparent frame.
                                             Box(
                                                 modifier = Modifier
+                                                    // Keep the full-screen page top-aligned while centering it
+                                                    // horizontally in the narrowing shell. The unbounded wrapper
+                                                    // avoids Placeable's centering offset for oversized children.
+                                                    // Keep unbounded=true and this modifier outside requiredSize.
+                                                    .wrapContentSize(
+                                                        Alignment.TopCenter,
+                                                        unbounded = true
+                                                    )
                                                     .requiredSize(
                                                         with(density) { parentWidth.intValue.toDp() },
                                                         with(density) { parentHeight.intValue.toDp() }
                                                     )
-                                                    .align(Alignment.TopCenter)
-                                                    // 播放页比壳高，默认会被居中放置（相对壳顶上浮
-                                                    // (壳高−屏高)/2）。补偿回**顶边对齐**：页面内容与
-                                                    // 封面一样随壳顶同步下移——否则收起途中"只有封面在
-                                                    // 往下走"、标题/按钮只走一半（真机反馈）。
-                                                    // offset lambda 在布局期读实时壳高，不触发重组。
-                                                    .offset {
-                                                        IntOffset(
-                                                            0,
-                                                            ((parentHeight.intValue -
-                                                                    yosBottomSheetConfig.shellHeightPx) / 2f)
-                                                                .roundToInt()
-                                                        )
-                                                    }
                                                     .graphicsLayer {
                                                         alpha = yosBottomSheetConfig.playerAlpha
                                                     }
@@ -1940,20 +1937,15 @@ class MainActivity : BaseActivity() {
                                             // 全屏播放器内容：双维固定测量 + 顶边对齐，常驻。
                                             Box(
                                                 modifier = Modifier
+                                                    // 与背景层同一套：顶边对齐壳顶（见上方注释）。
+                                                    .wrapContentSize(
+                                                        Alignment.TopCenter,
+                                                        unbounded = true
+                                                    )
                                                     .requiredSize(
                                                         with(density) { parentWidth.intValue.toDp() },
                                                         with(density) { parentHeight.intValue.toDp() }
                                                     )
-                                                    .align(Alignment.TopCenter)
-                                                    // 与背景层同一补偿：页面顶边对齐壳顶（见上）。
-                                                    .offset {
-                                                        IntOffset(
-                                                            0,
-                                                            ((parentHeight.intValue -
-                                                                    yosBottomSheetConfig.shellHeightPx) / 2f)
-                                                                .roundToInt()
-                                                        )
-                                                    }
                                                     .graphicsLayer {
                                                         compositingStrategy =
                                                             CompositingStrategy.ModulateAlpha
@@ -2901,24 +2893,26 @@ private fun CoverMorphLayer(
     // 表现为展开起点封面完全消失。绘制在容器自身的画布上则完全没有这个问题：
     // 画布尺寸恒等于外壳，坐标就是外壳坐标，不存在任何对齐偏移。
     val painter = coil.compose.rememberAsyncImagePainter(
-        model = coil.request.ImageRequest.Builder(context)
-            .data(url)
-            // morph 进度由手势驱动，crossfade 会与它叠加出二次淡入，故关闭。
-            .crossfade(false)
-            .error(R.drawable.placeholder_music_default_artwork)
-            .fallback(R.drawable.placeholder_music_default_artwork)
-            .placeholder(R.drawable.placeholder_music_default_artwork)
-            // 与全屏 Album 封面同缓存槽（cover|RAW），命中同一份位图；
-            // LOW 槽作占位，RAW 未就绪时先显示迷你条那张，不闪空图。
-            .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
-            .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
-            .allowHardware(true)
-            // 与全屏 Album 封面完全同参数（EXACT + ORIGINAL）：Coil 会校验缓存
-            // 位图与请求尺寸一致，参数不同会退化为重新解码，既掉帧又让 morph
-            // 中途出现画质跳变。同参 → 命中同一份位图。
-            .precision(coil.size.Precision.EXACT)
-            .size(coil.size.Size.ORIGINAL)
-            .build()
+        model = remember(url) {
+            coil.request.ImageRequest.Builder(context)
+                .data(url)
+                // morph 进度由手势驱动，crossfade 会与它叠加出二次淡入，故关闭。
+                .crossfade(false)
+                .error(R.drawable.placeholder_music_default_artwork)
+                .fallback(R.drawable.placeholder_music_default_artwork)
+                .placeholder(R.drawable.placeholder_music_default_artwork)
+                // 与全屏 Album 封面同缓存槽（cover|RAW），命中同一份位图；
+                // LOW 槽作占位，RAW 未就绪时先显示迷你条那张，不闪空图。
+                .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
+                .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
+                .allowHardware(true)
+                // 与全屏 Album 封面完全同参数（EXACT + ORIGINAL）：Coil 会校验缓存
+                // 位图与请求尺寸一致，参数不同会退化为重新解码，既掉帧又让 morph
+                // 中途出现画质跳变。同参 → 命中同一份位图。
+                .precision(coil.size.Precision.EXACT)
+                .size(coil.size.Size.ORIGINAL)
+                .build()
+        }
     )
 
     Canvas(

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -59,7 +60,7 @@ import yos.music.player.ui.widgets.basic.Title
 
 @Composable
 fun PlayLists(navController: NavController) {
-    val playLists = playList.sortedBy { it.name }
+    val playLists = remember(playList) { playList.sortedBy { it.name } }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     Title(title = stringResource(id = R.string.page_library_playlists),
@@ -179,13 +180,13 @@ private fun LazyItemScope.PlayListItem(playList: PlayList, itemClick: () -> Unit
                     this.shape = shape
                 }
                 .drawWithCache {
+                                        val outline = shape.createOutline(
+                        Size(size.width, size.height),
+                        LayoutDirection.Ltr,
+                        density
+                    )
                     onDrawWithContent {
                         drawContent()
-                        val outline = shape.createOutline(
-                            Size(size.width, size.height),
-                            LayoutDirection.Ltr,
-                            density
-                        )
                         drawOutline(
                             outline = outline,
                             color = Color.Gray.copy(alpha = 0.1f),
@@ -252,13 +253,13 @@ private fun LazyItemScope.PlayListItem(playListType: PlayListType, title: String
                     this.shape = shape
                 }
                 .drawWithCache {
+                                        val outline = shape.createOutline(
+                        Size(size.width, size.height),
+                        LayoutDirection.Ltr,
+                        density
+                    )
                     onDrawWithContent {
                         drawContent()
-                        val outline = shape.createOutline(
-                            Size(size.width, size.height),
-                            LayoutDirection.Ltr,
-                            density
-                        )
                         drawOutline(
                             outline = outline,
                             color = Color.Gray.copy(alpha = 0.1f),
