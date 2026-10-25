@@ -134,6 +134,21 @@ fun UserInterfaceSetting(navController: NavController) =
 
                         RoundColumn {
                             SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_nowplaying_show_comments_entry),
+                                // desc = stringResource(id = R.string.settings_performance_ui_nowplaying_show_comments_entry_desc),
+                                onClick = {
+                                    SettingsLibrary.NowPlayingShowCommentsEntry =
+                                        !SettingsLibrary.NowPlayingShowCommentsEntry
+                                },
+                                checkedLambda = { SettingsLibrary.NowPlayingShowCommentsEntry }
+                            )
+                        }
+
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_nowplaying_show_comments_entry_desc))
+                        GroupSpacerMedium()
+
+                        RoundColumn {
+                            SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album),
                                 // desc = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album_desc),
                                 onClick = {

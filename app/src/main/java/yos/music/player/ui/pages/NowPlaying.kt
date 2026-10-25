@@ -250,6 +250,9 @@ import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
 import yos.music.player.ui.widgets.basic.LiquidDropdownPlacement
 import yos.music.player.ui.widgets.basic.LiquidDropdownProgress
 import yos.music.player.ui.widgets.basic.LiquidDropdownRow
+import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
+import yos.music.player.ui.widgets.basic.liquidDropdownHeightCap
+import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.PlaybackBlockChip
@@ -258,16 +261,22 @@ import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.isBlocked
 import yos.music.player.ui.widgets.basic.rememberSongAvailability
 import yos.music.player.ui.widgets.basic.handleBlockedClick
-import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
-import yos.music.player.ui.widgets.basic.liquidDropdownHeightCap
 import yos.music.player.ui.widgets.liquid.YosSwitch
-import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
+import yos.music.player.ui.widgets.basic.LocalBottomOverlayHeight
+import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
+import yos.music.player.ui.widgets.dropdown.DropdownTriggerState
+import yos.music.player.ui.widgets.dropdown.LiquidDropdownLayout
+import yos.music.player.ui.widgets.dropdown.LiquidOverlayDropdownPopup
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerAlpha
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerMeasure
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerState
+import yos.music.player.ui.widgets.dropdown.stackBelowAnchorPositionProvider
 
 
 @Stable
@@ -593,9 +602,12 @@ fun NowPlaying(
         }
         // 本地歌曲没有酷狗评论资源：入口按钮整个不出现（底部行退回三个入口）。
         // 判定与评论区内部一致，都用在线 hash（kugouHash 只对 kugou-online-* 生效）。
-        val showCommentsEntry = thisMusicPlaying.value?.kugouHash() != null
+        // 设置开关关闭时同样隐藏，评论页自动退回逻辑复用同一判定。
+        val showCommentsEntry =
+            SettingsLibrary.NowPlayingShowCommentsEntry && thisMusicPlaying.value?.kugouHash() != null
         // 正在看评论时切到本地歌：入口已隐藏，必须自动退回封面页，否则用户没有出口。
-        LaunchedEffect(thisMusicPlaying.value?.mediaId) {
+        // showCommentsEntry 也作 key：停在评论页时关掉设置开关，同样要立即退回。
+        LaunchedEffect(thisMusicPlaying.value?.mediaId, showCommentsEntry) {
             if (nowPageLambda() == Comment && !showCommentsEntry) {
                 nowPageOnChanged(Album)
             }
@@ -1714,52 +1726,61 @@ internal fun PlayingList(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // 排序（破坏性重排，语义对齐上游 sortPlaylist）
-                            Box {
+                            // 走 1.6.5 玻璃弹窗引擎：与音质/「更多」菜单同材质同动画
+                            val sortTrigger = rememberDropdownTriggerState(showSortMenu)
+                            Box(modifier = Modifier.dropdownTriggerMeasure(sortTrigger)) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_sort),
                                     contentDescription = stringResource(id = R.string.queue_sort),
                                     modifier = Modifier
                                         .size(26.dp)
+                                        .dropdownTriggerAlpha(sortTrigger)
                                         .clickable { showSortMenu = true }
                                         .padding(3.dp)
                                 )
-                                DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(id = R.string.queue_sort_title_asc)) },
-                                        onClick = {
-                                            showSortMenu = false
+                                LiquidOverlayDropdownPopup(
+                                    show = showSortMenu,
+                                    onDismissRequest = { showSortMenu = false },
+                                    onDismissFinished = sortTrigger::onDismissFinished,
+                                    backdrop = LocalTitlePageBackdrop.current,
+                                    surfaceAlpha = 0.6f,
+                                    collapseSize = sortTrigger.size,
+                                ) {
+                                    val sortOptions = listOf(
+                                        R.string.queue_sort_title_asc to { descending: Boolean ->
                                             queueScope.launch {
-                                                MediaController.sortQueue(compareBy { it.title ?: "" })
+                                                MediaController.sortQueue(compareBy { it.title ?: "" }, descending = descending)
                                             }
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(id = R.string.queue_sort_title_desc)) },
-                                        onClick = {
-                                            showSortMenu = false
+                                        },
+                                        R.string.queue_sort_title_desc to { descending: Boolean ->
                                             queueScope.launch {
-                                                MediaController.sortQueue(compareBy { it.title ?: "" }, descending = true)
+                                                MediaController.sortQueue(compareBy { it.title ?: "" }, descending = descending)
                                             }
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(id = R.string.queue_sort_duration_asc)) },
-                                        onClick = {
-                                            showSortMenu = false
+                                        },
+                                        R.string.queue_sort_duration_asc to { descending: Boolean ->
                                             queueScope.launch {
-                                                MediaController.sortQueue(compareBy { it.duration ?: 0L })
+                                                MediaController.sortQueue(compareBy { it.duration ?: 0L }, descending = descending)
                                             }
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(id = R.string.queue_sort_duration_desc)) },
-                                        onClick = {
-                                            showSortMenu = false
+                                        },
+                                        R.string.queue_sort_duration_desc to { descending: Boolean ->
                                             queueScope.launch {
-                                                MediaController.sortQueue(compareBy { it.duration ?: 0L }, descending = true)
+                                                MediaController.sortQueue(compareBy { it.duration ?: 0L }, descending = descending)
                                             }
-                                        }
+                                        },
                                     )
+                                    sortOptions.forEachIndexed { index, (labelRes, action) ->
+                                        LiquidDropdownRow(
+                                            text = stringResource(id = labelRes),
+                                            selected = false,
+                                            showSelectedIcon = false,
+                                            isFirst = index == 0,
+                                            isLast = index == sortOptions.lastIndex,
+                                            onClick = {
+                                                showSortMenu = false
+                                                action(index == 1 || index == 3)
+                                            }
+                                        )
+                                    }
                                 }
                             }
 
@@ -2774,6 +2795,10 @@ private fun NowPlayingMoreMenu(
     val sleepOpen = section == MoreSection.Sleep
     val playlistsOpen = section == MoreSection.Playlists
 
+    // 跟手滑选：一级入口行 + 倍速二级纯行菜单（歌单/睡眠含滑块与列表，不接）
+    val dragSelect = remember { DropdownPanelDragSelectState() }
+    val speedDragSelect = remember { DropdownPanelDragSelectState() }
+
     // ---------- 一级：两行入口 ----------
     // 不能 if (!visible) return：弹层靠常驻组合播退出动画（同 MusicQualityIndicator 的用法）
     LiquidDropdownLayout(
@@ -2785,14 +2810,16 @@ private fun NowPlayingMoreMenu(
         backdrop = LocalTitlePageBackdrop.current,
         recedeFraction = { recede.value },
         // 逐帧进度回传给按钮本体：图标随面板的揭示方向下沉/收缩/淡出（与音质胶囊同一套联动）
-        onFractionProgress = onAnchorProgress
+        onFractionProgress = onAnchorProgress,
+        dragSelectState = dragSelect
     ) {
         // 宽度钉死让父子两块面板对齐（列宽取前 8 个子项固有宽度，不钉会随内容跳）；
         // 高度按锚点到屏底余量封顶，超出部分走列自带的 verticalScroll 内滚
         LiquidDropdownColumn(
             modifier = Modifier
                 .width(MoreMenuPanelWidth)
-                .heightIn(max = liquidDropdownHeightCap(anchorBounds))
+                .heightIn(max = liquidDropdownHeightCap(anchorBounds)),
+            onFitsOnScreen = { fits -> dragSelect.fitsOnScreen = fits }
         ) {
             if (showArtist) {
                 LiquidDropdownRow(
@@ -2860,7 +2887,9 @@ private fun NowPlayingMoreMenu(
         backdrop = LocalTitlePageBackdrop.current,
         placement = LiquidDropdownPlacement.StackBelowAnchor,
         // 宿主 slots 是 HashMap 快照、插入序不可控，靠 zIndex 显式压在父面板之上
-        zIndex = 1f
+        zIndex = 1f,
+        // 跟手滑选只给倍速（纯行菜单）；睡眠面板含滑块/Toggle，歌单是列表——手势会抢
+        dragSelectState = if (displayedSection == MoreSection.Speed) speedDragSelect else null
     ) {
         if (displayedSection == MoreSection.Playlists) {
             currentSong?.let { song ->
@@ -2875,7 +2904,8 @@ private fun NowPlayingMoreMenu(
             LiquidDropdownColumn(
                 modifier = Modifier
                     .width(MoreMenuPanelWidth)
-                    .heightIn(max = liquidDropdownHeightCap(subAnchor))
+                    .heightIn(max = liquidDropdownHeightCap(subAnchor)),
+                onFitsOnScreen = { fits -> speedDragSelect.fitsOnScreen = fits }
             ) {
                 if (displayedSection == MoreSection.Speed) {
                     MoreSpeedOptions.forEachIndexed { index, speed ->

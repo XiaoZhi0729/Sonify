@@ -384,12 +384,14 @@ internal fun NowPlayingLandscape(
 
         }
 
-        // 翻译切换（右上角）
+        // 翻译切换（右上角）。
+        // top=19dp：贴顶放置时按钮可点区整个落进系统右上角下拉手势的死区
+        // （真机实测 OPD 横屏注入点按全部无效），下移 15dp 让出该区域。
         Row(
             Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
-                .padding(top = 4.dp, end = 24.dp)
+                .padding(top = 19.dp, end = 24.dp)
         ) {
             TranslationToggleButton(
                 translation = translation,
@@ -425,8 +427,8 @@ internal fun NowPlayingLandscape(
                 nowPage = nowPageLambda
             )
 
-            // 本地歌曲没有评论资源：入口不出现
-            if (thisMusicPlayingLambda()?.kugouHash() != null) {
+            // 本地歌曲没有评论资源：入口不出现；设置开关关闭同样隐藏
+            if (SettingsLibrary.NowPlayingShowCommentsEntry && thisMusicPlayingLambda()?.kugouHash() != null) {
                 CommentEntryButton(
                     modifier = Modifier.width(56.dp),
                     onComments = onComments,
@@ -971,8 +973,8 @@ private fun NowPlayingLandscapePhone(
                             nowPage = nowPageLambda
                         )
 
-                        // 本地歌曲没有评论资源：入口不出现
-                        if (thisMusicPlayingLambda()?.kugouHash() != null) {
+                        // 本地歌曲没有评论资源：入口不出现；设置开关关闭同样隐藏
+                        if (SettingsLibrary.NowPlayingShowCommentsEntry && thisMusicPlayingLambda()?.kugouHash() != null) {
                             CommentEntryButton(
                                 modifier = Modifier.width(56.dp),
                                 onComments = onComments,

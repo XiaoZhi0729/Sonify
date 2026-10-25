@@ -91,6 +91,9 @@ import yos.music.player.native.KugouApiService
 import yos.music.player.ui.navigation.LocalArtistNavigator
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
+import yos.music.player.ui.widgets.dropdown.LocalDropdownPanelDragSelect
+import yos.music.player.ui.widgets.dropdown.dropdownPanelEntry
 
 /** 两块页面（一级菜单 / 歌单列表）共用固定宽度：列宽按内容算，换页会跳宽。 */
 private val AddToPlaylistPanelWidth = 216.dp
@@ -227,6 +230,9 @@ fun SongAddToPlaylistButton(
             )
         }
 
+        // 跟手滑选：面板级**单一竖轴状态 + 二维命中**——顶排横钮靠 X 区间区分、
+        // 下方行靠 Y 区间区分，一次手势可跨区域自由滑选；歌单列表页置 null 让行回 clickable
+        val dragSelect = remember { DropdownPanelDragSelectState() }
         LiquidDropdownLayout(
             expanded = expanded,
             anchorBounds = anchorBounds,
@@ -235,6 +241,7 @@ fun SongAddToPlaylistButton(
             surfaceAlpha = 0.6f,
             backdrop = LocalTitlePageBackdrop.current,
             onFractionProgress = follow::onProgress,
+            dragSelectState = if (page == AddToPlaylistPage.Actions) dragSelect else null,
         ) {
             AddToPlaylistPanel(
                 page = page,
@@ -448,7 +455,9 @@ private fun AddToPlaylistPageContent(
                 .width(AddToPlaylistPanelWidth)
                 .verticalScroll(rememberScrollState())
         ) {
-            // 顶部竖版动作区（对齐参考图）：图标在上、文字在下，两个按钮等分宽度
+            // 顶部竖版动作区（对齐参考图）：图标在上、文字在下，两个按钮等分宽度。
+            // 六个选项共用面板的单一滑选手势：竖轴状态下顶排三钮靠**二维命中的
+            // X 区间**区分（同一条 Y 带），与下方文字行可在一次手势里连续滑选
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -760,17 +769,32 @@ private fun TopActionButton(
     val contentColor = Color.Black withNight Color.White
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    // 面板滑选状态（引擎下发的竖轴 + 二维命中）：顶排三钮靠 X 区间区分，
+    // 与下方文字行共用同一次手势
+    val dragSelect = LocalDropdownPanelDragSelect.current
+    val buttonShape = YosRoundedCornerShape(17.dp)
     Column(
         modifier = modifier
             .height(56.dp)
-            .clip(YosRoundedCornerShape(17.dp))
-            .drawBehind {
-                if (pressed) drawRect(contentColor.copy(alpha = 0.10f))
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
+            .clip(buttonShape)
+            .then(
+                if (dragSelect != null) {
+                    Modifier.dropdownPanelEntry(
+                        enabled = true,
+                        highlightShape = buttonShape,
+                        action = onClick,
+                    )
+                } else {
+                    Modifier
+                        .drawBehind {
+                            if (pressed) drawRect(contentColor.copy(alpha = 0.10f))
+                        }
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onClick,
+                        )
+                }
             )
             .padding(horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

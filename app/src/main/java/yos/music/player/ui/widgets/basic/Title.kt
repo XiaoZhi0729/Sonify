@@ -803,7 +803,7 @@ internal class TitleBarGlassContext(
     val shadowAlpha: () -> Float
 )
 
-private val LocalTitleBarGlass = compositionLocalOf<TitleBarGlassContext?> { null }
+internal val LocalTitleBarGlass = compositionLocalOf<TitleBarGlassContext?> { null }
 
 /**
  * 设置页玻璃弹层（LiquidDropdown）的采样源：Title 页滚动内容层背景。

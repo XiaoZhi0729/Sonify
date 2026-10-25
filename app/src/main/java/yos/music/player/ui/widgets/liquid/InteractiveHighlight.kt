@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.util.fastCoerceIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -29,7 +30,24 @@ class InteractiveHighlight(
     private val position: (Size, Offset) -> Offset = { _, offset -> offset },
     // 手势层叠在被选中 Tab 上方，普通点击不会穿透到底下的 Tab 按钮；
     // "按下后未拖动即抬起"视为点按当前选中 Tab（iOS 再点回根部语义）
-    private val onTap: () -> Unit = {}
+    private val onTap: () -> Unit = {},
+    /**
+     * 光晕半径倍率（NexioSchedule 1.6.5 InteractiveHighlight 同义）：实际半径 = 基准 × 1.5 × 本值。
+     * 在绘制期读取，可传会变的值（如下拉面板的展开进度）让光晕随状态收放。
+     */
+    private val radiusScale: () -> Float = { 1f },
+    /**
+     * 光晕半径上限（dp）。null = 直接用节点自身 minDimension（既有调用点行为不变）。
+     * 非 null 时取 min(自身尺寸, 本值)：收起态的小圆按钮不会被大基准漫出圆外。
+     */
+    private val radiusBaseDp: Dp? = null,
+    /**
+     * 浅色模式的径向峰值。默认 0.15 = 既有调用点（顶栏玻璃圆钮等）的观感；
+     * 下拉面板按 1.6.5 的全局规则传 0.05（近白底加白会被截断成白斑，必须压低）。
+     */
+    private val lightPeakAlpha: Float = 0.15f,
+    /** 深色模式峰值恒为 0.15；构造期传入（绘制期读不到 Composable 主题）。 */
+    private val isDarkMode: Boolean = false,
 ) {
     private val press = Animatable(0f, 0.001f)
     private val location = Animatable(Offset.Zero, Offset.VectorConverter, Offset.VisibilityThreshold)
@@ -39,6 +57,31 @@ class InteractiveHighlight(
     // LiquidTopBarButton 需要在绘制期读取按压进度（layerBlock 缩放）与按压位移（向手指偏移）
     val pressProgress: Float get() = press.value
     val offset: Offset get() = location.value - start
+
+    /**
+     * 外部驱动接口（与 [gestureModifier] 同一套动画，供已消费指针事件的手势层
+     * 直接调用）：滑选等独占手势会消费事件，自挂的 inspectDragGestures 看到
+     * isConsumed 即取消——高光/形变需要由手势层经这三个方法全程驱动。
+     * 坐标是**本节点局部坐标系**。
+     */
+    fun externalDragStart(position: Offset) {
+        start = position
+        animationScope.launch {
+            launch { press.animateTo(1f, spring(0.5f, 300f, 0.001f)) }
+            launch { location.snapTo(start) }
+        }
+    }
+
+    fun externalDragMove(position: Offset) {
+        animationScope.launch { location.snapTo(position) }
+    }
+
+    fun externalDragEnd() {
+        animationScope.launch {
+            launch { press.animateTo(0f, spring(0.5f, 300f, 0.001f)) }
+            launch { location.animateTo(start, spring(0.5f, 300f, Offset.VisibilityThreshold)) }
+        }
+    }
 
     // 弥散高光：官方 demo 同款 AGSL，径向 smoothstep 渐隐 + Plus 混合；
     // 之前简化成 drawCircle 纯色圆，边缘生硬，视觉上退化为半透明遮罩
@@ -65,6 +108,15 @@ half4 main(float2 coord) {
         val progress = press.value
         if (progress > 0f) {
             val center = position(size, location.value)
+            val peak = (if (isDarkMode) 0.15f else lightPeakAlpha) * progress
+            // 半径/圆心两个分支共用同一份计算，避免 shader 与渐变各算一份漂移掉
+            val radiusBase = radiusBaseDp
+            val radius = (if (radiusBase != null) minOf(size.minDimension, radiusBase.toPx())
+            else size.minDimension) * 1.5f * radiusScale()
+            val haloCenter = Offset(
+                center.x.fastCoerceIn(0f, size.width),
+                center.y.fastCoerceIn(0f, size.height)
+            )
             if (shader != null) {
                 drawRect(
                     Color.White.copy(0.08f * progress),
@@ -72,13 +124,9 @@ half4 main(float2 coord) {
                 )
                 shader.apply {
                     setFloatUniform("size", size.width, size.height)
-                    setColorUniform("color", Color.White.copy(0.15f * progress).toArgb())
-                    setFloatUniform("radius", size.minDimension * 1.5f)
-                    setFloatUniform(
-                        "position",
-                        center.x.fastCoerceIn(0f, size.width),
-                        center.y.fastCoerceIn(0f, size.height)
-                    )
+                    setColorUniform("color", Color.White.copy(peak).toArgb())
+                    setFloatUniform("radius", radius)
+                    setFloatUniform("position", haloCenter.x, haloCenter.y)
                 }
                 drawRect(
                     ShaderBrush(shader),
@@ -86,15 +134,14 @@ half4 main(float2 coord) {
                 )
             } else {
                 // API < 33 无 AGSL：径向渐变模拟弥散，避免纯色圆的遮罩感
-                val radius = size.minDimension * 1.2f
                 drawCircle(
                     Brush.radialGradient(
-                        listOf(Color.White.copy(0.15f * progress), Color.Transparent),
-                        center = center,
+                        listOf(Color.White.copy(peak), Color.Transparent),
+                        center = haloCenter,
                         radius = radius
                     ),
                     radius = radius,
-                    center = center,
+                    center = haloCenter,
                     blendMode = BlendMode.Plus
                 )
             }

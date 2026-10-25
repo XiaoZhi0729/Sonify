@@ -5,6 +5,9 @@
     <uses-sdk tools:overrideLibrary="com.mocharealm.gaze.capsule" />
     <application>
         <activity
+            android:name=".debug.DropdownLabActivity"
+            android:exported="true" />
+        <activity
             android:name=".debug.DiagnosticActivity"
             android:exported="true" />
     </application>

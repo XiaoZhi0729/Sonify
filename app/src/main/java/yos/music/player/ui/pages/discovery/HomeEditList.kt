@@ -67,14 +67,11 @@ import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.HomeSectionConfig
 import yos.music.player.data.libraries.HomeSectionId
-import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
-import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
-import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.TitleBarIcon
-import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
-import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.theme.YosRoundedCornerShape
+import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
+import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 
 // ---------- 常量动画 spec（绝不读任何会变的状态，否则 spec 变化打断动画 → 闪现） ----------
 
@@ -163,49 +160,28 @@ internal fun HomeMenuButton(
     onEditHome: () -> Unit,
     onSettings: () -> Unit
 ) {
-    var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
-    val backdrop = LocalTitlePageBackdrop.current
-    val follow = rememberLiquidDropdownFollowState()
-    // onGloballyPositioned 必须挂在上游（未变换）节点：变换下沉到内层子节点，避免锚点被带着走 → 回环抖动
-    Box(
-        Modifier.onGloballyPositioned { coords ->
-            val pos = coords.positionInWindow()
-            val size = coords.size
-            anchorBounds = IntRect(
-                left = pos.x.toInt(),
-                top = pos.y.toInt(),
-                right = pos.x.toInt() + size.width,
-                bottom = pos.y.toInt() + size.height
-            )
-        }
+    TitleBarGlassMenu(
+        expanded = expanded,
+        onExpand = { onExpandChange(true) },
+        onDismiss = { onExpandChange(false) },
+        triggerIcon = Icons.Filled.MoreVert,
+        // 与 LiquidTopBarButton 分支的 TitleBarIcon 保持一致的内缩，占位槽就是按钮原位
+        modifier = Modifier.padding(end = 10.dp),
     ) {
-        Box(Modifier.liquidDropdownAnchorFollow(follow)) {
-            TitleBarIcon(icon = Icons.Filled.MoreVert, onBack = { onExpandChange(true) })
-        }
-        LiquidDropdownLayout(
-            expanded = expanded,
-            anchorBounds = anchorBounds,
-            onDismissRequest = { onExpandChange(false) },
-            backdrop = backdrop,
-            onFractionProgress = follow::onProgress
-        ) {
-            LiquidDropdownColumn {
-                LiquidDropdownRow(
-                    text = stringResource(R.string.home_menu_edit),
-                    selected = false,
-                    showSelectedIcon = false,
-                    isFirst = true,
-                    onClick = onEditHome
-                )
-                LiquidDropdownRow(
-                    text = stringResource(R.string.home_menu_settings),
-                    selected = false,
-                    showSelectedIcon = false,
-                    isLast = true,
-                    onClick = onSettings
-                )
-            }
-        }
+        LiquidGlassDropdownMenuItem(
+            text = stringResource(R.string.home_menu_edit),
+            onClick = {
+                onExpandChange(false)
+                onEditHome()
+            },
+        )
+        LiquidGlassDropdownMenuItem(
+            text = stringResource(R.string.home_menu_settings),
+            onClick = {
+                onExpandChange(false)
+                onSettings()
+            },
+        )
     }
 }
 

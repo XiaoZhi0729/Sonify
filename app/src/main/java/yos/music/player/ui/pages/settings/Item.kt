@@ -42,12 +42,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
-import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
-import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
 import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.liquid.YosSwitch
+import yos.music.player.ui.widgets.dropdown.LiquidOverlayDropdownPopup
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerAlpha
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerMeasure
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerState
 
 
 @Composable
@@ -66,100 +68,87 @@ fun SelectItem(
     val resolvedEnabled = enabledProvider?.invoke() ?: enabled
     val resolvedValue = value()
     val expanded = remember { mutableStateOf(false) }
-    var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
     val hapticFeedback = LocalHapticFeedback.current
     val pageBackdrop = LocalTitlePageBackdrop.current
+    val show = expanded.value && resolvedEnabled
+    // 触发区（选中值 + 箭头）：弹窗从这块内容原位长成面板，展开后硬切隐藏（原版同款）
+    val trigger = rememberDropdownTriggerState(show)
 
-    // 行尾内容随弹层动画淡入淡出（Nexio OverlayDropdownMenu 同参数：
-    // 出现时 fraction<0.15 隐藏、关闭时 <0.2 恢复，tween 180）
-    val fractionState = remember { mutableStateOf(0f) }
-    val contentAlpha = remember { Animatable(1f) }
-    LaunchedEffect(Unit) {
-        var prevFraction = 0f
-        var contentVisible = true
-        var animJob: Job? = null
-        snapshotFlow { fractionState.value }
-            .collect { current ->
-                val isEntering = current >= prevFraction
-                prevFraction = current
-                val newVisible = if (isEntering) current < 0.15f else current < 0.2f
-                if (newVisible != contentVisible) {
-                    contentVisible = newVisible
-                    animJob?.cancel()
-                    animJob = launch {
-                        contentAlpha.animateTo(
-                            targetValue = if (newVisible) 1f else 0f,
-                            animationSpec = tween(180)
-                        )
-                    }
-                }
-            }
-    }
-
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .onGloballyPositioned { coords ->
-                // 锚点行窗口系边界，供弹层定位与展开方向判定
-                val pos = coords.positionInWindow()
-                val size = coords.size
-                anchorBounds = IntRect(
-                    left = pos.x.toInt(),
-                    top = pos.y.toInt(),
-                    right = pos.x.toInt() + size.width,
-                    bottom = pos.y.toInt() + size.height,
-                )
-            }
-    ) {
+    Box(Modifier.fillMaxWidth()) {
         DefaultItem(enabled = resolvedEnabled, title = title, desc = desc, onClick = {
             expanded.value = !expanded.value
             if (expanded.value) {
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.ContextClick)
             }
         }) {
+            // 弹窗必须组合在锚点节点的**直接子布局内**：ListPopupLayout 的零尺寸 Spacer
+            // 读 parentLayoutCoordinates 得锚点 bounds（原版 OverlayDropdownMenu 同构）
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.graphicsLayer { alpha = 0.4f * contentAlpha.value },
+                modifier = Modifier.dropdownTriggerMeasure(trigger),
             ) {
-                Text(
-                    text = resolvedValue, fontSize = 15.sp
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(
-                    painter = painterResource(id = R.drawable.arrow_up_down),
-                    contentDescription = "choose",
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    // 值文字 40% 透明是本行原有观感（原 contentAlpha 也只在 0.4 基线上淡出）
                     modifier = Modifier
-                        .height(16.dp),
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
-        }
-
-        LiquidDropdownLayout(
-            expanded = expanded.value && resolvedEnabled,
-            anchorBounds = anchorBounds,
-            onDismissRequest = { expanded.value = false },
-            backdrop = pageBackdrop,
-            onFractionProgress = { progress -> fractionState.value = progress.fraction },
-        ) {
-            LiquidDropdownColumn {
-                items.forEachIndexed { index, item ->
-                    key(item) {
-                        LiquidDropdownRow(
-                            text = item,
-                            selected = item == resolvedValue,
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
-                                onValueChange(item)
-                                expanded.value = false
-                            },
-                            isFirst = index == 0,
-                            isLast = index == items.lastIndex,
-                        )
+                        .alpha(0.4f)
+                        .dropdownTriggerAlpha(trigger),
+                ) {
+                    Text(text = resolvedValue, fontSize = 15.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        painter = painterResource(id = R.drawable.arrow_up_down),
+                        contentDescription = "choose",
+                        modifier = Modifier.height(16.dp),
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                LiquidOverlayDropdownPopup(
+                    show = show,
+                    onDismissRequest = { expanded.value = false },
+                    onDismissFinished = trigger::onDismissFinished,
+                    backdrop = pageBackdrop,
+                    collapseSize = trigger.size,
+                    collapseContent = {
+                        DropdownValueCollapseContent(resolvedValue)
+                    },
+                ) {
+                    items.forEachIndexed { index, item ->
+                        key(item) {
+                            LiquidDropdownRow(
+                                text = item,
+                                selected = item == resolvedValue,
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
+                                    onValueChange(item)
+                                    expanded.value = false
+                                },
+                                isFirst = index == 0,
+                                isLast = index == items.lastIndex,
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** 收起态里的「当前值 + 箭头」副本（没有 0.4 alpha 的置灰：那是弹窗外那份的语义）。 */
+@Composable
+private fun DropdownValueCollapseContent(value: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.alpha(0.4f),
+    ) {
+        Text(text = value, fontSize = 15.sp)
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            painter = painterResource(id = R.drawable.arrow_up_down),
+            contentDescription = null,
+            modifier = Modifier.height(16.dp),
+            tint = MaterialTheme.colorScheme.onBackground
+        )
     }
 }
 

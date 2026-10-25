@@ -101,9 +101,6 @@ import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
-import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
-import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
-import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
@@ -117,13 +114,13 @@ import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
-import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
 import yos.music.player.ui.widgets.basic.rememberAlpha
-import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
+import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 
 /**
  * 在线歌单详情页（视觉与在线专辑详情页同款）。
@@ -774,53 +771,20 @@ fun OnlinePlaylistDetail(
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
                 rightBarIcon = {
-                    // 与专辑页/资料库「歌曲」页同款：MoreHoriz 图标 + 锚点捕获 + 按钮联动，
-                    // 弹层住在页面作用域内（同窗口玻璃采样），动画同一套引擎。
-                    val anchorBounds = remember { mutableStateOf(IntRect.Zero) }
-                    // 与专辑页/资料库「歌曲」页同一套锚点联动：按钮随面板揭示进度
-                    // 向左下滑开并淡出（菜单只有一行、面板盖不住按钮落点，所以必须淡出）
-                    val followState = rememberLiquidDropdownFollowState()
-
-                    TitleBarIcon(
-                        modifier = Modifier
-                            .onGloballyPositioned { coords ->
-                                val pos = coords.positionInWindow()
-                                val size = coords.size
-                                anchorBounds.value = IntRect(
-                                    left = pos.x.toInt(),
-                                    top = pos.y.toInt(),
-                                    right = pos.x.toInt() + size.width,
-                                    bottom = pos.y.toInt() + size.height
-                                )
-                            }
-                            // 联动必须挂在锚点捕获的下游：按钮会随面板进度下沉/收缩，
-                            // 锚点若跟着走会形成逐帧抖动回环
-                            .liquidDropdownAnchorFollow(followState),
-                        icon = Icons.Rounded.MoreHoriz,
-                        contentColor = contentColor,
-                        onBack = { menuOpen.value = true }
-                    )
-
-                    // 菜单内容暂为占位（具体动作后续补），结构与专辑页「更多」一致
-                    LiquidDropdownLayout(
+                    // 本体化玻璃菜单（NexioSchedule 1.6.5）：与专辑页同款接线
+                    TitleBarGlassMenu(
                         expanded = menuOpen.value,
-                        anchorBounds = anchorBounds.value,
-                        onDismissRequest = { menuOpen.value = false },
-                        surfaceAlpha = 0.6f,
-                        backdrop = LocalTitlePageBackdrop.current,
-                        onFractionProgress = followState::onProgress
+                        onExpand = { menuOpen.value = true },
+                        onDismiss = { menuOpen.value = false },
+                        triggerIcon = Icons.Rounded.MoreHoriz,
+                        modifier = Modifier.padding(end = 10.dp),
                     ) {
-                        LiquidDropdownColumn {
-                            LiquidDropdownRow(
-                                text = stringResource(id = R.string.online_album_more_placeholder),
-                                selected = false,
-                                enabled = false,
-                                onClick = {},
-                                isFirst = true,
-                                isLast = true,
-                                showSelectedIcon = false
-                            )
-                        }
+                        // 菜单内容暂为占位（具体动作后续补）
+                        LiquidGlassDropdownMenuItem(
+                            text = stringResource(id = R.string.online_album_more_placeholder),
+                            enabled = false,
+                            onClick = {},
+                        )
                     }
                 }
             )

@@ -62,6 +62,7 @@ import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
 import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.effects.overlayEffect
+import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
 
 /** 断言 A6 的测试锚点：胶囊节点必须常驻组合树。 */
 const val QUALITY_CAPSULE_TEST_TAG = "quality_capsule"
@@ -281,6 +282,8 @@ private fun QualitySheet(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
+    // 跟手滑选（在线四档纯行菜单）：面板手势层统一命中+执行，行自动切登记模式
+    val dragSelect = remember { DropdownPanelDragSelectState() }
     LiquidDropdownLayout(
         expanded = expanded,
         anchorBounds = anchorBounds,
@@ -289,13 +292,16 @@ private fun QualitySheet(
         surfaceAlpha = 0.6f,
         onDismissRequest = onDismiss,
         backdrop = LocalTitlePageBackdrop.current,
-        onFractionProgress = onFractionProgress
+        onFractionProgress = onFractionProgress,
+        dragSelectState = if (uiModel.isOnline) dragSelect else null
     ) {
         // 这里**不**套「更多」菜单那套高度封顶（liquidDropdownHeightCap）：四档面板的自然高
         // 约 184dp，而胶囊住在进度条下方的时间行（靠屏底），按锚点余量封顶会把最后一行
         // 挤成内滚；短窗口（多窗口/横屏）下引擎在 measure 阶段已经用"窗口高 - 阴影外扩"
         // 硬卡过一道，不会超出去。封顶留给需要贴锚点行堆叠的多行面板
-        LiquidDropdownColumn {
+        LiquidDropdownColumn(
+            onFitsOnScreen = { fits -> dragSelect.fitsOnScreen = fits }
+        ) {
             if (!uiModel.isOnline) {
                 LocalSpecSection(uiModel)
             } else {

@@ -92,9 +92,6 @@ import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
-import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
-import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
-import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
@@ -106,13 +103,13 @@ import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
-import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
-import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.basic.rememberAlpha
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
+import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 
 /**
  * 在线专辑详情页（结构对齐 AlbumInfo / RankDetail / OnlinePlaylistDetail 详情模板）。
@@ -672,71 +669,35 @@ fun OnlineAlbumDetail(
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
                 rightBarIcon = {
-                    // 与本地资料库「歌曲」页同款：MoreHoriz 图标 + 锚点捕获 + 按钮联动，
-                    // 弹层住在页面作用域内（同窗口玻璃采样），动画同一套引擎。
-                    val anchorBounds = remember { mutableStateOf(IntRect.Zero) }
-                    val followState = rememberLiquidDropdownFollowState()
-
-                    TitleBarIcon(
-                        modifier = Modifier
-                            .onGloballyPositioned { coords ->
-                                val pos = coords.positionInWindow()
-                                val size = coords.size
-                                anchorBounds.value = IntRect(
-                                    left = pos.x.toInt(),
-                                    top = pos.y.toInt(),
-                                    right = pos.x.toInt() + size.width,
-                                    bottom = pos.y.toInt() + size.height
-                                )
-                            }
-                            // 联动必须挂在锚点捕获的下游：按钮会随面板进度下沉/收缩，
-                            // 锚点若跟着走会形成逐帧抖动回环
-                            .liquidDropdownAnchorFollow(followState),
-                        icon = Icons.Rounded.MoreHoriz,
-                        contentColor = contentColor,
-                        onBack = { menuOpen = true }
-                    )
-
-                    // 占位菜单（分享按钮按要求不复刻）：「查看歌手」是现有能力，
-                    // 其余动作待补，先以置灰行占位。
+                    // 本体化玻璃菜单（NexioSchedule 1.6.5）：顶栏槽只放 42dp 占位，
+                    // 收起态那颗钮与展开后的面板是同一个控件（容器变换）。
                     val menuArtists = albumArtists(detail.value, album.singerName)
-                    LiquidDropdownLayout(
+                    TitleBarGlassMenu(
                         expanded = menuOpen,
-                        anchorBounds = anchorBounds.value,
-                        onDismissRequest = { menuOpen = false },
-                        surfaceAlpha = 0.6f,
-                        backdrop = LocalTitlePageBackdrop.current,
-                        onFractionProgress = followState::onProgress
+                        onExpand = { menuOpen = true },
+                        onDismiss = { menuOpen = false },
+                        triggerIcon = Icons.Rounded.MoreHoriz,
+                        modifier = Modifier.padding(end = 10.dp),
                     ) {
-                        LiquidDropdownColumn {
-                            menuArtists.firstOrNull()?.let { artist ->
-                                LiquidDropdownRow(
-                                    text = stringResource(id = R.string.online_album_more_view_artist),
-                                    selected = false,
-                                    onClick = {
-                                        menuOpen = false
-                                        navController.navigate(
-                                            UI.artistDetailRoute(
-                                                artistId = artist.id.takeIf { it.isNotEmpty() },
-                                                artistName = artist.name
-                                            )
+                        menuArtists.firstOrNull()?.let { artist ->
+                            LiquidGlassDropdownMenuItem(
+                                text = stringResource(id = R.string.online_album_more_view_artist),
+                                onClick = {
+                                    menuOpen = false
+                                    navController.navigate(
+                                        UI.artistDetailRoute(
+                                            artistId = artist.id.takeIf { it.isNotEmpty() },
+                                            artistName = artist.name
                                         )
-                                    },
-                                    isFirst = true,
-                                    isLast = false,
-                                    showSelectedIcon = false
-                                )
-                            }
-                            LiquidDropdownRow(
-                                text = stringResource(id = R.string.online_album_more_placeholder),
-                                selected = false,
-                                enabled = false,
-                                onClick = {},
-                                isFirst = menuArtists.isEmpty(),
-                                isLast = true,
-                                showSelectedIcon = false
+                                    )
+                                },
                             )
                         }
+                        LiquidGlassDropdownMenuItem(
+                            text = stringResource(id = R.string.online_album_more_placeholder),
+                            enabled = false,
+                            onClick = {},
+                        )
                     }
                 }
             )

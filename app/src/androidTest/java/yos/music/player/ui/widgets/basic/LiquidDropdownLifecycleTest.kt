@@ -9,12 +9,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.unit.IntRect
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import yos.music.player.ui.theme.YosMusicTheme
+import yos.music.player.ui.widgets.dropdown.LiquidDropdownLayout
 
 class LiquidDropdownLifecycleTest {
     @get:Rule
@@ -30,7 +30,6 @@ class LiquidDropdownLifecycleTest {
                 CompositionLocalProvider(LocalTitleOverlayHost provides null) {
                     LiquidDropdownLayout(
                         expanded = expanded.value,
-                        anchorBounds = IntRect(40, 100, 80, 140),
                         onDismissRequest = { expanded.value = false },
                         onDismissFinished = { dismissed++ },
                     ) { Text("Song actions") }
@@ -71,7 +70,6 @@ class LiquidDropdownLifecycleTest {
                     repeat(64) { index ->
                         LiquidDropdownLayout(
                             expanded = expandedMenu.value == index,
-                            anchorBounds = IntRect(40, 100, 80, 140),
                             onDismissRequest = { expandedMenu.value = null },
                             onDismissFinished = { dismissed++ },
                         ) { Text("Song actions $index") }
@@ -107,7 +105,6 @@ class LiquidDropdownLifecycleTest {
                     Box(Modifier.fillMaxSize()) {
                         LiquidDropdownLayout(
                             expanded = expanded.value,
-                            anchorBounds = IntRect(40, 100, 80, 140),
                             onDismissRequest = { expanded.value = false },
                             onDismissFinished = { dismissed++ },
                         ) { Text("Song actions") }
@@ -152,7 +149,6 @@ class LiquidDropdownLifecycleTest {
                     Box(Modifier.fillMaxSize()) {
                         LiquidDropdownLayout(
                             expanded = expanded.value,
-                            anchorBounds = IntRect(40, 100, 80, 140),
                             onDismissRequest = { expanded.value = false },
                             onDismissFinished = { dismissed++ },
                         ) { Text("Song actions") }
