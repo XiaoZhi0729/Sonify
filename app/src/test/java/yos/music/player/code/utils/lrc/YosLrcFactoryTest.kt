@@ -290,6 +290,67 @@ class YosLrcFactoryTest {
         assertTrue(entries.all { it.mainLyric.size == 2 })
     }
 
+    // ---- A2 增强型 LRC（行级 [mm:ss] + 字级 <mm:ss> 尖括号标签，12.31.flac 内嵌歌词实测）----
+
+    @Test
+    fun angleWordTimedA2LrcMergesIntoKaraokeEntry() {
+        // 字级标签不再漏进正文；行末孤立标签（其后无文本）作为末词的结束时间
+        val entries = factory.formatLrcEntries(
+            "[00:32.960] <00:32.960>欠<00:33.182>你<00:33.389>还<00:34.456>路<00:35.456>"
+        )
+
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals("欠你还路", entry.mainLyric.joinToString("") { it.second })
+        assertTrue(!entry.mainLyric.any { it.second.contains('<') })
+        assertEquals(listOf("", "欠", "你", "还", "路", ""), entry.mainLyric.map { it.second })
+        assertEquals(32960f, entry.mainLyric.first().first, 0f)
+        assertEquals(33182f, entry.mainLyric[1].first, 0f)
+        assertEquals(35456f, entry.mainLyric[4].first, 0f)
+        assertEquals(35456f, entry.mainLyric.last().first, 0f)
+    }
+
+    @Test
+    fun a2LrcLastWordWithoutTrailingTagFallsBackToNextLineStart() {
+        val entries = factory.formatLrcEntries(
+            "[00:10.000] <00:10.000>夜<00:10.500>奔\n[00:12.000] <00:12.000>第<00:12.500>二"
+        )
+
+        assertEquals(2, entries.size)
+        assertEquals(12000f, entries[0].mainLyric.last().first, 0f)
+        // 末行末词无后继标签 → 既有兜底 start+3s
+        assertEquals(15000f, entries[1].mainLyric.last().first, 0f)
+    }
+
+    @Test
+    fun a2LrcRealEmbeddedSampleHasNoTimestampsInBody() {
+        // 12.31.flac（郑润泽）VORBIS_COMMENT LYRICS 的真实前四行，含无行级标签接续行
+        val sample = """
+            [00:00.000] <00:00.000>12.31 <00:00.033>- <00:00.066>郑<00:00.099>润<00:00.132>泽<00:00.165>
+            [00:00.165] <00:00.165>作<00:00.198>词<00:00.231>: <00:00.264>郑<00:00.297>润<00:00.330>泽<00:00.363>
+            [00:32.960] <00:32.960>欠<00:33.182>你<00:33.389>还<00:33.597>没<00:33.856>走<00:34.201>的<00:34.456>路<00:35.456>
+            [00:35.745] <00:35.745>就<00:36.043>这<00:36.249>样<00:36.715>结<00:37.016>束<00:38.016>
+        """.trimIndent()
+        val entries = factory.formatLrcEntriesWithFallback(sample, 210_000)
+
+        assertEquals(4, entries.size)
+        assertEquals(listOf("12.31 - 郑润泽", "作词: 郑润泽", "欠你还没走的路", "就这样结束"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
+        assertTrue(entries.all { entry -> entry.mainLyric.all { !it.second.contains('<') } })
+        // 词级形状（行起点锚点 + 逐词 + 尾部空锚点），走逐字卡拉OK渲染
+        assertTrue(entries[2].mainLyric.size > 4)
+    }
+
+    @Test
+    fun classicLrcWithNonTimestampAngleBracketsIsUnchanged() {
+        // 尖括号非时间戳形态（无 mm:ss 结构）不得触发词级分支
+        val entries = factory.formatLrcEntries("[00:01.00]爱<3>你")
+
+        assertEquals(1, entries.size)
+        assertEquals("爱<3>你", entries.single().mainLyric.joinToString("") { it.second })
+        assertEquals(2, entries.single().mainLyric.size)
+    }
+
     // ---- 演唱者报幕标签（左右对唱排版） ----
 
     @Test

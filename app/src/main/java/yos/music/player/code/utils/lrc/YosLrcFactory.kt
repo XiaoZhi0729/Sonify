@@ -153,21 +153,47 @@ class YosLrcFactory(private val formatText: Boolean = true) {
 
     private val lineRegex = Regex("\\[(\\d{1,3}):(\\d{2})(?:\\.(\\d{1,3}))?\\]([^\\[]*)")
 
+    /** A2 增强型 LRC 的字级标签（组结构与 lineRegex 一致：分/秒/毫秒），如 `<00:32.960>`。 */
+    private val angleWordRegex = Regex("<(\\d{1,3}):(\\d{2})(?:\\.(\\d{1,3}))?>")
+
     private fun parseLrcRows(text: String): List<TimedText> {
         val result = mutableListOf<TimedText>()
         // 逐字行的末词结束时间无行内后继标签可依，挂起等待下一行首个时间戳回填；-1 表示无挂起行
         var openWordRowIndex = -1
         text.lineSequence().forEach { line ->
             val matches = lineRegex.findAll(line).toList()
-            if (matches.isEmpty()) return@forEach
+            val wordTagMatches = angleWordRegex.findAll(line).toList()
+            if (matches.isEmpty() && wordTagMatches.isEmpty()) return@forEach
             val millis = matches.map { timestampMillis(it) }
+            val firstTimestamp = millis.firstOrNull() ?: timestampMillis(wordTagMatches.first())
             if (openWordRowIndex >= 0) {
                 val pending = result[openWordRowIndex]
                 val words = pending.words.orEmpty()
                 result[openWordRowIndex] = pending.copy(
-                    words = words.dropLast(1) + words.last().copy(endMs = millis.first())
+                    words = words.dropLast(1) + words.last().copy(endMs = firstTimestamp)
                 )
                 openWordRowIndex = -1
+            }
+            // A2 增强型 LRC（常见于 FLAC/MP3 内嵌歌词）：行级 [mm:ss] 之外每个字还带
+            // <mm:ss> 字级标签。按字级标签切词，词结束 = 下一标签时间；行末孤立标签其后
+            // 无文本、被空文本过滤自然成为末词的结束标记。末词无后继标签时沿用挂起机制
+            // 由下一行首个时间戳回填。
+            if (wordTagMatches.isNotEmpty()) {
+                val words = wordTagMatches.mapIndexed { index, match ->
+                    val textStart = match.range.last + 1
+                    val textEnd = wordTagMatches.getOrNull(index + 1)?.range?.first ?: line.length
+                    WordSpan(
+                        endMs = wordTagMatches.getOrNull(index + 1)?.let { timestampMillis(it) },
+                        text = normalizeWord(line.substring(textStart, textEnd))
+                    )
+                }.filter { it.text.isNotEmpty() }
+                if (words.isNotEmpty()) {
+                    // 行末孤立标签已给出末词结束时间的行不再挂起，避免被下一行首戳/兜底覆盖；
+                    // 方括号路径的回填语义不受影响
+                    openWordRowIndex = if (words.last().endMs == null) result.size else -1
+                    result += TimedText(firstTimestamp, words.joinToString("") { it.text }, words)
+                }
+                return@forEach
             }
             // 逐字行判定：时间戳出现在非空白文本之后。注意 group4（[^\[]*）包含在 match
             // 范围内、相邻 match 之间的间隙恒为空，因此要看前一个 match 的 group4 文本。

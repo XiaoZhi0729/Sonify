@@ -33,7 +33,12 @@ object AudioMetadataUtils {
             ParcelFileDescriptor.open(File(songPath), ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
                 val metadata = TagLib.getMetadata(fd.dup().detachFd(), readPictures = false)
                 metadata?.propertyMap
-                    ?.filterKeys { it.startsWith("LYRICS", ignoreCase = true) }
+                    ?.filterKeys { key ->
+                        // TagLib 只把 ID3v2 USLT / M4A ©lyr 归一为 LYRICS；FLAC 的
+                        // UNSYNCEDLYRICS 字段保留原键名，需单独匹配
+                        key.startsWith("LYRICS", ignoreCase = true) ||
+                            key.startsWith("UNSYNCEDLYRICS", ignoreCase = true)
+                    }
                     ?.values
                     ?.flatMap { values -> values.toList() }
                     ?.joinToString("\n")
