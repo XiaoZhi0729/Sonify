@@ -142,6 +142,7 @@ import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeAlignment
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeLine
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeSyllable
 import com.mocharealm.accompanist.lyrics.ui.composable.list.LyricsLazyListState
+import com.mocharealm.accompanist.lyrics.ui.composable.list.LyricsScrollChain
 import com.mocharealm.accompanist.lyrics.ui.composable.list.rememberLyricsLazyListState
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLyricsView
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsAnchor
@@ -155,6 +156,31 @@ private const val LyricSungCoverMix = 0.3f
 private object LyricCoverTint {
     val color = mutableStateOf(Color.White)
 }
+
+/**
+ * 换行跟随的「链式弹簧」参数。
+ *
+ * 歌词库默认值（`LyricsScrollChain()` = stiffness 100 / damping 12）的阻尼比只有
+ * ζ = 12 / (2·√100) ≈ 0.6，是明显欠阻尼：每换一行，各行相对偏移都会**过冲约 9.5% 再回摆**，
+ * 前一行先走、后一行追上，观感就是整块歌词像果冻一样「弹」。
+ *
+ * 这里把阻尼比拉到临界点附近：
+ * - `stiffness = 180` / `damping = 28` → ζ = 28 / (2·√180) ≈ 1.04，过冲消失（严格单调收敛），
+ *   但起手仍是弹簧的「先快后软」，不是 tween 那种匀速硬滑；
+ * - `coupling` / `distanceFalloff` / `minResponse` 保持库默认，保留邻行跟随的拖尾手感；
+ * - 库内部按 `response` 缩放刚度、按 `response^0.3` 缩放阻尼，于是 ζ(d) ∝ response^(-0.2)，
+ *   越远的行阻尼比越大，拖尾也不会自己荡起来。
+ *
+ * 注意 [KaraokeLyricsView] 的 `scrollAnimationSpec`（我们传的 tween 650ms）只管列表本体位移，
+ * **管不到这条链**——调它治不了「弹」，必须从这里下手。
+ */
+private val LyricFollowScrollChain = LyricsScrollChain(
+    stiffness = 180f,
+    damping = 28f,
+    coupling = 0.65f,
+    distanceFalloff = 0.25f,
+    minResponse = 0.35f,
+)
 
 
 /**
@@ -403,6 +429,9 @@ fun YosLyricViewLib(
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
                         if (firstFollow) snap() else tween(650, easing = FastOutSlowInEasing),
+                    // 换行时各行相对偏移的跟随弹簧：库里默认是欠阻尼（ζ≈0.6）会过冲回摆，
+                    // 这里换成临界阻尼（ζ≈1.04），见 LyricFollowScrollChain 的注释。
+                    scrollChain = LyricFollowScrollChain,
                     preparedLyrics = preparedLyrics,
                     // 场景缓存：切页回来复用排版 + 渲染资源 + 已栅格化的行，等同页面常驻
                     sceneCacheKey = "$cacheKey|${textColor.value}",

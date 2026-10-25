@@ -277,6 +277,8 @@
     <string name="settings_others_reset_done">已重設為預設設定</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">顯示音量條</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">在播放界面的下部顯示音量調節條。</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry">評論入口</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">在播放頁底部顯示評論入口按鈕。</string>
     <string name="settings_performance_ui_theme">主題</string>
     <string name="settings_performance_ui_theme_light">淺色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -289,6 +291,10 @@
     <string name="everyday_recommend_login_hint">登入後可取得個人化每日推薦</string>
     <string name="home_personal_fm_title">私人電台</string>
     <string name="home_personal_fm_subtitle">隨心聆聽</string>
+    <string name="page_music_gallery_title">音樂畫廊</string>
+    <string name="page_music_gallery_subtitle">ORBIT / GALLERY</string>
+    <string name="page_music_gallery_wip">正在開發中</string>
+    <string name="page_music_gallery_retry">重試</string>
     <string name="personal_fm_login_hint">登入後可收聽私人電台</string>
     <string name="personal_fm_empty">暫時沒有推薦歌曲</string>
     <string name="personal_fm_refresh">換一批</string>

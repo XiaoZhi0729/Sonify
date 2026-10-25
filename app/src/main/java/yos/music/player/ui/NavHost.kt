@@ -136,6 +136,13 @@ interface UI {
         // 私人FM（主页顶部入口卡；需登录）
         const val PersonalFmDetail = "PersonalFmDetail"
 
+        // 音乐画廊（私人FM 封面的手势翻页画廊；入口在 Library›在线音乐）。
+        // 全屏沉浸页：MainActivity 按本路由隐藏全局底栏 / 迷你播放条、把底部渐隐遮罩
+        // 归零，并强制状态栏图标为纯白（见 MainActivity 的 hideAppChrome）。
+        // 因此它仍留在 Library house 的栈内（保住"资料库→画廊→返回"语义），
+        // 但视觉上不经过任何全局 chrome。
+        const val MusicGallery = "MusicGallery"
+
         // 歌手详情（本地歌手列表点击 / 在线场景入口；artistId 可空，为空时按 artistName 搜索解析）
         const val ArtistDetail = "ArtistDetail"
         const val ArtistDetailIdArg = "artistId"

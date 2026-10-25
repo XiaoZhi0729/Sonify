@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.translate
 import androidx.compose.ui.graphics.Color
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.isRenderEffectSupported
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -787,9 +789,17 @@ private class AnimatedPanelRectShape(
         density: Density,
     ): Outline {
         val rect = rectProvider(size.width, size.height)
+        // 首帧保险：rect 的宽/高可能还是 0（SubcomposeLayout 同一 pass 内才量出自然尺寸，
+        // 而 clip 的 outline 会先被问一次）。尺寸为 0 时 createOutline 得到空 outline，
+        // 整个面板会被裁成「什么都没有」——表现为弹窗一片空白。
+        // 这里退化成「不裁」（用整块节点矩形），等下一帧拿到真实 rect 再正常裁剪。
+        if (rect[2] <= 0f || rect[3] <= 0f) {
+            return Outline.Rectangle(Rect(0f, 0f, size.width, size.height))
+        }
         // 圆角半径钳制到半边长：42dp 收起态的 25dp 圆角因此被收缩成正圆，
-        // 不钳制会在上下左右四个中点鼓出三角形（squircle 路径控制点越界）
-        val base = squircle(cornerRadius)
+        // 不钳制会在上下左右四个中点鼓出三角形（squircle 路径控制点越界）；
+        // smoothBand：面板动画尺寸穿过危险区间时圆角=标称半径连续过渡（见 DropdownCompat）
+        val base = squircle(cornerRadius, smoothBand = true)
             .createOutline(Size(rect[2], rect[3]), layoutDirection, density)
         val offset = Offset(rect[0], rect[1])
         return when (base) {
@@ -1119,16 +1129,25 @@ private const val RecedeScale = 0.95f
 private const val PopupBlurRadius = 24f
 
 // 进场/退场各走一档：单条曲线做不出「进场早淡入 + 退场晚淡出」这两个相反方向。
-// 「标准」= LiquidGlassDropdownMenu 原值。
-private const val ContainerAlphaEnter = 5f
-private const val ContainerAlphaExit = 5f
-private const val ContentEnterFrom = 0.30f
-private const val ContentEnterTo = 0.70f
+//
+// ⚠️ 下面这组值是 NexioSchedule 1.6.5 **刻意**覆盖的结果，不是「标准值」。
+// 原版注释里的「标准」指的是 LiquidGlassDropdownMenu（本体化菜单）那一套
+// （5f / 0.30-0.70 / 2.5），ListPopup 弹窗**故意**不用标准值：
+//   - 玻璃进 f*7（f=0.14 即满不透明，比标准更早出现）
+//   - 玻璃退 f*3.6（f=0.28 才全透明，比标准更早消失）
+//   - 内容进 (f-0.22)/(0.62-0.22)（比标准更早淡入）
+//   - 内容退 (f-0.30)/(0.78-0.30)（抬高端点 → 更晚开始淡出）
+//   - 收起态内容 K=3.2（比标准 2.5 留得更久，长大过程中不会提前消失）
+// 曾有一次改动把这里「对齐」回标准值，导致弹窗的材质/内容消隐节奏与原版不一致。
+private const val ContainerAlphaEnter = 7f      // 标准 5f
+private const val ContainerAlphaExit = 3.6f     // 标准 5f
+private const val ContentEnterFrom = 0.22f      // 标准 0.30
+private const val ContentEnterTo = 0.62f        // 标准 0.70
 private const val ContentExitFrom = 0.30f
-private const val ContentExitTo = 0.70f
+private const val ContentExitTo = 0.78f         // 标准 0.70：抬高端点 → 更晚开始淡出
 // 收起态内容的淡出系数：alpha = 1 - fraction×K，淡完点 = 1/K。
-// 与 LiquidGlassDropdownMenu 的 triggerIcon 系数逐值一致（进入 2.5 / 退出 1.7）
-private const val CollapseIconKEnter = 2.5f
+// 退场与 LiquidGlassDropdownMenu 一致（1.7）；进场由 2.5 提到 3.2
+private const val CollapseIconKEnter = 3.2f
 private const val CollapseIconKExit = 1.7f
 
 /**
@@ -1301,6 +1320,10 @@ private fun PopupGlassCanvas(
 
         // 收起态内容（选项文本 + 箭头）：锁在面板矩形正中心，随容器长大淡出。
         // 自带 alpha —— 材质的 alpha 在材质层，两者互不影响。
+        //
+        // 与官方 1.6.5 逐字一致：就是「面板矩形居中」，**不做 extra 补偿**。
+        // （面板矩形 = 触发区尺寸 + collapseExtra，中心比触发区偏左 7dp/偏上 5dp；
+        //   官方同样如此，交接时的位置差由触发区的显示时机消化，不要在这里改定位。）
         if (collapseContent != null) {
             Box(
                 modifier = Modifier
@@ -1336,18 +1359,16 @@ private fun BoxScope.PopupMaterialLayer(
     style: PopupPanelStyle,
     shape: Shape,
 ) {
-    val surfaceColor = style.backgroundColor.copy(
-        alpha = style.surfaceAlpha ?: if (style.isDark) 0.8f else 0.72f,
-    )
     Box(
         modifier = Modifier
             .matchParentSize()
             .graphicsLayer { alpha = style.containerAlpha(style.fractionProgress()) }
-            // 显式裁剪成面板形状：原版用的 kyant backdrop fork 会在 DrawBackdropNode
-            // 内部 clipPath，而 backdrop 1.0.5 的节点完全不裁剪——不 clip 的话玻璃采样
-            // 和表面色会画成整块画布大小的方块（本项目 LiquidTopBarButton 也是
-            // .clip(CircleShape) + drawBackdrop 这套接法）
-            .clip(shape)
+            // ⚠️ 这里**不要**加 .clip(shape)。
+            // backdrop 1.0.5 的 DrawBackdropNode 自己按 shape 采样+绘制，外面再套一层
+            // clip 会强制插一个离屏合成层，把它的输出吃掉 —— 实测症状就是「弹窗没有
+            // 玻璃背景、只剩一层半透明白」。全项目 23 处 drawBackdrop 只有这里加过
+            // clip，也只有这里坏过；其余（顶栏圆钮/底栏/开关/主页更多菜单）都正常。
+            // 官方 1.6.5 的 PopupMaterialLayer 同样没有 clip（裁剪在 fork 库内部做）。
             .then(
                 if (style.liquidGlassBackdrop != null && isRenderEffectSupported()) {
                     Modifier.drawBackdrop(
@@ -1357,13 +1378,22 @@ private fun BoxScope.PopupMaterialLayer(
                         highlight = null,
                         shadow = null,
                         onDrawSurface = {
-                            drawRect(color = surfaceColor)
+                            drawRect(
+                                color = style.backgroundColor.copy(
+                                    alpha = style.surfaceAlpha ?: if (style.isDark) 0.8f else 0.72f,
+                                )
+                            )
                         }
                     )
                 } else {
-                    // 无玻璃（无采样源 / 无 RenderEffect）时的实色兜底：
-                    // 弹窗在任何场景都要有底，不能透明
-                    Modifier.drawBehind { drawRect(color = surfaceColor) }
+                    // 无玻璃（无采样源 / 无 RenderEffect）时才需要实色兜底
+                    Modifier.drawBehind {
+                        drawRect(
+                            color = style.backgroundColor.copy(
+                                alpha = style.surfaceAlpha ?: if (style.isDark) 0.8f else 0.72f,
+                            )
+                        )
+                    }
                 }
             )
             .dropdownEdgeLight(

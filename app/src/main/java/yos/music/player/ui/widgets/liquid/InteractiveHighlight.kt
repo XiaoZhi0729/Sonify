@@ -18,10 +18,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.util.fastCoerceIn
+import androidx.compose.ui.util.fastFirstOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -176,6 +178,65 @@ half4 main(float2 coord) {
         ) { change, _ ->
             dragDistance += change.positionChange().getDistance()
             animationScope.launch { location.snapTo(change.position) }
+        }
+    }
+
+    /**
+     * **独占**指针的版本：[gestureModifier] 全程不 consume，因此外层若还挂着拖动容器
+     * （画廊根节点的 `claimDragGestures`、列表滚动等），从本控件上起手滑动会**穿透**
+     * 过去把外层一起拖走——实机表现就是"按住按钮拖动，卡片却跟着翻页"。
+     *
+     * 本变体在越过 `touchSlop` 后 consume 每一个 change，外层容器看到 `isConsumed`
+     * 即放弃认领（`claimDragGestures` / `claimHorizontalDragGestures` 都以该判据取消），
+     * 于是拖动只作用在控件自身：高光跟手、按钮倾斜，页面不动。
+     *
+     * `touchSlop` 之前**不** consume：这段窗口既是点按判定，也避免拇指按下时微抖
+     * 就把外层的翻页手势掐掉。未越过 slop 即抬起 → [onTap]。
+     *
+     * 与 [gestureModifier] 的差异只有"consume"这一点，动画规格完全一致。
+     */
+    val claimingGestureModifier: Modifier = Modifier.pointerInput(animationScope) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            start = down.position
+            dragDistance = 0f
+            animationScope.launch {
+                launch { press.animateTo(1f, spring(0.5f, 300f, 0.001f)) }
+                launch { location.snapTo(start) }
+            }
+
+            var pointer = down.id
+            var claimed = false
+            var total = 0f
+            var released = false
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.fastFirstOrNull { it.id == pointer }
+                if (change == null) break
+                if (change.changedToUpIgnoreConsumed()) {
+                    released = true
+                    break
+                }
+                val delta = change.positionChange()
+                val distance = delta.getDistance()
+                total += distance
+                dragDistance += distance
+                if (!claimed) {
+                    if (total <= viewConfiguration.touchSlop) continue
+                    claimed = true
+                }
+                // 越过 slop 后独占：外层滚动/翻页容器看到 isConsumed 即放弃
+                change.consume()
+                animationScope.launch { location.snapTo(change.position) }
+            }
+
+            animationScope.launch {
+                launch { press.animateTo(0f, spring(0.5f, 300f, 0.001f)) }
+                launch { location.animateTo(start, spring(0.5f, 300f, Offset.VisibilityThreshold)) }
+            }
+            if (released && !claimed) {
+                onTap()
+            }
         }
     }
 

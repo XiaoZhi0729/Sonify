@@ -1,7 +1,5 @@
 package yos.music.player.ui.pages.settings.performance.userinterface
 
-import android.graphics.BlurMaskFilter
-import android.graphics.Path
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,19 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -69,9 +62,9 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.capsuleEdgeLight
 import yos.music.player.ui.widgets.basic.circleEdgeLight
 import yos.music.player.ui.widgets.liquid.LiquidSlider
-import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /** 预览卡圆角 */
@@ -388,36 +381,3 @@ private fun GlassBlurSliderItem(
     }
 }
 
-/**
- * 胶囊边缘光：`circleEdgeLight` 的圆角矩形版（描边画在轮廓上再裁剪进内部，只显示内半圈），
- * NORMAL 模糊 + ADD 混合，参数与顶栏圆钮一致。
- */
-private fun Modifier.capsuleEdgeLight(
-    color: Color,
-    width: Dp,
-    blurRadius: Dp
-): Modifier = drawWithContent {
-    drawContent()
-    if (color.alpha <= 0f || width <= 0.dp) return@drawWithContent
-    val radius = size.height / 2f
-    val strokePx = ceil(width.toPx().coerceAtMost(radius)) * 2f
-    val blurPx = blurRadius.toPx()
-    val path = Path().apply {
-        addRoundRect(0f, 0f, size.width, size.height, radius, radius, Path.Direction.CW)
-    }
-    drawIntoCanvas { canvas ->
-        val paint = android.graphics.Paint().apply {
-            this.color = color.toArgb()
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = strokePx
-            if (blurPx > 0f) {
-                maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
-            }
-            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.ADD)
-        }
-        canvas.save()
-        canvas.nativeCanvas.clipPath(path)
-        canvas.nativeCanvas.drawPath(path, paint)
-        canvas.restore()
-    }
-}

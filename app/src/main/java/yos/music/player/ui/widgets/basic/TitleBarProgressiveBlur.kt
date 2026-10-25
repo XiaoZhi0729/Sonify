@@ -16,6 +16,7 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.effect
+import com.kyant.backdrop.internal.RuntimeShaderEffect
 
 /**
  * 顶栏真·渐进模糊（移植自 NexioSchedule 的 ProgressiveBlurTopBar，AGSL 版）。
@@ -100,9 +101,9 @@ fun titleBarProgressiveBlur(
                     blurShader.setFloatUniform("bufferSize", bufferW, bufferH)
                     blurShader.setFloatUniform("maxRadius", maxRadiusPx)
                     blurShader.setFloatUniform("fadeStart", fadeStart)
-                    blurShader.setColorUniform("tint", tintColor.toArgb())
+                    blurShader.setColorUniform("tint", tintColor)
                     blurShader.setFloatUniform("tintMax", TINT_MAX_ALPHA)
-                    effect(RenderEffect.createRuntimeShaderEffect(blurShader, "content"))
+                    effect(RuntimeShaderEffect(blurShader, "content"))
 
                     val denoiseShader =
                         obtainRuntimeShader("ProgressiveDenoise", PROGRESSIVE_DENOISE_SHADER)
@@ -110,7 +111,7 @@ fun titleBarProgressiveBlur(
                     denoiseShader.setFloatUniform("contentSize", contentW, contentH)
                     denoiseShader.setFloatUniform("bufferSize", bufferW, bufferH)
                     denoiseShader.setFloatUniform("maxRadius", maxRadiusPx)
-                    effect(RenderEffect.createRuntimeShaderEffect(denoiseShader, "content"))
+                    effect(RuntimeShaderEffect(denoiseShader, "content"))
                 } else {
                     // 无 AGSL：保持旧观感（恒定半径），不扩边
                     blur(4.dp.toPx())

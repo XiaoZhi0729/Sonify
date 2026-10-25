@@ -196,6 +196,29 @@ class YosLrcFactoryTest {
         assertNull(entries.single().translation)
     }
 
+    @Test
+    fun romajiEntryWithSameLanguageStillClassifiesByStructure() {
+        // 《Precious My Heroes》(fox capture plan) 实测结构：罗马音与翻译都是
+        // language=0，且罗马音条目在前。按结构分类：多元素行=罗马音，单元素行=翻译。
+        val languageJson = """
+            {"content":[
+              {"language":0,"lyricContent":[["fo","x cap"],["ture"]]},
+              {"language":0,"lyricContent":[["译文一"],["译文二"]]}
+            ]}
+        """.trimIndent()
+        val encoded = Base64.getEncoder().encodeToString(languageJson.toByteArray())
+        val entries = factory.formatKrcEntries(
+            """
+                [language:$encoded]
+                [1000,1000]<0,500,0>First<500,500,0>line
+                [3000,1000]<0,500,0>Second<500,500,0>line
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("译文一", "译文二"), entries.map { it.translation })
+        assertEquals(listOf("fo x cap", "ture"), entries.map { it.romanization })
+    }
+
     // ---- 逐字时间戳 LRC（每个字符各带 [mm:ss.xxx] 标签，常见于 FLAC 内嵌歌词）----
 
     @Test

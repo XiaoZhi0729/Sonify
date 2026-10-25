@@ -50,6 +50,22 @@ import yos.music.player.data.libraries.SettingsLibrary.NowplayingBackgroundEffec
 import yos.music.player.ui.pages.NowPlayingPage
 import yos.music.player.ui.widgets.basic.YosWrapper
 
+/**
+ * 背景糊图的进程级缓存：键 = album Uri + 目标像素档，值 = imageResolve 全管线
+ * （饱和度×3 + 烘焙压暗 + 高斯模糊）产出的最终位图。
+ *
+ * 为什么必须有：糊好的 Drawable 原本是页内 remember 状态，离开页面即销毁——
+ * 重进画廊/播放页必然重跑整条管线并 450ms 淡入，实机观感即"背景每次重新加载"。
+ * 位图极小（96/32px 档，≤36KB/张），LruCache 12 张的内存开销可忽略；
+ * 缓存位图被多个 Drawable 共享（只读），BackgroundLayer 各自 newDrawable+mutate 互不干扰。
+ */
+private object FloatingLightBitmapCache {
+    private val cache = object : android.util.LruCache<String, Bitmap>(12) {}
+    fun key(uri: Uri, targetPx: Int) = "${uri}|$targetPx"
+    fun get(key: String): Bitmap? = cache.get(key)
+    fun put(key: String, bitmap: Bitmap) = cache.put(key, bitmap)
+}
+
 @Composable
 fun YosFloatingLight(
     modifier: Modifier,
@@ -69,9 +85,15 @@ fun YosFloatingLight(
     YosWrapper {
         LaunchedEffect(albumUri) {
             if (albumUri == null) return@LaunchedEffect
+            // 缓存命中：糊好的位图直接挂载，跳过整条管线（重进页背景即时出图）
+            val targetPx = if (NowplayingBackgroundEffect) 96 else 32
+            val cacheKey = FloatingLightBitmapCache.key(albumUri, targetPx)
+            FloatingLightBitmapCache.get(cacheKey)?.let { hit ->
+                drawable.value = hit.toDrawable(context.resources)
+                return@LaunchedEffect
+            }
             withContext(Dispatchers.IO) {
                 // 按最终目标尺寸直接解码（bitmapCompress 的目标 px），不再先解原图再压缩
-                val targetPx = if (NowplayingBackgroundEffect) 96 else 32
                 val request = ImageRequest.Builder(context)
                     .data(albumUri)
                     .size(targetPx)
@@ -80,8 +102,11 @@ fun YosFloatingLight(
                     BitmapResolver.bitmapCompress(this)
                 }
                 if (thisBitmap != null) {
-                    val nextDrawable = imageResolve(context, thisBitmap, bakeDarkOverlay = true)
-                        .toDrawable(context.resources)
+                    val blurred = imageResolve(context, thisBitmap, bakeDarkOverlay = true)
+                    // 糊好的结果进进程级缓存后归缓存所有，不可 recycle（thisBitmap 是
+                    // 模糊前的源图，仍归本次请求所有，照旧回收）
+                    FloatingLightBitmapCache.put(cacheKey, blurred)
+                    val nextDrawable = blurred.toDrawable(context.resources)
                     // 仅在结果完整生成后替换，切歌期间保留上一张背景。
                     withContext(Dispatchers.Main) {
                         if (album() == albumUri) {
@@ -104,13 +129,19 @@ fun YosFloatingLight(
         AnimatedContent(
             targetState = drawable.value,
             transitionSpec = {
-                fadeIn(animationSpec = tween(450)) togetherWith
-                    fadeOut(
-                        animationSpec = tween(
-                            durationMillis = 1,
-                            delayMillis = 450
+                // 首次出现（null → 图，含缓存命中的重进页）不淡入：450ms fadeIn 是
+                // "每次进页背景慢慢浮现"观感的另一半来源；换图（图 → 图）保留交叉淡化
+                if (initialState == null) {
+                    fadeIn(tween(0)) togetherWith fadeOut(tween(durationMillis = 1))
+                } else {
+                    fadeIn(animationSpec = tween(450)) togetherWith
+                        fadeOut(
+                            animationSpec = tween(
+                                durationMillis = 1,
+                                delayMillis = 450
+                            )
                         )
-                    )
+                }
             },
             modifier = modifier,
             contentKey = { it }
@@ -215,13 +246,14 @@ private fun BackgroundLayer(
     }
 }
 
-// 慢漂移参数：缩放 1.075–1.125（26s 周期），位移双频正弦（31s/23s）模拟 Ken Burns 的游走感。
-private const val DRIFT_SCALE_BASE = 1.10f
-private const val DRIFT_SCALE_AMP = 0.025f
-private const val DRIFT_SCALE_FREQ = (2.0 * PI / 26.0).toFloat()
-private const val DRIFT_PAN_AMP = 0.018f
-private const val DRIFT_PAN_X_FREQ = (2.0 * PI / 31.0).toFloat()
-private const val DRIFT_PAN_Y_FREQ = (2.0 * PI / 23.0).toFloat()
+// 慢漂移参数：缩放 1.20–1.32（19s 周期），位移 5.5%（X 24s / Y 17s）。
+// 红线：DRIFT_PAN_AMP ≤ (BASE−AMP−1)/2 = 0.08，任何相位都盖满全屏不露边。
+private const val DRIFT_SCALE_BASE = 1.26f
+private const val DRIFT_SCALE_AMP = 0.06f
+private const val DRIFT_SCALE_FREQ = (2.0 * PI / 19.0).toFloat()
+private const val DRIFT_PAN_AMP = 0.055f
+private const val DRIFT_PAN_X_FREQ = (2.0 * PI / 24.0).toFloat()
+private const val DRIFT_PAN_Y_FREQ = (2.0 * PI / 17.0).toFloat()
 private const val DRIFT_FRAME_MS = 1000f / 30f
 
 /**

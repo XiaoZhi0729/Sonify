@@ -12,6 +12,8 @@ import yos.music.player.data.libraries.SettingsLibrary
  * - [yos.music.player.ui.widgets.liquid.LiquidSwitch] 玻璃拇指
  * - [yos.music.player.ui.widgets.basic.LiquidDropdown] 下拉面板
  * - [yos.music.player.ui.widgets.basic.SonifyDialog] 对话框玻璃面
+ * - [yos.music.player.ui.pages.gallery.MusicGalleryPage] 顶栏圆钮 + 底部播放药丸
+ *   （采样源是该页自己的页内 `LayerBackdrop`，只录背景 + scrim + 4 张封面卡）
  *
  * **不乘**：TitleBarProgressiveBlur 的渐进模糊、各处非玻璃磨砂回退分支（Title 14dp /
  * ArtistDetail 14dp / PlayerShell 12dp）、艺人页倒影、静态封面/浮光位图模糊。

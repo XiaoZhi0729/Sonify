@@ -284,6 +284,15 @@ fun ListPopupLayout(
         { currentOnDismiss?.invoke() }
     }
 
+    // 传给宿主的可见性用 `internalVisible`（**不是** `show`）：
+    // 退场动画由本函数自己驱动（fraction/origin/dim 三个 Animatable），
+    // 期间必须保持内容在渲染，否则动画会被直接掐断。
+    //
+    // 曾试过传 `show`（照官方 PopupEntry 用 showState 驱动 AnimatedVisibility 的写法），
+    // 实测结果是「关闭时动画消失、直接闪没」—— 因为 show=false 当帧宿主那层的
+    // AnimatedVisibility(exit=None) 就把内容移除了，本函数的 340ms 退场动画来不及跑。
+    // 官方能用 show 驱动，是因为它的退场过渡走 AnimatedVisibility 自己的 transition；
+    // 本项目退场完全由 ListPopupLayout 负责，宿主层不能再抢跑。
     popupHost(internalVisible.value) {
         val coroutineScope = rememberCoroutineScope()
         // 预测性返回：commonMain 走本模块的 expect 封装（utils/NavigationBack.kt），

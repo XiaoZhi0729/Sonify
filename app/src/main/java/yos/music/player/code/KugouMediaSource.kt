@@ -229,7 +229,9 @@ class KugouResolvingDataSource(
         hash: String,
         decision: QualityIntentResolver.Decision
     ) {
-        if (!SettingsLibrary.ShowQualityDowngradeToast) return
+        // 音质降级提示已下线：功能彻底禁用（代码保留），原开关读取为：
+        // if (!SettingsLibrary.ShowQualityDowngradeToast) return
+        if (true) return
         val fact = KugouRepository.factOf(hash) ?: return
         if (fact.verdict != QualityVerdict.DOWNGRADED) return
         val actualQuality = fact.stampedTier ?: return

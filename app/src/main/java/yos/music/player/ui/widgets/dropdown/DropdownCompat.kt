@@ -1,32 +1,18 @@
 package yos.music.player.ui.widgets.dropdown
 
-import android.graphics.BlurMaskFilter
-import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Easing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.geometry.Size
-import yos.music.player.ui.theme.YosRoundedCornerShape
+import com.kyant.backdrop.edgelight.edgeLight
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
 import kotlin.math.PI
-import kotlin.math.ceil
 import kotlin.math.sin
 
 // =====================================================================
@@ -41,10 +27,6 @@ import kotlin.math.sin
 internal val SinOutEasing: Easing = Easing { fraction ->
     sin((fraction * PI / 2).toFloat())
 }
-
-/** 原版 `com.kyant.backdrop.isRenderEffectSupported()`：API 33+ 才有 RenderEffect 链路。 */
-internal fun isRenderEffectSupported(): Boolean =
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
 /** 原版 AppMaterialSettings.chromeLensEnabled()：本项目恒开（与既有玻璃控件一致）。 */
 internal val LocalChromeLensEnabled = staticCompositionLocalOf { true }
@@ -85,64 +67,23 @@ internal fun dropdownSurfaceContainer(): Color = Color(0xFFFAFAFA) withNight Col
 internal fun isDropdownDarkTheme(): Boolean = isFlamingoInDarkMode()
 
 /**
- * 原版 `rememberDefaultEdgeLight`（Uniform 路径）：
- * 浅色 White 0.6 / 0.24dp / blur 0.4dp，深色 White 0.2 / 0.34dp / blur 0.4dp。
+ * 官方 fork 的 `rememberDefaultEdgeLight` 直通（本项目只需固定浅/深两档）。
+ *
+ * 已不再自写描边：fork 自带完整的 `com.kyant.backdrop.edgelight` 实现
+ * （`Modifier.edgeLight(shape, EdgeLight)`），其内部走 RuntimeShader，
+ * 与官方 1.6.5 视觉一致；自写的 ADD 混合描边只是等效近似。
  */
-internal data class DropdownEdgeLight(
-    val color: Color,
-    val width: Dp,
-    val blurRadius: Dp,
-)
-
 @Composable
-internal fun rememberDropdownEdgeLight(): DropdownEdgeLight {
-    val light = !isDropdownDarkTheme()
-    return remember(light) {
-        DropdownEdgeLight(
-            color = if (light) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.2f),
-            width = if (light) 0.24.dp else 0.34.dp,
-            blurRadius = 0.4.dp,
-        )
-    }
-}
+internal fun rememberDropdownEdgeLight(): com.kyant.backdrop.edgelight.EdgeLight =
+    com.kyant.backdrop.edgelight.rememberDefaultEdgeLight(
+        isLightTheme = !isDropdownDarkTheme(),
+    )
 
-/**
- * 原版 `Modifier.edgeLight(shape, edgeLight)` 的 Uniform 等效实现
- * （与项目内 `rectEdgeLight` / `circleEdgeLight` 同一套画法）：
- * 描边画在形状边界上再裁剪进形状内，NORMAL 模糊 + ADD 混合。
- */
+/** 官方 `Modifier.edgeLight(shape, edgeLight)` 直通（扩展函数，需 import 调用）。 */
 internal fun Modifier.dropdownEdgeLight(
     shape: Shape,
-    spec: DropdownEdgeLight,
-): Modifier = drawWithContent {
-    drawContent()
-    if (spec.color.alpha <= 0f || spec.width <= 0.dp) return@drawWithContent
-    val outline = shape.createOutline(size, layoutDirection, this)
-    val path = Path()
-    when (outline) {
-        is Outline.Rounded -> path.addRoundRect(outline.roundRect)
-        is Outline.Generic -> path.addPath(outline.path)
-        is Outline.Rectangle -> path.addRect(outline.rect)
-    }
-    val strokePx = ceil(spec.width.toPx().coerceAtMost(size.minDimension / 2f)) * 2f
-    val blurPx = spec.blurRadius.toPx()
-    val nativePath = path.asAndroidPath()
-    drawIntoCanvas { canvas ->
-        val paint = android.graphics.Paint().apply {
-            color = spec.color.toArgb()
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = strokePx
-            if (blurPx > 0f) {
-                maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
-            }
-            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.ADD)
-        }
-        canvas.save()
-        canvas.nativeCanvas.clipPath(nativePath)
-        canvas.nativeCanvas.drawPath(nativePath, paint)
-        canvas.restore()
-    }
-}
+    spec: com.kyant.backdrop.edgelight.EdgeLight,
+): Modifier = this.edgeLight(shape = shape, edgeLight = spec)
 
 /**
  * 原版 `top.yukonga.miuix.kmp.theme.LocalDismissState`：弹窗内容里读「关闭本弹窗」的通道。
@@ -152,51 +93,15 @@ internal val LocalDismissState = androidx.compose.runtime.compositionLocalOf<() 
 
 
 /**
- * 原版 `com.kyant.capsule.ContinuousRoundedRectangle` 的等效实现：
- * 平滑圆角矩形，**圆角半径超过半边长时收缩**（42dp 收起态因此被"胶囊化"成正圆）。
+ * 原版 `com.kyant.capsule.ContinuousRoundedRectangle` 的便捷构造。
  *
- * 直接用 [YosRoundedCornerShape] 不行：它不钳制半径，25dp 圆角画在 42dp 方块上
- * 路径控制点会越界，在上下左右四个中点向外鼓出三角形（1.6.5 移植实测翻车点）。
+ * **已改用官方 fork 自带的实现**（`com.kyant.capsule.ContinuousRoundedRectangle`，
+ * 随 backdrop fork 一起移植进来），不再自写钳制版：
+ * - 官方类本身就是 `RoundedRectangularShape`，lens 的折射 SDF 直接可用；
+ * - 官方类内部已处理「半径超过半边长」的退化（42dp 收起态自然胶囊化成正圆），
+ *   不会在四方向鼓出三角。
  *
- * **必须继承 [androidx.compose.foundation.shape.CornerBasedShape]**：backdrop 的
- * lens 折射要从角半径算边缘 SDF，只认 RoundedRectangularShape / CornerBasedShape，
- * 普通 Shape 直接抛 UnsupportedOperationException（2026-10-24 真机崩溃实证）。
- * lens 侧自己也会把角半径钳到半边长，与本类的渲染钳制一致。
+ * 保留这个函数名只是为了让调用点少改，语义与官方完全一致。
  */
-internal class ClampedSquircleShape(
-    cornerRadius: Dp,
-) : androidx.compose.foundation.shape.CornerBasedShape(
-    topStart = androidx.compose.foundation.shape.CornerSize(cornerRadius),
-    topEnd = androidx.compose.foundation.shape.CornerSize(cornerRadius),
-    bottomEnd = androidx.compose.foundation.shape.CornerSize(cornerRadius),
-    bottomStart = androidx.compose.foundation.shape.CornerSize(cornerRadius),
-) {
-    private val radiusDp: Dp = cornerRadius
-
-    override fun createOutline(
-        size: Size,
-        topStart: Float,
-        topEnd: Float,
-        bottomEnd: Float,
-        bottomStart: Float,
-        layoutDirection: LayoutDirection,
-    ): Outline {
-        // 抽象签名不带 density：由「角半径 px / Dp 值」反推缩放（基类就是用它换算的 px）
-        val scale = if (radiusDp.value > 0f) topStart / radiusDp.value else 1f
-        val maxPx = size.minDimension / 2f
-        val clampedDp = (topStart.coerceAtMost(maxPx) / scale).dp
-        return YosRoundedCornerShape(clampedDp)
-            .createOutline(size, layoutDirection, Density(scale))
-    }
-
-    // 本项目没有走 copy 的调用点（Material 组件缩放角才会用），按原半径回一个
-    override fun copy(
-        topStart: androidx.compose.foundation.shape.CornerSize,
-        topEnd: androidx.compose.foundation.shape.CornerSize,
-        bottomEnd: androidx.compose.foundation.shape.CornerSize,
-        bottomStart: androidx.compose.foundation.shape.CornerSize,
-    ): androidx.compose.foundation.shape.CornerBasedShape = ClampedSquircleShape(radiusDp)
-}
-
-/** [ClampedSquircleShape] 的便捷构造。 */
-internal fun squircle(cornerRadius: Dp): Shape = ClampedSquircleShape(cornerRadius)
+internal fun squircle(cornerRadius: Dp, smoothBand: Boolean = false): Shape =
+    com.kyant.capsule.ContinuousRoundedRectangle(cornerRadius)

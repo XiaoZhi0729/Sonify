@@ -264,3 +264,41 @@ internal fun Modifier.circleEdgeLight(
         canvas.restore()
     }
 }
+
+/**
+ * [circleEdgeLight] 的圆角矩形 / 胶囊版：描边画在轮廓上再裁剪进内部（只显示内半圈），
+ * NORMAL 模糊 + ADD 混合，参数口径与圆形版一致（width 0.15dp / blur 0.5dp）。
+ *
+ * 原先私有在 [yos.music.player.ui.pages.settings.performance.userinterface.GlassEffectSetting]
+ * 里只服务演示胶囊；音乐画廊的播放药丸也要同一道内缘光，故上收到此处共用，
+ * 避免同一段实现留两份。
+ */
+internal fun Modifier.capsuleEdgeLight(
+    color: Color,
+    width: Dp,
+    blurRadius: Dp
+): Modifier = drawWithContent {
+    drawContent()
+    if (color.alpha <= 0f || width <= 0.dp) return@drawWithContent
+    val radius = size.height / 2f
+    val strokePx = ceil(width.toPx().coerceAtMost(radius)) * 2f
+    val blurPx = blurRadius.toPx()
+    val path = Path().apply {
+        addRoundRect(0f, 0f, size.width, size.height, radius, radius, Path.Direction.CW)
+    }
+    drawIntoCanvas { canvas ->
+        val paint = android.graphics.Paint().apply {
+            this.color = color.toArgb()
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = strokePx
+            if (blurPx > 0f) {
+                maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
+            }
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.ADD)
+        }
+        canvas.save()
+        canvas.nativeCanvas.clipPath(path)
+        canvas.nativeCanvas.drawPath(path, paint)
+        canvas.restore()
+    }
+}

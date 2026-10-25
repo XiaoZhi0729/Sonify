@@ -105,8 +105,12 @@ dependencies {
     implementation "com.mocharealm.accompanist:lyrics-ui:2.0.0-rc.2-patched9"
     implementation "com.mocharealm.accompanist:lyrics-core-jvm:0.5.0"
 
-    implementation "io.github.kyant0:backdrop:1.0.5"
+    // 液态玻璃：backdrop 已按官方 fork 源码移植进 app/src/main/java/com/kyant/backdrop
+    // （不再依赖 io.github.kyant0:backdrop:1.0.5 —— 该 artifact 缺 obtainGraphicsLayer()
+    //   按需建层路径，会导致 drawBackdrop 走「直采」分支、玻璃层无输出）
     implementation "io.github.kyant0:shapes:1.0.0"
+    // fork 的 AGSL 注解（@Language("AGSL")）
+    implementation "org.jetbrains:annotations:26.1.0"
 
     // 关于页横幅连点 10 次的彩带（与 Cresto 同版本、同参数）
     implementation "io.github.vinceglb:confettikit:0.8.0"

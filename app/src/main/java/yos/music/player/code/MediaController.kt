@@ -99,6 +99,7 @@ import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.uri
 import yos.music.player.data.objects.MainViewModelObject
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.data.objects.PersonalFmObject
 import yos.music.player.data.repositories.IntentSource
 import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouVerificationRequiredException
@@ -125,6 +126,15 @@ object MediaController {
 
     @Stable
     var playingMusicList = mutableStateOf<List<YosMediaItem>?>(null)
+
+    /**
+     * 当前播放队列是否为私人FM队列（画廊/电台页 prepare 时置位）。
+     * FM 队列需要"边播边补"：自动换曲接近队尾时拉新歌追加进**活动队列**
+     * （普通播放页听FM也能无限续），且 PersonalFmObject 与播放队列同序增长、
+     * 三端（画廊/播放页/电台页）顺序与状态同源。任何非 FM 的 prepare 重置为 false。
+     */
+    @Stable
+    var isFmQueue = mutableStateOf(false)
 
     @Stable
     var mediaControl: MediaController? = null
@@ -446,6 +456,23 @@ object MediaController {
         }
         playingMusicList.value = newList
         MusicLibrary.updatePlayList(PlayListV1(mainMusicList, newList))
+    }
+
+    /**
+     * 向活动播放队列**队尾**追加条目（不打断播放）：Media3 `addMediaItems` 不触碰
+     * currentPosition/playWhenReady。FM 补货专用——拉到的新批同序进队列，
+     * 快照经 [syncQueueSnapshot] 三同步（timeline → playingMusicList → MMKV）。
+     * FM 队列 prepare 时 shuffle 恒为 false，无随机乱序插入问题。
+     */
+    suspend fun appendToQueue(items: List<YosMediaItem>) = withContext(Dispatchers.Main) {
+        val controller = mediaControl ?: return@withContext
+        if (items.isEmpty()) return@withContext
+        controller.addMediaItems(
+            controller.mediaItemCount,
+            items.map { it.withPlayableUri().toMediaItem() }
+        )
+        syncQueueSnapshot()
+        YosDiagnostics.log("FM_APPEND", "n" to items.size, "q" to controller.mediaItemCount)
     }
 
     /** 队列内拖拽重排（Media3 原生 moveMediaItem，随机顺序由 Media3 自管不受影响）。 */
@@ -864,9 +891,11 @@ object MediaController {
         position: Long = 0L,
         shuffleModeEnabled: Boolean = false,
         repeatMode: Int = REPEAT_MODE_ALL,
-        play: Boolean = true
+        play: Boolean = true,
+        fmQueue: Boolean = false
     ) {
         println("prepare $music")
+        isFmQueue.value = fmQueue
         // 到点恢复/用户手动开播都走这里：记下 play 与起始进度，才能把"为什么没声音"
         // 与"根本没去播"区分开（println 在 release 会被剥，这行不会）
         YosDiagnostics.log("PREPARE", "mediaId" to music.mediaId, "play" to play, "pos" to position)
@@ -1038,6 +1067,13 @@ object MediaController {
     private var lastPrefetchedLyricId: String? = null
 
     /**
+     * 翻译兜底重取的每会话去重：缓存命中无翻译的歌每会话只后台重取一次。
+     * 酷狗确实没有翻译的歌不会在每次播放时反复打接口。
+     */
+    private val translationRefreshAttempted =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    /**
      * 下一首歌词预取：当前曲一开始播放，就在后台把下一首的歌词数据取好并预排版。
      *
      * 目的：用户切歌后立刻打开歌词页也能直接有字，而不是等网络 + 排版。
@@ -1068,21 +1104,7 @@ object MediaController {
                 val result: Result<LyricDiskCache.CachedLyrics> = if (cached != null) {
                     Result.success(cached)
                 } else {
-                    runCatching {
-                        val lyrics = KugouRepository.getLyrics(hash).getOrThrow()
-                        LyricDiskCache.CachedLyrics(
-                            lrc = lyrics.lrc,
-                            krc = lyrics.krc,
-                            translation = lyrics.translation,
-                            romanization = lyrics.romanization
-                        ).also { dto ->
-                            context?.let {
-                                LyricDiskCache.write(
-                                    it, hash, dto.lrc, dto.krc, dto.translation, dto.romanization
-                                )
-                            }
-                        }
-                    }
+                    runCatching { fetchAndCacheLyrics(hash) }
                 }
                 result.onSuccess { lyrics ->
                     val payload = parseOnlineLyrics(mediaId, lyrics)
@@ -1553,33 +1575,25 @@ object MediaController {
                     // 三级加载：磁盘命中直接上屏（零网络）；未命中走网络，成功后异步写盘。
                     val context = appContext
                     val cached = context?.let { LyricDiskCache.read(it, hash) }
-                    val result: Result<LyricDiskCache.CachedLyrics> = if (cached != null) {
-                        Result.success(cached)
-                    } else {
-                        runCatching {
-                            val lyrics = KugouRepository.getLyrics(hash).getOrThrow()
-                            LyricDiskCache.CachedLyrics(
-                                lrc = lyrics.lrc,
-                                krc = lyrics.krc,
-                                translation = lyrics.translation,
-                                romanization = lyrics.romanization
-                            ).also { dto ->
-                                context?.let {
-                                    LyricDiskCache.write(
-                                        it, hash, dto.lrc, dto.krc, dto.translation, dto.romanization
-                                    )
-                                }
-                            }
-                        }
+                val result: Result<LyricDiskCache.CachedLyrics> = if (cached != null) {
+                    // 磁盘命中但无翻译：先用缓存上屏不打断播放，后台兜底重取一次
+                    if (cached.translation.isNullOrBlank() &&
+                        translationRefreshAttempted.add(mediaId)
+                    ) {
+                        refreshLyricTranslation(mediaId, hash)
                     }
-                    result.onSuccess { lyrics ->
-                        val parsed = parseOnlineLyrics(mediaId, lyrics)
-                        val current = lyricCoordinator.complete(request, parsed)
-                        if (current && musicPlaying.value?.mediaId == mediaId) {
-                            publishLyricPayload(mediaId, parsed)
-                            MainViewModelObject.syncLyricIndex.intValue = -1
-                        }
-                        if (cached != null) YosDiagnostics.log("LYRIC_DISK_HIT", "id" to mediaId)
+                    Result.success(cached)
+                } else {
+                    runCatching { fetchAndCacheLyrics(hash) }
+                }
+                result.onSuccess { lyrics ->
+                    val parsed = parseOnlineLyrics(mediaId, lyrics)
+                    val current = lyricCoordinator.complete(request, parsed)
+                    if (current && musicPlaying.value?.mediaId == mediaId) {
+                        publishLyricPayload(mediaId, parsed)
+                        MainViewModelObject.syncLyricIndex.intValue = -1
+                    }
+                    if (cached != null) YosDiagnostics.log("LYRIC_DISK_HIT", "id" to mediaId)
                         println(
                             "在线歌词加载完成 mediaId=$mediaId lines=${parsed.entries.size} " +
                                 "disk=${cached != null} current=$current"
@@ -1591,6 +1605,53 @@ object MediaController {
                         }
                         println("在线歌词加载失败 mediaId=$mediaId current=$current: ${error.message}")
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * 网络取歌词并落盘（主加载与预取共用）。KRC 子请求重试后仍失败（krcFetchFailed）时
+     * **跳过写盘**：那次结果的 KRC/翻译可能残缺，落盘会把瞬时失败固化成永久"无翻译"
+     * 的负缓存；不落盘则下次播放未命中磁盘自然重取。上屏不受影响（翻译可能仍来自 LRC 响应）。
+     */
+    private suspend fun fetchAndCacheLyrics(hash: String): LyricDiskCache.CachedLyrics {
+        val lyrics = KugouRepository.getLyrics(hash).getOrThrow()
+        val dto = LyricDiskCache.CachedLyrics(
+            lrc = lyrics.lrc,
+            krc = lyrics.krc,
+            translation = lyrics.translation,
+            romanization = lyrics.romanization
+        )
+        if (lyrics.krcFetchFailed) {
+            YosDiagnostics.log("LYRIC_KRC_FETCH_FAILED", "id" to hash)
+        } else {
+            appContext?.let {
+                LyricDiskCache.write(it, hash, dto.lrc, dto.krc, dto.translation, dto.romanization)
+            }
+        }
+        return dto
+    }
+
+    /**
+     * 磁盘缓存命中但 translation 为空的兜底：旧版本/某次残缺请求落盘的条目无法区分
+     * "本来没翻译"与"请求失败"，先用无翻译缓存上屏，这里后台再取一次完整结果，
+     * 取到翻译则覆盖磁盘并热更当前显示（仅当这首歌仍是当前曲且歌词页仍在显示它）。
+     */
+    private fun refreshLyricTranslation(mediaId: String, hash: String) {
+        if (lyricCoordinator.isInFlight(mediaId)) return
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { fetchAndCacheLyrics(hash) }.onSuccess { dto ->
+                if (dto.translation.isNullOrBlank()) return@onSuccess
+                val parsed = parseOnlineLyrics(mediaId, dto)
+                lyricCoordinator.prewarm(mediaId, parsed)
+                if (!lyricCoordinator.isInFlight(mediaId) &&
+                    musicPlaying.value?.mediaId == mediaId &&
+                    MediaViewModelObject.lyricMediaId.value == mediaId
+                ) {
+                    publishLyricPayload(mediaId, parsed)
+                    MainViewModelObject.syncLyricIndex.intValue = -1
+                    YosDiagnostics.log("LYRIC_TRANSLATION_REFRESHED", "id" to mediaId)
                 }
             }
         }
@@ -2579,6 +2640,17 @@ class YosPlaybackService : MediaSessionService() {
             // UNKNOWN/MANUAL），拿记忆里的表去翻译会把 auto/repeat 说成别的
             "reason" to transitionReason
         )
+        // FM 队列边播边补：换曲接近队尾即拉新批追加进**活动队列**——普通播放页
+        // 听 FM 也能无限续（不再"播完 prepare 时的 20 首就停"）。是否补、补多少
+        // 由 PersonalFmObject 内部判（剩余 < 阈值才拉，自带节流守卫）。
+        if (yos.music.player.code.MediaController.isFmQueue.value) {
+            currentPlayer?.let { player ->
+                val idx = player.currentMediaItemIndex
+                CoroutineScope(Dispatchers.IO).launch {
+                    PersonalFmObject.ensureQueueAhead(idx)
+                }
+            }
+        }
         // 换曲瞬间清掉上一首的实测规格：这两个值是全局态且只在 handleTracksChanged 里
         // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
         MediaViewModelObject.bitrate.intValue = 0

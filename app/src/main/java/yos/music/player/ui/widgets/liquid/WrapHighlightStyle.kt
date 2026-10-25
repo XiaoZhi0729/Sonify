@@ -5,12 +5,11 @@ import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.util.fastCoerceAtMost
+import com.kyant.backdrop.RuntimeShader
 import com.kyant.backdrop.RuntimeShaderCache
 import com.kyant.backdrop.highlight.HighlightStyle
 import kotlin.math.PI
@@ -45,17 +44,17 @@ data class WrapHighlightStyle(
     override fun DrawScope.createShader(
         shape: Shape,
         runtimeShaderCache: RuntimeShaderCache
-    ): Shader? {
-        // backdrop 1.0.5 的 HighlightNode 本身在 SDK<31 时不走 shader；AGSL RuntimeShader
-        // 需要 API 33+（项目内 lens 等效果同样以 TIRAMISU 为门禁）。低版本返回 null
-        // 回退为纯色描边。
+    ): RuntimeShader? {
+        // backdrop fork（2.0.1）的 HighlightStyle.createShader 返回 RuntimeShader?，
+        // 不再是 1.0.5 的 Shader?；AGSL RuntimeShader 需要 API 33+，
+        // 低版本返回 null 回退为纯色描边。
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             runtimeShaderCache.obtainRuntimeShader("WrapHighlight", WrapHighlightShaderString)
                 .apply {
                     setFloatUniform("size", size.width, size.height)
                     setFloatUniform("cornerRadii", getCornerRadii(shape))
                     // 保留调色 alpha（不用 copy(alpha=1f)），深浅交给 color 而不是 Highlight.alpha。
-                    setColorUniform("color", color.toArgb())
+                    setColorUniform("color", color)
                     setFloatUniform("angle", angle * (PI / 180f).toFloat())
                     setFloatUniform("falloff", falloff)
                     setFloatUniform("baseline", baseline)

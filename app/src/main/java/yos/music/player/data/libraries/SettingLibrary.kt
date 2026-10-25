@@ -19,6 +19,16 @@ object SettingsLibrary {
     )
 
     /**
+     * 是否显示播放页评论入口按钮
+     */
+    @Stable
+    var NowPlayingShowCommentsEntry by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_show_comments_entry",
+        initialValue = true
+    )
+
+    /**
      * 应用主题
      */
     @Stable
@@ -495,6 +505,7 @@ object SettingsLibrary {
     fun resetAllToDefaults() {
         SettingsSaver.clearAll()
         NowPlayingShowVolumeBar = true
+        NowPlayingShowCommentsEntry = true
         CustomTheme = "Auto"
         ScreenCornerSet = false
         ScreenCorner = "30"

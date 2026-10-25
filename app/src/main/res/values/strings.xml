@@ -368,6 +368,8 @@
     <string name="diag_export_path">Report saved to %1$s</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">Show Volume Bar</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">Display the volume adjustment bar at the bottom of the playback page.</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry">Comments Entry</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">Show the comments entry button on the player page.</string>
     <string name="settings_performance_ui_theme">Theme</string>
     <string name="settings_performance_ui_theme_light">Light</string>
     <string name="settings_performance_ui_theme_dark">Dark</string>
@@ -391,6 +393,10 @@
     <string name="everyday_recommend_login_hint">Sign in for personalized daily recommends</string>
     <string name="home_personal_fm_title">Personal FM</string>
     <string name="home_personal_fm_subtitle">Tune in anytime</string>
+    <string name="page_music_gallery_title">Music Gallery</string>
+    <string name="page_music_gallery_subtitle">ORBIT / GALLERY</string>
+    <string name="page_music_gallery_wip">Under development</string>
+    <string name="page_music_gallery_retry">Retry</string>
     <string name="personal_fm_login_hint">Sign in to start Personal FM</string>
     <string name="personal_fm_empty">No FM songs right now</string>
     <string name="personal_fm_refresh">Refresh</string>

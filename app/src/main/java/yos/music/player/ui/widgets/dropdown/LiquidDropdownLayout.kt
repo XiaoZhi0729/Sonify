@@ -175,6 +175,20 @@ fun stackBelowAnchorPositionProvider(gap: Dp = StackGap): PopupPositionProvider 
  * 弹窗展开期间把指针事件全吃在这层，页面不会在弹窗底下被拖动/点击。
  * 弹窗自己的 ListPopupLayout 里还有一层 detectTapGestures（点外关闭），两者叠着用。
  */
+/**
+ * 弹层渲染层：全屏 Box + 事件消费垫层 + 内容。
+ *
+ * 垫层对齐原版 `MiuixPopupUtils.PopupEntry` 的 enableWindowDim=false 分支：
+ * 弹窗展开期间把指针事件全吃在这层，页面不会在弹窗底下被拖动/点击。
+ * 弹窗自己的 ListPopupLayout 里还有一层 detectTapGestures（点外关闭），两者叠着用。
+ *
+ * ⚠️ 这里**不**套 `AnimatedVisibility`：
+ * 原版 `PopupEntry` 那层是给「宿主常驻、由 AnimatedVisibility 自己跑进退场」的架构用的。
+ * 本项目退场完全由 `ListPopupLayout` 的三个 Animatable 负责，且 `internalVisible`
+ * 一旦置 false，`ListPopupLayout` 立刻 early return → `popupHost` 不再被调用 →
+ * 本组件同帧离开组合。AnimatedVisibility 的 exit 根本轮不到执行，属于死代码；
+ * 留着反而在**展开**时多拖一帧（首次打开会空一帧）。
+ */
 @Composable
 private fun DropdownPopupLayer(
     visible: Boolean,
@@ -220,7 +234,10 @@ internal fun DropdownPopupHost(
         val currentContent by rememberUpdatedState(content)
         SideEffect {
             host.set(slotKey) {
-                DropdownPopupLayer(visible = currentVisible, zIndex = currentZIndex) {
+                DropdownPopupLayer(
+                    visible = currentVisible,
+                    zIndex = currentZIndex,
+                ) {
                     currentContent()
                 }
             }
@@ -241,7 +258,10 @@ internal fun DropdownPopupHost(
                 dismissOnClickOutside = false,
             ),
         ) {
-            DropdownPopupLayer(visible = currentVisible, zIndex = currentZIndex) {
+            DropdownPopupLayer(
+                visible = currentVisible,
+                zIndex = currentZIndex,
+            ) {
                 currentContent()
             }
         }

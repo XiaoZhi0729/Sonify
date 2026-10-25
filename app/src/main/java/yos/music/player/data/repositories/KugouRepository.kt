@@ -320,7 +320,9 @@ data class KugouLyrics(
     val lrc: String,
     val krc: String?,
     val translation: String? = null,
-    val romanization: String? = null
+    val romanization: String? = null,
+    /** KRC 子请求重试后仍失败。此时 krc/translation 可能残缺，调用方不应把结果落盘。 */
+    val krcFetchFailed: Boolean = false
 )
 
 /** Normalized fields from one provider lyric response. */
@@ -2777,13 +2779,21 @@ object KugouRepository {
             if (lrc.isBlank()) {
                 return@withContext Result.failure(IllegalStateException("歌词响应无 decodeContent"))
             }
-            val krcResponse = api.getLyric(songHash, "krc").getOrNull()
+            // KRC 挂一次不算数（瞬时抖动会把翻译一起拖下水），重试一次；
+            // 仍失败则带 krcFetchFailed 回去，调用方不上盘，下次播放自然重取。
+            val krcParsed = api.getLyric(songHash, "krc").getOrNull()
                 ?.let { parseKugouLyricResponse(it, krcResponse = true) }
+                ?: run {
+                    api.getLyric(songHash, "krc").getOrNull()
+                        ?.let { parseKugouLyricResponse(it, krcResponse = true) }
+                }
+            val krcFetchFailed = krcParsed == null
             Result.success(
                 KugouLyrics(
                     lrc = lrc,
-                    krc = krcResponse?.krc,
-                    translation = lrcResponse.translation ?: krcResponse?.translation
+                    krc = krcParsed?.krc,
+                    translation = lrcResponse.translation ?: krcParsed?.translation,
+                    krcFetchFailed = krcFetchFailed
                 )
             )
         } catch (e: Exception) {

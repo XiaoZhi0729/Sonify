@@ -76,7 +76,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import yos.music.player.R
-import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 
@@ -344,7 +343,7 @@ fun LiquidGlassDropdownMenu(
                         )
                     }
                 }
-                .clip(squircle(PanelCornerRadius))
+                .clip(squircle(PanelCornerRadius, smoothBand = true))
         ) {
             // 与顶栏液态玻璃按钮同一套采样效果；blur 随展开档位过渡（8dp → 24dp）
             val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
@@ -364,7 +363,7 @@ fun LiquidGlassDropdownMenu(
                     .graphicsLayer { alpha = materialVisible }
                     .drawBackdrop(
                         backdrop = backdrop,
-                        shape = { squircle(PanelCornerRadius) },
+                        shape = { squircle(PanelCornerRadius, smoothBand = true) },
                         effects = glassEffects,
                         highlight = null,
                         shadow = null,
@@ -373,7 +372,7 @@ fun LiquidGlassDropdownMenu(
                         }
                     )
                     .dropdownEdgeLight(
-                        shape = squircle(PanelCornerRadius),
+                        shape = squircle(PanelCornerRadius, smoothBand = true),
                         spec = rememberDropdownEdgeLight(),
                     )
             )
@@ -469,7 +468,9 @@ fun LiquidGlassDropdownMenuItem(
 ) {
     val isLightTheme = !isDropdownDarkTheme()
     val textColor = if (isLightTheme) Color(0xFF1A1A1A) else Color(0xFFE8E4DE)
-    val rowShape = YosRoundedCornerShape(17.dp)
+    // 行高小于 2.0125×17dp 时未钳制 squircle 会在左右两侧中点自相交出倒三角，
+    // 必须走钳制版（DropdownCompat.ClampedSquircleShape）
+    val rowShape = squircle(17.dp)
 
     Box(
         modifier = modifier

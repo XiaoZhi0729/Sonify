@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
 import yos.music.player.ui.pages.discovery.PersonalFmDetail
+import yos.music.player.ui.pages.gallery.MusicGalleryPage
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
 import yos.music.player.ui.pages.library.albums.AlbumInfo
@@ -52,6 +53,7 @@ fun LibraryNavHost(
         composable(UI.NormalMusic) { NormalMusic(navController) }
         composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
         composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
+        composable(UI.MusicGallery) { MusicGalleryPage(navController) }
         composable(UI.OnlinePlaylists) {
             OnlinePlaylists(
                 navController = navController,

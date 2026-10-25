@@ -127,3 +127,10 @@ perf/
 # 本地复现用调试 APK
 perf/*.apk
 __pycache__/
+
+# 本地调试脚本与录屏产物（勿提交）
+/_*.py
+/_*.mp4
+/_fwdshots/
+/_lyrics_ui_bad/
+/_lyrics_ui_src/

@@ -368,6 +368,8 @@
     <string name="diag_export_path">报告已保存到 %1$s</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">显示音量条</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">在播放界面的下部显示音量调节条。</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry">评论入口</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">在播放页底部显示评论入口按钮。</string>
     <string name="settings_performance_ui_theme">主题</string>
     <string name="settings_performance_ui_theme_light">浅色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -391,6 +393,10 @@
     <string name="everyday_recommend_login_hint">登录后可获取个性化每日推荐</string>
     <string name="home_personal_fm_title">私人电台</string>
     <string name="home_personal_fm_subtitle">随心聆听</string>
+    <string name="page_music_gallery_title">音乐画廊</string>
+    <string name="page_music_gallery_subtitle">ORBIT / GALLERY</string>
+    <string name="page_music_gallery_wip">正在开发中</string>
+    <string name="page_music_gallery_retry">重试</string>
     <string name="personal_fm_login_hint">登录后可收听私人电台</string>
     <string name="personal_fm_empty">暂时没有推荐歌曲</string>
     <string name="personal_fm_refresh">换一批</string>

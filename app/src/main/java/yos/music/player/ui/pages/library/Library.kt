@@ -159,6 +159,16 @@ fun Library(
                         navController.toUI(UI.CollectedAlbums)
                     }
 
+                    // 音乐画廊：私人FM 队列封面的手势翻页画廊
+                    LibraryDivider()
+
+                    SmallLabelItem(
+                        icon = painterResource(id = R.drawable.ic_library_link_icon_playlists),
+                        label = stringResource(id = R.string.page_music_gallery_title)
+                    ) {
+                        navController.toUI(UI.MusicGallery)
+                    }
+
                     // 私人电台入口暂时隐藏（加载体验待优化）。恢复时取消注释即可，
                     // 分隔线需随入口一起回位，否则 EverydayRecommend 之后会留下悬空分隔线。
                     /*

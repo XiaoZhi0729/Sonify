@@ -40,6 +40,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.semantics.invisibleToUser
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -475,6 +480,15 @@ class MainActivity : BaseActivity() {
                             activeHouseController.currentBackStackEntryAsState()
                         }
                         val rootEntry = rootNavController.currentBackStackEntryAsState()
+                        // 全屏沉浸页（音乐画廊）：隐藏全局底栏 + 迷你播放条、底部遮罩归零、
+                        // 状态栏图标强制白色。
+                        //
+                        // 判据取「当前 house 的栈顶路由」而不是页面内的 DisposableEffect：
+                        // 四个 house 常驻组合（AppTabsShell 只是 alpha 分层），页面级开关
+                        // 会在「画廊开着时切到主页 Tab」后仍然生效，把底栏错误地一直藏起来。
+                        // 路由判据天然随栈变化，切 Tab / 返回都会立即还原。
+                        val hideAppChrome =
+                            activeEntry.value?.destination?.route == UI.MusicGallery
                         GlassDiagnostics.state(
                             "navigation",
                             "house=${selectedHouse.value} active=${activeEntry.value?.destination?.route} root=${rootEntry.value?.destination?.route}"
@@ -925,8 +939,16 @@ class MainActivity : BaseActivity() {
                         val miniPlayerVisible = remember("MainActivity_miniPlayerVisible") {
                             derivedStateOf { yosBottomSheetConfig.progress < 0.16f }
                         }
+                        // hideAppChrome 是组合期的普通 Boolean；derivedStateOf 的闭包只捕获
+                        // 创建时的值，必须经 rememberUpdatedState 转成 State 才能在 lambda 内
+                        // 读到最新值（否则切页后门禁永远停在首次组合的结果）。
+                        val hideAppChromeState = rememberUpdatedState(hideAppChrome)
                         val miniContentInteractive = remember("MainActivity_miniContentInteractive") {
-                            derivedStateOf { yosBottomSheetConfig.progress < 0.10f }
+                            // 全屏沉浸页（音乐画廊）隐藏了迷你条：即使 progress 恰好在收起区间，
+                            // 也不能让不可见的迷你条继续吃掉点击（它会盖住画廊底部药丸）。
+                            derivedStateOf {
+                                yosBottomSheetConfig.progress < 0.10f && !hideAppChromeState.value
+                            }
                         }
                         val pageScale = remember("MainActivity_pageScale") {
                             derivedStateOf { yosBottomSheetConfig.pageScale }
@@ -1038,8 +1060,21 @@ class MainActivity : BaseActivity() {
                         YosWrapper {
                             val isNight = isFlamingoInDarkMode()
                             val systemUiController = rememberSystemUiController()
-                            LaunchedEffect(showNowPlaying.value, isNight) {
-                                if (showNowPlaying.value) {
+                            LaunchedEffect(showNowPlaying.value, isNight, hideAppChrome) {
+                                if (hideAppChrome) {
+                                    // 全屏沉浸页（音乐画廊）：无论主题深浅，状态栏/导航栏图标一律纯白。
+                                    // 画廊背景是深色/彩色封面糊图，深色图标（isNight=false 时的
+                                    // darkIcons=true）在其上几乎不可见。
+                                    systemUiController.setNavigationBarColor(
+                                        Color.Transparent,
+                                        darkIcons = false,
+                                        navigationBarContrastEnforced = false
+                                    )
+                                    systemUiController.setStatusBarColor(
+                                        Color.Transparent,
+                                        darkIcons = false
+                                    )
+                                } else if (showNowPlaying.value) {
                                     systemUiController.setNavigationBarColor(
                                         Color.Transparent,
                                         darkIcons = false,
@@ -1099,8 +1134,11 @@ class MainActivity : BaseActivity() {
                                 // 非 split：迷你条高 + 5dp 间隙 + 底栏高 + 手势栏 inset；
                                 // split：迷你条与底栏共用底边，只算迷你条高 + 手势栏 inset。
                                 // 底栏尚未测得（height==0）时先不画，避免首帧出现一块空渐变。
+                                // 全屏沉浸页（音乐画廊）隐藏了底栏与迷你条：遮罩必须同步归零，
+                                // 否则画廊底部仍被压暗一块，且 LocalBottomOverlayHeight 会
+                                // 把下拉弹层错误地抬高。
                                 val bottomScrimHeight = with(density) {
-                                    if (height.intValue <= 0) 0.dp
+                                    if (hideAppChrome || height.intValue <= 0) 0.dp
                                     else (
                                             miniPlayerHeightPx +
                                                     (if (isSplitMode) 0f
@@ -1142,6 +1180,16 @@ class MainActivity : BaseActivity() {
                                 }
 
                                 NavBottomVisual(
+                                    // 全屏沉浸页（画廊）层叠修正：画廊路由在 Library house
+                                    // （AppTabsShell 内），与底栏的命中测试竞争发生在本根节点与
+                                    // NavPageVisual 这对兄弟之间。隐藏期把底栏整棵子树沉到
+                                    // NavPageVisual 之下——画廊全屏内容在上，底栏（含
+                                    // appChromePointerGate）退出命中路径，不再吞掉底部药丸的
+                                    // 指针事件；非隐藏时 zIndex=0，组合顺序原样，层叠不变。
+                                    chromeGate = Modifier
+                                        .zIndex(if (hideAppChrome) -1f else 0f)
+                                        .appChromeGate(hideAppChrome),
+                                    chromePointerGate = Modifier.appChromePointerGate(hideAppChrome),
                                     navBackdrop = navBackdrop,
                                     selectedHouse = { selectedHouse.value },
                                     onHouseSelected = { house -> appNavigator.switchHouse(house) },
@@ -1212,6 +1260,21 @@ class MainActivity : BaseActivity() {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    // 全屏沉浸页（画廊）层叠修正：本 Box 与 Surface 是兄弟，
+                                    // 组合在后=命中测试压过一切。隐藏期沉到 Surface 之下，
+                                    // 壳底带 pointerGate 退出命中路径，不吞画廊底部药丸的
+                                    // 指针事件；非隐藏时 zIndex=0，迷你条/播放页照常压在
+                                    // 内容之上，层叠不变。
+                                    .zIndex(if (hideAppChrome) -1f else 0f)
+                                    // 全屏沉浸页（音乐画廊）：播放壳（迷你条 + 全屏播放页）整棵
+                                    // 不绘制。保持组合、只停绘制——销毁会丢 NowPlaying 的滚动/
+                                    // 页面状态，重新展开时还得重建玻璃 producer。
+                                    //
+                                    // 这里**只停绘制、不加指针门禁**：本节点是 fillMaxSize，
+                                    // 在 Initial 阶段消费会让整屏收不到指针事件，画廊的横向
+                                    // 翻页手势会直接失效。命中测试的门禁挂在下面那个
+                                    // 「布局高度 = 壳高度」的壳节点上。
+                                    .appChromeGate(hideAppChrome)
                                     .onSizeChanged {
                                         parentHeight.intValue = it.height
                                         parentWidth.intValue = it.width
@@ -1538,6 +1601,12 @@ class MainActivity : BaseActivity() {
                                     Box(
                                         Modifier
                                             .fillMaxWidth()
+                                            // 全屏沉浸页（音乐画廊）：壳的命中测试门禁。
+                                            // 本节点布局高度 = 壳高度（收起态 43dp），不是全屏，
+                                            // 因此在 Initial 阶段消费只吃掉底部这条带——画廊底部
+                                            // 药丸正好落在带内，不关的话点它会命中下面看不见的
+                                            // 播放控件；画廊自己的横向翻页手势在整屏范围内不受影响。
+                                            .appChromePointerGate(hideAppChrome)
                                             .padding(
                                                 start = with(density) { yosBottomSheetConfig.shellLeftInsetPx.toDp() },
                                                 end = with(density) { yosBottomSheetConfig.shellRightInsetPx.toDp() }
@@ -1841,7 +1910,11 @@ class MainActivity : BaseActivity() {
                                                 // 手指按在音量条/进度条上时，本次手势归控件所有：
                                                 // 收起手势直接不启动。否则先上下再左右移动会同时
                                                 // 触发调音量与关闭播放器（竖直 slop 先被 shell 吃掉）。
-                                                enabled = !controlGestureActive.value,
+                                                // 全屏沉浸页（音乐画廊）里壳不可见：连同拖拽一起关掉，
+                                                // 否则它会先吃掉画廊的横向手势（竖直 slop 被 shell 认领后
+                                                // 横向位移才到画廊，手感是"拖一下没反应"）。
+                                                enabled = !controlGestureActive.value &&
+                                                        !hideAppChromeState.value,
                                                 onDragStarted = {
                                                     android.util.Log.d(
                                                         "MorphGeo",
@@ -2305,6 +2378,8 @@ class MainActivity : BaseActivity() {
 
     @Composable
     private fun NavBottomVisual(
+        chromeGate: Modifier = Modifier,
+        chromePointerGate: Modifier = Modifier,
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
         selectedHouse: () -> HouseId,
         onHouseSelected: (HouseId) -> Unit,
@@ -2337,6 +2412,7 @@ YosWrapper {
     Box(
         Modifier
             .fillMaxSize()
+            .then(chromeGate)
             .navigationBarsPadding()
             .then(
                 if (effectiveSplitMode) {
@@ -2402,21 +2478,26 @@ YosWrapper {
                 hiddenProducerEnabled = glassProbe.navHiddenProducer,
                 tabGlassEnabled = glassProbe.navTabGlass,
                 containerTintProvider = containerTintProvider,
-                modifier = if (effectiveSplitMode) {
-                    Modifier
-                        .width(splitBarWidthDp)
-                        .onSizeChanged {
-                            bottomBarWidthPx.intValue = it.width
-                            height.intValue = it.height
+                modifier = (
+                        if (effectiveSplitMode) {
+                            Modifier
+                                .width(splitBarWidthDp)
+                                .onSizeChanged {
+                                    bottomBarWidthPx.intValue = it.width
+                                    height.intValue = it.height
+                                }
+                        } else {
+                            Modifier
+                                .fillMaxWidth(0.93f)
+                                .onSizeChanged {
+                                    bottomBarWidthPx.intValue = it.width
+                                    height.intValue = it.height
+                                }
                         }
-                } else {
-                    Modifier
-                        .fillMaxWidth(0.93f)
-                        .onSizeChanged {
-                            bottomBarWidthPx.intValue = it.width
-                            height.intValue = it.height
-                        }
-                },
+                        )
+                    // 命中测试门禁挂在**紧贴底栏内容**的这个节点上（不是外层 fillMaxSize）：
+                    // 画廊页里底栏不可见但仍会响应点击，点了会直接跳 Tab。
+                    .then(chromePointerGate),
                 backdrop = navBackdrop
             )
         }
@@ -2593,6 +2674,50 @@ fun readFile(path: String): String? {
 // 都跟随同一来源（遮罩颜色取 scrimColorProvider，alpha 取本常量），
 // 保证动画期外壳与迷你条周围环境观感一致。两处必须同源，改这里即同步。
 private const val bottomScrimAlpha = 0.65f
+
+/**
+ * 全屏沉浸页的全局 chrome 门禁（底栏 / 迷你播放条 / 播放壳）。
+ *
+ * [hidden] 为 true 时整棵子树**不绘制**（不是 alpha=0）：alpha=0 仍会让玻璃 producer
+ * 每帧录制全屏 display list，而画廊页面本身已经有两层背景糊图 + 6 张封面在跑。
+ * 与 `HouseLayer` 的 `drawWhenHidden` 同一条思路——隐藏页一个绘制节点都不挂。
+ *
+ * 组合与布局保持不变：销毁子树会丢 NowPlaying 的滚动/页面状态，重新出现时还要
+ * 重建 backdrop 节点（圆角蒙版按尺寸重录，会闪一帧）。
+ */
+private fun Modifier.appChromeGate(hidden: Boolean): Modifier =
+    if (!hidden) this
+    else this
+        .drawWithContent { /* 隐藏：不绘制任何内容 */ }
+        // 同时从无障碍树里摘掉：不可见的底栏 Tab 若还留在语义树里，读屏会念出
+        // 「主页 / 喜爱 / 资料库 / 搜索」，等于把隐藏的 chrome 又暴露了一遍。
+        .semantics { invisibleToUser() }
+
+/**
+ * 与 [appChromeGate] 配套的**命中测试**门禁。
+ *
+ * 只停绘制不够：子树里的 clickable/draggable 仍然参与命中测试，画廊页面底部
+ * 会存在一条"看不见但会响应"的底栏——在那里点一下会直接跳 Tab。
+ *
+ * 在 [PointerEventPass.Initial] 阶段消费事件即可：本节点的子节点（底栏 Tab、
+ * 迷你条按钮）收不到，而消费发生在自己边界内。
+ * **边界假设已被实测推翻**：画廊底部药丸（距屏底 28dp、高 46dp）恰好落在壳底带
+ * 与底栏的范围内——门禁在 Initial 阶段整段消费后药丸自己也收不到事件（实机
+ * "点播放没反应/不能暂停"的根因之一）。因此画廊期由 SharedNavHost 的
+ * zIndex 提升保证页面压在 chrome 之上、chrome 不进入命中路径，门禁退化为兜底。
+ * 必须挂在**边界紧贴内容**的节点上（底栏 Column、播放壳 Box），不能挂在
+ * fillMaxSize 的外层容器上，否则会吞掉整屏的横向翻页手势。
+ */
+private fun Modifier.appChromePointerGate(hidden: Boolean): Modifier =
+    if (!hidden) this
+    else this.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                event.changes.forEach { it.consume() }
+            }
+        }
+    }
 
 private fun routeToPrimaryTabIndex(route: String?): Int = when (route) {
     UI.HomePage -> 0

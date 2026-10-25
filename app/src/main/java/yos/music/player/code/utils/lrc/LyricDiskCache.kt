@@ -22,6 +22,13 @@ object LyricDiskCache {
     private const val DIR_NAME = "lyric_cache"
     private const val MAX_ENTRIES = 800
 
+    /**
+     * 缓存 schema 版本。版本字段落盘后，schema/取数逻辑演进只需升号：read 侧把
+     * 旧版本条目整体淘汰重取，避免旧逻辑落下的残缺数据（如 translation=null 的
+     * 负缓存）被当健康条目永久短路网络。v2 起带此字段。
+     */
+    private const val SCHEMA_VERSION = 2
+
     private val gson = Gson()
 
     // @SerializedName 冻结缓存 JSON 键名：Gson 反射用运行时字段名，release 混淆后与
@@ -30,7 +37,8 @@ object LyricDiskCache {
         @SerializedName("lrc") val lrc: String,
         @SerializedName("krc") val krc: String? = null,
         @SerializedName("translation") val translation: String? = null,
-        @SerializedName("romanization") val romanization: String? = null
+        @SerializedName("romanization") val romanization: String? = null,
+        @SerializedName("schemaVersion") val schemaVersion: Int = SCHEMA_VERSION
     )
 
     @Volatile
@@ -57,6 +65,12 @@ object LyricDiskCache {
                     // Gson 反序列化不校验 Kotlin 非空：损坏/旧 schema 条目的 lrc 运行时可能为
                     // null，回流会让 formatLrcEntries 的参数空检查抛 NPE 造成启动崩溃循环。
                     // 删除毒化条目，下次加载走网络重取（write 侧守卫重写健康条目）。
+                    f.delete()
+                    null
+                } else if (parsed.schemaVersion < SCHEMA_VERSION) {
+                    // 旧版本条目按旧取数逻辑落盘，可能带着残缺字段（如 KRC/翻译子请求
+                    // 失败固化的 translation=null）。无法区分"本来没有"与"请求失败"，
+                    // 整体淘汰重取一次；重写时带上新版本号后即被信任。
                     f.delete()
                     null
                 } else {

@@ -52,6 +52,7 @@ import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.dropdown.LocalDropdownPanelDragSelect
 import yos.music.player.ui.widgets.dropdown.dropdownPanelEntry
+import yos.music.player.ui.widgets.dropdown.squircle
 import kotlin.math.min
 import androidx.compose.ui.graphics.painter.Painter
 
@@ -215,7 +216,9 @@ fun LiquidDropdownRow(
     // 跟手滑选：面板下发状态时，行不再挂 clickable（两个手势状态互相抢事件正是
     // 「先按住再滑动会跳状态」的根因），改由面板手势层统一命中 + 执行 + 画高亮
     val dragSelect = LocalDropdownPanelDragSelect.current
-    val rowShape = YosRoundedCornerShape(17.dp)
+    // 行高可能小于 2.0125×17dp（歌曲菜单收紧行距时），未钳制的 squircle 角曲线会在
+    // 左右两侧中点自相交出倒三角，必须走钳制版
+    val rowShape = squircle(17.dp)
 
     Row(
         modifier = modifier

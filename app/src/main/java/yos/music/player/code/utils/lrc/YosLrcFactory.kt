@@ -87,10 +87,19 @@ class YosLrcFactory(private val formatText: Boolean = true) {
     }
 
     fun formatKrcEntries(krcText: String, translationText: String? = null): List<LyricEntry> {
-        val embeddedTranslations = extractEmbeddedTranslations(krcText)
-        // 罗马音：KRC [language:] 载荷里 language != 0 的条目（翻译走 language=0）。
-        // 与 md3Music 同源：不单独发请求，数据本就在已拉取的 KRC 明文里。
-        val embeddedRomanizations = extractEmbeddedRomanizations(krcText)
+        // 内嵌翻译/罗马音分类 = 结构优先 + language 兜底（对齐 md3Music `_extractTranslationFromKrc`
+        // 的结构分类，保留 language!=0 归罗马音的既有语义）。不能只看 language 值：实测存在
+        // 罗马音与翻译都是 language=0、且罗马音条目排在前面的数据（Precious My Heroes），
+        // 按值取第一个命中会把罗马音条目当翻译，逐行匹配不上单元素格式 → 整首译文全空。
+        val languageEntries = embeddedLanguageEntries(krcText)
+        val embeddedTranslations = languageEntries
+            .firstOrNull { it.language == 0 && !it.syllableStyle && it.hasText }
+            ?.rows
+            ?.map { row -> row.firstOrNull()?.takeIf(String::isNotBlank) }
+        val embeddedRomanizations = languageEntries
+            .firstOrNull { it.language != 0 || it.syllableStyle }
+            ?.rows
+            ?.map { row -> row.joinToString(" ").takeIf(String::isNotBlank) }
         val explicitTranslations = translationText?.let {
             runCatching { parseLrcRows(it) }.getOrDefault(emptyList())
         }.orEmpty()
@@ -109,7 +118,7 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             val lineText = words.joinToString("") { it.groupValues[3] }
             if (words.isEmpty() || lineText.isNonLyricMetadata()) return@forEach
             val translationOrdinal = lyricRowOrdinal++
-            val embeddedOrdinal = if (embeddedTranslations.size >= numericRowCount) {
+            val embeddedOrdinal = if ((embeddedTranslations?.size ?: 0) >= numericRowCount) {
                 rowOrdinal
             } else {
                 translationOrdinal
@@ -123,11 +132,11 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             if (timedWords.size > 1) {
                 timedWords += (start + duration) to ""
                 val translation = nearestText(explicitTranslations, start)
-                    ?: embeddedTranslations.getOrNull(embeddedOrdinal)
+                    ?: embeddedTranslations?.getOrNull(embeddedOrdinal)
                 entries += LyricEntry(
                     mainLyric = timedWords,
                     translation = translation?.takeIf { it.isNotBlank() },
-                    romanization = embeddedRomanizations.getOrNull(embeddedOrdinal)?.takeIf { it.isNotBlank() }
+                    romanization = embeddedRomanizations?.getOrNull(embeddedOrdinal)?.takeIf { it.isNotBlank() }
                 )
             }
         }
@@ -253,57 +262,39 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         return result.toString()
     }
 
-    private fun extractEmbeddedTranslations(krcText: String): List<String?> {
-        val encoded = krcText.lineSequence()
-            .mapNotNull { Regex("^\\[language:([^]]+)]$").find(it.trim())?.groupValues?.get(1) }
-            .firstOrNull() ?: return emptyList()
-        val decoded = Base64Codec.decode(encoded)?.toString(Charsets.UTF_8) ?: return emptyList()
-        return extractSingleElementLyricRows(decoded)
-    }
-
-    /** Extracts language=0 rows while retaining empty row positions. */
-    private fun extractSingleElementLyricRows(json: String): List<String?> {
-        extractJsonObjects(json).forEach { objectText ->
-            val language = Regex(
-                "\"language\"\\s*:\\s*(?:0|\"0\")"
-            )
-            if (!language.containsMatchIn(objectText)) return@forEach
-            val contentKey = objectText.indexOf("\"lyricContent\"")
-            if (contentKey == -1) return@forEach
-            val arrayStart = objectText.indexOf('[', contentKey)
-            if (arrayStart == -1) return@forEach
-            val arrayEnd = findMatchingBracket(objectText, arrayStart, '[', ']')
-            if (arrayEnd == -1) return@forEach
-            val rows = splitJsonArrayElements(objectText.substring(arrayStart + 1, arrayEnd))
-            return rows.map { row ->
-                val match = Regex("^\\s*\\[\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"\\s*]\\s*$")
-                    .find(row)
-                match?.let { normalize(decodeJsonString(it.groupValues[1])) }
-                    ?.takeIf { it.isNotBlank() }
-            }
-        }
-        return emptyList()
+    /** KRC `[language:]` 载荷（Base64 JSON）的 content 数组里的一个条目。 */
+    private data class EmbeddedLanguageEntry(
+        val language: Int?,
+        /** 每行的字符串元素（已 normalize、去空白元素；空行 = 空列表，保留占位）。 */
+        val rows: List<List<String>>
+    ) {
+        /** 任一行是多元素数组 → 按字/音节拆分风格 → 罗马音；整行单元素 → 翻译。 */
+        val syllableStyle: Boolean get() = rows.any { it.size > 1 }
+        val hasText: Boolean get() = rows.any { it.isNotEmpty() }
     }
 
     /**
-     * 罗马音行：KRC [language:] 载荷里 language != 0 的条目（language=0 是翻译）。
-     * 每行可能是单元素数组（整行）或多元素数组（按音节拆分），统一用空格拼接——
-     * 与 Kugou 数据标注一致，对齐 md3Music `_extractTranslationFromKrc` 的处理。
-     * 数据本就随已拉取的 KRC 明文而来，无需额外请求。
+     * 解析第一个 `[language:...]` 块的 content 数组为条目列表。
+     * 直接按数组顶层拆分（不从整段 JSON 抽对象）：外层容器也含子条目的
+     * `"language":0` 子串，按对象抽取会把外层当条目、取到第一个 lyricContent。
      */
-    private fun extractEmbeddedRomanizations(krcText: String): List<String?> {
+    private fun embeddedLanguageEntries(krcText: String): List<EmbeddedLanguageEntry> {
         val encoded = krcText.lineSequence()
             .mapNotNull { Regex("^\\[language:([^]]+)]$").find(it.trim())?.groupValues?.get(1) }
             .firstOrNull() ?: return emptyList()
         val decoded = Base64Codec.decode(encoded)?.toString(Charsets.UTF_8) ?: return emptyList()
-        extractJsonObjects(decoded).forEach { objectText ->
-            // 必须有 language 字段（排除最外层 content 容器），且不是 language=0（那是翻译）
-            if (!objectText.contains("\"language\"")) return@forEach
-            if (Regex("\"language\"\\s*:\\s*(?:0|\"0\")").containsMatchIn(objectText)) return@forEach
-            val rows = lyricContentElementRows(objectText) ?: return@forEach
-            return rows.map { elements -> elements.joinToString(" ").takeIf { it.isNotBlank() } }
+        val contentKey = decoded.indexOf("\"content\"")
+        if (contentKey == -1) return emptyList()
+        val arrayStart = decoded.indexOf('[', contentKey)
+        if (arrayStart == -1) return emptyList()
+        val arrayEnd = findMatchingBracket(decoded, arrayStart, '[', ']')
+        if (arrayEnd == -1) return emptyList()
+        return splitJsonArrayElements(decoded.substring(arrayStart + 1, arrayEnd)).mapNotNull { entryText ->
+            val rows = lyricContentElementRows(entryText) ?: return@mapNotNull null
+            val language = Regex("\"language\"\\s*:\\s*\"?(\\d+)\"?")
+                .find(entryText)?.groupValues?.get(1)?.toInt()
+            EmbeddedLanguageEntry(language, rows)
         }
-        return emptyList()
     }
 
     /** 取一个 language 对象 lyricContent 每行的字符串元素（已 normalize、去空元素）。 */
@@ -352,21 +343,6 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         }
         if (start < arrayBody.length) elements += arrayBody.substring(start)
         return elements
-    }
-
-    private fun extractJsonObjects(json: String): List<String> {
-        val objects = mutableListOf<String>()
-        var index = 0
-        while (index < json.length) {
-            if (json[index] == '{') {
-                val end = findMatchingBracket(json, index, '{', '}')
-                if (end != -1) {
-                    objects += json.substring(index, end + 1)
-                }
-            }
-            index++
-        }
-        return objects
     }
 
     private fun findMatchingBracket(text: String, start: Int, open: Char, close: Char): Int {

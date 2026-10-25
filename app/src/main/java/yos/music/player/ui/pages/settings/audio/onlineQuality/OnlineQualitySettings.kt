@@ -121,16 +121,17 @@ fun OnlineQualitySettings(navController: NavController) =
                                 }
                             )
 
-                            Divider()
-
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_audio_online_quality_downgrade_toast),
-                                onClick = {
-                                    SettingsLibrary.ShowQualityDowngradeToast =
-                                        !SettingsLibrary.ShowQualityDowngradeToast
-                                },
-                                checkedLambda = { SettingsLibrary.ShowQualityDowngradeToast }
-                            )
+                            // 音质降级提示已下线：UI 隐藏、功能禁用（代码保留）
+                            // Divider()
+                            //
+                            // SwitchItem(
+                            //     title = stringResource(id = R.string.settings_audio_online_quality_downgrade_toast),
+                            //     onClick = {
+                            //         SettingsLibrary.ShowQualityDowngradeToast =
+                            //             !SettingsLibrary.ShowQualityDowngradeToast
+                            //     },
+                            //     checkedLambda = { SettingsLibrary.ShowQualityDowngradeToast }
+                            // )
                         }
 
                         // 两档同值：历史上会被播放页一并写死，这里诚实提醒可分开设置（不伪造恢复）
@@ -149,7 +150,8 @@ fun OnlineQualitySettings(navController: NavController) =
                                 )
                             )
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_audio_online_quality_downgrade_toast_desc))
+                        // 音质降级提示已下线：说明文案一并隐藏
+                        // ListHeader(content = stringResource(id = R.string.settings_audio_online_quality_downgrade_toast_desc))
 
                         GroupSpacer()
                     }

@@ -277,6 +277,8 @@
     <string name="settings_others_reset_done">設定をリセットしました</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar">音量バーを表示</string>
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">再生画面の下部に音量調節バーを表示します。</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry">コメント入口</string>
+    <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">再生ページの下部にコメント入口ボタンを表示します。</string>
     <string name="settings_performance_ui_theme">テーマ</string>
     <string name="settings_performance_ui_theme_light">ライト</string>
     <string name="settings_performance_ui_theme_dark">ダーク</string>
@@ -289,6 +291,10 @@
     <string name="everyday_recommend_login_hint">ログインするとパーソナライズされたおすすめをお届けします</string>
     <string name="home_personal_fm_title">パーソナルFM</string>
     <string name="home_personal_fm_subtitle">いつでも聴く</string>
+    <string name="page_music_gallery_title">ミュージックギャラリー</string>
+    <string name="page_music_gallery_subtitle">ORBIT / GALLERY</string>
+    <string name="page_music_gallery_wip">開発中</string>
+    <string name="page_music_gallery_retry">再試行</string>
     <string name="personal_fm_login_hint">ログインするとパーソナルFMを聴けます</string>
     <string name="personal_fm_empty">おすすめの楽曲はまだありません</string>
     <string name="personal_fm_refresh">更新</string>
