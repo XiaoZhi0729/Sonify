@@ -119,7 +119,8 @@ fun LocalArtists(navController: NavController) {
 
                 itemsIndexed(
                     displayArtists,
-                    key = { _, artist -> "artist:$artist" }
+                    key = { _, artist -> "artist:$artist" },
+                    contentType = { _, _ -> "local_artist" }
                 ) { index, artist ->
                     // 本地艺人：只查看该歌手已存到本地的歌曲（复用 NormalMusic 通用歌曲列表页）；
                     // 酷狗歌手详情入口在「在线音乐」分区的艺人列表

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Parcelable
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.util.fastMap
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -151,14 +152,44 @@ object MusicLibrary {
         dataSaverInterface = SongListSaver, key = "songs", initialValue = listOf<YosMediaItem>()
     )
 
+    // 缓存全量可见歌曲：依赖 songSaver/hideSongs/folders/hideFolders 变化才重算。
+    // 原 getter 在 filter 内嵌套 folders flatMap，每次访问 O(N×H) 主线程重算，
+    // 滑动列表逐行触发导致严重卡顿
+    private val songsCache = derivedStateOf {
+        val hiddenUris = folders
+            .filter { it.path in hideFolders }
+            .flatMap { it.songs }
+            .map { it.uri }
+            .toHashSet()
+        val hiddenSongs = hideSongs.toHashSet()
+        songSaver.filter { it !in hiddenSongs && it.uri !in hiddenUris }
+    }
+
     val songs: List<YosMediaItem>
-        get() = songSaver
-            .filter { it !in hideSongs && it.uri !in folders.filter { thisFolders -> thisFolders.path in hideFolders }
-                .flatMap { thisFlatMap -> thisFlatMap.songs }
-                .map { thisMap -> thisMap.uri } }
+        get() = songsCache.value
+
+    // 艺人→歌曲 / 专辑→歌曲 索引：一次构建，按名查询 O(1)，
+    // 避免每次 Artist[name]/Album[name] 全库 filter
+    private val artistIndexCache = derivedStateOf {
+        val index = HashMap<String, MutableList<YosMediaItem>>()
+        for (song in songsCache.value) {
+            for (artist in song.artistsList ?: defaultArtists) {
+                index.getOrPut(artist) { mutableListOf() }.add(song)
+            }
+        }
+        index
+    }
+
+    private val albumIndexCache = derivedStateOf {
+        val index = HashMap<String, MutableList<YosMediaItem>>()
+        for (song in songsCache.value) {
+            index.getOrPut(song.album ?: defaultAlbum) { mutableListOf() }.add(song)
+        }
+        index
+    }
 
     val artists
-        get() = songs/*.distinctBy { it.artist }.map { it.artist }*/.flatMap {
+        get() = songs.flatMap {
             it.artistsList ?: defaultArtists
         }
             .distinct()
@@ -169,13 +200,13 @@ object MusicLibrary {
     @Stable
     object Album {
         operator fun get(albumName: String) =
-            songs.filter { (it.album ?: defaultAlbum) == albumName }
+            albumIndexCache.value[albumName] ?: emptyList()
     }
 
     @Stable
     object Artist {
         operator fun get(artistName: String) =
-            songs.filter { (it.artistsList ?: defaultArtists).contains(artistName) }
+            artistIndexCache.value[artistName] ?: emptyList()
     }
 
     fun updatePlayList(playListV1: PlayListV1) {
