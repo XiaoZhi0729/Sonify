@@ -45,6 +45,12 @@ private const val LyricHorizontalGutterDp = 16f
 /** 库内部左右各留 16dp：排版宽度 = 可用宽度 − 32dp（应用侧再减 32dp）。 */
 private const val LyricLibraryGutterDp = 32f
 
+/**
+ * 行级行（无行内结束时间）的兜底行时长，与 [YosLrcFactory] 里末词无后继时间戳时的
+ * `+3_000f` 兜底同源。只在"末行没有下一行"时使用。
+ */
+private const val LINE_LEVEL_FALLBACK_DURATION_MS = 3_000f
+
 fun isCjkChar(c: Char): Boolean {
     val block = Character.UnicodeBlock.of(c)
     return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
@@ -59,13 +65,24 @@ fun isCjkChar(c: Char): Boolean {
 /**
  * 把本仓库的 (结束时间, 文本) 序列转换成第三方库的 KaraokeLine：词/字起点 = 上一个词的结束时间。
  * UI 组合与后台预热必须走同一份实现，否则两边排版输入不同、缓存键相同也会画出不同结果。
+ *
+ * [nextLineStart] 是下一行的行起点，用于给"行级行"补出行结束时间。库的时间轴
+ * （`LyricsPlaybackTimeline`）只把 `end > start` 的行登记进焦点集合，零长度行永远进不去：
+ * focus 退化成"下一个还没开始的行"（滚动目标超前一行），且不建扫色窗口
+ * （`LyricsPreparation` 里 `timing.end > timing.start` 才建），整行恒为未唱色。
+ * 所以行级行必须由调用方回填下一行起点，不能让它停在 `end == start`。
  */
 private fun List<Pair<Float, String>>.toKaraokeLine(
     translation: String?,
     otherSide: Boolean,
+    nextLineStart: Float?,
 ): KaraokeLine {
     val lineStart = firstOrNull()?.first ?: 0f
-    val lineEnd = lastOrNull()?.first ?: lineStart
+    val rawLineEnd = lastOrNull()?.first ?: lineStart
+    // 行级行（首尾锚点同时间）没有行内结束信息，用下一行起点或兜底时长补上；
+    // 逐字行末锚点本就晚于行起点，保持原值不动。
+    val lineEnd = if (rawLineEnd > lineStart) rawLineEnd
+    else (nextLineStart ?: (lineStart + LINE_LEVEL_FALLBACK_DURATION_MS))
     val syllables = ArrayList<KaraokeSyllable>(size)
     var cursor = lineStart
     for ((end, text) in this) {
@@ -101,6 +118,7 @@ fun buildSyncedLyrics(
         entry.mainLyric.toKaraokeLine(
             entry.translation ?: entry.romanization,
             otherSideForLines.getOrElse(index) { false },
+            entries.getOrNull(index + 1)?.startTime,
         )
     }
 )
