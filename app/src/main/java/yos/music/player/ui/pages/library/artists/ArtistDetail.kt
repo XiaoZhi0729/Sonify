@@ -1061,7 +1061,11 @@ fun ArtistDetail(
                                     fontSize = 14.sp,
                                     color = if (lightBackdrop) Color(0xFF161616).copy(alpha = 0.55f)
                                             else Color.White.copy(alpha = 0.45f),
-                                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                                    // FadeInContent 内部是 Box，父级不再是 Column：
+                                    // ColumnScope.align 写在里面能编译但测量期被丢弃（静默左对齐）。
+                                    // 改由自身铺满 + textAlign 居中，与父级布局类型无关。
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
                                         .padding(bottom = 8.dp)
                                         .then(if (lightBackdrop) Modifier else Modifier.overlayEffect())
                                 )
