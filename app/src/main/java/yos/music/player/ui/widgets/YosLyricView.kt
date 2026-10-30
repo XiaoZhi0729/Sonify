@@ -359,14 +359,29 @@ fun YosLyricViewLib(
                 val preparedLyrics = remember(cacheKey) {
                     LyricPreparedCache.preparedFor(cacheKey)
                 }
-                // 列表状态缓存：同一首歌切页回来直接复用，不再从顶部滚一次。
+                // 列表位置缓存：同一首歌切页回来不再从顶部滚一次。
                 // 键只含歌曲与栏宽、不含字号/字重：改样式不该把歌词弹回顶部重滚。
+                // 只缓存位置、不缓存 LyricsLazyListState 本体：那是单归属对象，
+                // 跨组合位点共享会让旧组合的 dispose 清掉新组合的 remeasurement，
+                // 导致过期 MeasureResult 重放到已回收的行节点上（place on deactivated node）。
                 val listStateKey = lyricListStateKey(mediaIdKey, layoutWidthPx / localDensity.density)
                 val listState = remember(listStateKey) {
-                    LyricPreparedCache.listStateFor(listStateKey) ?: LyricsLazyListState()
+                    val anchor = LyricPreparedCache.scrollAnchorFor(listStateKey)
+                    LyricsLazyListState(
+                        initialFirstVisibleItemIndex = anchor?.index ?: 0,
+                        initialFirstVisibleItemScrollOffset = anchor?.offset ?: 0,
+                    )
+                }
+                DisposableEffect(listStateKey, listState) {
+                    onDispose {
+                        LyricPreparedCache.putScrollAnchor(
+                            listStateKey,
+                            listState.firstVisibleItemIndex,
+                            listState.firstVisibleItemScrollOffset,
+                        )
+                    }
                 }
                 LaunchedEffect(cacheKey) {
-                    LyricPreparedCache.putListState(listStateKey, listState)
                     // 歌词页已接管这首歌：放弃同键后台预热，避免两边重复测量
                     LyricRenderWarmup.markLive(cacheKey)
                     // 记录真实排版宽度，供下次启动时的预热估算（按横竖屏分别保存）

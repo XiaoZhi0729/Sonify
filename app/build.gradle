@@ -102,7 +102,7 @@ dependencies {
     // 歌词渲染：第三方库（扫色前沿 / 辉光 / 逐字动画 / 行 reveal）
     // lyrics-ui 的 POM 把 lyrics-core-jvm 标成 runtime scope，但其公开 API 暴露了 core 的类型，
     // 必须显式再声明一次才能进 compile classpath。
-    implementation "com.mocharealm.accompanist:lyrics-ui:2.0.0-rc.2-patched9"
+    implementation "com.mocharealm.accompanist:lyrics-ui:2.0.0-rc.2-patched10"
     implementation "com.mocharealm.accompanist:lyrics-core-jvm:0.5.0"
 
     // 液态玻璃：backdrop 已按官方 fork 源码移植进 app/src/main/java/com/kyant/backdrop

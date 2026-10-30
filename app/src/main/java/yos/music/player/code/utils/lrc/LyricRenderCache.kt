@@ -238,11 +238,20 @@ object LyricPreparedCache {
         }
 
     private val listStates =
-        object : LinkedHashMap<String, LyricsLazyListState>(4, 0.75f, true) {
+        object : LinkedHashMap<String, ScrollAnchor>(4, 0.75f, true) {
             override fun removeEldestEntry(
-                eldest: MutableMap.MutableEntry<String, LyricsLazyListState>?,
+                eldest: MutableMap.MutableEntry<String, ScrollAnchor>?,
             ): Boolean = size > MAX_LIST_STATES
         }
+
+    /**
+     * 列表滚动锚点。缓存的是「停在第几行 + 行内偏移」而不是 [LyricsLazyListState] 本体：
+     * 那个 state 是单归属对象（remeasurement / items / heights 都是「谁最后组合谁写」），
+     * 跨组合位点共享会让旧组合的 dispose 清掉新组合刚挂上的 remeasurement，
+     * 进而把过期的 MeasureResult 重放到已回收的行节点上（崩溃：place is called on
+     * a deactivated node）。位置本身与归属无关，所以只留位置。
+     */
+    data class ScrollAnchor(val index: Int, val offset: Int)
 
     @Synchronized
     fun preparedFor(key: String): PreparedLyrics? = prepared[key]
@@ -253,11 +262,11 @@ object LyricPreparedCache {
     }
 
     @Synchronized
-    fun listStateFor(key: String): LyricsLazyListState? = listStates[key]
+    fun scrollAnchorFor(key: String): ScrollAnchor? = listStates[key]
 
     @Synchronized
-    fun putListState(key: String, value: LyricsLazyListState) {
-        listStates[key] = value
+    fun putScrollAnchor(key: String, index: Int, offset: Int) {
+        listStates[key] = ScrollAnchor(index, offset)
     }
 }
 
