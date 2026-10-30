@@ -1349,26 +1349,6 @@ fun NowPlaying(
                     ) {
 
                         YosWrapper {
-                            // 评论页不组合这层空 clickable：输入框会伸进控件带顶部，
-                            // 这层节点只要还在命中路径上就可能吞掉点击（键盘弹不出来）。
-                            if (showControl.value && nowPageLambda() != Comment) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(top = 40.dp)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = {
-                                                //showControl.value = true
-                                                /*lastClickTime.longValue =
-                                                TimeUtils.getNowMills()*/
-                                            })
-                                )
-                            }
-                        }
-
-                        YosWrapper {
                             // 歌词页控件显隐：用「常驻组合 + ModulateAlpha 承载动画 alpha」
                             // 取代 AnimatedVisibility 的 fadeIn。AnimatedVisibility 的淡入会把
                             // 子树离屏合成，内层 overlayEffect 的 Plus 加性提亮因此在透明底上失效
@@ -1429,6 +1409,38 @@ fun NowPlaying(
                                     .fillMaxWidth()
                                     .height(measuredBandHeight)
                             ) {
+                                // 控件带上方的空点击层（吞掉落在留白上的点击，不让它穿透到下面的页面）。
+                                //
+                                // **必须住在这个钉回原尺寸的 Box 里，不能住在外层加高的容器**：
+                                // 它是 fillMaxSize，会跟着父容器一起长高。外层为了容纳人声分离
+                                // 药丸的展开态往上多了 52dp（见 Box(1350) 注释），若挂在外层，
+                                // 本层顶边也跟着上移 52dp，而它的 padding(top = 40.dp) 是按
+                                // **原控件带顶边**标定的——净效果是整条横带上移约 12dp，把封面页
+                                // 标题行（歌名/歌手/收藏/更多）整个盖住，全部点不动。
+                                //
+                                // 放在这里则与外层那个 52dp 无关：本 Box 的几何 = 原始控件带，
+                                // 本层位置与被加高之前逐像素一致。排在玩家控件之前（底层），
+                                // 不会抢控件自己的命中。
+                                YosWrapper {
+                                    // 评论页不组合这层空 clickable：输入框会伸进控件带顶部，
+                                    // 这层节点只要还在命中路径上就可能吞掉点击（键盘弹不出来）。
+                                    if (showControl.value && nowPageLambda() != Comment) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(top = 40.dp)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {
+                                                        //showControl.value = true
+                                                        /*lastClickTime.longValue =
+                                                        TimeUtils.getNowMills()*/
+                                                    })
+                                        )
+                                    }
+                                }
+
                                 if (controlMounted) Column(
                                     Modifier
                                         .fillMaxSize()
