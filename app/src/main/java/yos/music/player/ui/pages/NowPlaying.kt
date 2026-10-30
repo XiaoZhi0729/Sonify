@@ -332,6 +332,38 @@ private const val AnimDurationMillis = 300
 // 背景层在 MainActivity 的 PlayerShell 内、顶部小把手单独绘制，均不跟随此偏移。
 private val PhonePortraitContentShift = 21.5.dp
 
+// ===== 控件带最小高度（只为"控件永不被压成 0"兜底，不改变任何控件尺寸）=====
+//
+// 控件带里除传输行外全是固定高度，合计 221dp：
+//   调用点顶 padding 52 + 主进度条 16.5（轨道 10.5 + 6） + 时间行 30
+//   + 音量行 54.5（M3 Slider 默认 48 + 上下 6.5） + 底部入口行 53（AirPlay）+ 底 padding 15
+// 传输行是唯一带 weight(1f) 的子项，窗口一变矮它第一个被压成 0——表现不是被裁掉
+// 一条边，而是"上一首/播放/下一首"整块零墨迹消失（小窗/分屏/自由窗口）。
+// 与平板横屏 0471caa 修的是同一个病：固定尺寸之和超过容器高度，weight 子项被挤成 0。
+//
+// 这里的策略是"把控件带撑够、让封面去让位"，**绝不缩小任何控件**：
+// 常规竖屏下比例算出来的高度本来就够，最小值不生效，观感与旧版逐像素一致。
+private val PlayerControlFixedHeight = 221.dp
+
+// 传输行至少要放得下一个播放键（三键里最大者 58.5dp）。
+private val PlayerControlTransportMinSlot = 58.5.dp
+
+internal fun playerControlBandMinHeight(): Dp =
+    PlayerControlFixedHeight + PlayerControlTransportMinSlot
+
+/**
+ * 控件带实际高度：比例目标与"装得下控件"的最小高度取较大者，且不超过可用高度。
+ *
+ * 只在窗口矮到比例值装不下控件时才会比比例值大；此时多出来的高度由调用方
+ * 从上方内容区扣掉（见 NowPlaying 里 albumContentFraction 的收紧逻辑），
+ * 保证封面让位而不是控件被压扁。
+ */
+internal fun playerControlBandHeight(availableHeight: Dp, bandFraction: Float): Dp {
+    if (availableHeight <= 0.dp) return 0.dp
+    val minHeight = playerControlBandMinHeight().coerceAtMost(availableHeight)
+    return (availableHeight * bandFraction).coerceIn(minHeight, availableHeight)
+}
+
 /*
 private val MaterialFadeInTransitionSpec
     get() = SharedElementsTransitionSpec(
@@ -436,23 +468,37 @@ fun NowPlaying(
         } else {
             PlayerControlBandFraction
         }
-        val albumContentFraction = if (isTabletPortrait) {
-            AlbumContentFractionTabletPortrait
+        // 控件带可用高度 = 窗口高 − 状态栏 − 导航条（控件 Column 自带这两个 padding）。
+        // 这里只用于「是否需要为控件让位」的估算；真正参与布局的是下面控件区里
+        // BoxWithConstraints 量到的实测高度，避免配置值与布局高度不同源。
+        val controlAvailableHeight =
+            (configuration.screenHeightDp.dp - rawStatusBarsTopDp() - rawNavigationBarsBottomDp())
+                .coerceAtLeast(0.dp)
+        val actualBandHeight = playerControlBandHeight(controlAvailableHeight, controlBandFraction)
+        val actualBandFraction = if (controlAvailableHeight > 0.dp) {
+            (actualBandHeight.value / controlAvailableHeight.value).coerceIn(0f, 1f)
         } else {
-            AlbumContentFraction
+            controlBandFraction
         }
-        val playingListFraction = if (isTabletPortrait) {
-            PlayingListFractionTabletPortrait
-        } else {
-            PlayingListFraction
-        }
+        // 内容区让位：只扣掉控件带**额外撑高**的那一部分，不是取 1-fraction。
+        // 正常竖屏 actualBandFraction == controlBandFraction → 增量为 0 → 取原常量，
+        // 标题行/歌手/收藏/更多的位置与旧版完全一致。
+        // （注意不能写成 min(原常量, 1-fraction)：0.595 与 1-0.437=0.563 一比就会把
+        //   整排文字顶上去，且会吃掉 0.595+0.437=1.032 那 80px 刻意的重叠。）
+        val bandExtraFraction = (actualBandFraction - controlBandFraction).coerceAtLeast(0f)
+        val albumContentFraction = (
+            if (isTabletPortrait) AlbumContentFractionTabletPortrait else AlbumContentFraction
+        ) - bandExtraFraction
+        val playingListFraction = (
+            if (isTabletPortrait) PlayingListFractionTabletPortrait else PlayingListFraction
+        ) - bandExtraFraction
         // 末句落点按"控件遮挡了多少"抬高：遮挡比例必须与控件带同源，否则平板竖屏改比例后
-        // 末句会落进控件里。
-        val lyricObstructionFraction = if (isTabletPortrait) {
-            1f - PlayerControlBandFractionTabletPortrait
-        } else {
-            LAST_LINE_OBSTRUCTION_FRACTION
-        }
+        // 末句会落进控件里。正常竖屏下取到的就是原常量。
+        val lyricObstructionFraction = maxOf(
+            if (isTabletPortrait) 1f - PlayerControlBandFractionTabletPortrait
+            else LAST_LINE_OBSTRUCTION_FRACTION,
+            actualBandFraction
+        ).coerceIn(0f, 1f)
         // 必须用 offset（布局位移）而不是 graphicsLayer.translationY（绘制位移）：
         // sharedElement 的动画落点读取布局坐标，graphicsLayer 会导致切大封面时
         // 动画终点停在未偏移的旧位置、结束后再跳到新位置。
@@ -1253,17 +1299,30 @@ fun NowPlaying(
 
             // 音乐控制
             YosWrapper {
-                Column(
+                // 用 BoxWithConstraints 量**真实**可用高度，而不是 screenHeightDp：
+                // 小窗/分屏/自由窗口下配置值未必等于布局高度，一旦不一致，
+                // 控件带与内容区的分配就会错位（表现为整排文字上下漂）。
+                BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
                         .statusBarsPadding()
                         .navigationBarsPadding()
-                        .then(phonePortraitShift), verticalArrangement = Arrangement.Bottom
+                        .then(phonePortraitShift)
                 ) {
+                    val measuredAvailableHeight = maxHeight
+                    val measuredBandHeight =
+                        playerControlBandHeight(measuredAvailableHeight, controlBandFraction)
+                    Column(
+                        Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                    // 控件带高度：正常竖屏 = 可用高 × 比例（与旧版一致）；
+                    // 矮窗口（小窗/分屏）里撑到最小高度，保证传输行不被压成 0。
+                    // 控件自身尺寸一律不变，多出来的高度从上方内容区扣（见 bandExtraFraction）。
                     Box(
                         Modifier
                             /*.fillMaxHeight(0.385f)*/
-                            .fillMaxHeight(controlBandFraction)
+                            .height(measuredBandHeight)
                             .fillMaxWidth()
                     ) {
 
@@ -1426,6 +1485,7 @@ fun NowPlaying(
                             }
                         }
                     }
+                    }
                 }
             }
 
@@ -1501,17 +1561,23 @@ private fun ColumnScope.Album(
                 contentAlignment = Alignment.BottomCenter
             ) {
                 // 播放/暂停内缩只作用于外层；内层明确锁定为正方形图片内容框。
-                // 坐标回调只挂在这个 aspectRatio 节点上，不包含外层底部 padding，
+                // 坐标回调只挂在这个正方形节点上，不包含外层底部 padding，
                 // 也不受 ShadowImage 内部阴影/描边 coordinator 的边界语义影响。
-                Box(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = dp, end = dp, bottom = dp),
                     contentAlignment = Alignment.BottomCenter
                 ) {
+                    // 边长 = min(可用宽, 可用高)。常规竖屏下可用宽恒小于可用高，取到的
+                    // 就是宽度 → 与旧版逐像素一致，播放/暂停的缩放仍是"底边跟着上移"
+                    // 的原观感（缩放由外层 padding 驱动，不是改 size 锚死底边）。
+                    // 只有小窗/分屏这类矮窗口里正方形按宽度算会超过槽位高度时，
+                    // 才由高度收窄——这是"只有封面变小、控件全不动"的唯一让位点。
+                    val coverSide = minOf(maxWidth, maxHeight)
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .size(coverSide)
                             .aspectRatio(1f)
                             .onGloballyPositioned { coordsOnChanged(it) }
                             // 点击面严格等于封面正方形：歌名/歌手/收藏/四周留白都不受影响。
@@ -3569,6 +3635,11 @@ private fun NowPlayingHandle(topOverride: Dp? = null) {
 }
 
 // 翻译切换按钮（竖屏控制层顶部 & 横屏右上角共用）
+//
+// 32dp：图标 drawable 自带的 24% 白圆角底覆盖整个 viewport，所以"背景药丸"大小
+// 就等于图标大小。与人声分离药丸的 PillIconSize 同值，两个按钮的底衬因此同宽。
+private val TranslationButtonSize = 32.dp
+
 @Composable
 internal fun TranslationToggleButton(
     translation: MutableState<Boolean>,
@@ -3596,14 +3667,14 @@ internal fun TranslationToggleButton(
                     painterResource(id = R.drawable.ic_nowplaying_translateon),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(TranslationButtonSize)
                 )
             } else {
                 Icon(
                     painterResource(id = R.drawable.ic_nowplaying_translate),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(TranslationButtonSize)
                 )
             }
         }
