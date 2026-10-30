@@ -42,6 +42,8 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
+import yos.music.player.ui.widgets.liquid.classyabaBlackRim
+import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 import kotlin.math.ceil
 
@@ -103,6 +105,11 @@ fun LiquidTopBarButton(
     else Color(0xFF242424).copy(0.84f)
     val edgeLightColor = if (luminance != null) adaptiveContentColor.copy(alpha = 0.55f)
     else if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
+    // 描边分两套，与 ClassYaba LiquidButton 的判据一致：那边也是按**应用主题**
+    // （GlasenseTheme.darkTheme）分流，不看 backdrop 亮度。本次只复刻浅色那套，
+    // 深色保持项目原状（整圈均匀白环），所以这里只判主题。
+    val rimHighlight: (() -> com.kyant.backdrop.highlight.Highlight?)? =
+        if (isLightTheme) classyabaBlackRim else null
     val shadowColor = if (isLightTheme) "#12000000".toColorInt() else "#20000000".toColorInt()
     val interactionSource = remember { MutableInteractionSource() }
     val animationScope = rememberCoroutineScope()
@@ -197,7 +204,10 @@ fun LiquidTopBarButton(
                             lens(8f.dp.toPx(), 24f.dp.toPx())
                         }
                     },
-                    highlight = { null },
+                    // 浅色模式描边改为 ClassYaba 配方（黑色环绕环，左右最深、上下保留
+                    // baseline 0.4）：交给材质自身的 highlight 槽，不额外增加离屏图层。
+                    // 深色模式保持原状（highlight = null + 下方 circleEdgeLight 白环）。
+                    highlight = rimHighlight,
                     shadow = { null },
                     layerBlock = {
                         // 只保留滚动联动的玻璃淡入；按压/拖动变换已上移到外层整体图层
@@ -210,7 +220,19 @@ fun LiquidTopBarButton(
                         drawRect(Color.Black.copy(alpha = 0.03f * interactiveHighlight.pressProgress))
                     }
                 )
-                .circleEdgeLight(color = edgeLightColor, width = 0.15f.dp, blurRadius = 0.5f.dp)
+                // 白色提亮边（上下直边最亮）：浅色模式下与上面的黑环合成 ClassYaba 的
+                // 「左右暗、上下亮」立体描边。深色模式不移植，继续用整圈均匀白环。
+                .then(
+                    if (isLightTheme) Modifier.classyabaWhiteEdge(CircleShape) else Modifier
+                )
+                .then(
+                    if (isLightTheme) Modifier
+                    else Modifier.circleEdgeLight(
+                        color = edgeLightColor,
+                        width = 0.15f.dp,
+                        blurRadius = 0.5f.dp
+                    )
+                )
                 .then(interactiveHighlight.modifier)
                 .then(if (draggable) interactiveHighlight.gestureModifier else interactiveHighlight.pressOnlyModifier)
                 .zIndex(0f)

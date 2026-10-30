@@ -64,6 +64,8 @@ import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.capsuleEdgeLight
 import yos.music.player.ui.widgets.basic.circleEdgeLight
+import yos.music.player.ui.widgets.liquid.classyabaBlackRim
+import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 import yos.music.player.ui.widgets.liquid.LiquidSlider
 import kotlin.math.roundToInt
 
@@ -217,7 +219,13 @@ private fun GlassPreviewCard(scale: Float, modifier: Modifier = Modifier) {
     }
 }
 
-/** 演示圆钮：与 LiquidTopBarButton 同配方（vibrancy + blur + API33 折射 + 边缘光） */
+/**
+ * 演示圆钮：与 LiquidTopBarButton 同配方（vibrancy + blur + API33 折射 + 边缘光）。
+ *
+ * 描边分两套，与顶栏圆钮保持一致：
+ * - 浅色：ClassYaba 配色 —— 黑色环绕环（左右最深、上下保留 baseline 0.4）+ 白色上下提亮边；
+ * - 深色：项目原状 —— 整圈均匀白环 [circleEdgeLight]。
+ */
 @Composable
 private fun DemoGlassButton(
     backdrop: Backdrop,
@@ -227,6 +235,7 @@ private fun DemoGlassButton(
     edgeColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val isDark = isFlamingoInDarkMode()
     Box(
         modifier
             .size(42.dp)
@@ -240,11 +249,18 @@ private fun DemoGlassButton(
                         lens(8.dp.toPx(), 24.dp.toPx())
                     }
                 },
-                highlight = { null },
+                highlight = if (isDark) { null } else classyabaBlackRim,
                 shadow = { null },
                 onDrawSurface = surface
             )
-            .circleEdgeLight(color = edgeColor, width = 0.15.dp, blurRadius = 0.5.dp),
+            .then(
+                if (isDark) Modifier.circleEdgeLight(
+                    color = edgeColor,
+                    width = 0.15.dp,
+                    blurRadius = 0.5.dp
+                )
+                else Modifier.classyabaWhiteEdge(CircleShape)
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -256,7 +272,7 @@ private fun DemoGlassButton(
     }
 }
 
-/** 演示胶囊：与顶栏圆钮同配方，只把形状换成胶囊 */
+/** 演示胶囊：与顶栏圆钮同配方，只把形状换成胶囊（描边同样只对浅色换 ClassYaba 配方） */
 @Composable
 private fun DemoGlassCapsule(
     backdrop: Backdrop,
@@ -266,6 +282,7 @@ private fun DemoGlassCapsule(
     edgeColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val isDark = isFlamingoInDarkMode()
     Box(
         modifier
             .height(44.dp)
@@ -279,11 +296,18 @@ private fun DemoGlassCapsule(
                         lens(8.dp.toPx(), 24.dp.toPx())
                     }
                 },
-                highlight = { null },
+                highlight = if (isDark) { null } else classyabaBlackRim,
                 shadow = { null },
                 onDrawSurface = surface
             )
-            .capsuleEdgeLight(color = edgeColor, width = 0.15.dp, blurRadius = 0.5.dp)
+            .then(
+                if (isDark) Modifier.capsuleEdgeLight(
+                    color = edgeColor,
+                    width = 0.15.dp,
+                    blurRadius = 0.5.dp
+                )
+                else Modifier.classyabaWhiteEdge(demoCapsuleShape)
+            )
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center
     ) {
