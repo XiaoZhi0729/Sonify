@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -109,7 +110,10 @@ import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
+import yos.music.player.ui.widgets.basic.SkeletonShimmer
+import yos.music.player.ui.widgets.basic.prefetchCover
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmer
 import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
@@ -157,81 +161,6 @@ fun Discovery(
     // 最近播放：收听历史（最近优先，后台切歌实时更新），首页最多展示 10 首
     val recentlyPlayed = MusicLibrary.recentlyPlayed.take(10)
 
-    fun load() {
-        if (status.value == "loading") return
-        status.value = "loading"
-        scope.launch {
-            KugouRepository.getRankList()
-                .onSuccess { list ->
-                    rankList.value = list
-                    status.value = if (list.isEmpty()) "empty" else "ok"
-                }
-                .onFailure { e ->
-                    status.value = "error:${e.message}"
-                }
-        }
-    }
-
-    fun loadNewSongs() {
-        if (newSongsStatus.value == "loading") return
-        newSongsStatus.value = "loading"
-        scope.launch {
-            KugouRepository.getTopSongs()
-                .onSuccess { list ->
-                    newSongs.value = list
-                    newSongsStatus.value = if (list.isEmpty()) "empty" else "ok"
-                }
-                .onFailure { e ->
-                    newSongsStatus.value = "error:${e.message}"
-                }
-        }
-    }
-
-    fun loadNewAlbums() {
-        if (newAlbumsStatus.value == "loading") return
-        newAlbumsStatus.value = "loading"
-        scope.launch {
-            KugouRepository.getTopAlbums()
-                .onSuccess { list ->
-                    newAlbums.value = list
-                    newAlbumsStatus.value = if (list.isEmpty()) "empty" else "ok"
-                }
-                .onFailure { e ->
-                    newAlbumsStatus.value = "error:${e.message}"
-                }
-        }
-    }
-
-    fun loadRecommendPlaylists() {
-        if (recommendPlaylistsStatus.value == "loading") return
-        recommendPlaylistsStatus.value = "loading"
-        scope.launch {
-            KugouRepository.getRecommendPlaylists()
-                .onSuccess { list ->
-                    recommendPlaylists.value = list
-                    recommendPlaylistsStatus.value = if (list.isEmpty()) "empty" else "ok"
-                }
-                .onFailure { e ->
-                    recommendPlaylistsStatus.value = "error:${e.message}"
-                }
-        }
-    }
-
-    fun loadEverydayRecommendSongs() {
-        if (everyStatus.value == "loading") return
-        everyStatus.value = "loading"
-        scope.launch {
-            KugouRepository.getEverydayRecommendSongs()
-                .onSuccess { list ->
-                    everySongs.value = list
-                    everyStatus.value = if (list.isEmpty()) "empty" else "ok"
-                }
-                .onFailure { e ->
-                    everyStatus.value = "error:${e.message}"
-                }
-        }
-    }
-
     // 新歌点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
     fun playNewSongsAt(index: Int) {
         val songs = newSongs.value
@@ -252,32 +181,20 @@ fun Discovery(
         }
     }
 
-    // 首次进入加载；切 Tab 返回时 DiscoveryObject 状态仍在，不重复请求。
-    // discoveryRevision 变化（重选 Home Tab / 回前台 / 操作完成）时强制重拉全部区块。
+    // 数据加载全部交给 DiscoveryObject（进程级单飞 + 启动即预加载）：
+    // 冷启动时 Application 已经在拉五个板块，页面只需在「用户重选 Home Tab /
+    // 回前台 / 操作完成」时补一次强制刷新。
     val discoveryRevision = KugouSyncCoordinator.discoveryRevision.value
     val refreshing = remember("Discovery_refreshing") { mutableStateOf(false) }
     val lastRevision = remember("Discovery_lastRevision") { mutableStateOf(discoveryRevision) }
 
-    fun refreshAll() {
-        load()
-        loadNewSongs()
-        loadNewAlbums()
-        loadRecommendPlaylists()
-        loadEverydayRecommendSongs()
-    }
+    fun refreshAll() = DiscoveryObject.refreshAll()
 
     LaunchedEffect(discoveryRevision) {
         if (discoveryRevision == lastRevision.value) {
-            if (status.value == "idle") load()
-            // 上次会话残留 loading 态自愈（切页时协程已取消）
-            if (status.value == "loading") {
-                status.value = if (rankList.value.isEmpty()) "idle" else "ok"
-                if (status.value == "idle") load()
-            }
-            if (newSongsStatus.value == "idle") loadNewSongs()
-            if (newAlbumsStatus.value == "idle") loadNewAlbums()
-            if (recommendPlaylistsStatus.value == "idle") loadRecommendPlaylists()
-            if (everyStatus.value == "idle") loadEverydayRecommendSongs()
+            // 首次组合：Application 可能还没发请求（或已发完在防抖窗口内），
+            // ensureFresh 自己会判断，重复调用不会重复打接口。
+            DiscoveryObject.ensureFresh()
         } else {
             lastRevision.value = discoveryRevision
             refreshing.value = true
@@ -286,16 +203,30 @@ fun Discovery(
     }
 
     // 全部区块加载完成后收起下拉刷新指示器
-    LaunchedEffect(status.value, newSongsStatus.value, newAlbumsStatus.value, recommendPlaylistsStatus.value, everyStatus.value) {
-        if (refreshing.value &&
-            status.value != "loading" &&
-            newSongsStatus.value != "loading" &&
-            newAlbumsStatus.value != "loading" &&
-            recommendPlaylistsStatus.value != "loading" &&
-            everyStatus.value != "loading"
-        ) {
-            refreshing.value = false
+    LaunchedEffect(
+        status.value,
+        newSongsStatus.value,
+        newAlbumsStatus.value,
+        recommendPlaylistsStatus.value,
+        everyStatus.value
+    ) {
+        if (refreshing.value && DiscoveryObject.allSettled()) refreshing.value = false
+    }
+
+    // 卡片封面预热：与真实卡片同档位（HIGH/400px），数据一到位就把前几屏的封面解码好，
+    // 避免卡片入场时先闪一帧占位图再淡入。
+    val prewarmContext = LocalContext.current
+    LaunchedEffect(
+        recommendPlaylists.value,
+        newAlbums.value,
+        rankList.value
+    ) {
+        val urls = buildList {
+            addAll(recommendPlaylists.value.take(4).map { it.artworkUrl })
+            addAll(newAlbums.value.take(4).map { it.coverUrl })
+            addAll(rankList.value.take(4).map { it.coverUrl })
         }
+        urls.forEach { prefetchCover(prewarmContext, it) }
     }
 
     // ---------- 主页自定义（Home Layout） ----------
@@ -352,6 +283,18 @@ fun Discovery(
             dragHolder.clear()
         }
     }
+
+    // 骨架屏扫光：整页共用一条动画（各块相位同步，视觉上是一道光扫过整屏）。
+    // 只在"确实还有板块会显示骨架"时创建——数据全到位后无限动画会白跑，是纯粹的掉帧来源。
+    // 判据必须与 DiscoverySectionSlot 里 pending 的定义完全一致：上游明确返回空
+    // （status=="empty"）或报错的板块不显示骨架，否则那两种情况会让动画永远跑下去。
+    val anySectionPending =
+        sectionShowsSkeleton(recommendPlaylists.value, recommendPlaylistsStatus.value) ||
+            sectionShowsSkeleton(newSongs.value, newSongsStatus.value) ||
+            sectionShowsSkeleton(newAlbums.value, newAlbumsStatus.value) ||
+            sectionShowsSkeleton(rankList.value, status.value) ||
+            sectionShowsSkeleton(everySongs.value, everyStatus.value)
+    val shimmer = rememberSkeletonShimmer(enabled = anySectionPending)
 
     val renderSections: LazyListScope.() -> Unit = {
                 if (visibleSections.isEmpty()) {
@@ -410,7 +353,12 @@ fun Discovery(
 
         // ② 每日推荐（样式与「新歌精选」一致：横向分页多列歌曲行；无数据则整段隐藏）
                             HomeSectionId.EverydayRecommend -> item("EverydayRecommendSection") {
-            if (everySongs.value.isNotEmpty()) {
+            DiscoverySectionSlot(
+                hasData = everySongs.value.isNotEmpty(),
+                status = everyStatus.value,
+                shimmer = shimmer,
+                skeleton = { HomeSkeletonSongColumn(shimmer) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -427,7 +375,13 @@ fun Discovery(
 
         // ③ 精选歌单
                             HomeSectionId.RecommendPlaylists -> item("RecommendPlaylistSection") {
-            if (recommendPlaylists.value.isNotEmpty()) {
+            DiscoverySectionSlot(
+                hasData = recommendPlaylists.value.isNotEmpty(),
+                status = recommendPlaylistsStatus.value,
+                shimmer = shimmer,
+                emptyText = stringResource(id = R.string.discovery_recommend_playlists_empty),
+                skeleton = { HomeSkeletonCardRail(shimmer, AlbumCardCoverToTitleGap) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -481,18 +435,16 @@ fun Discovery(
                         }
                     }
                 }
-            } else {
-                // 未加载到数据时显示状态（loading/empty/error；idle/ok 时不渲染，不影响其它 Section）
-                OnlineStatusItem(
-                    status = recommendPlaylistsStatus.value,
-                    loadingText = stringResource(id = R.string.online_playlists_loading),
-                    emptyText = stringResource(id = R.string.discovery_recommend_playlists_empty)
-                )
             }
         }
 
                             HomeSectionId.NewSongs -> item("NewSongsSection") {
-            if (newSongs.value.isNotEmpty()) {
+            DiscoverySectionSlot(
+                hasData = newSongs.value.isNotEmpty(),
+                status = newSongsStatus.value,
+                shimmer = shimmer,
+                skeleton = { HomeSkeletonSongColumn(shimmer) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -510,7 +462,12 @@ fun Discovery(
         }
 
                             HomeSectionId.NewAlbums -> item("NewAlbumsSection") {
-            if (newAlbums.value.isNotEmpty()) {
+            DiscoverySectionSlot(
+                hasData = newAlbums.value.isNotEmpty(),
+                status = newAlbumsStatus.value,
+                shimmer = shimmer,
+                skeleton = { HomeSkeletonCardRail(shimmer, AlbumCardCoverToTitleGap) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -559,7 +516,12 @@ fun Discovery(
         }
 
                             HomeSectionId.Rank -> item("RankSection") {
-            if (rankList.value.isNotEmpty()) {
+            DiscoverySectionSlot(
+                hasData = rankList.value.isNotEmpty(),
+                status = status.value,
+                shimmer = shimmer,
+                skeleton = { HomeSkeletonCardRail(shimmer) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -745,6 +707,76 @@ fun Discovery(
     }
     }
 }
+
+/**
+ * 主页板块的统一外壳：**有数据 → 真实内容；无数据 → 骨架 / 空态 / 错误**。
+ *
+ * 三处刻意的取舍：
+ *  1. 骨架不是与内容二选一，而是**叠在内容之上淡出**。内容一到就立刻组合（封面即刻开始解码），
+ *     灰块在 260ms 内退场，视觉上是"内容从灰块底下浮现"，没有硬切。
+ *  2. 淡出结束后骨架**离开组合**，真实内容外面不留任何常驻容器——用 Crossfade 的话
+ *     `AnimatedContent` 会永久包在内容外面，且 fadeIn/fadeOut 静止时仍带 alpha 图层
+ *     （正是本项目反复处理的 `alpha caused saveLayer`）。
+ *  3. error 且无旧数据 → 复用 [OnlineStatusItem] 的错误行。历史上这几个板块失败是彻底静默的
+ *     （整段消失，用户分不清"没内容"还是"断网"）。empty 只在调用方给了 [emptyText] 时提示，
+ *     其余保持旧行为（静默隐藏）。
+ */
+@Composable
+private fun DiscoverySectionSlot(
+    hasData: Boolean,
+    status: String,
+    shimmer: SkeletonShimmer,
+    skeleton: @Composable () -> Unit,
+    emptyText: String? = null,
+    content: @Composable () -> Unit
+) {
+    val failed = status.startsWith("error:")
+    val empty = status == "empty"
+    // 这个板块此刻是否该显示骨架（与页面顶层的 anySectionPending 用同一个判据）
+    val pending = sectionShowsSkeleton(hasData, status)
+
+    Box(Modifier.fillMaxWidth()) {
+        when {
+            hasData -> content()
+            failed -> OnlineStatusItem(
+                status = status,
+                loadingText = stringResource(id = R.string.online_playlists_loading),
+                emptyText = emptyText.orEmpty()
+            )
+            empty && emptyText != null -> OnlineStatusItem(
+                status = status,
+                loadingText = stringResource(id = R.string.online_playlists_loading),
+                emptyText = emptyText
+            )
+        }
+        // 存活与淡出交给 AnimatedVisibility 一处管理。
+        //
+        // 曾手写「skeletonAlive 布尔 + 延迟 280ms 卸载 + 独立 alpha 动画」两个状态：
+        // 两者会互相竞争——pending 快速 true→false→true 时，上一个卸载定时器与新一次挂载
+        // 交叠，骨架会闪断重挂，扫光看着像"扫到一半突然没了又重新开始"。
+        // AnimatedVisibility 内部只有一套进出场状态机，不存在这种竞争；
+        // 且它退出完成后整棵骨架离开组合，真实内容外面不留常驻容器。
+        AnimatedVisibility(
+            visible = pending,
+            enter = fadeIn(tween(120)),
+            exit = fadeOut(tween(260, easing = FastOutSlowInEasing))
+        ) {
+            HomeSkeletonSection(shimmer = shimmer, content = skeleton)
+        }
+    }
+}
+
+/**
+ * 板块是否显示骨架：无数据、且不是因为「已报错」或「上游明确返回空」而空。
+ *
+ * 页面顶层用它决定扫光动画是否该存在，[DiscoverySectionSlot] 用它决定骨架是否该出现——
+ * 两处必须是同一个函数，否则动画与骨架会脱节（数据全到位后动画还在空转）。
+ */
+internal fun sectionShowsSkeleton(hasData: Boolean, status: String): Boolean =
+    !hasData && status != "empty" && !status.startsWith("error:")
+
+internal fun sectionShowsSkeleton(items: List<*>, status: String): Boolean =
+    sectionShowsSkeleton(items.isNotEmpty(), status)
 
 /**
  * 横向分页多列歌曲（新歌精选 / 每日推荐共用）：HorizontalPager 松手吸附，

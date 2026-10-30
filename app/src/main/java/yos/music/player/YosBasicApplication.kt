@@ -139,6 +139,17 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             // 主页板块布局：MMKV+Gson 落盘，主线程先建好状态，避免首帧组合才读磁盘
             yos.music.player.data.libraries.HomeLayoutStore.sections.value
         }
+        // 主页发现流启动即预加载：不等主页组合就并行拉五个板块，骨架屏因此只闪很短一下。
+        // **不加延迟**——加了就晚于主页首次组合里的 ensureFresh，预加载失去意义
+        // （单飞去重后，谁先发谁生效）。请求本身在 IO 线程（KugouRepository 内部
+        // withContext(IO)），与下面 registerDevice 同批发出，不占主线程。
+        //
+        // 刻意不做磁盘快照：每次启动都从空态开始，让骨架如实反映"这次真的在联网"。
+        // 拿上次的内容顶上来会让用户误以为数据是新的，还得手动刷新才知道有没有更新。
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { yos.music.player.data.objects.DiscoveryObject.ensureFresh() }
+        }
+
         // 音频字节缓存上限：主线程读设置一次存进 OnlineAudioCache 的普通字段，缓存层后续
         // 构造时不再读 DataSaver（否则播放线程首次读设置会把状态建到非全局快照里）。
         runCatching {

@@ -333,12 +333,13 @@ class YosLrcFactoryTest {
         """.trimIndent()
         val entries = factory.formatLrcEntriesWithFallback(sample, 210_000)
 
-        assertEquals(4, entries.size)
-        assertEquals(listOf("12.31 - 郑润泽", "作词: 郑润泽", "欠你还没走的路", "就这样结束"),
+        // 制作信息行（`作词:`）与 KRC 路径一致地被过滤，不上屏
+        assertEquals(3, entries.size)
+        assertEquals(listOf("12.31 - 郑润泽", "欠你还没走的路", "就这样结束"),
             entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
         assertTrue(entries.all { entry -> entry.mainLyric.all { !it.second.contains('<') } })
         // 词级形状（行起点锚点 + 逐词 + 尾部空锚点），走逐字卡拉OK渲染
-        assertTrue(entries[2].mainLyric.size > 4)
+        assertTrue(entries[1].mainLyric.size > 4)
     }
 
     @Test
@@ -395,5 +396,122 @@ class YosLrcFactoryTest {
         )
 
         assertEquals(listOf(false, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    // ---- 制作人员署名不得被当成报幕标签（独唱歌曲整首跑右边） ----
+
+    @Test
+    fun creditLinesEachAppearingOnceNeverSwitchSide() {
+        // 万里长风（周深独唱）的真实署名行：每行只出现一次，曾把整首歌词翻到右侧
+        val entries = factory.formatKrcEntries(
+            """
+                [0,3000]<0,300,0>万里长风<300,300,0> - <600,300,0>周深
+                [5382,1000]<0,300,0>词：<300,300,0>毕磊
+                [8073,1000]<0,300,0>曲：<300,300,0>钱雷
+                [10764,1000]<0,300,0>编曲：<300,300,0>钱雷
+                [29625,1000]<0,300,0>我们会到哪里
+                [32859,1000]<0,300,0>曾经有人问起
+            """.trimIndent()
+        )
+
+        assertTrue(MediaViewModelObject.otherSideForLines.all { !it })
+        // `编曲：` 属既有 isNonLyricMetadata 过滤范围，与 KRC 路径一致地被移除
+        assertEquals(
+            listOf("万里长风 - 周深", "词：毕磊", "曲：钱雷", "我们会到哪里", "曾经有人问起"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() }
+        )
+    }
+
+    @Test
+    fun englishCreditLinesNeverSwitchSide() {
+        // First Love 的真实署名行：Guitar：/Strings： 都是英文形态
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>Guitar：<300,300,0>秋山浩徳
+                [2000,1000]<0,300,0>Strings：<300,300,0>後藤勇一郎
+                [3000,1000]<0,300,0>最後のキスは
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, false, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun singleDistinctSingerLabelNeverEnablesSplitLayout() {
+        // 只有一个歌手标签时不分栏：全程左对齐
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男：<300,300,0>一
+                [2000,1000]<0,300,0>男：<300,300,0>二
+                [3000,1000]<0,300,0>男：<300,300,0>三
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, false, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun onceOnlySingerLabelBetweenRepeatedLabelsStillSplits() {
+        // 某位歌手只唱一句，另一位重复出现：仍应判为对唱
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男：<300,300,0>一
+                [2000,1000]<0,300,0>女：<300,300,0>二
+                [3000,1000]<0,300,0>男：<300,300,0>三
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun multiWordSingerLabelIsFullyStripped() {
+        // KRC 把 `男：` 逐字切成 ["男", "："] 两个词，剥离不能残留冒号
+        val entries = factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男<300,300,0>：<600,300,0>君を
+                [2000,1000]<0,300,0>女<300,300,0>：<600,300,0>僕を
+                [3000,1000]<0,300,0>男<300,300,0>：<600,300,0>また
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("君を", "僕を", "また"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun standaloneSingerLabelLineIsRemoved() {
+        // 蔷薇青竹的真实形态：`男：` 独占一行，既不应显示也不应占位
+        val entries = factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男<300,300,0>：
+                [2000,1000]<0,300,0>君を
+                [3000,1000]<0,300,0>女<300,300,0>：
+                [4000,1000]<0,300,0>僕を
+                [5000,1000]<0,300,0>男<300,300,0>：
+                [6000,1000]<0,300,0>また
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("君を", "僕を", "また"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
+        // sides 与被删行同步对齐：君を左、僕を右、また左
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun lrcPathFiltersCreditLinesLikeKrcPath() {
+        val entries = factory.formatLrcEntries(
+            """
+                [00:01.00]歌名 - 歌手
+                [00:02.00]作词: 某人
+                [00:03.00]作曲: 某人
+                [00:04.00]真正的歌词
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("歌名 - 歌手", "真正的歌词"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
     }
 }
