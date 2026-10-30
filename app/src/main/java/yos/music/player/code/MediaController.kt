@@ -78,6 +78,7 @@ import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.lrc.LyricInfoSerializer
 import yos.music.player.code.MediaController as YosControllerObject
 import yos.music.player.code.utils.player.CrossfadeExo
+import yos.music.player.code.vocalsep.VocalSeparationController
 import yos.music.player.code.utils.player.BluetoothOutputMonitor
 import yos.music.player.code.utils.player.BluetoothSessionTitles
 import yos.music.player.code.utils.player.FadeExo
@@ -1761,6 +1762,9 @@ class YosPlaybackService : MediaSessionService() {
     /** 听歌时长心跳循环：随服务生命周期启停（防重建叠加导致计时翻倍）。 */
     private var gradeHeartbeatJob: Job? = null
 
+    /** 人声分离模型可用性的收集协程（服务重建时先取消旧的，防叠加）。 */
+    private var vocalSepAvailabilityJob: Job? = null
+
     private val shuffleMode = "shuffle_mode"
     private val repeatMode = "repeat_mode"
 
@@ -1892,6 +1896,16 @@ class YosPlaybackService : MediaSessionService() {
         // 音质切换需要读偏好与网络形态：服务创建时注入应用级 Context（幂等）
         yos.music.player.code.MediaController.appContext = applicationContext
         yos.music.player.data.repositories.NetworkObserver.init(applicationContext)
+        // 人声分离：注入 Context 并探测模型是否可用（只查 assets，不解码模型）。
+        // 模型可用性变化会推到 VocalSeparationState.available，UI 据此置灰按钮。
+        VocalSeparationController.init(applicationContext)
+        // 模型探测在后台线程完成，把结果同步进 Compose 状态（UI 只读 VocalSeparationState）
+        vocalSepAvailabilityJob?.cancel()
+        vocalSepAvailabilityJob = CoroutineScope(Dispatchers.Main).launch {
+            VocalSeparationController.available.collect { present ->
+                yos.music.player.data.objects.VocalSeparationState.updateAvailability(present)
+            }
+        }
         val audioAttributes: AudioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -1899,8 +1913,11 @@ class YosPlaybackService : MediaSessionService() {
         sessionAudioAttributes = audioAttributes
         // 主/副 player 共用这一套解码配置：过渡窗口里新曲必须与正在播的这曲走同一条解码
         // 路径，否则"切个歌顺便换了渲染器"会听出音色差
-        fun renderFactory(): DefaultRenderersFactory =
-            YosRenderFactory(this)
+        //
+        // playerKey 决定人声分离处理器的归属：主副各持一份（TFLite 的 Interpreter
+        // 不是线程安全的，而交叉淡化期间两台 player 会同时出声）。
+        fun renderFactory(playerKey: String): DefaultRenderersFactory =
+            YosRenderFactory(this, playerKey)
                 .setEnableAudioFloatOutput(
                     SettingsLibrary.AudioFloatOutput
                 )
@@ -1930,7 +1947,7 @@ class YosPlaybackService : MediaSessionService() {
                 )
                 .setTargetBufferBytes(32 * 1024 * 1024)
                 .build()
-        val player = ExoPlayer.Builder(this, renderFactory())
+        val player = ExoPlayer.Builder(this, renderFactory(VocalSeparationController.PLAYER_PRIMARY))
             .setAudioAttributes(
                 audioAttributes,
                 SettingsLibrary.AudioAttributes
@@ -1952,7 +1969,10 @@ class YosPlaybackService : MediaSessionService() {
             player,
             secondaryBuilder = {
                     lateinit var secondary: ExoPlayer
-                    secondary = ExoPlayer.Builder(this, renderFactory())
+                    secondary = ExoPlayer.Builder(
+                        this,
+                        renderFactory(VocalSeparationController.PLAYER_SECONDARY)
+                    )
                         .setAudioAttributes(audioAttributes, false)
                         .setLoadControl(loadControl())
                         .setHandleAudioBecomingNoisy(true)
@@ -1987,6 +2007,8 @@ class YosPlaybackService : MediaSessionService() {
                     // 换曲 = 上一次拦截的上下文已失效；但队列重建/重备**同一首**也会派发
                     // transition（reason=PLAYLIST_CHANGED），那种不能把说明框收掉。
                     yos.music.player.data.objects.PlaybackBlockState.clearIfOtherTrack(mediaItem?.mediaId)
+                    // 人声分离同理：按 mediaId 比对，只有真换了另一首才关闭（换曲自动关闭）
+                    yos.music.player.data.objects.VocalSeparationState.clearIfOtherTrack(mediaItem?.mediaId)
                     // 抽到 handleTrackSwitched：扶正后副 player 不会再有 transition 事件，
                     // promote 事务需要手动补发同一套处理
                     handleTrackSwitched(mediaItem, reason)
@@ -2123,6 +2145,9 @@ class YosPlaybackService : MediaSessionService() {
                     super.onPositionDiscontinuity(oldPosition, newPosition, reason)
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                         yos.music.player.data.repositories.ListenReportService.onSeek()
+                        // seek 后引擎的流式状态全部失效（carry / OLA 尾量 / 28 路状态），
+                        // 必须清掉重来，否则会残留上一位置的混响尾巴。开关不动。
+                        VocalSeparationController.requestResetAll()
                     }
                 }
 
@@ -2592,6 +2617,9 @@ class YosPlaybackService : MediaSessionService() {
         forwardingPlayer = newForwarding
         currentPlayer = secondary
         setCustomButtons(newForwarding)
+        // ④' 人声分离处理器身份随播放器搬迁（不清引擎状态：正在淡入的新曲必须保持
+        //     分离效果，否则接缝处会漏出一瞬原声）
+        runCatching { VocalSeparationController.promoteSecondaryToPrimary() }
         // ⑤ 收尾：释放旧 player；补发换曲事件（副 player 本来就在播，不会再有 transition/tracks
         //    通知，歌词/最近播放/音质探测/封面预载必须手动补跑，且顺序与自然换曲一致）
         runCatching { old.release() }
@@ -2908,6 +2936,11 @@ class YosPlaybackService : MediaSessionService() {
         YosDiagnostics.attachPlayback(this, null)
         gradeHeartbeatJob?.cancel()
         gradeHeartbeatJob = null
+        vocalSepAvailabilityJob?.cancel()
+        vocalSepAvailabilityJob = null
+        // 人声分离：处理器与引擎随 player 一起释放，这里只清注册表
+        runCatching { VocalSeparationController.release() }
+        runCatching { yos.music.player.data.objects.VocalSeparationState.updateAvailability(false) }
         // 先拆跳歌退避：它往主线程 Handler 上挂了重备任务，回调里要碰 player，
         // 放在 session 释放之后执行就会打到已 release 的播放器
         OnlineSkipState.detach()

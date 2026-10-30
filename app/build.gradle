@@ -18,6 +18,21 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
+        // 不生成矢量图标的位图回退。
+        //
+        // 默认 minSdk < 24 时 AGP 会把每个 drawable 矢量栅格化成
+        // drawable-{ldpi..xxxhdpi}-v4/*.png（本项目 306 个），打包进 APK。
+        // 资源匹配里 `-xxxhdpi` 比 `-anydpi-v24` 更具体，于是高密度设备
+        // （本机 520dpi）**永远加载 PNG，XML 矢量被完全绕过**。
+        //
+        // 后果不只是多占体积：改矢量 XML（换路径、调圆角、改比例）在真机上
+        // 毫无变化，因为屏幕上是位图。人声分离药丸与翻译按钮的图标尺寸/圆角
+        // 对不齐就是这个原因，排查了两轮才定位。
+        //
+        // minSdk 23 仍然安全：VectorDrawableCompat 走 appcompat 即可渲染，
+        // 且本项目 AppCompat 1.7.0 已在依赖里。
+        vectorDrawables.generatedDensities = []
+
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
         }
@@ -63,6 +78,12 @@ android {
         jniLibs {
             useLegacyPackaging true
         }
+    }
+
+    androidResources {
+        // 模型权重已压缩过，再 zip 一遍既无收益又要整包解压才能读；
+        // 保持不压缩才能用 AssetManager.openFd 拿长度/偏移。
+        noCompress 'tflite'
     }
 
     composeCompiler {
@@ -169,4 +190,13 @@ dependencies {
     implementation("dev.chrisbanes.haze:haze:2.0.1")
     implementation("dev.chrisbanes.haze:haze-blur:2.0.1")
     implementation("dev.chrisbanes.haze:haze-blur-materials:2.0.1")
+
+    // 人声分离实时推理（TFLite 解释器）
+    // -api 件不可省：Interpreter/Tensor 的公开类型在 api artifact 里，缺了会报
+    // "Tensor not found"；-gpu 两件只为补类，不挂 delegate（旧 GpuDelegate 在部分
+    // SoC 驱动上会 SIGSEGV，Java 层拦不住，本功能只走 CPU + XNNPACK）
+    implementation "org.tensorflow:tensorflow-lite:2.16.1"
+    implementation "org.tensorflow:tensorflow-lite-api:2.16.1"
+    implementation "org.tensorflow:tensorflow-lite-gpu:2.16.1"
+    implementation "org.tensorflow:tensorflow-lite-gpu-api:2.16.1"
 }

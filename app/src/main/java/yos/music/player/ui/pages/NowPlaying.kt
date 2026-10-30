@@ -242,6 +242,8 @@ import yos.music.player.ui.widgets.LYRIC_TOP_FADE_INSET_DP
 import yos.music.player.ui.widgets.lyricTopMaskEndPx
 import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.audio.MusicQualityIndicator
+import yos.music.player.ui.widgets.audio.VocalSeparationPill
+import yos.music.player.ui.widgets.audio.VocalSeparationPillHeight
 import yos.music.player.ui.widgets.basic.AddToPlaylistPickerPanel
 import yos.music.player.ui.widgets.basic.FullScreenStaticCover
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -258,9 +260,6 @@ import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.PlaybackBlockChip
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
-import yos.music.player.ui.widgets.basic.isBlocked
-import yos.music.player.ui.widgets.basic.rememberSongAvailability
-import yos.music.player.ui.widgets.basic.handleBlockedClick
 import yos.music.player.ui.widgets.liquid.YosSwitch
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.overlayEffect
@@ -661,6 +660,20 @@ fun NowPlaying(
         val onSliderAction: () -> Unit = {
             showControl.value = true
             lastClickTime.longValue = TimeUtils.getNowMills()
+        }
+        // 人声分离引擎故障：处理器已自行退回原声，这里只负责告知一次（避免"声音突然变了"
+        // 却没有任何解释）。用 phase 作为 key，同一次故障不会重复弹。
+        val vocalSepPhase = yos.music.player.data.objects.VocalSeparationState.phase
+        val vocalSepContext = LocalContext.current
+        LaunchedEffect(vocalSepPhase) {
+            if (vocalSepPhase == yos.music.player.data.objects.VocalSeparationState.Phase.Failed) {
+                Toast.makeText(
+                    vocalSepContext,
+                    vocalSepContext.getString(R.string.vocal_separation_failed),
+                    Toast.LENGTH_SHORT
+                ).show()
+                yos.music.player.data.objects.VocalSeparationState.acknowledgeFailure()
+            }
         }
         val onWhileAction: suspend () -> Unit = {
             shuffleModeEnabled.value = mediaControl?.shuffleModeEnabled ?: false
@@ -1319,10 +1332,19 @@ fun NowPlaying(
                     // 控件带高度：正常竖屏 = 可用高 × 比例（与旧版一致）；
                     // 矮窗口（小窗/分屏）里撑到最小高度，保证传输行不被压成 0。
                     // 控件自身尺寸一律不变，多出来的高度从上方内容区扣（见 bandExtraFraction）。
+                    //
+                    // ## 为什么 +52dp
+                    // 人声分离药丸展开时向上长 52dp（36dp → 88dp），它住在本容器顶边，
+                    // 那 52dp 会落在本容器之外。Compose 的命中测试按容器 bounds 裁剪，
+                    // 落在外面就收不到指针、会穿透到下面的滚动歌词。
+                    //
+                    // 往上多给 52dp 即可容纳。外层 Column 是 Arrangement.Bottom，
+                    // 加高只**向上延伸、底边不动**；里面那个 Box 再钉回 measuredBandHeight
+                    // 贴底，所以所有控件的位置一分不动。
                     Box(
                         Modifier
                             /*.fillMaxHeight(0.385f)*/
-                            .height(measuredBandHeight)
+                            .height(measuredBandHeight + VocalSeparationPillHeight - 36.dp)
                             .fillMaxWidth()
                     ) {
 
@@ -1368,8 +1390,44 @@ fun NowPlaying(
                             val controlMounted by remember {
                                 derivedStateOf { controlAlpha > 0f }
                             }
+
+                            // 人声分离药丸：住在外层**加高**的控件带（Box(1344)，比原控件带
+                            // 高 52dp），而不是下面那个钉回原尺寸的 Box——只有这里的高度
+                            // 容得下展开态的 88dp。
+                            //
+                            // ## 为什么外面再包一层 88dp 槽位 + Bottom 对齐
+                            // 本容器顶边在原控件带顶边之上 52dp。药丸若直接 Top 对齐，
+                            // 收起态会被顶到那 52dp 之上、且展开时向下长（两个方向都错）。
+                            //
+                            // 放一个 88dp 高、贴顶的槽位，药丸在槽位内 Bottom 对齐：
+                            // 槽位底边 = 本容器顶边 + 88dp = 原控件带顶边 + 36dp
+                            // = 药丸原来的底边。于是收起态与改动前逐像素一致，
+                            // 展开时向上长满槽位上方那 52dp——底边固定、只向上延伸。
+                            if (page == Lyric) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(end = 32.dp)
+                                        .height(VocalSeparationPillHeight)
+                                        .graphicsLayer {
+                                            compositingStrategy =
+                                                CompositingStrategy.ModulateAlpha
+                                            // 与原来嵌套在 Row 里时的两层 alpha 一致
+                                            alpha = controlAlpha * alphaAnim.value
+                                        },
+                                    contentAlignment = Alignment.BottomCenter
+                                ) {
+                                    VocalSeparationPill()
+                                }
+                            }
+                            // 外层控件带为了容纳药丸向上多留了 52dp，这里把它**钉回原尺寸
+                            // 并贴底**：控件带内所有内容（播放条标题行、传输键、进度条、
+                            // 评论面板的让位换算）几何与改动前完全一致。
                             Box(
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(measuredBandHeight)
                             ) {
                                 if (controlMounted) Column(
                                     Modifier
@@ -1442,6 +1500,13 @@ fun NowPlaying(
                                 //（Album 列 fillMaxHeight(0.595f) + 控制带 fillMaxHeight(0.437f)
                                 // = 1.032，重叠 ≈80px；真机逐点实测「⋯」只有上沿可点时验证过）。
                                 if (page == Lyric) {
+                                    // 只放翻译按钮。人声分离药丸住在**外层加高的控件带**
+                                    // （Box(1344)，比本容器高 52dp），因为它展开时要向上长 52dp，
+                                    // 需要父容器本身就有那么高。
+                                    //
+                                    // 若把药丸放进本容器（高度 = measuredBandHeight），
+                                    // 它会从本容器顶边往下排，整体比原来低 52dp、压到进度条那行
+                                    // （真机验证过）。
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
@@ -1462,8 +1527,10 @@ fun NowPlaying(
                                                             CompositingStrategy.ModulateAlpha
                                                         this.alpha = alphaAnim.value
                                                     },
-                                                horizontalArrangement = Arrangement.End
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.Top
                                             ) {
+                                                // 翻译切换（左端）
                                                 YosWrapper {
                                                     TranslationToggleButton(
                                                         translation = translation,
@@ -2271,11 +2338,6 @@ private fun SmallMusicListItem(
 ) {
     val density = LocalDensity.current
     val floating = dragging && !hideWhenDragging
-    // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
-    val availability = rememberSongAvailability(music)
-    val blocked = availability.isBlocked
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val checkboxVisibility = remember {
         androidx.compose.animation.core.MutableTransitionState(editMode)
     }.apply { targetState = editMode }
@@ -2298,13 +2360,7 @@ private fun SmallMusicListItem(
         modifier = modifier
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(
-                when {
-                    dragging && hideWhenDragging -> 0f
-                    blocked -> 0.4f
-                    else -> 1f
-                }
-            )
+            .alpha(if (dragging && hideWhenDragging) 0f else 1f)
             .onSizeChanged { onRowMeasured(it.height) }
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer {
@@ -2320,10 +2376,7 @@ private fun SmallMusicListItem(
                 shape = RoundedCornerShape(12.dp)
             )
             .combinedClickable(
-                onClick = {
-                    if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-                    else itemClick()
-                },
+                onClick = itemClick,
                 onLongClick = if (editMode) null else onLongClick
             )
             .padding(horizontal = 30.dp),
@@ -3636,9 +3689,47 @@ private fun NowPlayingHandle(topOverride: Dp? = null) {
 
 // 翻译切换按钮（竖屏控制层顶部 & 横屏右上角共用）
 //
-// 32dp：图标 drawable 自带的 24% 白圆角底覆盖整个 viewport，所以"背景药丸"大小
-// 就等于图标大小。与人声分离药丸的 PillIconSize 同值，两个按钮的底衬因此同宽。
-private val TranslationButtonSize = 32.dp
+// ## 架构：Compose 盒子 + 独立字形图标
+// 与人声分离药丸（VocalSeparationPanel）同一套结构：盒子负责背景，Icon 只管字形。
+//
+// 旧实现把「24% 白圆角底」烘在 drawable 里（ic_nowplaying_translate.xml 的 path0），
+// 于是背景尺寸恒等于图标尺寸——改 Icon 的 .size() 会连背景一起缩放，想让两个按钮的
+// 底衬对齐时根本无从下手。那时反复调 30→32dp 在真机上看不出任何变化，根因就在这里。
+//
+// 现在五个维度都与药丸对齐：
+//   盒子 36dp = PillWidth / PillHeightOff
+//   图标 30dp = PillIconSize
+//   圆角 9dp  = PillRadiusIdle（且同用 YosRoundedCornerShape 超椭圆）
+//   底衬 24%  = ScrimAlphaCollapsed
+//   整体 alpha 0.4 = PillContentAlphaCollapsed
+private val TranslateBoxSize = 36.dp
+private val TranslateIconSize = 30.dp
+private val TranslateCornerRadius = 9.dp
+
+/**
+ * 底衬白色浓度：关闭 24% → 开启 90%。
+ *
+ * **关闭态必须等于改动前的样子**：旧版把底衬烘在 drawable 里（`fillAlpha="0.24"`），
+ * 所以这里取 24% 与旧版逐像素一致。调整这个值之前先想清楚——关闭态的用户观感
+ * 不该因为「开启态要更白」而被顺带改动（用户实测反馈过）。
+ *
+ * 开启态提到 90%：整体 alpha 固定 0.4（同旧版），白色浓度只剩这一个可调量，
+ * 想要明显更白就得把它拉高。实际有效浓度 ≈ 0.4 × 0.9 = 0.36。
+ * 不取 100%：留一点余量透出背景，避免变成纯白实心块。
+ */
+private const val TranslateScrimOff = 0.24f
+private const val TranslateScrimOn = 0.90f
+
+/**
+ * 整体不透明度。
+ *
+ * 两个状态都是 0.4，与改动前完全一致。开启态的「更白」只靠
+ * [TranslateScrimOn] 提浓度实现，不动这一层——否则关闭态也会跟着变亮。
+ */
+private const val TranslateContentAlpha = 0.4f
+
+/** 已开启态的字形颜色：压在白色底衬上，必须是深色（白字会看不见）。 */
+private val TranslateGlyphOnColor = Color(0xFF1A1A1A)
 
 @Composable
 internal fun TranslationToggleButton(
@@ -3646,10 +3737,23 @@ internal fun TranslationToggleButton(
     enabled: Boolean,
     onPress: () -> Unit
 ) {
+    // 底衬浓度跟着开关态过渡。切换要**快**：之前用 spring(stiffness=600) 约 400ms，
+    // 点下去半天才亮到位，读起来像卡顿。120ms 的 tween 是"即点即变"的手感，
+    // 又保留一点点过渡避免生硬跳变。
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (translation.value) TranslateScrimOn else TranslateScrimOff,
+        animationSpec = tween(durationMillis = 120),
+        label = "translateScrimAlpha"
+    )
     Box(
         modifier = Modifier
+            .size(TranslateBoxSize)
+            // overlayEffect 在最外层：它的 saveLayer 包住后面全部绘制（含底衬），
+            // 与旧实现把底衬烘在 drawable 里时的加性提亮范围一致。
             .overlayEffect()
-            .alpha(0.4f)
+            .alpha(TranslateContentAlpha)
+            .clip(YosRoundedCornerShape(TranslateCornerRadius))
+            .background(Color.White.copy(alpha = scrimAlpha))
             .clickable(
                 enabled = enabled,
                 onClick = onPress,
@@ -3657,27 +3761,17 @@ internal fun TranslationToggleButton(
                 interactionSource = remember { MutableInteractionSource() }),
         contentAlignment = Alignment.Center
     ) {
-        AnimatedContent(
-            targetState = translation.value,
-            transitionSpec = {
-                fadeIn(snap()) togetherWith fadeOut(snap())
-            }) {
-            if (it) {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_translateon),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(TranslationButtonSize)
-                )
-            } else {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_translate),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(TranslationButtonSize)
-                )
-            }
-        }
+        // 不再用 AnimatedContent：两个状态只差一个 tint，尺寸完全相同，
+        // 换子树纯属浪费。而且子组合树的进出会放大重组范围——歌词库
+        // （LyricsLazyColumn 的 SubcomposeLayout）在语义变化检测触发的重布局里
+        // 踩到「place is called on a deactivated node」，点击本按钮后崩溃。
+        // 收敛成单个 Icon 能显著缩小那个竞态窗口。
+        Icon(
+            painter = painterResource(id = R.drawable.ic_translate_glyph),
+            contentDescription = null,
+            modifier = Modifier.size(TranslateIconSize),
+            tint = if (translation.value) TranslateGlyphOnColor else Color.White
+        )
     }
 }
 

@@ -333,13 +333,29 @@ object SettingsLibrary {
     )
 
     /**
-     * ExoPlayer解码 - 音频浮点输出
+     * 音频浮点输出
      */
     @Stable
     var AudioFloatOutput by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_exoplayer_audio_float_output",
         initialValue = false
+    )
+
+    /**
+     * 人声分离默认占比（0..1，**不是 0..100**）。
+     *
+     * 0 = 纯伴奏（没人声），1 = 原声（人声伴奏都在，等同关闭）。用 0..1 是因为混音
+     * 直接吃这个值做线性权重（wet = accomp·(1-r) + dry·r），界面上的百分比是另一套单位，
+     * 混用会得到 100 倍偏差。
+     *
+     * 默认 0.5 而不是 1：1 在新语义下等于"没开"，会让点开按钮看起来毫无反应。
+     */
+    @Stable
+    var VocalSeparationDefaultRatio by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_audio_vocal_separation_default_ratio",
+        initialValue = 0.5f
     )
 
     /**
@@ -536,6 +552,7 @@ object SettingsLibrary {
         Codec = "Auto"
         HardwareAudioTrackPlayBackParams = false
         AudioFloatOutput = false
+        VocalSeparationDefaultRatio = 0.5f
         OnlineQualityWifi = "128"
         OnlineQualityMobile = "128"
         ShowQualityDowngradeToast = true
