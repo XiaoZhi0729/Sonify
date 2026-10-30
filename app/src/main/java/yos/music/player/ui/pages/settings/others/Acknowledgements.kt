@@ -16,6 +16,7 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.startWeb
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 private data class AckEntry(val name: String, val desc: String, val url: String)
 
@@ -61,7 +62,7 @@ fun Acknowledgements(navController: NavController) =
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_others_about_acknowledgements),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

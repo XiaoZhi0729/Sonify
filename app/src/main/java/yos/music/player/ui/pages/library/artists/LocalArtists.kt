@@ -56,6 +56,7 @@ import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun LocalArtists(navController: NavController) {
@@ -78,7 +79,7 @@ fun LocalArtists(navController: NavController) {
                 )
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("tip_no_song") {
@@ -94,7 +95,7 @@ fun LocalArtists(navController: NavController) {
         } else {
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("SearchField") {

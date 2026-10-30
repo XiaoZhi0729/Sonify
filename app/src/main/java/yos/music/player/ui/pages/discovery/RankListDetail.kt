@@ -24,6 +24,7 @@ import yos.music.player.ui.UI
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 排行榜大全页（主页「排行榜」Header 整行点击进入）。
@@ -65,7 +66,7 @@ fun RankListDetail(
 
     TitleWithLazyVerticalGrid(
         title = stringResource(id = R.string.discovery_rank_title),
-        onBack = { navController.popBackStack() }
+        onBack = { navController.popBackStackSafely() }
     ) {
         if (status.value != "ok") {
             item("Status", span = { GridItemSpan(maxLineSpan) }) {

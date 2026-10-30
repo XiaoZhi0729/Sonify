@@ -51,6 +51,7 @@ import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 资料库›专辑：酷狗账号下**收藏的在线专辑**。
@@ -89,7 +90,7 @@ fun CollectedAlbums(
     if (!account.isLoggedIn) {
         Title(
             title = stringResource(id = R.string.page_library_albums),
-            onBack = { navController.popBackStack() }
+            onBack = { navController.popBackStackSafely() }
         ) {
             item("login_tip") {
                 Column(
@@ -126,7 +127,7 @@ fun CollectedAlbums(
     Column(Modifier.fillMaxSize()) {
         TitleWithLazyVerticalGrid(
             title = stringResource(id = R.string.page_library_albums),
-            onBack = { navController.popBackStack() },
+            onBack = { navController.popBackStackSafely() },
             onRefresh = {
                 refreshing.value = true
                 CollectedAlbumsObject.ensureLoaded(force = true)

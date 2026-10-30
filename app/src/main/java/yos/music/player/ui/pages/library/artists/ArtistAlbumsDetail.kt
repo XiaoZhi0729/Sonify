@@ -23,6 +23,7 @@ import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.pages.discovery.NewAlbumCard
 import yos.music.player.ui.pages.discovery.StatusFooter
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 专辑大全页（艺人页「专辑」区块标题 → 查看全部，网格 + 滚动分页）。
@@ -65,7 +66,7 @@ fun ArtistAlbumsDetail(
         // 层级：区块名当大标题、歌手名当灰色小标题
         title = stringResource(id = R.string.artist_detail_albums_section),
         subTitle = artistName,
-        onBack = { navController.popBackStack() },
+        onBack = { navController.popBackStackSafely() },
         gridState = gridState
     ) {
         if (albums.isEmpty() && (loading || endReached || loadError != null)) {

@@ -37,6 +37,7 @@ import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 每日推荐页（主页「每日推荐」入口卡进入）。
@@ -87,7 +88,7 @@ fun EverydayRecommendDetail(navController: NavController) {
     Title(
         title = stringResource(id = R.string.home_everyday_recommend_title),
         subTitle = stringResource(id = R.string.home_everyday_recommend_subtitle),
-        onBack = { navController.popBackStack() }
+        onBack = { navController.popBackStackSafely() }
     ) {
         if (songs.value.isEmpty()) {
             item("Status") {

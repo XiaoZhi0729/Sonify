@@ -34,6 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -61,8 +63,11 @@ import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.basic.DetailSongsSkeleton
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.enterCoverCorner
+import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBar
@@ -76,6 +81,7 @@ import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 榜单详情页（结构对齐 OnlinePlaylistDetail / AlbumInfo 详情模板）。
@@ -98,7 +104,7 @@ fun RankDetail(
         // 边界：无选中榜单（如进程重建后 holder 丢失）
         Title(
             title = stringResource(id = R.string.discovery_rank_title),
-            onBack = { navController.popBackStack() }
+            onBack = { navController.popBackStackSafely() }
         ) {
             item("NoRank") {
                 // 原版列表空态规范（18sp / α0.6）
@@ -160,11 +166,23 @@ fun RankDetail(
         loadSongs()
     }
 
+    // ---------- 骨架与内容淡入 ----------
+    // 骨架只在「没歌 + 仍在加载/未失败」时出现（与主页 sectionShowsSkeleton 同判据）。
+    val showSkeleton = trackItems.isEmpty() &&
+        status.value != "empty" &&
+        !status.value.startsWith("error:")
+    val shimmer = rememberSkeletonShimmerForPage(pending = showSkeleton)
+    // 页面级共享 alpha：所有可见行同时渐入；动画结束后恒 1f，
+    // 因此滚动加载更多的新行不会重新淡入。
+    val contentAlpha = rememberContentFadeAlpha(hasData = trackItems.isNotEmpty())
+
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
 
     val state = rememberLazyListState()
-    val titleBackdrop = rememberTitleBackdrop()
+    // blit=true：本页无自带背景层，底色即 shell 的主题白/黑，与种子色严格相等，
+    // 录制层可直接上屏，省掉整页内容的第二遍绘制。
+    val titleBackdrop = rememberTitleBackdrop(blit = true)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
     val overlayHost = remember { TitleOverlayHost() }
 
@@ -318,11 +336,22 @@ fun RankDetail(
                 }
 
                 item("Status") {
+                    // error / empty 仍走状态行；loading 由下面的骨架承担，
+                    // 所以这里只在非 loading 时才有内容可画。
                     OnlineStatusItem(
                         status = status.value,
                         loadingText = stringResource(id = R.string.online_playlist_loading_songs),
                         emptyText = stringResource(id = R.string.rank_songs_empty)
                     )
+                }
+
+                // 骨架：行高与 MusicList 的 64dp 严格对齐，移除瞬间内容正好补位、不跳动。
+                // lazy item 纵向排列不重叠，做不了"骨架叠在内容上淡出"（淡出期间内容会被
+                // 推出屏幕），所以这里靠「位置零跳动 + 内容淡入」达到同样的观感。
+                if (showSkeleton) {
+                    item("Skeleton") {
+                        DetailSongsSkeleton(shimmer = shimmer, rows = 6)
+                    }
                 }
 
                 item {
@@ -334,14 +363,22 @@ fun RankDetail(
                     key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
                 ) { index, song ->
                     key(songKeys.getOrElse(index) { "oob_$index" }) {
-                        // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放
-                        if (isWideScreen) {
-                            DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
-                                playAt(index)
+                        // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放。
+                        // alpha 走页面级共享曲线：所有可见行同时渐入。
+                        Box(
+                            Modifier.graphicsLayer {
+                                compositingStrategy = CompositingStrategy.ModulateAlpha
+                                alpha = contentAlpha()
                             }
-                        } else {
-                            MusicList(KugouRepository.toDisplayMediaItem(song)) {
-                                playAt(index)
+                        ) {
+                            if (isWideScreen) {
+                                DetailSongRowWide(music = KugouRepository.toDisplayMediaItem(song)) {
+                                    playAt(index)
+                                }
+                            } else {
+                                MusicList(KugouRepository.toDisplayMediaItem(song)) {
+                                    playAt(index)
+                                }
                             }
                         }
                     }
@@ -373,7 +410,7 @@ fun RankDetail(
             // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
             TitleBar(
                 title = rank.name,
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely() },
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop
             )

@@ -84,8 +84,6 @@ import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.rawStatusBarsTopPx
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -340,9 +338,17 @@ val LocalTitlePageColor = compositionLocalOf<Color?> { null }
  *
  * [pageColorOverride] 供「底色不是由 [LocalTitlePageColor] 提供」的场景显式传色
  * （如在 CompositionLocalProvider 之前就要创建 backdrop）。null 时行为不变。
+ *
+ * [blit] 见 [rememberLayerBackdrop] 的 blitRecordedContent：录制层直接上屏，省掉第二遍
+ * drawContent。**仅当 seed 色恒等于页面真实背景色时才可开启**，否则两者像素不同——
+ * 典型反例是底色走 animateColorAsState 的页面（种子用目标色，背景是动画中间值，
+ * 过渡期会被这层盖成纯色）。纯色底页面可安全开启。
  */
 @Composable
-fun rememberTitleBackdrop(pageColorOverride: Color? = null): LayerBackdrop {
+fun rememberTitleBackdrop(
+    pageColorOverride: Color? = null,
+    blit: Boolean = false
+): LayerBackdrop {
     val pageColor = pageColorOverride
         ?: LocalTitlePageColor.current
         ?: (Color.White withNight Color.Black)
@@ -356,7 +362,7 @@ fun rememberTitleBackdrop(pageColorOverride: Color? = null): LayerBackdrop {
             drawContent()
         }
     }
-    return rememberLayerBackdrop(onDraw = onDraw)
+    return rememberLayerBackdrop(onDraw = onDraw, blitRecordedContent = blit)
 }
 
 @Composable
@@ -396,7 +402,10 @@ private fun BaseTitleGrid(
             }
         } else null
 
-    val titleBackdrop = rememberTitleBackdrop()
+    // blit=true：Base 页底色恒为 LocalTitlePageColor（无 provider 时即主题白/黑，与
+    // shell 的 colorScheme.background 严格相等），种子色与真实背景逐像素一致，
+    // 录制层可直接上屏，省掉整页内容的第二遍绘制。
+    val titleBackdrop = rememberTitleBackdrop(blit = true)
     val overlayHost = remember { TitleOverlayHost() }
 
     CompositionLocalProvider(
@@ -404,15 +413,12 @@ private fun BaseTitleGrid(
         LocalTitleOverlayHost provides overlayHost,
     ) {
         Box(Modifier.fillMaxSize()) {
-            val hazeState = remember(title) { HazeState() }
-
             val gridContent: @Composable () -> Unit = {
                 LazyVerticalGrid(
                     state = state,
                     modifier = Modifier
                         .fillMaxSize()
                         .titleCollapseTouchTracker(collapse)
-                        .hazeSource(hazeState)
                         .layerBackdrop(titleBackdrop)
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
@@ -509,7 +515,10 @@ private fun BaseTitleList(
             }
         } else null
 
-    val titleBackdrop = rememberTitleBackdrop()
+    // blit=true：Base 页底色恒为 LocalTitlePageColor（无 provider 时即主题白/黑，与
+    // shell 的 colorScheme.background 严格相等），种子色与真实背景逐像素一致，
+    // 录制层可直接上屏，省掉整页内容的第二遍绘制。
+    val titleBackdrop = rememberTitleBackdrop(blit = true)
     val overlayHost = remember { TitleOverlayHost() }
 
     CompositionLocalProvider(
@@ -517,15 +526,12 @@ private fun BaseTitleList(
         LocalTitleOverlayHost provides overlayHost,
     ) {
         Box(Modifier.fillMaxSize()) {
-            val hazeState = remember(title) { HazeState() }
-
             val listContent: @Composable () -> Unit = {
                 LazyColumn(
                     state = state,
                     modifier = Modifier
                         .fillMaxSize()
                         .titleCollapseTouchTracker(collapse)
-                        .hazeSource(hazeState)
                         .layerBackdrop(titleBackdrop)
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
@@ -994,9 +1000,10 @@ fun TitleBar(
                                 exportedBackdrop = barSurfaceBackdrop
                             )
                         } else {
-                            // 关闭"工具栏液态玻璃"：顶栏改为 Haze 磨砂——采样顶栏下方内容做
-                            // 均匀模糊，并叠一层半透明页面底色（与 Haze 底栏/迷你条同源），
-                            // 取代原先的纯色块。
+                            // 关闭"工具栏液态玻璃"：顶栏退化为均匀模糊——采样顶栏下方内容做
+                            // 恒定半径模糊，并叠一层半透明页面底色，取代原先的纯色块。
+                            // 走的是本库的 drawPlainBackdrop + blur，与底栏/迷你条的
+                            // drawBackdrop 材质同一套 backdrop 链路（都不是 Haze）。
                             val pageColor =
                                 LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
                             Modifier.drawPlainBackdrop(

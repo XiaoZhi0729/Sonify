@@ -60,6 +60,7 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /** 音频缓存上限档位（MB），与 [SettingsLibrary.AudioCacheCapMb] 配对。 */
 private val AUDIO_CAP_LABELS = listOf("256 MB", "512 MB", "1 GB", "2 GB")
@@ -147,7 +148,7 @@ fun DataStorage(navController: NavController) =
 
         Title(
             title = stringResource(id = R.string.settings_storage_data_storage),
-            onBack = { navController.popBackStack() },
+            onBack = { navController.popBackStackSafely() },
             titleHorizontalPadding = 32.dp,
             onRefresh = { refresh() },
             refreshing = refreshing,

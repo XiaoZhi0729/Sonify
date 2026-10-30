@@ -48,6 +48,7 @@ import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -81,7 +82,7 @@ fun LocalAlbums(
                 )
             Title(
                 title = stringResource(id = R.string.page_library_albums), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("tip_no_song") {
@@ -117,7 +118,7 @@ fun LocalAlbums(
 
             TitleWithLazyVerticalGrid(
                 title = stringResource(id = R.string.page_library_albums), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("SearchField", span = { GridItemSpan(maxLineSpan) }) {

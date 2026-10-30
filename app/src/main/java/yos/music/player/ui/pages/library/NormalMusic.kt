@@ -59,6 +59,7 @@ import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun NormalMusic(navController: NavController) {
@@ -86,7 +87,7 @@ fun NormalMusic(navController: NavController) {
                 )
             Title(
                 title = pageInfo.first, onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("tip_no_song") {
@@ -139,7 +140,7 @@ fun NormalMusic(navController: NavController) {
             Box(Modifier.fillMaxSize()) {
                 Title(
                     title = pageInfo.first, onBack = {
-                        navController.popBackStack()
+                        navController.popBackStackSafely()
                     },
                     rightBarIcon = {
                         // 「更多」是本体化玻璃菜单（NexioSchedule 1.6.5）：

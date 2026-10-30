@@ -58,6 +58,7 @@ import yos.music.player.ui.widgets.basic.Title
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * VIP 签到页（对齐 md3Music SignInCalendarPage，酷狗 youth 活动"签到送 VIP"）。
@@ -85,7 +86,7 @@ fun KugouVipSignIn(navController: NavController) =
 
         Title(
             title = stringResource(id = R.string.kugou_vip_sign_in_title),
-            onBack = { navController.popBackStack() },
+            onBack = { navController.popBackStackSafely() },
             titleHorizontalPadding = 32.dp,
             content = {
                 if (!KugouAccountState.isLoggedIn) {

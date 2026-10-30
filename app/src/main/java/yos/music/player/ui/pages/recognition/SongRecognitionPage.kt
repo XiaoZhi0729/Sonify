@@ -70,6 +70,7 @@ import yos.music.player.native.KugouApiService
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 听歌识曲页（入口：搜索页搜索框右侧的麦克风标志）。
@@ -132,7 +133,7 @@ fun SongRecognitionPage(navController: NavController) {
         title = stringResource(R.string.song_recognition_title),
         onBack = {
             controller.stop()
-            navController.popBackStack()
+            navController.popBackStackSafely()
         }
     ) {
         item("Mic") {

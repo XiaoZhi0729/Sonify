@@ -76,6 +76,7 @@ import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -102,7 +103,7 @@ fun AlbumInfo(
             val message = stringResource(id = R.string.tip_no_album_info)
             Title(
                 title = stringResource(id = R.string.page_library_album_info_title), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("tip_no_song") {
@@ -131,14 +132,16 @@ fun AlbumInfo(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) {
-                            navController.popBackStack()
+                            navController.popBackStackSafely()
                         },
                     tint = MaterialTheme.colorScheme.primary
                 )
             }*/
 
             val state = rememberLazyListState()
-            val titleBackdrop = rememberTitleBackdrop()
+            // blit=true：本页无自带背景层，底色即 shell 的主题白/黑，与种子色严格相等，
+            // 录制层可直接上屏，省掉整页内容的第二遍绘制。
+            val titleBackdrop = rememberTitleBackdrop(blit = true)
             val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
 
             val mainArtists = rememberSaveable(key = "AlbumInfo_mainArtists") {
@@ -395,7 +398,7 @@ fun AlbumInfo(
             // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
             TitleBar(
                 title = albumName.value,
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely() },
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop
             )

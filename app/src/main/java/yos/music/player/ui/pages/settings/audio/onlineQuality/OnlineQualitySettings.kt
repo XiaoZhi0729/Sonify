@@ -28,6 +28,7 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 在线音质设置：WiFi/流量分设档位 + 降级提示开关。
@@ -42,7 +43,7 @@ fun OnlineQualitySettings(navController: NavController) =
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_audio_online_quality),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

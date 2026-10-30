@@ -487,4 +487,10 @@
     <string name="playlist_collect_failed">收藏操作失敗，請重試</string>
     <string name="playlist_uncollect_confirm">取消收藏「%1$s」？</string>
     <string name="playlist_read_only">此歌單不可編輯</string>
+
+    <!-- 人聲分離 -->
+    <string name="vocal_separation">人聲音軌分離</string>
+    <string name="vocal_separation_failed">音軌分離已停止，已恢復原始音訊。</string>
+    <string name="vocal_separation_unavailable">目前音訊暫不支援音軌分離。</string>
+    <string name="vocal_separation_ratio">人聲 %1$d%%</string>
 </resources>

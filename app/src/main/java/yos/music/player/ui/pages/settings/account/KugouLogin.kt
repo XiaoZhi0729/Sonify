@@ -78,6 +78,7 @@ import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.theme.headline
 import yos.music.player.ui.theme.headlineDark
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /** 未登录态的登录方式分段（与 UI 字符串 kugou_login_method_* 顺序一致）。 */
 private const val LOGIN_METHOD_QR = 0
@@ -105,7 +106,7 @@ fun KugouLogin(navController: NavController) =
         Title(
             title = stringResource(id = R.string.settings_online_kugou_account),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

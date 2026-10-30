@@ -31,6 +31,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -294,7 +295,20 @@ fun Discovery(
             sectionShowsSkeleton(newAlbums.value, newAlbumsStatus.value) ||
             sectionShowsSkeleton(rankList.value, status.value) ||
             sectionShowsSkeleton(everySongs.value, everyStatus.value)
-    val shimmer = rememberSkeletonShimmer(enabled = anySectionPending)
+    // 关闭要宽限一个完整退场时长：pending 变 false 时骨架还在跑 fadeOut
+    // （80ms 延迟 + 280ms 淡出），动画若立刻销毁，退场途中扫光会突然定格。
+    // 与之前删掉的「骨架延迟卸载」不同：这里只控制动画是否创建、不影响骨架显隐，
+    // 因此不存在状态竞争（最坏情况只是动画多跑一会儿）。
+    var shimmerEnabled by remember { mutableStateOf(anySectionPending) }
+    LaunchedEffect(anySectionPending) {
+        if (anySectionPending) {
+            shimmerEnabled = true
+        } else {
+            kotlinx.coroutines.delay(400)
+            shimmerEnabled = false
+        }
+    }
+    val shimmer = rememberSkeletonShimmer(enabled = shimmerEnabled)
 
     val renderSections: LazyListScope.() -> Unit = {
                 if (visibleSections.isEmpty()) {
@@ -711,15 +725,26 @@ fun Discovery(
 /**
  * 主页板块的统一外壳：**有数据 → 真实内容；无数据 → 骨架 / 空态 / 错误**。
  *
- * 三处刻意的取舍：
- *  1. 骨架不是与内容二选一，而是**叠在内容之上淡出**。内容一到就立刻组合（封面即刻开始解码），
- *     灰块在 260ms 内退场，视觉上是"内容从灰块底下浮现"，没有硬切。
+ * 数据到达时的完整动效是两段错峰：**内容渐入（220ms）→ 骨架延迟 80ms 后淡出（280ms）**。
+ * 骨架退场时内容已接近全亮，避免"两者都半透明、页面底色透出一截发灰"。
+ *
+ * 四处刻意的取舍：
+ *  1. 内容**立刻组合**（封面即刻开始解码），只是 alpha 从 0 渐入；灰块叠在上面同步退场，
+ *     视觉上是"内容从灰块底下浮现"，没有硬切。
  *  2. 淡出结束后骨架**离开组合**，真实内容外面不留任何常驻容器——用 Crossfade 的话
  *     `AnimatedContent` 会永久包在内容外面，且 fadeIn/fadeOut 静止时仍带 alpha 图层
  *     （正是本项目反复处理的 `alpha caused saveLayer`）。
- *  3. error 且无旧数据 → 复用 [OnlineStatusItem] 的错误行。历史上这几个板块失败是彻底静默的
- *     （整段消失，用户分不清"没内容"还是"断网"）。empty 只在调用方给了 [emptyText] 时提示，
- *     其余保持旧行为（静默隐藏）。
+ *  3. 内容淡入用 `CompositingStrategy.ModulateAlpha`，不是默认 Auto：子树里的
+ *     `ShadowImage` / `RecommendCardItem` 用 `BlendMode.Overlay` 画描边（它们的底在自己的
+ *     Offscreen 层内，父级 alpha 不会破坏混合），但默认 Auto 会为父级建一个全屏离屏缓冲，
+ *     就是 `AppTabsShell` 记过的 `alpha caused saveLayer` 开销。ModulateAlpha 把 alpha
+ *     乘进每条绘制指令、不开层。
+ *  4. 动画只在"正在淡入"期间挂 layer，结束后 Modifier 链与无动画时完全一致——
+ *     多挂一个 DrawModifierNode 会改变图层合并与脏区传播的拓扑，静止态不该赌观感。
+ *
+ * error 且无旧数据 → 复用 [OnlineStatusItem] 的错误行。历史上这几个板块失败是彻底静默的
+ * （整段消失，用户分不清"没内容"还是"断网"）。empty 只在调用方给了 [emptyText] 时提示，
+ * 其余保持旧行为（静默隐藏）。
  */
 @Composable
 private fun DiscoverySectionSlot(
@@ -735,19 +760,48 @@ private fun DiscoverySectionSlot(
     // 这个板块此刻是否该显示骨架（与页面顶层的 anySectionPending 用同一个判据）
     val pending = sectionShowsSkeleton(hasData, status)
 
+    // 内容淡入：首帧初值取当前 hasData。
+    //
+    // 固定写 0f 会让"从别的 Tab 切回主页"时内容凭空淡入一次（组合是新建的，
+    // 但用户看到的是已有内容）。取初值即"已有数据就直接 1f"，回访不补跑动画。
+    val contentAlpha = remember { Animatable(if (hasData) 1f else 0f) }
+    // 只在动画期间挂 alpha layer：true/false 各变一次（仅两次重组），
+    // 静止态不保留任何额外的绘制节点。
+    var contentAnimating by remember { mutableStateOf(false) }
+    LaunchedEffect(hasData) {
+        if (hasData && contentAlpha.value < 1f) {
+            contentAnimating = true
+            try {
+                contentAlpha.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+            } finally {
+                contentAnimating = false
+            }
+        }
+    }
+
     Box(Modifier.fillMaxWidth()) {
-        when {
-            hasData -> content()
-            failed -> OnlineStatusItem(
-                status = status,
-                loadingText = stringResource(id = R.string.online_playlists_loading),
-                emptyText = emptyText.orEmpty()
-            )
-            empty && emptyText != null -> OnlineStatusItem(
-                status = status,
-                loadingText = stringResource(id = R.string.online_playlists_loading),
-                emptyText = emptyText
-            )
+        val contentModifier = if (contentAnimating) {
+            Modifier.graphicsLayer {
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+                alpha = contentAlpha.value
+            }
+        } else {
+            Modifier
+        }
+        Box(contentModifier) {
+            when {
+                hasData -> content()
+                failed -> OnlineStatusItem(
+                    status = status,
+                    loadingText = stringResource(id = R.string.online_playlists_loading),
+                    emptyText = emptyText.orEmpty()
+                )
+                empty && emptyText != null -> OnlineStatusItem(
+                    status = status,
+                    loadingText = stringResource(id = R.string.online_playlists_loading),
+                    emptyText = emptyText
+                )
+            }
         }
         // 存活与淡出交给 AnimatedVisibility 一处管理。
         //
@@ -759,7 +813,9 @@ private fun DiscoverySectionSlot(
         AnimatedVisibility(
             visible = pending,
             enter = fadeIn(tween(120)),
-            exit = fadeOut(tween(260, easing = FastOutSlowInEasing))
+            // 延迟 80ms：内容先亮起来，骨架再退。同步跑会让中段"骨架半透明 + 内容半透明"，
+            // 页面底色从两层底下透出一截，观感发灰。
+            exit = fadeOut(tween(280, delayMillis = 80, easing = FastOutSlowInEasing))
         ) {
             HomeSkeletonSection(shimmer = shimmer, content = skeleton)
         }

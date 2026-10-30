@@ -24,6 +24,7 @@ import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun LyricGetter(navController: NavController) =
@@ -41,7 +42,7 @@ fun LyricGetter(navController: NavController) =
             Title(title = stringResource(id = R.string.settings_extend_statusbarlyric),
                 subTitle = "Lyric Getter API ${apiVersion.intValue}",
                 onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 },
                 titleHorizontalPadding = 32.dp,
                 content = {

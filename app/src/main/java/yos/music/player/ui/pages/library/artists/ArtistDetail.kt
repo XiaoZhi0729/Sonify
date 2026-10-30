@@ -161,9 +161,12 @@ import yos.music.player.data.libraries.SettingsLibrary
 import android.util.Log
 import android.widget.Toast
 import yos.music.player.ui.widgets.basic.TitleBar
+import yos.music.player.ui.widgets.basic.FadeInContent
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.LiquidTopBarButton
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 歌手详情页（Apple Music 艺人页式排版）：
@@ -354,6 +357,17 @@ fun ArtistDetail(
             info == null || info.offset + info.size <= 0
         }
     }
+
+    // ---------- 骨架扫光 ----------
+    // 本页有四处可能出骨架：头部状态行、热门歌曲、专辑横排、全部歌曲（含 songsState 未解析时的
+    // ResolvingSongs）。任一处在加载就保持动画存活，全部结束再宽限一个退场时长后关掉——
+    // 否则骨架淡出途中扫光会突然定格。骨架色块取自 LocalContentColor（提取色），见 ArtistSkeletonBlock。
+    val anyArtistSkeletonPending = headerLoading.value ||
+        (hotSongs.value.isEmpty() && hotLoading.value) ||
+        (albums.value.isEmpty() && albumsLoading.value) ||
+        (songs.isEmpty() && songsState?.loading?.value == true)
+    val skeletonShimmer = rememberSkeletonShimmerForPage(pending = anyArtistSkeletonPending)
+
     val smallTitleAlpha by animateFloatAsState(
         targetValue = if (heroScrolledOut.value) 1f else 0f,
         animationSpec = tween(150),
@@ -1028,8 +1042,13 @@ fun ArtistDetail(
 
                 item("HeaderStatus") {
                     Column(Modifier.fillMaxWidth()) {
-                        if (headerLoading.value) ArtistHeaderSkeleton()
-                        if (hasHeaderDetail.value) {
+                        // 原本是两个并列 if：骨架与数量行可能同帧共存一瞬（骨架还没退、
+                        // 数量行已经上），表现为"文字压在灰条上"。改成 FadeInContent 后
+                        // 骨架必须淡出、数量行才渐入，两者不再重叠。
+                        FadeInContent(
+                            hasData = hasHeaderDetail.value,
+                            skeleton = { ArtistHeaderSkeleton(skeletonShimmer) }
+                        ) {
                             detail.value?.let { info ->
                                 // 次级信息"微光"分流：暗取色底 = 白 + Plus 加色（播放页歌手名
                                 // 同款质感：加色混合把白当光加进背景）；亮取色底 = 深色弱化
@@ -1124,6 +1143,7 @@ fun ArtistDetail(
                             loading = hotLoading.value,
                             error = hotError.value,
                             pagerState = hotPagerState,
+                            shimmer = skeletonShimmer,
                             onRetry = { hotRetry.value += 1 },
                             onPlayAt = { playAt(hotSongs.value, it) },
                             probeName = "HotSongs"
@@ -1141,6 +1161,7 @@ fun ArtistDetail(
                             loading = albumsLoading.value,
                             error = albumsError.value,
                             onRetry = { albumsRetry.value += 1 },
+                            shimmer = skeletonShimmer,
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
                             probeName = "Albums",
@@ -1166,13 +1187,14 @@ fun ArtistDetail(
                             loading = songsState.loading.value,
                             error = songsState.loadError.value,
                             pagerState = pagerState,
+                            shimmer = skeletonShimmer,
                             onRetry = { songsState.requestNextPage() },
                             onPlayAt = { playAt(songs, it) },
                             probeName = "AllSongs"
                         )
                     }
                 } else if (headerLoading.value) {
-                    item("ResolvingSongs") { ArtistSongsSkeleton() }
+                    item("ResolvingSongs") { ArtistSongsSkeleton(skeletonShimmer) }
                 }
 
                 item("navbar") {
@@ -1229,7 +1251,7 @@ fun ArtistDetail(
                     Box(Modifier.align(Alignment.CenterStart).padding(start = 16.5.dp)) {
                         if (SettingsLibrary.BarBlurEffect) {
                             LiquidTopBarButton(
-                                onClick = { navController.popBackStack() },
+                                onClick = { navController.popBackStackSafely() },
                                 // 采样"页面内容 + 顶栏材质表面"的组合层，见 barGlassBackdrop 注释
                                 backdrop = barGlassBackdrop,
                                 icon = painterResource(id = R.drawable.ic_back),
@@ -1246,7 +1268,7 @@ fun ArtistDetail(
                                 Modifier.size(42.dp).clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                    onClick = { navController.popBackStack() }
+                                    onClick = { navController.popBackStackSafely() }
                                 ),
                                 contentAlignment = Alignment.Center
                             ) {

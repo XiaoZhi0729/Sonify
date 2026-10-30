@@ -24,13 +24,14 @@ import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.theme.SystemScreenCornerSample
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun UserInterfaceSetting(navController: NavController) =
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_performance_ui_title),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

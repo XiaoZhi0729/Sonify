@@ -68,7 +68,6 @@ import androidx.compose.ui.draw.DrawResult
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import android.util.Log
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -361,9 +360,10 @@ fun YosLyricViewLib(
                 }
                 // 列表位置缓存：同一首歌切页回来不再从顶部滚一次。
                 // 键只含歌曲与栏宽、不含字号/字重：改样式不该把歌词弹回顶部重滚。
-                // 只缓存位置、不缓存 LyricsLazyListState 本体：那是单归属对象，
-                // 跨组合位点共享会让旧组合的 dispose 清掉新组合的 remeasurement，
-                // 导致过期 MeasureResult 重放到已回收的行节点上（place on deactivated node）。
+                // **只缓存位置、不缓存 LyricsLazyListState 本体**：那个 state 是单归属对象，
+                // 跨组合位点共享会让旧组合的 dispose 清掉新组合刚挂上的 remeasurement，
+                // 把过期 MeasureResult 重放到已回收的行节点上
+                // （崩溃：place is called on a deactivated node）。
                 val listStateKey = lyricListStateKey(mediaIdKey, layoutWidthPx / localDensity.density)
                 val listState = remember(listStateKey) {
                     val anchor = LyricPreparedCache.scrollAnchorFor(listStateKey)

@@ -56,6 +56,7 @@ import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 我的在线歌单列表页（正式 UI，视觉已归一）。
@@ -382,7 +383,7 @@ fun OnlinePlaylists(
         },
         refreshing = status.value == "loading",
         onBack = {
-            navController.popBackStack()
+            navController.popBackStackSafely()
         }
     ) {
         item("Status") {

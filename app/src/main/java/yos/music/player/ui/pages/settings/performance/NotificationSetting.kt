@@ -18,13 +18,14 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun NotificationSetting(navController: NavController) =
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_performance_notification_title),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

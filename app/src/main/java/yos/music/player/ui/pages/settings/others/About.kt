@@ -61,6 +61,7 @@ import yos.music.player.ui.widgets.effects.coverArtworkGesture
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 import yos.music.player.update.DeveloperSettings
 import yos.music.player.update.UpdateSettingsItems
+import yos.music.player.ui.navigation.popBackStackSafely
 
 private val bannerCorner = YosRoundedCornerShape(9.dp)
 
@@ -79,7 +80,7 @@ fun About(navController: NavController) {
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_others_about),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

@@ -57,6 +57,7 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun PlayLists(navController: NavController) {
@@ -65,7 +66,7 @@ fun PlayLists(navController: NavController) {
     val context = LocalContext.current
     Title(title = stringResource(id = R.string.page_library_playlists),
         onBack = {
-            navController.popBackStack()
+            navController.popBackStackSafely()
         },
         content = {
             item("AddList") {

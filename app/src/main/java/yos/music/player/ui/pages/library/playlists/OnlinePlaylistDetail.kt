@@ -44,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -105,6 +107,7 @@ import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.enterCoverCorner
+import yos.music.player.ui.widgets.basic.DetailSongsSkeleton
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.SonifyDialogTextField
@@ -115,12 +118,15 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 在线歌单详情页（视觉与在线专辑详情页同款）。
@@ -160,7 +166,7 @@ fun OnlinePlaylistDetail(
         // 边界：无选中歌单（如进程重建后 holder 丢失）
         Title(
             title = stringResource(id = R.string.page_online_playlists_title),
-            onBack = if (showBackButton) ({ navController.popBackStack() }) else null
+            onBack = if (showBackButton) ({ navController.popBackStackSafely() }) else null
         ) {
             item("NoPlaylist") {
                 // 对齐原版列表空态规范（NormalMusic/LocalAlbums：18sp / α0.6）
@@ -439,6 +445,17 @@ fun OnlinePlaylistDetail(
     // 头部/尾部统一曲目数：已加载优先，未加载用路由 songCount 兜底
     val displayCount = if (displayTracks.isNotEmpty()) displayTracks.size else (songCount ?: 0)
 
+    // ---------- 骨架与内容淡入 ----------
+    // 骨架只在「没歌 + 仍在加载/未失败」时出现（与主页 sectionShowsSkeleton 同判据）。
+    // 注意用 displayTracks 而不是 tracks：挂起歌单的待加歌也算内容。
+    val showSkeleton = displayTracks.isEmpty() &&
+        status.value != "empty" &&
+        !status.value.startsWith("error:")
+    val shimmer = rememberSkeletonShimmerForPage(pending = showSkeleton)
+    // 页面级共享 alpha：所有可见行同时渐入；结束后恒 1f，补页新行不会重新淡入。
+    val contentAlpha = rememberContentFadeAlpha(hasData = displayTracks.isNotEmpty())
+
+
     // ---- 封面色底（与在线专辑详情共用同一条取色管线） ----
     // 键按「来源 + 歌单 id」建，不按封面 URL：列表封面与详情封面常是同一张图的不同尺寸。
     val playlistColors = rememberPlaylistBackdropColors(
@@ -693,6 +710,15 @@ fun OnlinePlaylistDetail(
                         }
                     }
 
+                    // 骨架：行高与 MusicList 的 64dp 严格对齐，移除瞬间内容正好补位、不跳动。
+                    // lazy item 纵向排列不重叠，做不了"骨架叠在内容上淡出"（淡出期间内容会被
+                    // 推出屏幕），所以这里靠「位置零跳动 + 内容淡入」达到同样的观感。
+                    if (showSkeleton) {
+                        item("Skeleton") {
+                            DetailSongsSkeleton(shimmer = shimmer, rows = 6)
+                        }
+                    }
+
                     // 歌曲行：保留封面小图（52dp）的统一歌曲行；
                     // 宽屏（≥600dp）三列：歌名（左半）+ 歌手（起于屏幕中央）+ 时长（贴右）。
                     // 点击 → 全部歌曲进队列，从被点击歌曲开始播放；自有歌单支持长按移除。
@@ -701,19 +727,28 @@ fun OnlinePlaylistDetail(
                         key = { index, _ -> trackKeys[index] }
                     ) { index, track ->
                         key(trackKeys[index]) {
-                            if (isWideScreen) {
-                                DetailSongRowWide(
-                                    music = KugouRepository.toDisplayMediaItem(track),
-                                    onDelete = removeAt?.let { cb -> { cb(index) } }
-                                ) {
-                                    playAt(index)
+                            // alpha 走页面级共享曲线：所有可见行同时渐入，
+                            // 动画结束后恒 1f，后续补页的新行不会重新淡入。
+                            Box(
+                                Modifier.graphicsLayer {
+                                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                                    alpha = contentAlpha()
                                 }
-                            } else {
-                                MusicList(
-                                    music = KugouRepository.toDisplayMediaItem(track),
-                                    itemClick = { playAt(index) },
-                                    onLongClick = removeAt?.let { cb -> { cb(index) } }
-                                )
+                            ) {
+                                if (isWideScreen) {
+                                    DetailSongRowWide(
+                                        music = KugouRepository.toDisplayMediaItem(track),
+                                        onDelete = removeAt?.let { cb -> { cb(index) } }
+                                    ) {
+                                        playAt(index)
+                                    }
+                                } else {
+                                    MusicList(
+                                        music = KugouRepository.toDisplayMediaItem(track),
+                                        itemClick = { playAt(index) },
+                                        onLongClick = removeAt?.let { cb -> { cb(index) } }
+                                    )
+                                }
                             }
                         }
 
@@ -766,7 +801,7 @@ fun OnlinePlaylistDetail(
             // 顶栏：滚动离屏浮现小标题 + 模糊；返回键/右上图标着色跟随页面文字色
             TitleBar(
                 title = playlistName,
-                onBack = if (showBackButton) ({ navController.popBackStack() }) else null,
+                onBack = if (showBackButton) ({ navController.popBackStackSafely() }) else null,
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
@@ -778,6 +813,10 @@ fun OnlinePlaylistDetail(
                         onDismiss = { menuOpen.value = false },
                         triggerIcon = Icons.Rounded.MoreHoriz,
                         modifier = Modifier.padding(end = 10.dp),
+                        // 与左侧返回键同色：页面底色是封面提取色，与 App 深浅主题无关，
+                        // 必须按 backdrop 亮度自适应，否则深色封面上那颗钮会发脏。
+                        adaptiveLuminance = true,
+                        contentColor = contentColor,
                     ) {
                         // 菜单内容暂为占位（具体动作后续补）
                         LiquidGlassDropdownMenuItem(

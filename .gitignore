@@ -134,3 +134,11 @@ __pycache__/
 /_fwdshots/
 /_lyrics_ui_bad/
 /_lyrics_ui_src/
+
+# 人声分离模型权重：仅本地研究，禁止入库/分发
+/app/src/main/assets/vocalsep/*.tflite
+!/app/src/main/assets/vocalsep/README.md
+
+# 工具与调试产物（勿提交）
+.mimosa/
+/_gray/

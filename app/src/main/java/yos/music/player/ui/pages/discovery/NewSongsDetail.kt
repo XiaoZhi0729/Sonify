@@ -1,6 +1,7 @@
 package yos.music.player.ui.pages.discovery
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -31,7 +34,11 @@ import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.basic.DetailSongsSkeleton
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 新歌精选完整列表页（Discovery「新歌精选」→ 查看全部）。
@@ -44,6 +51,7 @@ import yos.music.player.ui.widgets.basic.Title
 @Composable
 fun NewSongsDetail(navController: NavController) {
     val songs = DiscoveryObject.newSongs.value
+    val status = DiscoveryObject.newSongsStatus.value
     val scope = rememberCoroutineScope()
     // 酷狗接口可能返回重复 FileHash，item key 按出现序号唯一化
     val songKeys = remember(songs) { lazyItemKeys(songs) { it.hash } }
@@ -57,10 +65,27 @@ fun NewSongsDetail(navController: NavController) {
         }
     }
 
+    // ---------- 骨架与内容淡入 ----------
+    // 本页数据来自 DiscoveryObject（主页已加载好），正常进入时 holder 非空、直接呈现内容。
+    // 只有进程重建后 holder 为空、且上游仍在加载时才有骨架可显示。
+    // 判据与主页 sectionShowsSkeleton 一致：error / empty 不出骨架（那些走状态行）。
+    val showSkeleton = songs.isEmpty() &&
+        status != "empty" &&
+        !status.startsWith("error:")
+    val shimmer = rememberSkeletonShimmerForPage(pending = showSkeleton)
+    val contentAlpha = rememberContentFadeAlpha(hasData = songs.isNotEmpty())
+
     Title(
         title = stringResource(id = R.string.discovery_new_songs_title),
-        onBack = { navController.popBackStack() }
+        onBack = { navController.popBackStackSafely() }
     ) {
+        // 骨架优先于空态：还在加载时不能先说"没有数据"
+        if (showSkeleton) {
+            item("Skeleton") {
+                DetailSongsSkeleton(shimmer = shimmer, rows = 8)
+            }
+            return@Title
+        }
         if (songs.isEmpty()) {
             // 边界：进程重建后 holder 丢失（与 RankDetail 空态规范一致：18sp / α0.6）
             item("Empty") {
@@ -125,9 +150,17 @@ fun NewSongsDetail(navController: NavController) {
         ) { index, song ->
             key(songKeys[index]) {
                 // 统一歌曲 Item：与本地/榜单列表同款 MusicList 视觉规范；
-                // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
-                MusicList(KugouRepository.toDisplayMediaItem(song)) {
-                    playAt(index)
+                // 点击 → 全部歌曲进队列，从被点击歌曲开始播放。
+                // alpha 走页面级共享曲线：所有可见行同时渐入（进程重建后来数据时生效）。
+                Box(
+                    Modifier.graphicsLayer {
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                        alpha = contentAlpha()
+                    }
+                ) {
+                    MusicList(KugouRepository.toDisplayMediaItem(song)) {
+                        playAt(index)
+                    }
                 }
             }
 

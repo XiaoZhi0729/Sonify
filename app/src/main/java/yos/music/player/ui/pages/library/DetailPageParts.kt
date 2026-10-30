@@ -27,15 +27,12 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -63,11 +60,8 @@ import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.enterCoverCorner
-import yos.music.player.ui.widgets.basic.isBlocked
-import yos.music.player.ui.widgets.basic.rememberSongAvailability
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
-import yos.music.player.ui.widgets.basic.handleBlockedClick
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.overlayEffect
@@ -286,22 +280,13 @@ fun DetailSongRowWide(
     onDelete: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
-    // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
-    val availability = rememberSongAvailability(music)
-    val blocked = availability.isBlocked
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
-    val playAction: () -> Unit = {
-        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-        else itemClick()
-    }
+    // 不做点击前的可播性预测（理由见 MusicList）：真实不可播的歌由播放失败链路跳歌并提示。
+    val playAction: () -> Unit = itemClick
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(if (blocked) 0.4f else 1f)
-            .clickable(onClick = playAction)
+            .clickable(onClick = itemClick)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -388,20 +373,11 @@ fun AlbumTrackRow(
     modifier: Modifier = Modifier,
     itemClick: () -> Unit
 ) {
-    val availability = rememberSongAvailability(music)
-    val blocked = availability.isBlocked
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
-    val playAction: () -> Unit = {
-        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-        else itemClick()
-    }
+    val playAction: () -> Unit = itemClick
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .alpha(if (blocked) 0.4f else 1f)
-            .clickable(onClick = playAction)
+            .clickable(onClick = itemClick)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -459,7 +435,6 @@ fun AlbumTrackRow(
 /**
  * 专辑歌曲行（宽屏 ≥600dp，无封面）：由 [DetailSongRowWide] 派生，把 52dp 封面列换成
  * 曲目序号列，其余不变（歌名占左半 / 歌手自屏幕中央起左对齐 / 时长贴最右）。
- * 同样保留不可播置灰 + 点击复核。
  */
 @Composable
 fun AlbumTrackRowWide(
@@ -467,21 +442,12 @@ fun AlbumTrackRowWide(
     trackNumber: Int?,
     itemClick: () -> Unit
 ) {
-    val availability = rememberSongAvailability(music)
-    val blocked = availability.isBlocked
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
-    val playAction: () -> Unit = {
-        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-        else itemClick()
-    }
+    val playAction: () -> Unit = itemClick
     Row(
         modifier = Modifier
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(if (blocked) 0.4f else 1f)
-            .clickable(onClick = playAction)
+            .clickable(onClick = itemClick)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

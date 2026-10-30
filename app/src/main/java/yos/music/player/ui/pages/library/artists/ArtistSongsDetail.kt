@@ -1,6 +1,7 @@
 package yos.music.player.ui.pages.library.artists
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +20,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +36,9 @@ import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
+import yos.music.player.ui.navigation.popBackStackSafely
 
 private data class ArtistSongsScrollSnapshot(
     val lastVisibleIndex: Int,
@@ -98,16 +104,25 @@ fun ArtistSongsDetail(
         }
     }
 
+    // ---------- 骨架扫光与内容淡入 ----------
+    // 骨架条件沿用原来的 when 首分支：没歌、且「正在加载 或 未到底且无错」。
+    // 显式判空是为了在"还没开始请求"时也铺骨架，避免闪一下空态。
+    val showSkeleton = songs.isEmpty() && (loading || (!endReached && loadError == null))
+    val shimmer = rememberSkeletonShimmerForPage(pending = showSkeleton)
+    // 列表页用页面级共享 alpha：骨架行高与 MusicList 的 64dp 对齐，移除瞬间内容补位、
+    // 零跳动，然后所有可见行同时渐入。动画结束后恒 1f，补页的新行不会重新淡入。
+    val contentAlpha = rememberContentFadeAlpha(hasData = songs.isNotEmpty())
+
     Title(
         // 层级：区块名当大标题、歌手名当灰色小标题（进入前已知点的是哪位歌手）
         title = stringResource(R.string.artist_detail_all_songs),
         subTitle = artistName,
-        onBack = { navController.popBackStack() },
+        onBack = { navController.popBackStackSafely() },
         listState = listState
     ) {
         when {
-            songs.isEmpty() && (loading || (!endReached && loadError == null)) -> item("Skeleton") {
-                ArtistSongsSkeleton()
+            showSkeleton -> item("Skeleton") {
+                ArtistSongsSkeleton(shimmer)
             }
             songs.isEmpty() && loadError != null -> item("Error") {
                 ArtistSongsError(
@@ -129,8 +144,17 @@ fun ArtistSongsDetail(
                     items = songs,
                     key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
                 ) { index, song ->
-                    MusicList(KugouRepository.toDisplayMediaItem(song)) {
-                        playAt(index)
+                    // alpha 走页面级共享曲线：所有可见行同时渐入；
+                    // 动画结束后恒 1f，滚动补页的新行不会重新淡入。
+                    Box(
+                        Modifier.graphicsLayer {
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                            alpha = contentAlpha()
+                        }
+                    ) {
+                        MusicList(KugouRepository.toDisplayMediaItem(song)) {
+                            playAt(index)
+                        }
                     }
                     if (index < songs.lastIndex) {
                         OnlineListItemDivider()

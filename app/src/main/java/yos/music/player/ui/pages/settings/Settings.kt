@@ -39,6 +39,7 @@ import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
 import java.util.Locale
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,7 +49,7 @@ fun Settings(navController: NavController) =
         val showResetConfirm = remember { mutableStateOf(false) }
         Title(title = stringResource(id = R.string.page_settings_title),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

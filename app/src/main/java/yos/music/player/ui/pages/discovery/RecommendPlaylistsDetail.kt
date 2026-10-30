@@ -30,6 +30,7 @@ import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 精选歌单大全页（主页「精选歌单」Header 整行点击进入，滚动分页加载）。
@@ -100,7 +101,7 @@ fun RecommendPlaylistsDetail(
 
     TitleWithLazyVerticalGrid(
         title = stringResource(id = R.string.discovery_recommend_playlists_title),
-        onBack = { navController.popBackStack() },
+        onBack = { navController.popBackStackSafely() },
         gridState = gridState
     ) {
         // 首拉阶段（列表尚空）：加载中转圈 / 失败错误行 / 末页空态

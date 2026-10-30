@@ -591,4 +591,10 @@
     <string name="playlist_collect_failed">Could not update saved playlists. Please try again.</string>
     <string name="playlist_uncollect_confirm">Unsave "%1$s"?</string>
     <string name="playlist_read_only">This playlist is read-only</string>
+
+    <!-- 人声分离 -->
+    <string name="vocal_separation">Vocal separation</string>
+    <string name="vocal_separation_failed">Vocal separation stopped. Original audio restored.</string>
+    <string name="vocal_separation_unavailable">Vocal separation is unavailable for the current audio.</string>
+    <string name="vocal_separation_ratio">Vocal %1$d%%</string>
 </resources>

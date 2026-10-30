@@ -64,6 +64,7 @@ import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 在线艺人选择页（资料库「在线音乐」分区入口）。
@@ -101,7 +102,7 @@ fun OnlineArtists(navController: NavController) {
         if (!account.isLoggedIn) {
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("login_tip") {
@@ -126,7 +127,7 @@ fun OnlineArtists(navController: NavController) {
             val message = stringResource(id = R.string.online_artists_empty)
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 }
             ) {
                 item("empty_followed") {
@@ -142,7 +143,7 @@ fun OnlineArtists(navController: NavController) {
         } else {
             Title(
                 title = stringResource(id = R.string.page_library_artists), onBack = {
-                    navController.popBackStack()
+                    navController.popBackStackSafely()
                 },
                 onRefresh = {
                     refreshing.value = true

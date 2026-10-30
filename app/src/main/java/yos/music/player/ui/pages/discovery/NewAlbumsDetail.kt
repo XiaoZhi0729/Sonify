@@ -37,6 +37,7 @@ import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 本周新发行大全页（主页「本周新发行」Header 整行点击进入，滚动分页加载）。
@@ -106,7 +107,7 @@ fun NewAlbumsDetail(
 
     TitleWithLazyVerticalGrid(
         title = stringResource(id = R.string.discovery_new_albums_title),
-        onBack = { navController.popBackStack() },
+        onBack = { navController.popBackStackSafely() },
         gridState = gridState
     ) {
         // 首拉阶段（列表尚空）：加载中转圈 / 失败错误行 / 末页空态

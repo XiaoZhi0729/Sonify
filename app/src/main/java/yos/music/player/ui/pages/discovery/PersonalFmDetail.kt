@@ -41,6 +41,7 @@ import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 私人FM 页（主页「私人电台」入口卡进入）。
@@ -115,7 +116,7 @@ fun PersonalFmDetail(navController: NavController) {
         title = stringResource(id = R.string.home_personal_fm_title),
         subTitle = stringResource(id = R.string.home_personal_fm_subtitle),
         listState = listState,
-        onBack = { navController.popBackStack() }
+        onBack = { navController.popBackStackSafely() }
     ) {
         // 不做硬登录门控：真机实测未登录（userid=0）上游也返回推荐歌曲，
         // 能拉到就展示；仅空态时按登录态给出引导文案。

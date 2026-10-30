@@ -21,28 +21,38 @@ import com.kyant.backdrop.internal.InverseLayerScope
 
 private val DefaultOnDraw: ContentDrawScope.() -> Unit = { drawContent() }
 
+/**
+ * @param blitRecordedContent 录制完成后直接把录制层画上屏（不再第二次 [drawContent]），
+ *   前提是 onDraw 的产出一一对应节点该显示的像素（如「种子底色 + 内容」正好等于
+ *   「页面底色 + 内容」）。默认 false 保持源库行为：onDraw 可能只为采样额外加了背景，
+ *   上屏必须退回 drawContent() 才不丢内容。
+ */
 @Composable
 fun rememberLayerBackdrop(
     graphicsLayer: GraphicsLayer = rememberGraphicsLayer(),
+    blitRecordedContent: Boolean = false,
     onDraw: ContentDrawScope.() -> Unit = DefaultOnDraw
 ): LayerBackdrop {
-    return remember(graphicsLayer, onDraw) {
-        LayerBackdrop(graphicsLayer, onDraw)
+    return remember(graphicsLayer, onDraw, blitRecordedContent) {
+        LayerBackdrop(graphicsLayer, onDraw, blitRecordedContent)
     }
 }
 
 @Stable
 class LayerBackdrop internal constructor(
     val graphicsLayer: GraphicsLayer,
-    internal val onDraw: ContentDrawScope.() -> Unit
+    internal val onDraw: ContentDrawScope.() -> Unit,
+    blitRecordedContent: Boolean = false
 ) : Backdrop {
 
     /**
-     * onDraw 是否只是 drawContent()（或等价物）。
-     * 为 true 时 [LayerBackdropNode] 录制后直接把图层画上屏，内容树只走一遍；
-     * 为 false 时 onDraw 可能额外画背景等，上屏仍走 drawContent()，录制层单独走 onDraw。
+     * 录制后能否直接把图层画上屏，使内容树只走一遍。
+     * 为 true 的条件是「onDraw 的产出即节点应显示的像素」：默认 onDraw 天然满足，
+     * 或调用方显式声明 [blitRecordedContent]。为 false 时 onDraw 可能额外画了背景等，
+     * 上屏仍 drawContent()（内容会走两遍，但保证像素一致）。
      */
-    internal val contentOnlyCapture: Boolean = onDraw === DefaultOnDraw
+    internal val contentOnlyCapture: Boolean =
+        blitRecordedContent || onDraw === DefaultOnDraw
 
     override val isCoordinatesDependent: Boolean = true
 

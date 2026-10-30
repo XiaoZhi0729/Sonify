@@ -30,6 +30,7 @@ import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 最近播放完整列表页（主页「继续收听」→ 查看全部）。
@@ -52,7 +53,7 @@ fun RecentPlayedDetail(navController: NavController) {
 
     Title(
         title = stringResource(id = R.string.home_continue_listening),
-        onBack = { navController.popBackStack() }
+        onBack = { navController.popBackStackSafely() }
     ) {
         if (songs.isEmpty()) {
             item("Empty") {

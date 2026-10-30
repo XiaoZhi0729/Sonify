@@ -487,4 +487,10 @@
     <string name="playlist_collect_failed">保存の変更に失敗しました。再試行してください</string>
     <string name="playlist_uncollect_confirm">「%1$s」の保存を解除しますか？</string>
     <string name="playlist_read_only">このプレイリストは編集できません</string>
+
+    <!-- ボーカル分離 -->
+    <string name="vocal_separation">ボーカル分離</string>
+    <string name="vocal_separation_failed">ボーカル分離を停止しました。元の音声に戻りました。</string>
+    <string name="vocal_separation_unavailable">この音声ではボーカル分離を利用できません。</string>
+    <string name="vocal_separation_ratio">ボーカル %1$d%%</string>
 </resources>

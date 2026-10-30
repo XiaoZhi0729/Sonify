@@ -56,6 +56,7 @@ import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.yosRoundColumn
 import yos.music.player.ui.widgets.liquid.YosSwitch
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun LibraryOverview(
@@ -67,7 +68,7 @@ fun LibraryOverview(
         val folders = remember(folders) { folders.sortedBy { it.name } }
     Title(title = stringResource(id = R.string.settings_library_overview),
         onBack = {
-            navController.popBackStack()
+            navController.popBackStackSafely()
         },
         titleHorizontalPadding = 32.dp,
         content = {

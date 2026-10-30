@@ -51,6 +51,7 @@ import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.OptionDialog
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 缓存分类的「按歌曲挑选清理」页（category = "lyric" / "audio"）。
@@ -105,7 +106,7 @@ fun CacheDetail(navController: NavController, category: String) {
         Title(
             title = stringResource(id = titleRes),
             subTitle = stringResource(id = R.string.settings_storage_selected_count, selected.size),
-            onBack = { navController.popBackStack() },
+            onBack = { navController.popBackStackSafely() },
             titleHorizontalPadding = 32.dp,
             rightBarIcon = {
                 Text(

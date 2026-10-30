@@ -45,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -61,6 +63,7 @@ import androidx.navigation.NavController
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
+import yos.music.player.ui.widgets.basic.AlbumTrackSkeleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import yos.music.player.R
@@ -104,12 +107,15 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
+import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
  * 在线专辑详情页（结构对齐 AlbumInfo / RankDetail / OnlinePlaylistDetail 详情模板）。
@@ -144,7 +150,7 @@ fun OnlineAlbumDetail(
         // 边界：无选中专辑（如进程重建后 holder 丢失）
         Title(
             title = stringResource(id = R.string.discovery_new_albums_title),
-            onBack = { navController.popBackStack() }
+            onBack = { navController.popBackStackSafely() }
         ) {
             item("NoAlbum") {
                 Text(
@@ -283,6 +289,16 @@ fun OnlineAlbumDetail(
 
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
+
+    // ---------- 骨架与内容淡入 ----------
+    // 骨架只在「没歌 + 仍在加载/未失败」时出现（与主页 sectionShowsSkeleton 同判据）。
+    val showSkeleton = trackItems.isEmpty() &&
+        status.value != "empty" &&
+        !status.value.startsWith("error:")
+    val shimmer = rememberSkeletonShimmerForPage(pending = showSkeleton)
+    // 页面级共享 alpha：所有可见行同时渐入；动画结束后恒 1f，滚动补页的新行不会重新淡入。
+    val contentAlpha = rememberContentFadeAlpha(hasData = trackItems.isNotEmpty())
+
     // 专辑作者名：窄屏行仅当某首歌的歌手与专辑作者不同时才显示该行歌手（与本地专辑一致）
     val albumArtistNames = remember(detail.value, album) {
         albumArtists(detail.value, album.singerName).map { it.name }
@@ -580,12 +596,22 @@ fun OnlineAlbumDetail(
             }
 
             item("Status") {
+                // error / empty 仍走状态行；loading 交给下面的骨架
                 OnlineStatusItem(
                     status = status.value,
                     loadingText = stringResource(id = R.string.online_playlist_loading_songs),
                     emptyText = stringResource(id = R.string.online_album_songs_empty),
                     contentColor = contentColor
                 )
+            }
+
+            // 骨架：专辑行没有封面、行首是 24dp 序号列，必须用 AlbumTrackSkeleton
+            // 才对得上位置（DetailSongsSkeleton 是带封面的歌曲行）。
+            // 行高与真实行严格对齐 → 移除瞬间内容补位、零跳动。
+            if (showSkeleton) {
+                item("Skeleton") {
+                    AlbumTrackSkeleton(shimmer = shimmer, rows = 6, wide = isWideScreen)
+                }
             }
 
             item {
@@ -598,18 +624,26 @@ fun OnlineAlbumDetail(
             ) { index, song ->
                 key(songKeys.getOrElse(index) { "oob_$index" }) {
                     // 专辑歌曲行（无封面）：行首显示专辑内序号；
-                    // 点击 → 全部歌曲进队列，从被点击歌曲开始播放
-                    if (isWideScreen) {
-                        AlbumTrackRowWide(
-                            music = KugouRepository.toDisplayMediaItem(song),
-                            trackNumber = index + 1
-                        ) { playAt(index) }
-                    } else {
-                        AlbumTrackRow(
-                            music = KugouRepository.toDisplayMediaItem(song),
-                            trackNumber = index + 1,
-                            mainArtists = albumArtistNames
-                        ) { playAt(index) }
+                    // 点击 → 全部歌曲进队列，从被点击歌曲开始播放。
+                    // alpha 走页面级共享曲线：所有可见行同时渐入。
+                    Box(
+                        Modifier.graphicsLayer {
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                            alpha = contentAlpha()
+                        }
+                    ) {
+                        if (isWideScreen) {
+                            AlbumTrackRowWide(
+                                music = KugouRepository.toDisplayMediaItem(song),
+                                trackNumber = index + 1
+                            ) { playAt(index) }
+                        } else {
+                            AlbumTrackRow(
+                                music = KugouRepository.toDisplayMediaItem(song),
+                                trackNumber = index + 1,
+                                mainArtists = albumArtistNames
+                            ) { playAt(index) }
+                        }
                     }
                 }
 
@@ -664,7 +698,7 @@ fun OnlineAlbumDetail(
             // TitleBar 默认是主题红，在彩色底上会脏。
             TitleBar(
                 title = detail.value?.name?.takeIf { it.isNotEmpty() } ?: album.name,
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely() },
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
@@ -678,6 +712,10 @@ fun OnlineAlbumDetail(
                         onDismiss = { menuOpen = false },
                         triggerIcon = Icons.Rounded.MoreHoriz,
                         modifier = Modifier.padding(end = 10.dp),
+                        // 与左侧返回键同色：页面底色是封面提取色，与 App 深浅主题无关，
+                        // 必须按 backdrop 亮度自适应，否则深色封面上那颗钮会发脏。
+                        adaptiveLuminance = true,
+                        contentColor = contentColor,
                     ) {
                         menuArtists.firstOrNull()?.let { artist ->
                             LiquidGlassDropdownMenuItem(

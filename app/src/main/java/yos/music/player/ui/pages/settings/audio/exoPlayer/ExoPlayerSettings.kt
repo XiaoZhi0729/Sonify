@@ -20,6 +20,7 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun ExoPlayerSettings(navController: NavController) =
@@ -27,7 +28,7 @@ fun ExoPlayerSettings(navController: NavController) =
         Title(title = stringResource(id = R.string.settings_audio_exoplayer),
             subTitle = stringResource(id = R.string.settings_audio_exoplayer_sub),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

@@ -12,12 +12,8 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -29,9 +25,6 @@ import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
-import yos.music.player.ui.widgets.basic.isBlocked
-import yos.music.player.ui.widgets.basic.rememberSongAvailability
-import yos.music.player.ui.widgets.basic.handleBlockedClick
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -107,33 +100,21 @@ LaunchedEffect(Unit) {
         )
     )
     val alpha by animateFloatAsState(if (music() == musicPlaying.value) 0.3F else 1F)*/
-    // 不可播（无版权/付费限制等）置灰：点击**先复核再决定**，复核通过仍可正常播放
-    val availability = rememberSongAvailability(music)
-    val blocked = availability.isBlocked
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // 行点击与菜单「播放」共用：不可播歌曲先复核再决定是否播放
-    val playAction: () -> Unit = {
-        if (blocked) scope.launch { handleBlockedClick(context, music) { itemClick() } }
-        else itemClick()
-    }
+    // 不做点击前的可播性预测：列表接口不下发可用的版权字段（实测 Privilege/FailProcess
+    // 与能否拿到音源零相关），主动探测又会被本地负缓存、档位与账号凭据污染，判错一次就是
+    // "能播却灰"。真实不可播的歌交给播放失败链路（跳歌 + 提示），见 skipPastUnplayable。
+    // 行点击与行尾菜单的「播放」都直接进播放，不做前置拦截。
+    val playAction: () -> Unit = itemClick
     Row(
         modifier = Modifier
             /*.animateItem(fadeInSpec = null, fadeOutSpec = null)*/
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(if (blocked) 0.4f else 1f)
             .then(
-                when {
-                    blocked -> Modifier.combinedClickable(
-                        onClick = playAction,
-                        onLongClick = onLongClick
-                    )
-
-                    onLongClick != null ->
-                        Modifier.combinedClickable(onClick = playAction, onLongClick = onLongClick)
-
-                    else -> Modifier.clickable(onClick = playAction)
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(onClick = itemClick, onLongClick = onLongClick)
+                } else {
+                    Modifier.clickable(onClick = itemClick)
                 }
             )
             .padding(horizontal = horizontalPadding),

@@ -62,10 +62,14 @@ import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import yos.music.player.ui.widgets.basic.CardRailSkeleton
+import yos.music.player.ui.widgets.basic.FadeInContent
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.ShadowImage
+import yos.music.player.ui.widgets.basic.SkeletonShimmer
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.skeleton
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.dropShadow
 import yos.music.player.ui.widgets.effects.overlayEffect
@@ -162,15 +166,29 @@ internal fun ArtistSongSection(
     loading: Boolean,
     error: String?,
     pagerState: PagerState,
+    shimmer: SkeletonShimmer,
     onRetry: () -> Unit,
     onPlayAt: (Int) -> Unit,
     probeName: String = ""
 ) {
+    // 整个区块装在**一个** lazy item 内部，没有 LazyColumn 的"item 不重叠"限制，
+    // 所以骨架可以直接叠在内容上淡出（与主页 DiscoverySectionSlot 同款）。
+    //
+    // 无内容时的三种情况由 skeleton 槽位自己区分：
+    //  - 仍在加载          → 骨架
+    //  - 加载完但确实没歌  → 空态文案
+    //  - 报错              → 什么都不画（错误行由下方单独渲染）
     Column(Modifier.fillMaxWidth().measureProbe(probeName).drawProbe(probeName)) {
-        when {
-            songs.isNotEmpty() -> SongsPagerSection(songs, pagerState, onPlayAt)
-            loading -> ArtistSongsSkeleton()
-            error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_empty))
+        FadeInContent(
+            hasData = songs.isNotEmpty(),
+            skeleton = {
+                when {
+                    loading -> ArtistSongsSkeleton(shimmer)
+                    error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_empty))
+                }
+            }
+        ) {
+            SongsPagerSection(songs, pagerState, onPlayAt)
         }
         // Appended-page failures remain visible without hiding already loaded songs.
         if (error != null) ArtistSectionError(error, loading, onRetry)
@@ -241,17 +259,21 @@ internal fun SongsPagerSection(
     }
 }
 
-/** Shared, static placeholder: four 64dp rows with 52dp artwork. */
+/**
+ * 艺人页歌曲区骨架。
+ *
+ * [shimmer] 为 null 时退化为静态灰块（历史行为）；传了扫光则整页共用同一道光。
+ */
 @Composable
-internal fun ArtistSongsSkeleton() {
+internal fun ArtistSongsSkeleton(shimmer: SkeletonShimmer? = null) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         repeat(4) {
             Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-                ArtistSkeletonBlock(Modifier.size(52.dp))
+                ArtistSkeletonBlock(Modifier.size(52.dp), shimmer)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.65f).height(13.dp))
-                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.42f).height(11.dp))
+                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.65f).height(13.dp), shimmer)
+                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.42f).height(11.dp), shimmer)
                 }
             }
         }
@@ -259,20 +281,38 @@ internal fun ArtistSongsSkeleton() {
 }
 
 @Composable
-internal fun ArtistHeaderSkeleton() {
+internal fun ArtistHeaderSkeleton(shimmer: SkeletonShimmer? = null) {
     Column(
         Modifier.fillMaxWidth().padding(bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        ArtistSkeletonBlock(Modifier.width(150.dp).height(14.dp))
-        ArtistSkeletonBlock(Modifier.width(108.dp).height(10.dp))
+        ArtistSkeletonBlock(Modifier.width(150.dp).height(14.dp), shimmer)
+        ArtistSkeletonBlock(Modifier.width(108.dp).height(10.dp), shimmer)
     }
 }
 
+/**
+ * 艺人页的骨架块。
+ *
+ * 底色取自 `LocalContentColor`（艺人页用提取色注入），因此骨架会跟着页面主色走；
+ * 有扫光时把同一组色转交 [skeleton]，保持与其它页一致的材质。
+ */
 @Composable
-private fun ArtistSkeletonBlock(modifier: Modifier) {
-    Box(modifier.clip(RoundedCornerShape(6.dp)).background(LocalContentColor.current.copy(alpha = 0.09f)))
+internal fun ArtistSkeletonBlock(modifier: Modifier, shimmer: SkeletonShimmer? = null) {
+    val base = LocalContentColor.current.copy(alpha = 0.09f)
+    if (shimmer == null) {
+        Box(modifier.clip(RoundedCornerShape(6.dp)).background(base))
+    } else {
+        Box(
+            modifier.skeleton(
+                shimmer = shimmer,
+                cornerRadius = 6.dp,
+                baseColorOverride = base,
+                highlightColorOverride = LocalContentColor.current.copy(alpha = 0.16f)
+            )
+        )
+    }
 }
 
 /** 艺人专辑横排定版几何：卡宽 150dp（[NewAlbumCard] 历史定版）+ 卡间距 12dp。 */
@@ -296,31 +336,30 @@ internal fun ArtistAlbumsSection(
     error: String?,
     onRetry: () -> Unit,
     onOpen: (KugouNewAlbum) -> Unit,
+    shimmer: SkeletonShimmer,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     probeName: String = ""
 ) {
+    // 同 ArtistSongSection：整个区块在一个 lazy item 内，可以真交叉淡化。
     Column(Modifier.fillMaxWidth().measureProbe(probeName).drawProbe(probeName)) {
-        when {
-            albums.isNotEmpty() -> ArtistAlbumRail(
+        FadeInContent(
+            hasData = albums.isNotEmpty(),
+            skeleton = {
+                when {
+                    loading -> CardRailSkeleton(shimmer = shimmer)
+                    error == null -> ArtistEmptyStatus(
+                        stringResource(R.string.artist_detail_albums_empty)
+                    )
+                }
+            }
+        ) {
+            ArtistAlbumRail(
                 albums = albums,
                 onOpen = onOpen,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope
             )
-            loading -> LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(3) {
-                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                        ArtistSkeletonBlock(Modifier.size(150.dp))
-                        ArtistSkeletonBlock(Modifier.width(110.dp).height(12.dp))
-                        ArtistSkeletonBlock(Modifier.width(80.dp).height(10.dp))
-                    }
-                }
-            }
-            error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_albums_empty))
         }
         if (error != null) ArtistSectionError(error, loading, onRetry)
     }

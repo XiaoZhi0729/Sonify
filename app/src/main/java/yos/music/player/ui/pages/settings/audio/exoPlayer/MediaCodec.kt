@@ -14,6 +14,7 @@ import yos.music.player.ui.pages.settings.DefaultItem
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.yosRoundColumn
+import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun MediaCodec(navController: NavController) =
@@ -23,7 +24,7 @@ fun MediaCodec(navController: NavController) =
         }
         Title(title = stringResource(id = R.string.settings_audio_exoplayer_support_mediacodec),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

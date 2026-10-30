@@ -119,17 +119,24 @@ private fun staticShimmer(rootWidthPx: Float): SkeletonShimmer {
  * 等价，却不需要 translate/clip 的坐标换算。
  *
  * 位置用 `onGloballyPositioned` 记录、只在绘制期读取，滚动时不会触发重组。
+ *
+ * @param baseColorOverride / @param highlightColorOverride 覆盖默认的 onSurface 派生色。
+ *   艺人页用 `CompositionLocalProvider(LocalContentColor provides 提取色)` 注入页面主色，
+ *   骨架跟着页面取色走才不会脱节。默认 null 时保持原有的主题派生色（主页行为不变）。
  */
 @Composable
 fun Modifier.skeleton(
     shimmer: SkeletonShimmer,
-    cornerRadius: Dp = 6.dp
+    cornerRadius: Dp = 6.dp,
+    baseColorOverride: Color? = null,
+    highlightColorOverride: Color? = null
 ): Modifier {
     val dark = isFlamingoInDarkMode()
     // 夜间底色要更亮一档：纯黑底上 0.10 的白色几乎看不见，骨架会像"没画"。
-    val baseColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (dark) 0.16f else 0.07f)
-    val highlightColor =
-        if (dark) Color.White.copy(alpha = 0.13f) else Color.White.copy(alpha = 0.75f)
+    val baseColor = baseColorOverride
+        ?: MaterialTheme.colorScheme.onSurface.copy(alpha = if (dark) 0.16f else 0.07f)
+    val highlightColor = highlightColorOverride
+        ?: if (dark) Color.White.copy(alpha = 0.13f) else Color.White.copy(alpha = 0.75f)
 
     // 块在根坐标系里的位置：滚动时跟着变，光带因此始终锚定在屏幕上。
     val rootOffset = remember { mutableStateOf(Offset.Zero) }

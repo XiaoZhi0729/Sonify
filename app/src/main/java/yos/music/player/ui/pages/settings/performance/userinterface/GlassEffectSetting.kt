@@ -68,6 +68,7 @@ import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 import yos.music.player.ui.widgets.liquid.LiquidSlider
 import kotlin.math.roundToInt
+import yos.music.player.ui.navigation.popBackStackSafely
 
 /** 预览卡圆角 */
 private val PreviewCorner = 20.dp
@@ -109,7 +110,7 @@ fun GlassEffectSetting(navController: NavController) {
     SettingBackground {
         Title(title = stringResource(id = R.string.settings_performance_ui_glass_effect_title),
             onBack = {
-                navController.popBackStack()
+                navController.popBackStackSafely()
             },
             titleHorizontalPadding = 32.dp,
             content = {

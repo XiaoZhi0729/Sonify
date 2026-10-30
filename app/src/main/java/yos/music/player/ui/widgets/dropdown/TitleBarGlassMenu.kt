@@ -15,6 +15,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
@@ -59,6 +60,10 @@ fun TitleBarGlassMenu(
     fraction: Animatable<Float, *> = remember { Animatable(0f) },
     offsetPx: () -> Offset = { Offset.Zero },
     backdrop: Backdrop? = null,
+    // 收起态那颗钮与顶栏返回键同色（页面底色驱动的自适应亮度）。
+    // 页面底色 ≠ App 主题色的页面（在线专辑/歌单详情）必须传 true + 页面文字色。
+    adaptiveLuminance: Boolean = false,
+    contentColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // 槽位：收起态按钮应有的位置（root 坐标 px）。原版只上报 y，这里连右缘一起量，
@@ -80,7 +85,10 @@ fun TitleBarGlassMenu(
     val barGlass = LocalTitleBarGlass.current
     val materialAlpha = if (barGlass != null) barGlass.backdropAlpha() else 1f
     val pageBackdrop = LocalTitlePageBackdrop.current ?: remember { emptyBackdrop() }
-    val resolvedBackdrop = backdrop ?: pageBackdrop
+    // 优先用顶栏给出的组合层（页面内容 + 顶栏材质表面）——顶栏玻璃上下文存在时
+    // 说明本菜单正渲染在 TitleBar 的 rightBarIcon 槽内，与返回键采同一份背景，
+    // 两者在滚动叠加模糊表面后的明暗必须一致。
+    val resolvedBackdrop = backdrop ?: barGlass?.backdrop ?: pageBackdrop
     val hapticFeedback = LocalHapticFeedback.current
     val density = LocalDensity.current
     val shadowPaddingPx = with(density) { LiquidGlassDropdownShadowPadding.toPx() }
@@ -113,6 +121,8 @@ fun TitleBarGlassMenu(
                 },
                 offsetPx = offsetPx,
                 materialAlpha = materialAlpha,
+                adaptiveLuminance = adaptiveLuminance,
+                contentColor = contentColor,
                 content = content,
             )
         }
