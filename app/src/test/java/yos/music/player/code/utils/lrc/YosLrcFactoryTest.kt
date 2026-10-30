@@ -514,4 +514,76 @@ class YosLrcFactoryTest {
         assertEquals(listOf("歌名 - 歌手", "真正的歌词"),
             entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
     }
+
+    // ---- 串烧（medley）：制作信息重复出现也不得判为对唱 ----
+
+    @Test
+    fun medleyWithRepeatedCreditLinesNeverSplits() {
+        // 《季候风 / 有一天我会》真实形态：两首歌各带一份词/曲署名，
+        // `词：`与`曲：`因此各出现两次——纯频次校验会把它们当成两位歌手。
+        // 演唱报幕标签独占一行，制作署名带姓名，结构判据据此区分。
+        val entries = factory.formatKrcEntries(
+            """
+                [220,33]<0,6,0>词<6,7,0>：<13,6,0>潘<19,7,0>源<26,7,0>良
+                [253,263]<0,52,0>曲<52,53,0>：<105,52,0>陈<157,53,0>小<210,53,0>霞
+                [516,2457]<0,248,0>那<248,169,0>次<417,176,0>季<593,240,0>候<833,1624,0>风
+                [3572,2384]<0,329,0>吹<329,320,0>得<649,255,0>那<904,280,0>样<1184,1200,0>空
+                [74923,856]<0,209,0>词<209,0,0>：<209,223,0>杨<432,200,0>立<632,224,0>德
+                [75779,1777]<0,200,0>曲<200,0,0>：<200,168,0>陈<368,209,0>小<577,1200,0>霞
+                [104115,5441]<0,344,0>有<344,232,0>一<576,248,0>天<824,256,0>我<1080,1897,0>会
+            """.trimIndent()
+        )
+
+        assertTrue(MediaViewModelObject.otherSideForLines.all { !it })
+        assertEquals(
+            listOf("词：潘源良", "曲：陈小霞", "那次季候风", "吹得那样空", "词：杨立德", "曲：陈小霞", "有一天我会"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() }
+        )
+    }
+
+    @Test
+    fun creditLineWithTrailingNameIsNotSingerLabel() {
+        // 同行形态：冒号后还有姓名 → 制作署名，不是演唱报幕
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>词<300,300,0>：<600,300,0>潘源良
+                [2000,1000]<0,300,0>曲<300,300,0>：<600,300,0>陈小霞
+                [3000,1000]<0,300,0>词<300,300,0>：<600,300,0>杨立德
+                [4000,1000]<0,300,0>曲<300,300,0>：<600,300,0>陈小霞
+            """.trimIndent()
+        )
+
+        assertTrue(MediaViewModelObject.otherSideForLines.all { !it })
+    }
+
+    @Test
+    fun roleWordLabelMayShareLineWithLyric() {
+        // 演唱角色词允许「标签 + 歌词」同行；制作署名不会用这些词
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>男：<300,300,0>一
+                [2000,1000]<0,300,0>女：<300,300,0>二
+                [3000,1000]<0,300,0>男：<300,300,0>三
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun standaloneNameLabelStillSplitsWhenRepeated() {
+        // 人名报幕独占一行（明天会更好的形态）：不靠角色词白名单也能识别
+        factory.formatKrcEntries(
+            """
+                [1000,1000]<0,300,0>廖敏冲<300,300,0>：
+                [2000,1000]<0,300,0>一
+                [3000,1000]<0,300,0>张碧晨<300,300,0>：
+                [4000,1000]<0,300,0>二
+                [5000,1000]<0,300,0>廖敏冲<300,300,0>：
+                [6000,1000]<0,300,0>三
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+    }
 }

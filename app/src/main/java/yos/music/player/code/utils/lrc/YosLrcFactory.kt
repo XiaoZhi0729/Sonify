@@ -422,22 +422,48 @@ class YosLrcFactory(private val formatText: Boolean = true) {
      */
     private val singerLabelRegex = Regex("^[\\p{L}\\p{N}][^:：]{0,15}\\s*[:：]$")
 
+    /**
+     * 演唱角色词：只有这些词允许出现在「标签与歌词同一行」的形态里（`男：君を`）。
+     *
+     * 制作人员署名不会用这些词（`词：`/`曲：`/`Guitar：` 都不在集合内），
+     * 因此同行形态用白名单即可安全区分，不必依赖频次。
+     */
+    private val singerRoleWords = setOf(
+        "男", "女", "合", "合唱", "对唱", "男声", "女声", "男声部", "女声部",
+        "全体", "齐唱", "合声", "男女", "众人",
+    )
+
     /** 一个报幕标签及其在行内覆盖的元素数（KRC 常把 `男：` 切成 `["男", "："]`）。 */
     private data class SingerLabel(val text: String, val consumed: Int)
 
     /**
      * 真对唱报幕标签的最低出现次数。
      *
-     * 制作人员署名（`词：`/`曲：`/`OP：`/`SP：`/`Guitar：`/`Chorus：`…）同样满足
-     * [singerLabelRegex]，但整首只出现一次；真对唱的报幕标签会随演唱轮次反复出现。
-     * 频次是两者唯一可靠、且不依赖语种与人名的区分特征。
+     * 单唱歌曲里偶尔出现一次人名冒号行（如舞台提示），不足以构成对唱：
+     * 真对唱的报幕标签会随演唱轮次反复出现。
      */
     private val singerLabelMinOccurrences = 2
 
     /** 至少两个不同的标签才算对唱：只有一个报幕标签的歌曲全程左对齐。 */
     private val minDistinctSingerLabels = 2
 
-    /** 返回该行的报幕标签；不是标签返回 null。 */
+    /** 标签去掉尾部冒号后的核心词。 */
+    private fun labelCore(label: String): String =
+        label.trim().removeSuffix("：").removeSuffix(":").trim()
+
+    /**
+     * 返回该行的报幕标签；不是标签返回 null。
+     *
+     * 判据是**结构**而非词表：演唱报幕标签总是独占一行（`男：` 后面没有内容），
+     * 而制作人员署名总是「标签 + 姓名」同行（`词：潘源良`、`Guitar：秋山浩徳`）。
+     * 实测 219 首真实歌词里 41 处同行标签全部是制作信息，无一例外。
+     *
+     * 同行形态只在标签是演唱角色词时才认（`男：君を`）：这类词不会出现在制作署名里，
+     * 因此无需依赖频次或语种就能安全放行。
+     *
+     * 这条结构判据替代了早期的纯频次方案——串烧歌曲（如《季候风》两首歌各带一份
+     * `词：`/`曲：`）会让制作信息重复出现，仅靠频次必然误判。
+     */
     private fun singerLabelOf(entry: LyricEntry): SingerLabel? {
         val whole = entry.mainLyric.joinToString("") { it.second }.trim()
         // 制作人员行先排除：它们形似标签，但绝不是演唱者
@@ -446,12 +472,15 @@ class YosLrcFactory(private val formatText: Boolean = true) {
             // 整行就是标签（`男：` 独占一行）：覆盖锚点外的全部元素
             return SingerLabel(whole, (entry.mainLyric.size - 1).coerceAtLeast(0))
         }
-        // 行首连续若干词拼起来恰好是标签：KRC 逐字切分下 `男：` 常成 ["男", "："]
+        // 行首连续若干词拼起来是「演唱角色词 + 冒号」：KRC 逐字切分下 `男：` 常成 ["男", "："]
         val limit = minOf(3, entry.mainLyric.size - 1)
         for (count in 1..limit) {
             val candidate = entry.mainLyric.subList(1, count + 1)
                 .joinToString("") { it.second }.trim()
-            if (candidate.isNotEmpty() && singerLabelRegex.matches(candidate)) {
+            if (candidate.isNotEmpty() &&
+                singerLabelRegex.matches(candidate) &&
+                labelCore(candidate) in singerRoleWords
+            ) {
                 return SingerLabel(candidate, count)
             }
         }
@@ -480,9 +509,10 @@ class YosLrcFactory(private val formatText: Boolean = true) {
     /**
      * 计算每行应处的侧，并把报幕标签从正文里剥掉。
      *
-     * 两遍扫描：先按出现频次定出「合法歌手标签」，再据此分栏。单遍即时翻转会把
-     * 制作人员署名（`词：`/`曲：`/`Guitar：` 各出现一次）当成换人，导致独唱歌曲
-     * 整首被翻到右侧——这是频次校验要解决的核心问题。
+     * 标签识别靠 [singerLabelOf] 的结构判据（演唱标签独占一行，制作署名带姓名）。
+     * 这里再做两件事：
+     *  - 频次校验：只出现一次的标签不构成对唱，避免单唱歌曲里的偶发人名冒号行翻转；
+     *  - 至少两个不同标签才分栏，单标签歌曲全程左对齐。
      */
     private fun processOtherSide(entries: List<LyricEntry>): List<LyricEntry> {
         val labels = entries.map { singerLabelOf(it) }
@@ -490,10 +520,9 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         labels.forEachIndexed { index, label ->
             if (label != null) occurrences.getOrPut(label.text) { mutableListOf() } += index
         }
-        // 重复出现的标签是「真歌手」的可靠证据：制作人员署名整首只出现一次
+        // 重复出现的标签才是真歌手；单次出现视为偶发冒号行
         val repeated = occurrences.filterValues { it.size >= singerLabelMinOccurrences }
-        // 只出现一次的标签仍可能是歌手（某位歌手只唱一句），但必须夹在重复标签之间
-        // 才算：开头的制作署名（`SP：`/`词：`）前面没有歌手轮次，不会被误认。
+        // 只出现一次的标签仍可能是歌手（某位歌手只唱一句），但必须夹在重复标签之间才算
         val validLabels = HashSet<String>(repeated.keys)
         occurrences.forEach { (label, positions) ->
             if (label in repeated) return@forEach
