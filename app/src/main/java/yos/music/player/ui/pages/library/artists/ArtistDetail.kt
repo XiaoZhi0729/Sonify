@@ -120,6 +120,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -197,6 +198,14 @@ private const val HeroTabletContentRaiseDp = 40f
  * 超出取图死线 → 烘焙概率性失败 → 倒影缺失硬衔接。封顶到源图分辨率，绘制时再放大回整盒。
  */
 private const val HeroBakeMaxWidthPx = 1024f
+
+/**
+ * 烘焙串行化闸门。烘焙在 `Dispatchers.Default` 上阻塞执行（GPU 同步 + 最长 3s 忙等，
+ * 中途无挂起点不可取消），自由窗口/分屏连续改尺寸时 LaunchedEffect 每变一次就重启，
+ * 旧协程仍在阻塞段跑完 —— 会同时占用多个 Default 线程并饿死取色、列表映射等后台任务。
+ * 这里让同一时刻只有一个烘焙真正执行，排队者在拿到锁时先检查自己是否已被取消。
+ */
+private val HeroBakeGate = kotlinx.coroutines.sync.Mutex()
 
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
@@ -653,8 +662,8 @@ fun ArtistDetail(
         // 会把 item 内容裁切在 item 边界内，倒影因此画在列表之外，位置按 Hero item 的
         // 视口 offset 逐帧跟随；Hero item 在照片底边越过视口顶的瞬间即被回收，而倒影
         // 此后还应可见 bandHeight——门禁按照片底边余量线性渐隐，不跳变不提前消失。
-        // 平板方形 hero 会让 0.5*heroHeight 的倒影带胀到约 1/3 屏高（首屏被压没），故限幅；
-        // 手机带高约 200dp，260dp 上限不误伤，公式保持原样。
+        // 平板方形 hero 会让 0.68*heroHeight 的倒影带胀到约 2/5 屏高（首屏被压没），故限幅；
+        // 手机带高约 0.68*45% ≈ 30% 屏高，260dp 上限在常规手机上仍不误伤。
         val bandHeight = if (portraitTablet)
             minOf(heroHeight * ArtistReflectionFraction, HeroTabletReflectionBandMaxDp.dp)
         else heroHeight * ArtistReflectionFraction
@@ -666,15 +675,18 @@ fun ArtistDetail(
         // 烘焙几何与缓存键提到组合期（原先在烘焙 effect 内算）：只有这样首帧才能同步探
         // 内存缓存 [HeroBakeCache.memoryGet]，命中即首帧落位（回访「倒影秒出」）。几何只依赖
         // 盒尺寸，不依赖源位图，故组合期可算；计算逐字与旧 effect 内一致。
-        val edgeReflection = portraitTablet || isLandscape
         val bakeScale = (HeroBakeMaxWidthPx / bakeWidthPx).coerceAtMost(1f)
         val bakeW = (bakeWidthPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakeBlurPx = maxBlurPx * bakeScale
-        val bakeCacheKey = remember(avatarUrl, heroAspect, edgeReflection, bakeW, bakePhotoH, bakeBandH) {
-            // 配方版本进键：着色器/渐隐算法变了必须换键，否则磁盘里的旧烘焙图永远复用
-            avatarUrl?.let { "v$ArtistHeroBakeRecipeVersion|$it|$heroAspect|$edgeReflection|${bakeW}x${bakePhotoH}x${bakeBandH}" }
+        val bakeCacheKey = remember(avatarUrl, heroAspect, bakeW, bakePhotoH, bakeBandH) {
+            // 配方版本进键：着色器/渐隐算法变了必须换键，否则磁盘里的旧烘焙图永远复用。
+            // 拉伸倍率单独入键：它只改几何不改配方版本，不写进来会导致调参后回访仍读旧图。
+            avatarUrl?.let {
+                "v$ArtistHeroBakeRecipeVersion|$it|$heroAspect|" +
+                    "s$ArtistReflectionStretch|${bakeW}x${bakePhotoH}x${bakeBandH}"
+            }
         }
         // 烘焙位图按头像 URL 记忆（不含几何尺寸）：旋转等尺寸变化触发重烘焙期间保留旧图
         // 继续显示——回到同方向后旧图与新盒子几何一致，交换逐像素相同完全无感；烘焙失败也
@@ -741,19 +753,12 @@ fun ArtistDetail(
         //  maxWidth 派生的烘焙几何，只能在 BoxWithConstraints 作用域内求值。）
         // 全屏底色层：动画色在叶子组合里读（见 ArtistBackdropFill），避免渐变期整页重组。
         ArtistBackdropFill(bgColorState, backdropAlpha)
-        // Hero item 视口偏移：横竖屏切换的全树重测会让「绘制期 lambda 直接读
-        // derivedStateOf(layoutInfo)」的观察链断链——层冻结在失效前一帧（列表已滚走、
-        // 合成图钉在屏幕上，而同一 layoutInfo 的组合期读者如小标题仍正常）。改为协程层
-        // snapshotFlow 采集（与组合期读者同一条旋转后仍存活的观察路径）写入普通状态，
-        // 绘制期只读普通状态；层本体另由组合期 heroScrolledOut 门禁移除，杜绝僵尸层。
-        val heroViewportTop = remember { mutableStateOf<Int?>(null) }
-        LaunchedEffect(listState) {
-            snapshotFlow {
-                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
-            }.collect { v ->
-                heroViewportTop.value = v
-            }
-        }
+        // Hero item 视口偏移由 [heroOffsetInViewport] 在**放置期**直接向 LazyListState 取：
+        // 曾用 snapshotFlow 采集进普通状态再绘制期读——那条链路每帧要走「布局写 layoutInfo
+        // → 帧末通知 → 协程调度 → 写 State → 下一帧失效」，最低晚一帧且延迟不定，表现为
+        // 滚动时照片/倒影比列表"跟不上"地抖动。Compose 先测量全部子项再统一放置，而
+        // LazyColumn 在测量阶段就写好了 layoutInfo，故背景层在自己的放置块里读到的是
+        // 同帧值，零延迟、无需重组。
         LaunchedEffect(avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
             // 横屏（平板+手机）走横向头部（照片在左、无「照片底边向下」区域），不烘焙倒影。
             if (isLandscape) return@LaunchedEffect
@@ -778,26 +783,39 @@ fun ArtistDetail(
             // 与上屏/取色共用同一张软件位图（单次解码），不再各自解码。
             val src = heroBitmap.value ?: return@LaunchedEffect
             val shader = newArtistHeroReflectionShader(
-                bakeW, bakePhotoH, bakeBandH, bakeBlurPx, edgeReflection
+                bakeW, bakePhotoH, bakeBandH, bakeBlurPx
             )
-            val bakedBitmap = withContext(Dispatchers.Default) {
-                runCatching {
-                    bakeHeroReflection(src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader, edgeReflection)
+            // 串行化 + 过时放弃：withLock 在协程取消时自动释放不会漏解锁。
+            // 锁只包住真正阻塞的 GPU 烘焙段（最长 3s 忙等）；拿到锁后再 ensureActive 一次，
+            // 若排队期间几何又变了（本 effect 已被重启 → 已取消）就直接放弃，不白跑一遍。
+            // 注意不能沿用 runCatching：它会把 CancellationException 也吞成 null，让已取消的
+            // 旧 effect 继续走下面的「烘焙失败」分支去改 backdropBakeSettled（污染新状态）。
+            val bakedBitmap = HeroBakeGate.withLock {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                withContext(Dispatchers.Default) {
+                    try {
+                        bakeHeroReflection(src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        // 烘焙失败会退回「锐利照片 + 提取色」硬衔接，必须留痕（debug 包看 logcat）
+                        android.util.Log.w("ArtistDetail", "hero reflection bake failed (${bakeW}x${bakePhotoH + bakeBandH})", t)
+                        null
+                    }
                 }
-                    // 烘焙失败会退回「锐利照片 + 提取色」硬衔接，必须留痕（debug 包看 logcat）
-                    .onFailure { android.util.Log.w("ArtistDetail", "hero reflection bake failed (${bakeW}x${bakePhotoH + bakeBandH})", it) }
-                    .getOrNull()
-                    ?.also { HeroBakeCache.put(context, cacheKey, it) }
             }
             if (bakedBitmap == null) {
                 // 烘焙失败：宣告「倒影不会来了」，揭示门立即放行、退化为锐利照片（不让门干等）。
                 backdropBakeSettled = true
                 return@LaunchedEffect
             }
+            // 落盘放到闸门外：内存插入同步生效（同进程回访立刻命中），PNG 编码自行切 IO，
+            // 不再占着烘焙闸门让后续几何变化的烘焙排队。
+            HeroBakeCache.put(context, cacheKey, bakedBitmap)
             pendingHeroBake = bakedBitmap.asImageBitmap()
             android.util.Log.d(
                 "HeroTrack",
-                "bake done ${bakeW}x${bakePhotoH + bakeBandH} edge=$edgeReflection " +
+                "bake done ${bakeW}x${bakePhotoH + bakeBandH} stretch=$ArtistReflectionStretch " +
                     "geo w=$bakeWidthPx hero=$heroHeightPx band=$bandHeightPx aspect=$heroAspect rgb=$originalRgb dark=$isDark"
             )
         }
@@ -807,7 +825,7 @@ fun ArtistDetail(
         // 相同，落位时机不影响观感；首次烘焙在静止且可见时换上即为设计中的接管。
         LaunchedEffect(pendingHeroBake) {
             if (pendingHeroBake == null) return@LaunchedEffect
-            snapshotFlow { heroViewportTop.value to listState.isScrollInProgress }
+            snapshotFlow { heroOffsetInViewport(listState) to listState.isScrollInProgress }
                 .first { (o, scrolling) -> o != null && !scrolling }
             bakedHero = pendingHeroBake ?: return@LaunchedEffect
             pendingHeroBake = null
@@ -875,21 +893,23 @@ fun ArtistDetail(
                         .fillMaxWidth()
                         .height(heroHeight + bandHeight)
                         .graphicsLayer {
-                            val o = heroViewportTop.value
                             // translationY 而非 Modifier.offset：offset 是布局阶段修饰符，
                             // 滚动时它每帧变化 → 每帧重新放置并让父级布局失效；这个层只
                             // 需要视觉位移，放进 graphicsLayer 后滚动期间不再触发布局。
-                            translationY = (o ?: 0).toFloat()
-                            val scrollA = if (o == null) 0f
-                            else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
-                            // 再乘背景揭示门 alpha：倒影随照片/提取色同帧渐入，不再突然叠上来。
-                            alpha = scrollA * backdropAlpha
+                            // 放置期直读 LazyListState（同帧值，见上方 heroOffsetInViewport 注释）。
+                            translationY = (heroOffsetInViewport(listState) ?: 0).toFloat()
                         }
                         .drawWithContent {
-                            // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制
+                            // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制。
+                            // alpha 走 drawImage 参数而不是 graphicsLayer.alpha：图层 alpha<1 会
+                            // 让 framework 建离屏缓冲（整像素对齐），滚动时可能在整像素台阶上跳。
+                            val o = heroOffsetInViewport(listState)
+                            val scrollA = if (o == null) 0f
+                            else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
                             bakedHero?.let {
                                 drawImage(
                                     it,
+                                    alpha = scrollA * backdropAlpha,
                                     dstSize = androidx.compose.ui.unit.IntSize(
                                         size.width.roundToInt(), size.height.roundToInt()
                                     )
@@ -1465,6 +1485,20 @@ private fun ArtistTabletLandscapeHeader(
         }
     }
 }
+
+/**
+ * Hero item 相对视口顶边的偏移（px），Hero 不在视口内时为 null。
+ *
+ * 供背景合成层在**放置/绘制期**直接调用：Compose 先测量全部子项再统一放置，而
+ * LazyColumn 在测量阶段就写好了 `layoutInfo`，所以这里拿到的是当帧值。对比此前
+ * `snapshotFlow` 采集进普通状态的写法（布局→帧末通知→协程→写 State→下帧失效，
+ * 最低晚一帧且延迟不定），滚动时照片/倒影不再比列表"慢半拍"地抖。
+ *
+ * Hero 是第 0 项：滚过一整屏后 index 不再为 0，此时 [LazyListState.layoutInfo] 里
+ * 查不到 Hero 的 info，自然返回 null。
+ */
+private fun heroOffsetInViewport(listState: androidx.compose.foundation.lazy.LazyListState): Int? =
+    listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
 
 /**
  * 艺人页背景「整体揭示」门的判据。
