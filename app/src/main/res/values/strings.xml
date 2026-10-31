@@ -429,6 +429,9 @@
     <string name="online_playlist_pending_empty">No songs yet. Tap &#171;Add Songs&#187; below.</string>
     <string name="online_playlist_add_songs">Add Songs</string>
     <string name="online_playlist_add_search_hint">Search songs to add</string>
+    <string name="online_playlist_search_hint">Search this playlist</string>
+    <string name="online_playlist_search_clear">Clear search</string>
+    <string name="online_playlist_search_no_match">No matching songs</string>
     <string name="online_playlist_add_added">Added</string>
     <string name="online_playlist_track_remove">Remove from Playlist</string>
     <string name="online_playlist_track_remove_confirm">Remove \"%1$s\" from this playlist?</string>

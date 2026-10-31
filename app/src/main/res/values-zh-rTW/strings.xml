@@ -324,6 +324,9 @@
     <string name="online_playlist_pending_empty">還沒有歌曲，點下方「新增歌曲」加歌吧。</string>
     <string name="online_playlist_add_songs">新增歌曲</string>
     <string name="online_playlist_add_search_hint">搜尋要加入的歌曲</string>
+    <string name="online_playlist_search_hint">搜尋歌單內歌曲</string>
+    <string name="online_playlist_search_clear">清空搜尋內容</string>
+    <string name="online_playlist_search_no_match">無符合歌曲</string>
     <string name="online_playlist_add_added">已加入</string>
     <string name="online_playlist_track_remove">從歌單移除</string>
     <string name="online_playlist_track_remove_confirm">確定從歌單移除「%1$s」？</string>

@@ -4,11 +4,16 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
@@ -32,28 +38,43 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntRect
@@ -67,6 +88,7 @@ import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -304,6 +326,122 @@ fun OnlinePlaylistDetail(
         { index -> removeTarget.value = displayTracks.getOrNull(index) }
     } else null
 
+    // ---------- 页内搜索（仅自有歌单） ----------
+    // 只是把操作行右侧那颗圆钮形变成输入框，输入内容**直接过滤列表本身**：
+    // 不加遮罩、不锁滚动、不换骨架，列表始终按原来的方式滚动与点击。
+    //
+    // 只对自有歌单开放：第三格原来是「添加歌曲」，现在被「搜索」占用；非自有歌单的第三格
+    // 保持收藏钮不变（用户裁决）。判定沿用 editAllowed，与加歌/删歌同一套权限。
+    val searchEnabled = editAllowed
+    val searchExpanded = remember("OnlinePlaylistDetail_searchExpanded") { mutableStateOf(false) }
+    val searchQuery = remember("OnlinePlaylistDetail_searchQuery") {
+        mutableStateOf(TextFieldValue(""))
+    }
+    // 防抖后的关键词：拼音组合输入（未上屏）期间不更新，上屏后再计时。
+    val searchKeyword = remember("OnlinePlaylistDetail_searchKeyword") { mutableStateOf("") }
+    val searchFieldFocus = remember { FocusRequester() }
+    val searchButtonFocus = remember { FocusRequester() }
+    // 展开动画：0 = 圆钮，1 = 满宽输入框
+    val searchMorph = animateFloatAsState(
+        targetValue = if (searchExpanded.value) 1f else 0f,
+        animationSpec = SearchMorphSpec,
+        label = "playlistSearchMorph"
+    )
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    // 动画值到端点后再做焦点/键盘动作：展开完成才聚焦，收起完成才把焦点还给按钮。
+    //
+    // 用 snapshotFlow + drop(1) 而不是 LaunchedEffect(searchExpanded.value)：后者在首次组合
+    // （searchExpanded 初始就是 false）时也会跑一遍「收起」分支，把刚进页面的焦点抢到搜索钮上、
+    // 顺带调一次 hide()。
+    LaunchedEffect(Unit) {
+        snapshotFlow { searchExpanded.value }.drop(1).collect { expanded ->
+            if (expanded) {
+                // 键盘要**立刻**弹：之前等 shape 收敛（f≥0.995）才 requestFocus，
+                // 用户点完要干等 300~400ms 才看到键盘，反馈迟钝。
+                //
+                // 展开层在 f=0 时就已参与组合（expandedLayerPresent 跟随 expanded），
+                // 输入框节点此刻已存在，所以点完当帧就能聚焦。
+                // 唯一要注意的是 requestFocus 只能在节点 attach 之后调用：
+                // 用 yield() 让出一次，等这次组合/布局跑完再请求。
+                //
+                // 焦点落在 42dp 宽的输入框上会不会撑变形？不会 ——
+                // 输入框的宽度由外层 layout 决定（跟随 fraction），焦点不影响布局。
+                kotlinx.coroutines.yield()
+                runCatching { searchFieldFocus.requestFocus() }
+                keyboardController?.show()
+            } else {
+                snapshotFlow { searchMorph.value }.first { it <= 0.005f }
+                // 收起：清空输入、退出聚焦、收键盘、焦点回按钮
+                searchQuery.value = TextFieldValue("")
+                searchKeyword.value = ""
+                runCatching { focusManager.clearFocus(force = true) }
+                keyboardController?.hide()
+                runCatching { searchButtonFocus.requestFocus() }
+            }
+        }
+    }
+    // 防抖 250ms（与搜索页同一节奏）；拼音组合中（composition 未提交）不检索。
+    //
+    // 判据用 composition == null || composition.collapsed 而不是 composition != null：
+    // 英文输入法会把正在输入的整个单词标成 composing 区间（长单词持续期间一直非 null），
+    // 部分国产输入法提交候选后也不清区间，只用 != null 会让这些情况下搜索结果一直不更新。
+    // 长度为 0 的非 null 区间（"空组合区"）同样应视为已上屏。
+    LaunchedEffect(searchQuery.value.text, searchQuery.value.composition) {
+        val composing = searchQuery.value.composition?.let { !it.collapsed } == true
+        if (composing) return@LaunchedEffect
+        val keyword = searchQuery.value.text.trim()
+        if (keyword == searchKeyword.value) return@LaunchedEffect
+        if (keyword.isEmpty()) {
+            searchKeyword.value = ""
+            return@LaunchedEffect
+        }
+        delay(250)
+        searchKeyword.value = keyword
+    }
+    // 列表实际渲染的数据：关键词为空时就是原歌单，否则是过滤结果。
+    // 这里刻意保留**原索引**：播放队列是完整歌单，点击要按原位置播放。
+    val visibleTracks: List<Pair<Int, KugouPlaylistTrack>> =
+        remember(displayTracks, searchKeyword.value) {
+            filterPlaylistTracks(displayTracks, searchKeyword.value)
+        }
+    // 与 visibleTracks 同一次状态派生，满足 LazyItemKeys 的红线 1
+    val visibleKeys = remember(visibleTracks, trackKeys) {
+        visibleTracks.map { (originalIndex, _) ->
+            trackKeys.getOrElse(originalIndex) { "oob_$originalIndex" }
+        }
+    }
+    val searching = searchKeyword.value.isNotEmpty()
+    // 换歌单时收起搜索，避免状态残留到下一个歌单
+    LaunchedEffect(playlistId, accountUserid) {
+        searchExpanded.value = false
+        searchQuery.value = TextFieldValue("")
+        searchKeyword.value = ""
+    }
+    // 搜索入口随 editAllowed 一起消失（如换账号后失去编辑权限）：立刻收起，不留一个
+    // 打不开的搜索框
+    LaunchedEffect(searchEnabled) {
+        if (!searchEnabled) {
+            searchExpanded.value = false
+            searchQuery.value = TextFieldValue("")
+            searchKeyword.value = ""
+        }
+    }
+    // 返回键：先收起搜索，再次返回才退出页面
+    BackHandler(enabled = searchExpanded.value) {
+        searchExpanded.value = false
+    }
+    fun openSearch() {
+        if (!searchEnabled) return
+        // 防重复触发：动画未收敛时忽略
+        if (searchMorph.value > 0.02f && searchMorph.value < SearchMorphSettled) return
+        searchExpanded.value = true
+    }
+    fun dismissSearch() {
+        if (!searchExpanded.value) return
+        searchExpanded.value = false
+    }
+
     val loadingBaseText = stringResource(id = R.string.online_playlist_loading_songs)
     val progressFormat = stringResource(id = R.string.online_playlist_loaded_progress)
     // 串行化：loadTracks 有 5 个触发入口（首进/静默revalidate/下拉刷新/重试/挂起歌单补拉），
@@ -508,6 +646,51 @@ fun OnlinePlaylistDetail(
             Modifier
                 .fillMaxSize()
                 .background(backdrop)
+                // 点搜索框以外的空白处收起搜索。
+                //
+                // 用「只观察、不消费」的手势监听：搜索期间列表照常滚动、行照常可点 ——
+                // 任何消费型手势（detectTapGestures / 全屏透明遮罩）都会把列表手势一起吃掉，
+                // 与「列表始终保持原样」的前提冲突。
+                //
+                // 判定规则（三条同时满足才收起）：
+                // 1. 这是一次**点击**而不是滚动：从按下到抬起位移没超过 touch slop。
+                //    只看 Press 会在每次想滚列表时立刻收起，搜索态就没法滚了。
+                // 2. 没人消费这次手势：搜索框、歌曲行、按钮都有自己的 clickable 并消费，
+                //    所以「没人消费」= 按在了空白处。用 Final 阶段读消费状态
+                //    （Initial 阶段子节点还没消费，isConsumed 恒 false，会把所有点击都算进来）。
+                // 3. 仍然处于展开态。
+                .then(
+                    if (searchExpanded.value) {
+                        Modifier.pointerInput(Unit) {
+                            val touchSlop = viewConfiguration.touchSlop
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val down = awaitPointerEvent(PointerEventPass.Final)
+                                    if (down.type != PointerEventType.Press) continue
+                                    val pressed = down.changes.firstOrNull() ?: continue
+                                    val start = pressed.position
+                                    var moved = false
+                                    var consumed = pressed.isConsumed
+                                    // 跟踪到抬起为止：只读状态，不消费任何事件
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Final)
+                                        if (event.changes.isEmpty()) break
+                                        val change = event.changes.firstOrNull()
+                                            ?: break
+                                        if ((change.position - start).getDistance() > touchSlop) {
+                                            moved = true
+                                        }
+                                        if (event.type == PointerEventType.Release) {
+                                            if (change.isConsumed) consumed = true
+                                            break
+                                        }
+                                    }
+                                    if (!moved && !consumed) dismissSearch()
+                                }
+                            }
+                        }
+                    } else Modifier
+                )
         ) {
             PullToRefreshBox(
                 isRefreshing = refreshing.value,
@@ -541,14 +724,14 @@ fun OnlinePlaylistDetail(
                                 onToggleCollect = if (!editAllowed) ({ toggleCollect() }) else null,
                                 collectEnabled = collectEnabled,
                                 collectDescription = collectDescription,
-                                trailingIcon = if (editAllowed) {
-                                    R.drawable.ic_add
+                                trailingIcon = if (searchEnabled && !searchExpanded.value) {
+                                    R.drawable.ic_magnifying_glass
                                 } else null,
                                 trailingIconDescription = stringResource(
-                                    id = R.string.online_playlist_add_songs
+                                    id = R.string.common_search
                                 ),
-                                onTrailingClick = if (editAllowed) {
-                                    { showAddDialog.value = true }
+                                onTrailingClick = if (searchEnabled) {
+                                    { openSearch() }
                                 } else null,
                                 onPlayAll = {
                                     // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
@@ -588,13 +771,44 @@ fun OnlinePlaylistDetail(
                                         playAt(list.indices.random())
                                     }
                                 },
-                                onAddSongs = if (editAllowed) {
-                                    { showAddDialog.value = true }
+                                onSearch = if (searchEnabled) {
+                                    { openSearch() }
                                 } else null,
+                                searchFieldFocus = searchFieldFocus,
+                                searchQuery = searchQuery.value,
+                                onSearchQueryChange = { searchQuery.value = it },
+                                onSearchClear = {
+                                    searchQuery.value = TextFieldValue("")
+                                    searchKeyword.value = ""
+                                    runCatching { searchFieldFocus.requestFocus() }
+                                    keyboardController?.show()
+                                },
+                                searchMorphFraction = searchMorph,
+                                searchExpanded = searchExpanded.value,
                                 collected = collected,
                                 collectEnabled = collectEnabled,
                                 collectDescription = collectDescription,
                                 onToggleCollect = { toggleCollect() }
+                            )
+                        }
+                    }
+
+                    // 平板（≥600dp）：形变搜索框插在头部下方单独一行 —— 宽屏操作行被
+                    // 两个 NormalButton 占满，塞不下满宽输入框，这里退化为「折叠态不占位
+                    // （入口在头部圆钮）、展开态占一整行」。
+                    if (isWideScreen && searchEnabled && searchMorph.value > 0.01f) {
+                        item("WideSearchField") {
+                            WideSearchFieldRow(
+                                query = searchQuery.value,
+                                onQueryChange = { searchQuery.value = it },
+                                onClear = {
+                                    searchQuery.value = TextFieldValue("")
+                                    searchKeyword.value = ""
+                                    runCatching { searchFieldFocus.requestFocus() }
+                                    keyboardController?.show()
+                                },
+                                contentColor = contentColor,
+                                focusRequester = searchFieldFocus
                             )
                         }
                     }
@@ -667,31 +881,29 @@ fun OnlinePlaylistDetail(
                     }
                     item("Status") {
                         if (status.value == "empty" && displayTracks.isEmpty()) {
-                            // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛）
+                            // 空歌单：资料库同款图标 + 提示文字，居中（高度收敛）。
+                            // 视觉组件与搜索结果「无匹配歌曲」空态同源（PlaylistEmptyState）。
                             Box(
                                 modifier = Modifier
                                     .fillParentMaxWidth()
                                     .fillParentMaxHeight(0.32f),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_uitabbar_library),
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(70.dp)
-                                            .alpha(0.3f),
-                                        tint = LocalContentColor.current
-                                    )
-                                    Text(
-                                        text = stringResource(id = R.string.online_playlist_songs_empty),
-                                        fontSize = 16.sp,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier
-                                            .padding(top = 12.dp)
-                                            .alpha(0.55f)
-                                    )
-                                }
+                                PlaylistEmptyState(
+                                    text = stringResource(id = R.string.online_playlist_songs_empty)
+                                )
+                            }
+                        } else if (searching && visibleTracks.isEmpty()) {
+                            // 搜索无匹配：同一个图标与布局，只换文案
+                            Box(
+                                modifier = Modifier
+                                    .fillParentMaxWidth()
+                                    .fillParentMaxHeight(0.32f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                PlaylistEmptyState(
+                                    text = stringResource(id = R.string.online_playlist_search_no_match)
+                                )
                             }
                         } else {
                             OnlineStatusItem(
@@ -704,7 +916,7 @@ fun OnlinePlaylistDetail(
                     }
 
                     // 分割线仅在非空列表渲染；空歌单只有图标+文字，不要分割线
-                    if (status.value != "empty") {
+                    if (status.value != "empty" && !(searching && visibleTracks.isEmpty())) {
                         item {
                             OnlineDetailDivider()
                         }
@@ -722,11 +934,17 @@ fun OnlinePlaylistDetail(
                     // 歌曲行：保留封面小图（52dp）的统一歌曲行；
                     // 宽屏（≥600dp）三列：歌名（左半）+ 歌手（起于屏幕中央）+ 时长（贴右）。
                     // 点击 → 全部歌曲进队列，从被点击歌曲开始播放；自有歌单支持长按移除。
+                    //
+                    // 搜索时渲染 filtered(visibleTracks)，但每行带着**原索引**：
+                    // 播放队列始终是完整歌单，点击按原位置播放。分隔线判据也必须用
+                    // visibleTracks 的长度，否则会与渲染行数不一致。
                     itemsIndexed(
-                        displayTracks,
-                        key = { index, _ -> trackKeys[index] }
-                    ) { index, track ->
-                        key(trackKeys[index]) {
+                        visibleTracks,
+                        key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } }
+                    ) { index, pair ->
+                        val originalIndex = pair.first
+                        val track = pair.second
+                        key(visibleKeys.getOrElse(index) { "oob_$index" }) {
                             // alpha 走页面级共享曲线：所有可见行同时渐入，
                             // 动画结束后恒 1f，后续补页的新行不会重新淡入。
                             Box(
@@ -738,22 +956,22 @@ fun OnlinePlaylistDetail(
                                 if (isWideScreen) {
                                     DetailSongRowWide(
                                         music = KugouRepository.toDisplayMediaItem(track),
-                                        onDelete = removeAt?.let { cb -> { cb(index) } }
+                                        onDelete = removeAt?.let { cb -> { cb(originalIndex) } }
                                     ) {
-                                        playAt(index)
+                                        playAt(originalIndex)
                                     }
                                 } else {
                                     MusicList(
                                         music = KugouRepository.toDisplayMediaItem(track),
-                                        itemClick = { playAt(index) },
-                                        onLongClick = removeAt?.let { cb -> { cb(index) } }
+                                        itemClick = { playAt(originalIndex) },
+                                        onLongClick = removeAt?.let { cb -> { cb(originalIndex) } }
                                     )
                                 }
                             }
                         }
 
                         key("divider_$index") {
-                            if (index < displayTracks.size - 1) {
+                            if (index < visibleTracks.size - 1) {
                                 Spacer(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -768,20 +986,21 @@ fun OnlinePlaylistDetail(
                         }
                     }
 
-                    if (status.value != "empty") {
+                    if (status.value != "empty" && !(searching && visibleTracks.isEmpty())) {
                         item {
                             OnlineDetailDivider()
                         }
                     }
 
-                    // 末尾统计行（与专辑页「N 首歌曲, 约 M 分钟」一致）
-                    if (displayTracks.isNotEmpty()) {
+                    // 末尾统计行（与专辑页「N 首歌曲, 约 M 分钟」一致）。
+                    // 搜索时统计的是命中的曲目，跟列表同步。
+                    if (visibleTracks.isNotEmpty()) {
                         item("PlaylistOthers") {
                             Text(
                                 text = stringResource(
                                     id = R.string.page_library_album_info_others,
-                                    displayTracks.size,
-                                    (displayTracks.sumOf { it.durationMs } / 60000).toInt()
+                                    visibleTracks.size,
+                                    (visibleTracks.sumOf { it.second.durationMs } / 60000).toInt()
                                 ),
                                 fontSize = 15.sp,
                                 modifier = Modifier
@@ -801,7 +1020,10 @@ fun OnlinePlaylistDetail(
             // 顶栏：滚动离屏浮现小标题 + 模糊；返回键/右上图标着色跟随页面文字色
             TitleBar(
                 title = playlistName,
-                onBack = if (showBackButton) ({ navController.popBackStackSafely() }) else null,
+                // 搜索展开时，顶栏返回键与系统返回键同样只收起搜索，不退页
+                onBack = if (showBackButton) {
+                    { if (searchExpanded.value) dismissSearch() else navController.popBackStackSafely() }
+                } else null,
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
@@ -818,12 +1040,23 @@ fun OnlinePlaylistDetail(
                         adaptiveLuminance = true,
                         contentColor = contentColor,
                     ) {
-                        // 菜单内容暂为占位（具体动作后续补）
-                        LiquidGlassDropdownMenuItem(
-                            text = stringResource(id = R.string.online_album_more_placeholder),
-                            enabled = false,
-                            onClick = {},
-                        )
+                        // 「添加歌曲」从操作行挪到这里（自有歌单）：搜索钮占用了原来的
+                        // 第三格。非自有歌单仍显示占位项，保持原样。
+                        if (editAllowed) {
+                            LiquidGlassDropdownMenuItem(
+                                text = stringResource(id = R.string.online_playlist_add_songs),
+                                onClick = {
+                                    menuOpen.value = false
+                                    showAddDialog.value = true
+                                },
+                            )
+                        } else {
+                            LiquidGlassDropdownMenuItem(
+                                text = stringResource(id = R.string.online_album_more_placeholder),
+                                enabled = false,
+                                onClick = {},
+                            )
+                        }
                     }
                 }
             )
@@ -929,7 +1162,7 @@ internal fun sharedPlaylistCoverKey(
  * 详情页横向分割线（对齐专辑页 OnlineAlbumDivider 规范）。
  */
 @Composable
-private fun OnlineDetailDivider(modifier: Modifier = Modifier) =
+internal fun OnlineDetailDivider(modifier: Modifier = Modifier) =
     Spacer(
         modifier = modifier
             .fillMaxWidth()
@@ -958,7 +1191,15 @@ private fun PlaylistHeaderCompact(
     playEnabled: Boolean,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
-    onAddSongs: (() -> Unit)?,
+    // 页内搜索（仅自有歌单）：非 null 时操作行右侧那颗圆钮就是搜索入口，
+    // 点击后它在原地形变成输入框（形变由 PlaylistSearch.MorphSearchField 负责）。
+    onSearch: (() -> Unit)?,
+    searchFieldFocus: FocusRequester,
+    searchQuery: TextFieldValue,
+    onSearchQueryChange: (TextFieldValue) -> Unit,
+    onSearchClear: () -> Unit,
+    searchMorphFraction: State<Float>,
+    searchExpanded: Boolean,
     collected: Boolean,
     collectEnabled: Boolean,
     collectDescription: String,
@@ -1037,41 +1278,75 @@ private fun PlaylistHeaderCompact(
                 .padding(top = 4.dp)
         )
 
-        // 操作行：随机圆钮（左）· 实心播放胶囊（中，剩余空间的 2/3）· 添加歌曲圆钮（右，仅自有歌单）
-        // 三个按钮全部由页面文字色派生，浅色封面上翻成深色、深色封面上保持白色。
-        YosWrapper {
-            CompactPlayActionRow(
-                foregroundColor = contentColor,
-                playEnabled = playEnabled,
-                onShuffle = onShuffle,
-                onPlayAll = onPlayAll,
-                modifier = Modifier.padding(top = 14.dp, bottom = 10.dp),
-                trailing = if (onAddSongs != null) {
-                    {
-                        ArtistRoundActionButton(
-                            icon = R.drawable.ic_add,
-                            contentDescription = stringResource(id = R.string.online_playlist_add_songs),
-                            iconTint = contentColor,
-                            highlighted = false,
-                            iconSize = 24.dp,
-                            containerColor = contentColor.copy(alpha = 0.18f)
-                        ) {
-                            onAddSongs()
+        // 操作行：随机圆钮（左）· 实心播放胶囊（中，剩余空间的 2/3）· 尾部槽位（右）。
+        // 三个控件全部由页面文字色派生，浅色封面上翻成深色、深色封面上保持白色。
+        //
+        // 自有歌单的尾部槽位就是搜索入口：MorphSearchField 折叠态与那颗 42dp 圆钮逐像素
+        // 同构，所以槽位里只放一个同尺寸 Spacer 占位 —— **必须真的占 42dp**，
+        // 传空 lambda 会让 Row 少一格宽度、整行重新居中，搜索框就会压到播放胶囊上。
+        // 展开时搜索框越过随机钮与胶囊铺满整行，那两个按钮同步淡出。
+        //
+        // 外层再套一层固定高度的 Box：搜索框用 layout{} 按绝对坐标摆放，而 LazyColumn 条目
+        // 给的高度是无界的（Int.MAX_VALUE），无界约束下它算不出可视高度、会把输入框摆到
+        // 条目外面去（表现为「只剩键盘，看不见输入框」）。有界之后定位就是确定的。
+        //
+        // 高度 = 上下 padding + 内容行高，且必须放在 padding **之前**：
+        // 写在 padding 之后的话，44dp 会被当成扣除 padding 后的内容高度，操作行被压扁。
+        //
+        // 另留 ActionRowBlurBleed × 2 给模糊扩散：内层 PlayActionRowMotion 的模糊图层
+        // 必须比内容大出一圈，模糊才能真的散开（否则四边被图层边界硬切成方框，
+        // 用户三个方向都看得到）。这份余量加进 padding，内容在屏幕上的位置不变。
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .height(
+                    SearchFieldExpandedHeight +
+                        ActionRowTopPadding +
+                        ActionRowBottomPadding +
+                        ActionRowBlurBleed * 2
+                )
+                .padding(
+                    top = ActionRowTopPadding + ActionRowBlurBleed,
+                    bottom = ActionRowBottomPadding + ActionRowBlurBleed
+                )
+        ) {
+            if (onSearch != null) {
+                // 自有歌单：三个控件由同一个 fraction 逐控件驱动（挤压铺满 + 景深模糊）
+                PlayActionRowMotion(
+                    fraction = searchMorphFraction,
+                    foregroundColor = contentColor,
+                    playEnabled = playEnabled,
+                    onShuffle = onShuffle,
+                    onPlayAll = onPlayAll,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = onSearchQueryChange,
+                    onSearchClear = onSearchClear,
+                    searchFocus = searchFieldFocus,
+                    searchExpanded = searchExpanded,
+                    onOpenSearch = onSearch
+                )
+            } else {
+                // 非自有歌单：无搜索入口，原样走共享组件（零改动）
+                val geometry = remember(maxWidth) { PlayActionGeometry(maxWidth) }
+                YosWrapper {
+                    CompactPlayActionRow(
+                        foregroundColor = contentColor,
+                        playEnabled = playEnabled,
+                        onShuffle = onShuffle,
+                        onPlayAll = onPlayAll,
+                        trailing = {
+                            ArtistCollectButton(
+                                collected = collected,
+                                enabled = collectEnabled,
+                                iconTint = contentColor,
+                                containerColor = contentColor.copy(alpha = 0.18f),
+                                description = collectDescription,
+                                onClick = onToggleCollect
+                            )
                         }
-                    }
-                } else {
-                    {
-                        ArtistCollectButton(
-                            collected = collected,
-                            enabled = collectEnabled,
-                            iconTint = contentColor,
-                            containerColor = contentColor.copy(alpha = 0.18f),
-                            description = collectDescription,
-                            onClick = onToggleCollect
-                        )
-                    }
+                    )
                 }
-            )
+            }
         }
 
         // 简介：常驻在三个按钮下方（仅推荐歌单携带 intro）；超过两行行尾接「…更多」
