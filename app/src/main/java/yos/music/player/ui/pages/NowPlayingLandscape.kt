@@ -189,7 +189,37 @@ internal fun NowPlayingLandscape(
         return
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // 外层用 BoxWithConstraints：底部悬浮行在分栏态要与左列控件带共用同一个左边界，
+    // 而 mediaStartPadding 由整屏宽度算出，两个区域必须在同一作用域里读它。
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+
+        val outerPaneWidth = maxWidth
+        val outerScreenHeight = LocalConfiguration.current.screenHeightDp.dp
+        val outerCoverVisual = minOf(
+            outerScreenHeight * 0.45f,
+            outerPaneWidth * 0.45f - 120.dp
+        ).coerceAtLeast(120.dp)
+        val outerContentWidth = outerCoverVisual + 120.dp
+        val outerMediaPaneWidth = outerPaneWidth * 0.45f
+        val outerPage = nowPageLambda()
+        val outerPanesOpen = outerPage != Album
+        // 底部行左缘：
+        // - 分栏态（歌词/评论/队列）：与左列控件带的**墨迹左缘**对齐。
+        //   控件带在 LandscapeTitleBlock / PlayerControl 内部各缩 25dp，
+        //   墨迹左缘 = mediaStartPadding + 25dp。原来硬编码 20dp，
+        //   分栏态 mediaStartPadding 变成 12dp 后控件带墨迹在 37dp，
+        //   设备块停在 20dp，肉眼就是「设备那块比上面的组件偏左」。
+        // - Album 态：封面与控件带整屏居中，底部行仍是铺满整屏的悬浮条，
+        //   设备块贴屏幕左下角（20dp），保持原设计，不跟着居中跑。
+        val bottomRowStartPadding by animateDpAsState(
+            targetValue = if (outerPanesOpen) {
+                ((outerMediaPaneWidth - outerContentWidth) / 2).coerceAtLeast(0.dp) + 25.dp
+            } else {
+                20.dp
+            },
+            animationSpec = tween(durationMillis = 300),
+            label = "bottomRowStartPadding"
+        )
 
         // 主内容区（顶部给翻译按钮留白）。
         // 底部留白从 84dp 收到 44dp：媒体列在音量行之前的内容就接近 620dp，
@@ -202,7 +232,9 @@ internal fun NowPlayingLandscape(
                 .fillMaxSize()
                 .padding(top = 96.dp, bottom = 44.dp)
         ) {
-            val paneWidth = maxWidth
+            // 分栏几何统一取自外层：底部行的左边界要在同一份数值上加 25dp，
+            // 两处不能各算一遍，否则改一个漏一个就又是错位。
+            val paneWidth = outerPaneWidth
 
             // 平板横屏定版：封面/标题/控件带与右侧歌词·评论·队列整体上抬 20dp。
             // 不能靠改内容区的上下 padding 实现——左列内容在内容区内「居中」、右栏
@@ -211,15 +243,12 @@ internal fun NowPlayingLandscape(
             // 这个 Box 之外，留在原位。
             val contentLift = 20.dp
 
-            val configuration = LocalConfiguration.current
-            val screenHeight = configuration.screenHeightDp.dp
-
             // 分栏比例（以正确布局的真机截图为准，1120x800dp 横屏平板）：
             // - 左媒体栏 45%（504dp）：控件列中心 252dp
             // - 右歌词/队列栏 57%（638.4dp，自屏幕右缘起算）：歌词文字左缘 510.9dp
             //   （原 60% 会让歌词文字落在 477.3dp，比目标偏左 33dp）
             // 两栏在视觉上错开，不会互相压字。
-            val mediaPaneWidth = paneWidth * 0.45f
+            val mediaPaneWidth = outerMediaPaneWidth
             val rightPaneFraction = 0.57f
 
             // 封面呼吸内缩：播放态 7dp、暂停态 42dp。
@@ -230,20 +259,21 @@ internal fun NowPlayingLandscape(
             // 视觉正方形：约 45% 屏高（参考图 362dp），并限制不超过左媒体栏可用宽度。
             // 注意这里约束的是「看得见的封面」，不是布局占位——占位还要留出两侧呼吸内缩，
             // 否则暂停态会内缩 84dp（原写法实测只剩 292dp，明显小于参考图）。
-            val coverVisual = minOf(screenHeight * 0.45f, mediaPaneWidth - 120.dp)
-                .coerceAtLeast(120.dp)
+            val coverVisual = outerCoverVisual
             // 布局占位 = 视觉正方形 + 两侧最大内缩：呼吸只改视觉尺寸，不推动下方标题与控件。
             val coverSize = coverVisual + breathInsetMax * 2
 
             // 标题行/控件行与封面同轴的宽度：进度条比视觉封面左右各宽 60dp
             // （参考图：控件带 482dp / 视觉封面 362dp）
-            val contentWidth = coverVisual + 120.dp
+            val contentWidth = outerContentWidth
 
             val page = nowPageLambda()
             val paneOpen = page != Album
 
             // 左列媒体：Album 在整块 pane 内居中（保持原行为）；
             // 右栏打开后，再以 contentWidth 为基准在左媒体栏内居中。
+            // 底部行的左缘（bottomRowStartPadding）就是在这个值上加 25dp 得来的，
+            // 两者共用同一份分栏几何。
             val mediaStartPadding by animateDpAsState(
                 targetValue = if (paneOpen) {
                     ((mediaPaneWidth - contentWidth) / 2).coerceAtLeast(0.dp)
@@ -386,13 +416,16 @@ internal fun NowPlayingLandscape(
         }
 
         // 底部悬浮行：输出设备（左）& 歌词/队列入口（右）
+        //
+        // 左缘由 bottomRowStartPadding 给出：分栏态与上方控件带的墨迹左缘严格对齐
+        // （见该变量的注释），Album 态仍贴屏幕左下角 20dp。
         Row(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .alpha(0.4f)
                 .navigationBarsPadding()
-                .padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+                .padding(start = bottomRowStartPadding, end = 20.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AirPlay(fill = false)
