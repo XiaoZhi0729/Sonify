@@ -77,8 +77,6 @@ import yos.music.player.ui.pages.NowPlayingPage.Lyric
 import yos.music.player.ui.pages.NowPlayingPage.PlayingList
 import yos.music.player.ui.pages.comments.SongCommentsPanel
 import yos.music.player.ui.widgets.YosLyricScrollState
-import yos.music.player.ui.widgets.audio.VocalSeparationPill
-import yos.music.player.ui.widgets.audio.VocalSeparationPillHeight
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -385,43 +383,6 @@ internal fun NowPlayingLandscape(
             // 在本次状态切换的 transition 参数读取完后再记录当前页，保留上一次页面用于下一次判断。
             SideEffect { previousPage.value = page }
 
-        }
-
-        // 翻译切换（右上角）。
-        // top=19dp：贴顶放置时按钮可点区整个落进系统右上角下拉手势的死区
-        // （真机实测 OPD 横屏注入点按全部无效），下移 15dp 让出该区域。
-        //
-        // ## 为什么 Row 要撑到 88dp 并上移 52dp
-        // 药丸的根节点高度跟随展开态（36→88dp），它的指针要能收到，**每一层祖先的
-        // 测量尺寸都必须容得下 88dp**——Compose 的命中测试按容器 bounds 逐层裁剪，
-        // 只要中间有一层只有 36dp，按在展开体上半截就会穿透到下面的内容。
-        //
-        // 撑高 88 + 上移 52 + 内容 Bottom 对齐，三者抵消后底边与改动前完全重合，
-        // 所以翻译按钮与药丸的视觉位置零变化。
-        Row(
-            Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 19.dp, end = 24.dp)
-                .height(VocalSeparationPillHeight)
-                .offset(y = -(VocalSeparationPillHeight - 36.dp)),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            TranslationToggleButton(
-                translation = translation,
-                enabled = true
-            ) {
-                Vibrator.click(context)
-                translation.value = !translation.value
-                showControl.value = true
-                lastClickTime.longValue = TimeUtils.getNowMills()
-                SettingsLibrary.NowPlayingTranslation = translation.value
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            // 人声分离药丸：与竖屏歌词页同一个控件（点按开关、上下拖调占比）
-            VocalSeparationPill()
         }
 
         // 底部悬浮行：输出设备（左）& 歌词/队列入口（右）
@@ -923,38 +884,6 @@ private fun NowPlayingLandscapePhone(
                                     topSpacerWithStatusBar = false,
                                     modifier = Modifier.fillMaxSize()
                                 )
-
-                                // 翻译切换放在歌词区右上角：手机横屏的标题行右端
-                                // 已经住着收藏★/更多⋯，屏幕右上角再放一个 48dp 触摸盒
-                                // 会压到 ⋯ 的中心（这个碰撞在竖屏上真实发生过一次）。
-                                //
-                                // 高度撑到 [VocalSeparationPillHeight]：Row 是药丸的直接父级，
-                                // 只有 36dp 时展开态溢出的上半截接收不到指针。
-                                // Bottom 对齐 + 外层上移 52dp，视觉位置不变。
-                                Row(
-                                    Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(top = 4.dp)
-                                        .height(VocalSeparationPillHeight)
-                                        .offset(y = -(VocalSeparationPillHeight - 36.dp)),
-                                    verticalAlignment = Alignment.Bottom
-                                ) {
-                                    TranslationToggleButton(
-                                        translation = translation,
-                                        enabled = true
-                                    ) {
-                                        Vibrator.click(context)
-                                        translation.value = !translation.value
-                                        showControl.value = true
-                                        lastClickTime.longValue = TimeUtils.getNowMills()
-                                        SettingsLibrary.NowPlayingTranslation = translation.value
-                                    }
-
-                                    Spacer(Modifier.width(12.dp))
-
-                                    // 人声分离药丸：与竖屏/平板横屏同一个控件
-                                    VocalSeparationPill()
-                                }
                             }
                         }
 
@@ -989,17 +918,24 @@ private fun NowPlayingLandscapePhone(
                         }
                     }
 
-                    // 底部行：歌词入口 / 输出设备 / 队列入口，铺在控件带宽度内
+                    // 底部行：歌词入口 / 输出设备 / 队列入口（评论入口按设置与曲目可用性插入）。
+                    //
+                    // 用等分权重而不是 SpaceBetween：各按钮原始宽度并不相同——入口是 56dp
+                    // 槽位、AirPlay 按内容自适应——SpaceBetween 只均分「剩余空隙」，中心距
+                    // 会不均（实测 378/321/354px）。等分后中心落在各槽位正中，间距由构造保证一致。
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 25.dp)
-                            .alpha(0.4f),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .alpha(0.4f)
+                            .padding(horizontal = 25.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // AirPlay 是 RowScope 扩展，套进 Box 后隐式接收者失效，
+                        // 这里先捕获本 Row 的 receiver 再传进去。
+                        val rowScope = this
+
                         LyricsEntryButton(
-                            modifier = Modifier.width(56.dp),
+                            modifier = Modifier.weight(1f),
                             onLyrics = onLyrics,
                             nowPage = nowPageLambda
                         )
@@ -1007,16 +943,21 @@ private fun NowPlayingLandscapePhone(
                         // 本地歌曲没有评论资源：入口不出现；设置开关关闭同样隐藏
                         if (SettingsLibrary.NowPlayingShowCommentsEntry && thisMusicPlayingLambda()?.kugouHash() != null) {
                             CommentEntryButton(
-                                modifier = Modifier.width(56.dp),
+                                modifier = Modifier.weight(1f),
                                 onComments = onComments,
                                 nowPage = nowPageLambda
                             )
                         }
 
-                        AirPlay(fill = false)
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            rowScope.AirPlay(fill = false)
+                        }
 
                         QueueEntryButton(
-                            modifier = Modifier.width(56.dp),
+                            modifier = Modifier.weight(1f),
                             onPlaylist = onPlaylist,
                             nowPage = nowPageLambda
                         )

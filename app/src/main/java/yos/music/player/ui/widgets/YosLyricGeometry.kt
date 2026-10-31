@@ -6,8 +6,21 @@ import kotlin.math.roundToInt
 internal const val LYRIC_ACTIVE_ANCHOR_FRACTION = 0.12f
 internal const val LYRIC_TOP_FADE_INSET_DP = 32f
 
+/**
+ * 顶部渐隐 inset 的有效值：不得超过锚点距离的一半。
+ *
+ * 手机横屏的歌词面板只有约 267dp 高，`0.12 × 267 ≈ 32dp` 与常量 inset 32dp 相减归零，
+ * 渐隐带退化成 0 高度 = 硬边（底部渐隐走 Fraction，线性于视口高，所以短视口不会这样塌）。
+ * 视口 ≥ 4 × inset（约 533dp，竖屏与平板横屏都满足）时上限不起作用，结果与旧公式逐像素一致。
+ */
+internal fun lyricTopFadeInsetPx(viewportHeightPx: Float, insetPx: Float): Float {
+    val anchorPx = viewportHeightPx.coerceAtLeast(0f) * LYRIC_ACTIVE_ANCHOR_FRACTION
+    return insetPx.coerceIn(0f, anchorPx * 0.5f)
+}
+
 internal fun lyricTopMaskEndPx(viewportHeightPx: Float, insetPx: Float): Float =
-    (viewportHeightPx.coerceAtLeast(0f) * LYRIC_ACTIVE_ANCHOR_FRACTION - insetPx)
+    (viewportHeightPx.coerceAtLeast(0f) * LYRIC_ACTIVE_ANCHOR_FRACTION -
+        lyricTopFadeInsetPx(viewportHeightPx, insetPx))
         .coerceAtLeast(0f)
 
 /**

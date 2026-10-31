@@ -18,10 +18,13 @@ class YosLyricGeometryTest {
             for (heightDp in listOf(100f, 400f, 650f, 900f)) {
                 val viewportPx = heightDp * density
                 val anchorPx = viewportPx * LYRIC_ACTIVE_ANCHOR_FRACTION
-                val endPx = lyricTopMaskEndPx(viewportPx, LYRIC_TOP_FADE_INSET_DP * density)
-                val expected = ((heightDp * LYRIC_ACTIVE_ANCHOR_FRACTION - LYRIC_TOP_FADE_INSET_DP).coerceAtLeast(0f)) * density
+                val insetPx = LYRIC_TOP_FADE_INSET_DP * density
+                val endPx = lyricTopMaskEndPx(viewportPx, insetPx)
+                val expected =
+                    (anchorPx - lyricTopFadeInsetPx(viewportPx, insetPx)).coerceAtLeast(0f)
                 assertEquals(expected, endPx, 0.001f)
                 assertTrue("height=$heightDp density=$density", endPx <= anchorPx)
+                assertTrue("height=$heightDp density=$density", endPx >= 0f)
             }
         }
     }
@@ -30,7 +33,55 @@ class YosLyricGeometryTest {
     fun collapsedTopMaskNeverHasANegativeEnd() {
         assertEquals(0f, lyricTopMaskEndPx(0f, 16f), 0f)
         assertEquals(0f, lyricTopMaskEndPx(-100f, 16f), 0f)
-        assertEquals(0f, lyricTopMaskEndPx(100f, 16f), 0f)
+        // 极短视口：终点被钳在 [0, anchor) 内。旧公式在这里恰好塌成 0（渐隐带消失），
+        // 新公式保住 anchor 的一半，所以只断言范围，不再钉死 0。
+        val end = lyricTopMaskEndPx(100f, 16f)
+        assertTrue("end=$end must stay non-negative", end >= 0f)
+        assertTrue("end=$end must stay below anchor", end < 100f * LYRIC_ACTIVE_ANCHOR_FRACTION)
+    }
+
+    @Test
+    fun shortLandscapeViewportKeepsAVisibleTopFadeBand() {
+        // 手机横屏：853dp 屏 − 56dp 顶 − 18dp 底 = 320dp 内容区，再减标题块约 49dp + 4dp 间距。
+        val density = 3.25f
+        val viewportDp = 267f
+        val viewportPx = viewportDp * density
+        val insetPx = LYRIC_TOP_FADE_INSET_DP * density
+
+        // 旧公式在这里算出约 0.04dp，渐隐带整条消失（横屏顶部硬切）。
+        val legacy = (viewportPx * LYRIC_ACTIVE_ANCHOR_FRACTION - insetPx).coerceAtLeast(0f)
+        assertTrue("legacy should collapse on short viewport", legacy / density < 0.5f)
+
+        // 新公式保住了锚点距离的一半。
+        val endDp = lyricTopMaskEndPx(viewportPx, insetPx) / density
+        val anchorDp = viewportDp * LYRIC_ACTIVE_ANCHOR_FRACTION
+        assertTrue("fade band $endDp dp too thin", endDp >= anchorDp * 0.5f - 0.001f)
+        assertTrue("fade band must stay below the anchor", endDp < anchorDp)
+    }
+
+    @Test
+    fun tallViewportsAreUnaffectedByTheInsetClamp() {
+        // 竖屏与平板横屏（视口 ≥ 4 × inset ≈ 533dp）必须与旧公式逐像素一致，
+        // 不能动到已经验收的观感。
+        for (density in listOf(2.75f, 3.25f, 3.5f)) {
+            for (heightDp in listOf(534f, 620f, 700f, 900f)) {
+                val viewportPx = heightDp * density
+                val insetPx = LYRIC_TOP_FADE_INSET_DP * density
+                val legacy = viewportPx * LYRIC_ACTIVE_ANCHOR_FRACTION - insetPx
+                assertEquals(
+                    "height=$heightDp density=$density",
+                    legacy,
+                    lyricTopMaskEndPx(viewportPx, insetPx),
+                    0.001f,
+                )
+                assertEquals(
+                    "height=$heightDp density=$density",
+                    insetPx,
+                    lyricTopFadeInsetPx(viewportPx, insetPx),
+                    0.001f,
+                )
+            }
+        }
     }
 
     @Test

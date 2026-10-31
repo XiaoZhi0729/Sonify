@@ -324,6 +324,13 @@ fun YosLyricViewLib(
             // 库内部左右各留 16dp，封面是 32dp；这里再补 16dp，两侧与封面齐平
             BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 val localDensity = LocalDensity.current
+                // 库内顶部渐隐与应用层遮罩用同一份几何：短视口（手机横屏约 267dp）时
+                // 常量 32dp inset 会把 anchor−inset 压到 0，渐隐带整条消失变成硬边。
+                // 这里按实际高度算出收窄后的 inset 再交给库，两层同时保住。
+                val topFadeInset = with(localDensity) {
+                    lyricTopFadeInsetPx(maxHeight.toPx(), LYRIC_TOP_FADE_INSET_DP.dp.toPx())
+                        .toDp()
+                }
                 // 库内部排版宽度 = maxWidth - 32dp
                 val layoutWidthPx =
                     with(localDensity) { (maxWidth - 32.dp).toPx() }.coerceAtLeast(1f)
@@ -439,7 +446,7 @@ fun YosLyricViewLib(
                     showTranslation = translationLambda(),
                     showPhonetic = false,
                     anchor = LyricsAnchor.Fraction(LYRIC_ACTIVE_ANCHOR_FRACTION),
-                    topFade = LyricsFade.ToAnchor(LYRIC_TOP_FADE_INSET_DP.dp),
+                    topFade = LyricsFade.ToAnchor(topFadeInset),
                     bottomFade = LyricsFade.Fraction(0.5f),
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
