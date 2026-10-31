@@ -7,8 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -42,9 +40,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick as onSemanticsClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.code.MediaController.musicPlaying
+import yos.music.player.code.OnlineAudioCache
 import yos.music.player.code.qualityLabelResOf
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MediaViewModelObject
@@ -63,6 +68,8 @@ import yos.music.player.ui.widgets.basic.liquidDropdownAnchorFollow
 import yos.music.player.ui.widgets.basic.rememberLiquidDropdownFollowState
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerGesture
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerGestureState
 
 /** 断言 A6 的测试锚点：胶囊节点必须常驻组合树。 */
 const val QUALITY_CAPSULE_TEST_TAG = "quality_capsule"
@@ -98,6 +105,16 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     val isOnline = uri?.scheme == KugouRepository.PLACEHOLDER_SCHEME
     val hash = uri?.lastPathSegment?.takeIf { isOnline }
 
+    // 本机已整体缓存的档位：组合期绝不查磁盘（getCachedSpans 会碰缓存索引），
+    // 换曲时异步取一次。失败/未就绪时保持空集 —— 只影响面板上的行尾 chip，
+    // 不影响任何播放决策（决策在数据源线程里自己查，见 KugouResolvingDataSource）。
+    var cachedTiers by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(hash) {
+        cachedTiers = if (hash == null) emptySet() else withContext(Dispatchers.IO) {
+            OnlineAudioCache.cachedTiersOf(context, hash)
+        }
+    }
+
     val ui = QualityUiModel.build(
         isOnline = isOnline,
         fact = hash?.let { KugouRepository.factOf(it) },
@@ -109,7 +126,9 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
         localBitrateKbps = bitrate,
         localSampleRateHz = samplingRate,
         // 能力表让"已证明拿不到"不随最后一次解析的意图漂移（也不会被重启忘掉）
-        provenUnavailableTiers = SongQualityCapabilityStore.provenUnavailableOf(hash)
+        provenUnavailableTiers = SongQualityCapabilityStore.provenUnavailableOf(hash),
+        // 流量下改播了本机缓存的高音源时，用户需要看到"为什么现在不是 128K"
+        cachedTiers = cachedTiers
     )
 
     var menuOpen by remember { mutableStateOf(false) }
@@ -137,6 +156,11 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     // 7dp），胶囊跟着同向下沉 6dp、缩到 0.9、淡出；与「更多」按钮用的是同一套参数
     val capsuleFollow = rememberLiquidDropdownFollowState()
 
+    // 跟手滑选：胶囊与面板共享同一份状态 —— 长按胶囊展开后不停手就能直接滑选档位
+    val qualityDragSelect = remember { DropdownPanelDragSelectState() }
+    val qualityTriggerGesture = rememberDropdownTriggerGestureState(qualityDragSelect)
+    val openQualityMenu: () -> Unit = { menuOpen = true }
+
     fun captureAnchor(coords: androidx.compose.ui.layout.LayoutCoordinates) {
         val pos = coords.positionInWindow()
         val size = coords.size
@@ -163,12 +187,23 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
                 .testTag(QUALITY_CAPSULE_TEST_TAG)
                 .then(
                     if (music.value != null) {
-                        // 涟漪从胶囊方框里漫出来（浅色玻璃上尤其脏），且这枚徽标本身就是
-                        // 控件本体、按下即弹面板，不需要水波确认；关掉 indication 只留点击
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { menuOpen = true }
+                        // 点按与长按由同一个手势仲裁（长按 0.5s 展开后可不停手直接滑选档位）。
+                        // 不能再叠 clickable：它会无条件消费 down，且在 up 时先 consume 再
+                        // 无条件 onClick，长按抬手会被二次触发一次点击。
+                        Modifier
+                            .dropdownTriggerGesture(
+                                state = qualityTriggerGesture,
+                                expanded = { menuOpen },
+                                onTap = openQualityMenu,
+                                onExpand = openQualityMenu,
+                            )
+                            .semantics {
+                                role = Role.Button
+                                onSemanticsClick {
+                                    openQualityMenu()
+                                    true
+                                }
+                            }
                     } else {
                         Modifier
                     }
@@ -249,6 +284,7 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
             anchorBounds = anchorBounds,
             onFractionProgress = capsuleFollow::onProgress,
             onDismiss = { menuOpen = false },
+            dragSelectState = qualityDragSelect,
             onSelect = { tier ->
                 // 在线选档：只改本首。已证明不可用的行不会走到这里（置灰行不响应点击）
                 MediaController.requestQualityForCurrentSong(tier)
@@ -280,10 +316,13 @@ private fun QualitySheet(
     anchorBounds: IntRect,
     onFractionProgress: (LiquidDropdownProgress) -> Unit,
     onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    /** 与胶囊触发区共享的滑选状态（长按展开后不停手滑选）：在线四档纯行菜单才接 */
+    dragSelectState: DropdownPanelDragSelectState,
 ) {
-    // 跟手滑选（在线四档纯行菜单）：面板手势层统一命中+执行，行自动切登记模式
-    val dragSelect = remember { DropdownPanelDragSelectState() }
+    // 跟手滑选（在线四档纯行菜单）：面板手势层统一命中+执行，行自动切登记模式。
+    // 状态由调用方持有并与胶囊共享，长按展开后同一个手势可以接着滑选。
+    val dragSelect = dragSelectState
     LiquidDropdownLayout(
         expanded = expanded,
         anchorBounds = anchorBounds,

@@ -34,7 +34,9 @@ object CacheSongIndex {
         @SerializedName("t") val title: String?,
         @SerializedName("a") val artist: String?,
         @SerializedName("u") val thumb: String?,
-        @SerializedName("ts") val ts: Long
+        @SerializedName("ts") val ts: Long,
+        /** 时长（毫秒）：供"流量下改用已缓存高音源"估算整首大小。老数据缺该字段时为 0。 */
+        @SerializedName("d") val durationMs: Long = 0L
     )
 
     /** 对外暴露的元数据。 */
@@ -50,17 +52,30 @@ object CacheSongIndex {
         if (!mediaId.startsWith("kugou-online-")) return
         val hash = mediaId.removePrefix("kugou-online-")
         if (hash.isBlank()) return
-        put(hash, item.title, item.artists, item.thumb?.toString())
+        put(hash, item.title, item.artists, item.thumb?.toString(), item.duration)
     }
 
-    /** 按 hash 记录（供回填与内部使用）。 */
-    fun put(hash: String, title: String?, artist: String?, thumb: String?) {
+    /** 按 hash 记录（供回填与内部使用）；[durationMs] 缺失时沿用索引里已有的值。 */
+    fun put(hash: String, title: String?, artist: String?, thumb: String?, durationMs: Long = 0L) {
         val s = store ?: return
         if (hash.isBlank()) return
         runCatching {
-            s.encode(hash.lowercase(), gson.toJson(Stored(title, artist, thumb, System.currentTimeMillis())))
+            // 回填路径拿不到时长（歌单首屏缓存不含 duration），别用它把已有值覆盖成 0
+            val keptDuration = if (durationMs > 0L) durationMs else durationOf(hash)
+            s.encode(
+                hash.lowercase(),
+                gson.toJson(Stored(title, artist, thumb, System.currentTimeMillis(), keptDuration))
+            )
             trimIfNeeded(s)
         }
+    }
+
+    /** 本曲时长（毫秒）；索引里没有该曲或老数据无此字段时返回 0。 */
+    fun durationOf(hash: String): Long {
+        val s = store ?: return 0L
+        val json = runCatching { s.decodeString(hash.lowercase()) }.getOrNull() ?: return 0L
+        val st = runCatching { gson.fromJson(json, Stored::class.java) }.getOrNull() ?: return 0L
+        return st.durationMs.coerceAtLeast(0L)
     }
 
     fun lookup(hash: String): Meta? {

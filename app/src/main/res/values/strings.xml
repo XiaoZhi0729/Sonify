@@ -152,6 +152,7 @@
     <string name="quality_capsule_unknown">Unknown</string>
     <string name="quality_capsule_loading">…</string>
     <string name="quality_row_chip_no_source">no source for this song</string>
+    <string name="quality_row_chip_cached">cached on device</string>
     <string name="quality_section_local">Local file</string>
     <string name="quality_local_note">Local files are not affected by online quality settings.</string>
     <string name="quality_local_samplerate">Sample rate %1$d Hz</string>

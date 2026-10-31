@@ -361,6 +361,10 @@ object SettingsLibrary {
     /**
      * 在线音质 - WiFi 环境下请求的音质档位（128/320/flac/high）。
      *
+     * 默认 **Hi-Res**：省流量的前提是"在家连 WiFi 时已经缓存了高音质"，而这个缓存只有在
+     * WiFi 档本身够高时才会产生。默认 128K 会让整条"出门口直接放本地 Hi-Res"的链路
+     * 永远没有素材可用（见 [yos.music.player.data.repositories.CachedQualityPreference]）。
+     *
      * setter 收窄：历史上的 `applyExplicitQuality` 会把 WiFi 与流量两档一并写死，
      * 用户在播放页只改"这一首"却永久抹掉了设置页的分设且不可撤销。
      * 现在只有 [updateOnlineQuality] 能写（设置页专用），其余入口只能走本曲覆盖。
@@ -369,7 +373,7 @@ object SettingsLibrary {
     var OnlineQualityWifi by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_online_quality_wifi",
-        initialValue = "128"
+        initialValue = "high"
     )
         private set
 
@@ -553,7 +557,7 @@ object SettingsLibrary {
         HardwareAudioTrackPlayBackParams = false
         AudioFloatOutput = false
         VocalSeparationDefaultRatio = 0.5f
-        OnlineQualityWifi = "128"
+        OnlineQualityWifi = "high"
         OnlineQualityMobile = "128"
         ShowQualityDowngradeToast = true
         EnableExcludeSongsUnderOneMinute = true

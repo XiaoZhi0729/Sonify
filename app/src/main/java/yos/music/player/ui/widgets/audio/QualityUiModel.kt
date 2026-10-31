@@ -38,7 +38,6 @@ data class QualityRowUi(
     /** 行尾 chip：贴在"已证明拿不到"的那一行上；能力未知时不出现。 */
     @StringRes val chipRes: Int?
 )
-
 data class QualityLocalSpecUi(
     val bitrateKbps: Int,
     val sampleRateHz: Int,
@@ -70,7 +69,13 @@ object QualityUiModel {
         localBitrateKbps: Int = 0,
         localSampleRateHz: Int = 0,
         /** 能力表（[yos.music.player.data.repositories.SongQualityCapabilityStore]）给出的已证明不可用集合 */
-        provenUnavailableTiers: Set<String> = emptySet()
+        provenUnavailableTiers: Set<String> = emptySet(),
+        /**
+         * 本机已整体缓存的档位（磁盘字节按档位分 key 存，这是事实查询）。
+         * 流量下会因此改播高音源（见 [yos.music.player.data.repositories.CachedQualityPreference]），
+         * 徽标显示的档位与用户设置的档位不同时，靠这枚 chip 说明原因。
+         */
+        cachedTiers: Set<String> = emptySet()
     ): QualityUiState {
         val capsule: QualityCapsuleUi
         val localTier: String?
@@ -115,7 +120,12 @@ object QualityUiModel {
                 tier = tier,
                 selected = tier == intentTier,
                 enabled = !provenUnavailable,
-                chipRes = if (provenUnavailable) R.string.quality_row_chip_no_source else null
+                // 已证明拿不到优先说明原因；否则若本机已整首缓存这一档，说明"为什么现在在放它"
+                chipRes = when {
+                    provenUnavailable -> R.string.quality_row_chip_no_source
+                    tier in cachedTiers -> R.string.quality_row_chip_cached
+                    else -> null
+                }
             )
         }
 

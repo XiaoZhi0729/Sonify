@@ -2307,6 +2307,35 @@ object KugouRepository {
      */
     fun factOf(hash: String?): QualityFact? = hash?.lowercase()?.let { factByHash[it] }
 
+    /**
+     * 记录一次**本地缓存播放**的事实：没有走 `/song/url`，实际播放的是磁盘上那份字节。
+     *
+     * 与 [rememberResolvedQuality] 的区别是刻意只写事实：这里不产生负缓存、不写可播性表、
+     * 不写能力表——它没有任何上游证据（既没证明某档可用，也没证明某档不可用），
+     * 拿它去落盘会污染"置灰"与"探测待办"两套长期结论。
+     *
+     * [playedTier] 是缓存 key 里的档位（缓存字节就是按档位分 key 存的，这是确切事实），
+     * 因此 `stampedTier = playedTier` 不违反断言 A1（不拿意图冒充实际）。
+     */
+    fun recordCachedPlayback(
+        hash: String,
+        intentTier: String,
+        intentSource: IntentSource,
+        playedTier: String
+    ) {
+        val lower = hash.lowercase()
+        val previous = factByHash[lower]
+        factByHash[lower] = QualityFact.of(
+            intentTier = intentTier,
+            intentSource = intentSource,
+            stampedTier = KugouQuality.parse(playedTier),
+            stampedRaw = playedTier,
+            observedTier = previous?.observedTier
+        )
+        if (pendingByHash[lower] == intentTier) pendingByHash.remove(lower)
+        actualQualityVersion.intValue++
+    }
+
     /** 当前实际档位（未知返回 null）。兼容旧调用点，语义已收紧为"只报有证据的档位"。 */
     fun actualQualityOf(hash: String): String? = factOf(hash)?.playingTier
 

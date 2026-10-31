@@ -152,6 +152,7 @@
     <string name="quality_capsule_unknown">未知</string>
     <string name="quality_capsule_loading">…</string>
     <string name="quality_row_chip_no_source">本首无此音源</string>
+    <string name="quality_row_chip_cached">本机已缓存</string>
     <string name="quality_section_local">本地文件</string>
     <string name="quality_local_note">本地文件不受在线音质设置影响。</string>
     <string name="quality_local_samplerate">采样率 %1$d Hz</string>

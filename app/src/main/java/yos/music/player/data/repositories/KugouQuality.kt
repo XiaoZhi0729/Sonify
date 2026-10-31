@@ -71,6 +71,27 @@ object KugouQuality {
     }
 
     /**
+     * 档位的**标称码率**（kbps），只用于估算"这一档整首大约多少字节"。
+     *
+     * 取值刻意取同类音源的**上限**（CBR 千千静听类 128K ≈ 128kbps、320K ≈ 320kbps、
+     * FLAC 常见 900~1100、Hi-Res 24bit/96kHz 常见 2300~4600）。偏大方向的误差是安全的：
+     * 算出的"总大小"偏大 ⇒ "已缓存比例"偏小 ⇒ 只有当缓存确实很完整时才会被判定为已缓存，
+     * 决策天然偏向不升档，不会因估算偏小而放着一首没下完的歌去烧流量。
+     */
+    fun nominalKbps(tier: String): Int = when (tier) {
+        HIRES -> 2600
+        LOSSLESS -> 1100
+        HIGH -> 320
+        else -> 128
+    }
+
+    /** 按标称码率估算整首字节数；时长为未知（<=0）时返回 0 = 无法估算。 */
+    fun estimateTotalBytes(tier: String, durationMs: Long): Long {
+        if (durationMs <= 0) return 0
+        return nominalKbps(tier).toLong() * 1000L / 8L * durationMs / 1000L
+    }
+
+    /**
      * 按当前网络环境读取**偏好**档位与来源署名（设置页、"生效档"chip 共用）。
      *
      * 注意：只含偏好、不含播放页的本曲覆盖。需要完整意图的调用方（解析线程、

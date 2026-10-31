@@ -15,6 +15,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -24,9 +25,15 @@ import okhttp3.OkHttpClient
 import yos.music.player.R
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.objects.CacheSongIndex
+import yos.music.player.data.repositories.CachedQualityPreference
+import yos.music.player.data.repositories.IntentSource
 import yos.music.player.data.repositories.KugouUpstreamError
 import yos.music.player.data.repositories.KugouQuality
+import yos.music.player.data.repositories.NetworkKind
+import yos.music.player.data.repositories.NetworkObserver
 import yos.music.player.data.repositories.QualityIntentResolver
+import yos.music.player.data.repositories.QualityTrace
 import yos.music.player.data.repositories.QualityVerdict
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.PlaybackRequestPurpose
@@ -34,6 +41,7 @@ import yos.music.player.data.repositories.KugouVerificationRequiredException
 import yos.music.player.data.repositories.KugouSignatureRejectedException
 import yos.music.player.data.repositories.KugouTokenRejectedException
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.net.Proxy
 import java.net.ProxySelector
@@ -60,12 +68,18 @@ class KugouResolvingDataSource(
     private val directUpstream: DataSource,
     /** 直连通道的磁盘缓存版本（与代理通道共用同一份 SimpleCache 与 cacheKey）。 */
     private val directCachedUpstream: DataSource?,
+    /**
+     * 「整首已缓存」专用通道：上游是必定抛错的桩，命中本地字节时零网络，
+     * 未命中则立刻抛 IOException 交由调用方回退到联网解析。
+     * Media3 1.4.0 没有 FLAG_CACHE_ONLY，这个桩就是它的等价实现。
+     */
+    private val cacheOnlyUpstream: DataSource?,
     private val appContext: Context,
     private val purpose: () -> PlaybackRequestPurpose = { PlaybackRequestPurpose.PLAYBACK }
 ) : DataSource {
 
     /**
-     * open() 实际选用的数据源。read/close/getUri 必须跟着它走——四个通道是彼此独立的实例，
+     * open() 实际选用的数据源。read/close/getUri 必须跟着它走——各通道是彼此独立的实例，
      * open 走 A、read 走 B 会直接 NPE（DefaultDataSource 在未 open 的实例上 read，
      * 内部 mDataSource 为 null）。
      */
@@ -74,60 +88,79 @@ class KugouResolvingDataSource(
     /** active 是否为"绕过系统代理的直连"通道：read 中途断流时据此判断要不要标记代理故障。 */
     private var activeIsDirect = false
 
+    /** active 是否是零网络的纯缓存通道：读失败与代理健康无关，不得标记代理故障。 */
+    private var activeIsCacheOnly = false
+
     override fun open(dataSpec: DataSpec): Long {
         val openedAt = SystemClock.elapsedRealtime()
-        var resolveHash: String? = null
-        var cacheKey: String? = null
-        var resolveStartedAt = openedAt
-        val spec = if (dataSpec.uri.scheme == KugouRepository.PLACEHOLDER_SCHEME) {
-            val hash = dataSpec.uri.lastPathSegment
-                ?: throw IOException("在线占位符 URI 缺少 hash: ${dataSpec.uri}")
-            resolveHash = hash
-            // 意图单一来源：与 UI 读同一个 QualityIntentResolver（本曲覆盖优先，否则按网络取偏好），
-            // 不再在解析线程里各自现读全局偏好——那是"UI 显示 A 档、音频按 B 档解析"的根源
-            val decision = QualityIntentResolver.resolve(hash, appContext)
-            resolveStartedAt = SystemClock.elapsedRealtime()
-            val realUrl = try {
-                KugouRepository.resolvePlayUrlBlocking(hash, decision.tier, decision.source, purpose())
-            } catch (e: IOException) {
-                YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
-                // 确定性失败（鉴权失效/版权付费拦截）不等退避重试：见 asFatalIfDeterministic
-                throw asFatalIfDeterministic(e)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // 切歌取消（Loader 线程被中断/协程被取消）不是解析失败：不上报 RESOLVE_FAIL，
-                // 也不进负缓存链路；包成 IOException 交回 ExoPlayer——取消中的加载错误会被其吞掉
-                throw IOException("在线歌曲解析被取消 hash=$hash", e)
-            } catch (e: InterruptedException) {
-                // 同上：runBlocking 在线程被中断时抛 InterruptedException（见 resolvePlayUrlBlocking）
-                throw IOException("在线歌曲解析被取消 hash=$hash", e)
-            } catch (e: Exception) {
-                // 解析链的领域异常（无 URL、Server 未运行等）统一收敛为 IO 错误
-                YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
-                throw IOException("在线歌曲 URL 解析失败 hash=$hash: ${e.message}", e)
-            }
-            YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, true, null)
-            notifyQualityDowngradeIfNeeded(hash, decision)
-            println("惰性解析 hash=$hash quality=${decision.tier} source=${decision.source} → $realUrl")
-            // 缓存 key 与 CDN URL 解耦：签名 URL 30 分钟就轮换，拿 URL 当 key 缓存永不命中。
-            // 用 "hash:实际档位"（可能低于请求档的降级结果）标识一份字节流，
-            // seek 出缓冲的重开、重播、crossfade 预取才能落到同一份磁盘缓存上。
-            cacheKey = OnlineAudioCache.keyOf(hash, effectiveTierOf(hash, decision.tier))
-            dataSpec.buildUpon().setUri(realUrl).setKey(cacheKey).build()
-        } else {
-            dataSpec
+        if (dataSpec.uri.scheme != KugouRepository.PLACEHOLDER_SCHEME) {
+            // 本地文件与其它直链：不解析、不进缓存（不把本地文件再抄一份进缓存）
+            selectChannel(online = false, preferDirect = false, cacheOnly = false)
+            return openedStep(dataSpec, null, openedAt)
         }
-        // 只有走了解析路径（设置了稳定 key）的 http(s) 流才进缓存通道；本地文件与
-        // 其它直链 scheme 原样透传，不引入"把本地文件再抄一遍进缓存"的磁盘浪费。
-        val online = cacheKey != null && isHttpOrHttps(spec)
+        val hash = dataSpec.uri.lastPathSegment
+            ?: throw IOException("在线占位符 URI 缺少 hash: ${dataSpec.uri}")
+        // 意图单一来源：与 UI 读同一个 QualityIntentResolver（本曲覆盖优先，否则按网络取偏好），
+        // 不再在解析线程里各自现读全局偏好——那是"UI 显示 A 档、音频按 B 档解析"的根源
+        val decision = QualityIntentResolver.resolve(hash, appContext)
+        // 流量下本机已有更高档字节时改播它：省流量的初衷是"复用在家缓存的高音质"，
+        // 而不是"看到流量就重下 128K"。只对被动偏好生效，用户为本曲显式选的档不覆盖。
+        val upgrade = cachedUpgradeFor(hash, decision)
+        // 零网络快路径：整首缓存已在本地，连 /song/url 都不请求。失败（被 LRU 淘汰、
+        // 缓存文件损坏等）静默回退到下面的联网解析，用户侧不该感知到这次尝试。
+        if (upgrade != null && upgrade.fullyCached) {
+            tryOpenFromCacheOnly(hash, decision, upgrade)?.let { return it }
+        }
+        // 未整首缓存但有升级结论：按**升级后的档位**请求，剩余字节续写进同一份缓存，
+        // 比整首重下 128K 更省（key 由实际档位决定，见 openResolved 里的 cacheKey）
+        return openResolved(dataSpec, hash, decision, upgrade?.tier ?: decision.tier, openedAt)
+    }
+
+    /** 联网解析 + 真实 open（含代理失败回退直连）。 */
+    private fun openResolved(
+        dataSpec: DataSpec,
+        hash: String,
+        decision: QualityIntentResolver.Decision,
+        requestedTier: String,
+        openedAt: Long
+    ): Long {
+        val resolveStartedAt = SystemClock.elapsedRealtime()
+        val realUrl = try {
+            KugouRepository.resolvePlayUrlBlocking(hash, requestedTier, decision.source, purpose())
+        } catch (e: IOException) {
+            YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
+            // 确定性失败（鉴权失效/版权付费拦截）不等退避重试：见 asFatalIfDeterministic
+            throw asFatalIfDeterministic(e)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 切歌取消（Loader 线程被中断/协程被取消）不是解析失败：不上报 RESOLVE_FAIL，
+            // 也不进负缓存链路；包成 IOException 交回 ExoPlayer——取消中的加载错误会被其吞掉
+            throw IOException("在线歌曲解析被取消 hash=$hash", e)
+        } catch (e: InterruptedException) {
+            // 同上：runBlocking 在线程被中断时抛 InterruptedException（见 resolvePlayUrlBlocking）
+            throw IOException("在线歌曲解析被取消 hash=$hash", e)
+        } catch (e: Exception) {
+            // 解析链的领域异常（无 URL、Server 未运行等）统一收敛为 IO 错误
+            YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, false, e.toString())
+            throw IOException("在线歌曲 URL 解析失败 hash=$hash: ${e.message}", e)
+        }
+        YosDiagnostics.resolve(hash, SystemClock.elapsedRealtime() - resolveStartedAt, true, null)
+        notifyQualityDowngradeIfNeeded(hash, decision)
+        println("惰性解析 hash=$hash quality=$requestedTier source=${decision.source} → $realUrl")
+        // 缓存 key 与 CDN URL 解耦：签名 URL 30 分钟就轮换，拿 URL 当 key 缓存永不命中。
+        // 用 "hash:实际档位"（可能低于请求档的降级结果）标识一份字节流，
+        // seek 出缓冲的重开、重播、crossfade 预取才能落到同一份磁盘缓存上。
+        val cacheKey = OnlineAudioCache.keyOf(hash, effectiveTierOf(hash, requestedTier))
+        val spec = dataSpec.buildUpon().setUri(realUrl).setKey(cacheKey).build()
+        val online = isHttpOrHttps(spec)
         // 代理最近刚失败 → 冷却窗内直接走直连，别为同一处故障反复付满超时。
         val preferDirect = online && OnlineProxyHealth.isBypassed()
-        selectChannel(online, preferDirect)
+        selectChannel(online, preferDirect, cacheOnly = false)
         // 解析成功不等于听得到声：真正卡住的是随后连 CDN。这两段必须分别计时，
         // 否则"熄屏后无声"永远分不清是酷狗 API 不放 URL、还是后台网络被限流。
         try {
-            return openedStep(spec, resolveHash, openedAt)
+            return openedStep(spec, hash, openedAt)
         } catch (e: IOException) {
-            logOpenFail(spec, resolveHash, openedAt, e)
+            logOpenFail(spec, hash, openedAt, e)
             // 走系统代理失败、且系统确实为该 URL 配了代理 → 记冷却窗并立刻用直连重试。
             // 酷狗 CDN 直连可用，代理被后台冻结/断流时这条路能把歌救回来。
             val canFallback = online && !preferDirect && OnlineProxyHealth.usesSystemProxy(spec.uri)
@@ -135,21 +168,75 @@ class KugouResolvingDataSource(
             OnlineProxyHealth.markProxyFailed()
             // media3 契约未定义"open 失败后 close"，但失败时无连接可泄，兜住异常即可。
             runCatching { active.close() }
-            selectChannel(online, preferDirect = true)
+            selectChannel(online, preferDirect = true, cacheOnly = false)
             try {
-                return openedStep(spec, resolveHash, openedAt)
+                return openedStep(spec, hash, openedAt)
             } catch (e2: IOException) {
-                logOpenFail(spec, resolveHash, openedAt, e2)
+                logOpenFail(spec, hash, openedAt, e2)
                 throw e2
             }
         }
     }
 
+    /**
+     * 纯缓存打开：让 CacheDataSource 直接喂本地字节，上游桩一旦被碰到就说明缓存其实不完整。
+     *
+     * 返回读取到的长度；任何失败（未命中/文件损坏/桩被调用）都返回 null，并且**不留痕迹**——
+     * 把 active 复位、关掉半开的实例，让调用方走正常联网解析，行为与没有本功能时一致。
+     */
+    private fun tryOpenFromCacheOnly(
+        hash: String,
+        decision: QualityIntentResolver.Decision,
+        choice: CachedQualityPreference.Choice
+    ): Long? {
+        val source = cacheOnlyUpstream ?: return null
+        val startedAt = SystemClock.elapsedRealtime()
+        val cacheKey = OnlineAudioCache.keyOf(hash, choice.tier)
+        val spec = DataSpec.Builder()
+            .setUri(CACHE_ONLY_URI)
+            .setKey(cacheKey)
+            .build()
+        selectChannel(online = true, preferDirect = false, cacheOnly = true)
+        return try {
+            val read = source.open(spec)
+            // 整首在本地 ⇒ 零网络、零 /song/url。事实按缓存 key 的档位如实记录
+            // （缓存字节本就按档位分 key 存，这是确切事实，不违反"不拿意图冒充实际"）
+            KugouRepository.recordCachedPlayback(hash, decision.tier, decision.source, choice.tier)
+            YosDiagnostics.log(
+                "CACHE_ONLY", "hash" to hash, "intent" to decision.tier,
+                "played" to choice.tier, "cost" to (SystemClock.elapsedRealtime() - startedAt)
+            )
+            QualityTrace.log(
+                "RESOLVE", "path" to "cache_only", "hash" to hash.lowercase(),
+                "intent" to decision.tier, "played" to choice.tier
+            )
+            read
+        } catch (e: IOException) {
+            logOpenFail(spec, hash, startedAt, e)
+            runCatching { source.close() }
+            resetChannel()
+            null
+        } catch (e: Exception) {
+            runCatching { source.close() }
+            resetChannel()
+            null
+        }
+    }
+
+    /** 把通道状态复位成"未打开"，供缓存快路径失败后回退使用。 */
+    private fun resetChannel() {
+        active = upstream
+        activeIsDirect = false
+        activeIsCacheOnly = false
+    }
+
     /** 选通道：本地/非 http 走原 upstream；在线 http(s) 在代理与直连间二选一（各带缓存版本）。 */
-    private fun selectChannel(online: Boolean, preferDirect: Boolean) {
-        activeIsDirect = online && preferDirect
+    private fun selectChannel(online: Boolean, preferDirect: Boolean, cacheOnly: Boolean) {
+        activeIsDirect = online && !cacheOnly && preferDirect
+        activeIsCacheOnly = online && cacheOnly
         active = when {
             !online -> upstream
+            cacheOnly -> cacheOnlyUpstream ?: upstream
             preferDirect -> directCachedUpstream ?: directUpstream
             else -> cachedUpstream ?: upstream
         }
@@ -179,7 +266,43 @@ class KugouResolvingDataSource(
         )
     }
 
-    private fun viaLabel(): String = if (activeIsDirect) "direct" else "proxy"
+    private fun viaLabel(): String = if (activeIsCacheOnly) "cache" else if (activeIsDirect) "direct" else "proxy"
+
+    /**
+     * 流量下是否该改用本机已缓存的高音源。
+     *
+     * 三个前置条件，任一不满足就不介入（返回 null，调用方完全走原路径）：
+     * 1. 网络是**计费**形态（Wi-Fi 下本来就在按偏好档拉流，不需要介入）；
+     * 2. 意图来自**被动偏好**——用户为本曲显式选的档（[IntentSource.PER_SONG]）是强意图，
+     *    拿"省流量"去覆盖它会让手选变成摆设；
+     * 3. 择优算法认为高档位确实更省（见 [CachedQualityPreference.choose]）。
+     */
+    private fun cachedUpgradeFor(
+        hash: String,
+        decision: QualityIntentResolver.Decision
+    ): CachedQualityPreference.Choice? {
+        if (decision.source != IntentSource.MOBILE_PREF) return null
+        if (NetworkObserver.kind(appContext) != NetworkKind.METERED) return null
+        return runCatching {
+            // 一次扫描取回四档事实：这是每首歌 open 路径上的成本，不做逐档重复查询
+            val facts = OnlineAudioCache.cacheFactsOf(appContext, hash)
+            val choice = CachedQualityPreference.choose(
+                intentTier = decision.tier,
+                durationMs = CacheSongIndex.durationOf(hash),
+                cachedBytes = { tier -> facts.cachedBytes[tier] ?: 0L },
+                fullyCached = { tier -> tier in facts.fullyCached },
+                estimateTotal = KugouQuality::estimateTotalBytes
+            )
+            if (choice != null) {
+                QualityTrace.log(
+                    "CACHE_UPGRADE", "hash" to hash.lowercase(),
+                    "intent" to decision.tier, "chosen" to choice.tier,
+                    "full" to choice.fullyCached, "remaining" to choice.remainingBytes
+                )
+            }
+            choice
+        }.getOrNull()
+    }
 
     /** 事实档位（服务端实际发放，可能低于请求档）优先；无事实时才落回请求档。 */
     private fun effectiveTierOf(hash: String, requestedTier: String): String =
@@ -256,27 +379,28 @@ class KugouResolvingDataSource(
 
     // 流中途断（读到一半代理挂了）：立刻标记代理故障，让紧随其后的下一次 open 直接走直连，
     // 不必再白等一轮连接超时。异常照旧上抛，由 ExoPlayer 的退避重试重新 open。
+    // 纯缓存通道读失败与代理无关（它根本不联网），不能把这份故障记忆记到代理头上。
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int = try {
         active.read(buffer, offset, length)
     } catch (e: IOException) {
-        if (!activeIsDirect) OnlineProxyHealth.markProxyFailed()
+        if (!activeIsDirect && !activeIsCacheOnly) OnlineProxyHealth.markProxyFailed()
         throw e
     }
 
     override fun close() {
         active.close()
-        active = upstream
-        activeIsDirect = false
+        resetChannel()
     }
 
     override fun getUri(): android.net.Uri? = active.uri
 
     override fun addTransferListener(transferListener: TransferListener) {
-        // open 前不知道会走哪个通道，四个都得挂上（CacheDataSource 会转发给内部实例）
+        // open 前不知道会走哪个通道，全都要挂上（CacheDataSource 会转发给内部实例）
         upstream.addTransferListener(transferListener)
         cachedUpstream?.addTransferListener(transferListener)
         directUpstream.addTransferListener(transferListener)
         directCachedUpstream?.addTransferListener(transferListener)
+        cacheOnlyUpstream?.addTransferListener(transferListener)
     }
 
     companion object {
@@ -284,6 +408,12 @@ class KugouResolvingDataSource(
 
         /** open 总耗时超过此阈值就记一条：后台限流下解析/连 CDN 常呈 10s+ 长尾。 */
         private const val OPEN_SLOW_MS = 3_000L
+
+        /**
+         * 纯缓存通道用的假 URI。CacheDataSource 只把它当"要打开哪个 key"的载体，
+         * 真身由 DataSpec.key 决定；即便上游桩被碰到也不需要它是可解析的地址。
+         */
+        private val CACHE_ONLY_URI: android.net.Uri = android.net.Uri.parse("cacheonly://song/cached")
 
         private val lastDowngradeToastLock = Any()
         private var lastDowngradeToastKey: String? = null
@@ -349,7 +479,7 @@ class KugouResolvingDataSourceFactory(
     )
 
     override fun createDataSource(): DataSource {
-        // 四个通道（代理/直连 × 裸/缓存）是彼此独立的会话对象，各要独立实例
+        // 五个通道（代理/直连 × 裸/缓存 + 纯缓存）是彼此独立的会话对象，各要独立实例
         val cache = OnlineAudioCache.get(appContext)
         fun cached(factory: DataSource.Factory): DataSource? = cache?.let {
             CacheDataSource.Factory()
@@ -365,15 +495,48 @@ class KugouResolvingDataSourceFactory(
                 )
                 .createDataSource()
         }
+        // 纯缓存通道：上游是必定抛错的桩。Media3 1.4.0 没有 FLAG_CACHE_ONLY，
+        // 只要缓存完整就绝不会碰上游（零网络）；一旦被碰到即说明判定有误，
+        // 立刻抛 IOException 让 open() 回退到正常联网解析，用户侧无感。
+        val cacheOnly = cache?.let {
+            CacheDataSource.Factory()
+                .setCache(it)
+                .setUpstreamDataSourceFactory { FailingDataSource }
+                .setCacheKeyFactory { spec -> spec.key ?: spec.uri.toString() }
+                .createDataSource()
+        }
         return KugouResolvingDataSource(
             upstream.createDataSource(),
             cached(upstream),
             directFactory.createDataSource(),
             cached(directFactory),
+            cacheOnly,
             appContext,
             purpose
         )
     }
+}
+
+/**
+ * "缓存缺失就报错"的桩上游：纯缓存通道专用。
+ *
+ * 它永远不会成功——被调用本身就是"缓存不完整"的证据。抛 [FileNotFoundException]
+ * （IOException 子类）而不是 RuntimeException：Media3 的缓存层与 Loader 对 IOException
+ * 的处理是既定的（重试/回源语义明确），抛运行时异常会把一次正常的缓存未命中升级成崩溃。
+ */
+@OptIn(UnstableApi::class)
+private object FailingDataSource : DataSource {
+    override fun open(dataSpec: DataSpec): Long =
+        throw FileNotFoundException("本地缓存不完整: ${dataSpec.key}")
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        throw FileNotFoundException("本地缓存不完整")
+
+    override fun getUri(): android.net.Uri? = null
+
+    override fun close() = Unit
+
+    override fun addTransferListener(transferListener: TransferListener) = Unit
 }
 
 /**
@@ -428,6 +591,56 @@ object OnlineAudioCache {
 
     fun keyOf(hash: String, effectiveTier: String): String =
         "kugou:${hash.lowercase()}:$effectiveTier"
+
+    /**
+     * 一次扫描取回某曲**所有档位**的缓存事实：[档位] → 已缓存字节数，以及整首已缓存的档位集合。
+     *
+     * 为什么是批量而不是逐档查询：升档决策要同时看清四个档位（字节数 + 完整度），
+     * 逐档查会把同一批 key 的元数据翻 8 次，而这发生在每首歌的 open 路径上。
+     * 这里只遍历一次 `cache.keys`（进程内的 key 表，不碰磁盘）就够。
+     *
+     * 两点口径必须守住：
+     * - 字节数用 `getCachedSpans` 里 isCached 的 span 求和，不能用 `sumOf { length }`：
+     *   空洞(hole) span 的 length 是负数。
+     * - "整首已缓存"要同时满足"登记过真实总长"（`ContentMetadata.EXO_LEN`，由
+     *   CacheDataSource 首次下载时从响应头写入）与"[0, total) 全部命中"。总长未知时
+     *   一律算不完整——"不知道"当作"已缓存"会让零网络通道在数据不全时打开，白等一次失败。
+     */
+    fun cacheFactsOf(context: Context, hash: String): CacheFacts {
+        val cache = get(context) ?: return CacheFacts.EMPTY
+        return runCatching {
+            val prefix = "kugou:${hash.lowercase()}:"
+            val bytes = HashMap<String, Long>(4)
+            val full = HashSet<String>(4)
+            cache.keys.forEach { key ->
+                if (!key.startsWith(prefix)) return@forEach
+                val tier = KugouQuality.parse(key.removePrefix(prefix)) ?: return@forEach
+                val spans = runCatching { cache.getCachedSpans(key) }.getOrNull() ?: return@forEach
+                bytes[tier] = spans.filter { it.isCached }.sumOf { it.length }
+                val total = runCatching {
+                    ContentMetadata.getContentLength(cache.getContentMetadata(key))
+                }.getOrDefault(0L)
+                if (total > 0L && runCatching { cache.isCached(key, 0L, total) }.getOrDefault(false)) {
+                    full.add(tier)
+                }
+            }
+            CacheFacts(bytes, full)
+        }.getOrDefault(CacheFacts.EMPTY)
+    }
+
+    /** 某曲的缓存事实快照。两个集合都只含"已知"的档位，缺省即"没有缓存"。 */
+    data class CacheFacts(
+        val cachedBytes: Map<String, Long>,
+        val fullyCached: Set<String>
+    ) {
+        companion object {
+            val EMPTY = CacheFacts(emptyMap(), emptySet())
+        }
+    }
+
+    /** 本机已**整首**缓存的全部档位（供音质面板的行尾 chip 说明"为什么在放这一档"）。 */
+    fun cachedTiersOf(context: Context, hash: String): Set<String> =
+        cacheFactsOf(context, hash).fullyCached
 
     /**
      * 用户可调的音频缓存上限（MB）。主线程启动时经 [applyCapMb] 注入一次（避免播放线程首次
