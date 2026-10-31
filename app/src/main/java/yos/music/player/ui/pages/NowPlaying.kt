@@ -4740,11 +4740,15 @@ private fun VolumeSlider(
             context.unregisterReceiver(volumeChangeReceiver)
         }
     }
+    // 整条「左图标 + 轨道 + 右图标」的外缘要与进度条轨道线的可见端点重合。
+    // 进度条 Track 的端点内缩 capInset = 轨道高/2 + 1dp，而圆头半径 = 轨道高/2，
+    // 圆头向外多画一个半径，所以线的可见墨迹边缘恒在 1dp 处（按下变粗时两个量
+    // 同步变化，边缘不动）。这里取同样的 1dp，多留的 padding 会让整条比线短一截。
+    val volumeSideInset = 1.dp
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .padding(end = 1.5.dp)
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = volumeSideInset)
             .padding(top = 4.dp, bottom = 2.5.dp)
             .overlayEffect()
             .alpha(volumeAlpha)
@@ -4854,7 +4858,7 @@ private fun VolumeSlider(
                         }
                     }
                     .weight(1f)
-                    .padding(start = 1.5.dp, end = 5.dp),
+                    .padding(horizontal = 2.dp),
                 thumb = {
                 },
                 track = {
