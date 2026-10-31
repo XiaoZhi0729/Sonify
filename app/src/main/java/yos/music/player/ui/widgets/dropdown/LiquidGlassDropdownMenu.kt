@@ -5,8 +5,6 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import android.os.Build
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -189,6 +187,14 @@ fun LiquidGlassDropdownMenu(
     var hasOpened by remember { mutableStateOf(false) }
     // 跟手滑选：菜单项各自登记位置，手势逐帧命中测试
     val dragSelectState = remember { DropdownPanelDragSelectState() }
+    // 展开进度登记给状态：触发区那边（长按展开后不停手滑选）靠它判断何时能开始命中
+    dragSelectState.registerFraction { fraction.value }
+    // 触发区手势：与面板共享 dragSelectState，长按展开后同一个手势继续做命中
+    val triggerGesture = remember(dragSelectState) { DropdownTriggerGestureState(dragSelectState) }
+    val expandAction: () -> Unit = {
+        hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
+        onExpand?.invoke()
+    }
 
     // 预测性返回：始终注册（否则动画未播完时立即返回会抓不到手势）。⚠️ handler 与进度读取
     // 必须绑定同一份状态，拆开会导致跟手动画失效。
@@ -521,15 +527,30 @@ fun LiquidGlassDropdownMenu(
                             translationX = p * (ButtonDiameter.toPx() / 2f - width.toPx() / 2f)
                             translationY = p * (height.toPx() / 2f - ButtonDiameter.toPx() / 2f)
                         }
-                       // interactiveHighlight 高光提供，不要默认涟漪
-                        .clickable(
-                            enabled = !show && onExpand != null,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
-                            onExpand?.invoke()
-                        },
+                       // interactiveHighlight 高光提供，不要默认涟漪。
+                       // 点按与长按由同一个手势仲裁（长按 0.5s 展开后可不停手直接滑选）：
+                       // 不能再叠 clickable —— 它会无条件消费 down、且在 up 时先 consume 再
+                       // 无条件 onClick，长按抬手会被它二次触发一次点击（详见 DropdownTriggerGesture）。
+                       // onExpand 为 null 时整块不挂手势（等价于原 clickable(enabled = false)）
+                        .then(
+                            if (onExpand != null) {
+                                Modifier
+                                    .dropdownTriggerGesture(
+                                        state = triggerGesture,
+                                        expanded = { show },
+                                        onTap = expandAction,
+                                        onExpand = expandAction,
+                                    )
+                                    // 无障碍：手势节点替代了 clickable，读屏/键盘仍需能触发
+                                    .semantics {
+                                        role = Role.Button
+                                        onSemanticsClick {
+                                            expandAction()
+                                            true
+                                        }
+                                    }
+                            } else Modifier
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

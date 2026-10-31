@@ -28,6 +28,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -42,13 +44,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
+import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.LiquidDropdownRow
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.liquid.YosSwitch
+import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
 import yos.music.player.ui.widgets.dropdown.LiquidOverlayDropdownPopup
 import yos.music.player.ui.widgets.dropdown.dropdownTriggerAlpha
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerGesture
 import yos.music.player.ui.widgets.dropdown.dropdownTriggerMeasure
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerGestureState
 import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerState
 
 
@@ -73,14 +79,46 @@ fun SelectItem(
     val show = expanded.value && resolvedEnabled
     // 触发区（选中值 + 箭头）：弹窗从这块内容原位长成面板，展开后硬切隐藏（原版同款）
     val trigger = rememberDropdownTriggerState(show)
+    // 跟手滑选：触发区与弹层共享同一份状态，长按展开后不停手就能直接滑选
+    val dragSelect = remember { DropdownPanelDragSelectState() }
+    val triggerGesture = rememberDropdownTriggerGestureState(dragSelect)
+    val toggle: () -> Unit = {
+        if (!expanded.value) {
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.ContextClick)
+            expanded.value = true
+        } else {
+            expanded.value = false
+        }
+    }
 
-    Box(Modifier.fillMaxWidth()) {
-        DefaultItem(enabled = resolvedEnabled, title = title, desc = desc, onClick = {
-            expanded.value = !expanded.value
-            if (expanded.value) {
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.ContextClick)
+    // 手势挂在这一层、并让 DefaultItem 不挂点击（onClick = null 时它不添加任何手势修饰符）：
+    // 两个手势节点叠在一起会互相抢事件，且 clickable 会在长按抬手时二次触发一次点击。
+    // 按压遮罩自己画：手势接管后 clickable 的 indication 一并没了，
+    // 不补这一层行按下就没有任何反馈（原先靠 Material 水波）。
+    val pressMaskColor = if (isFlamingoInDarkMode()) Color.White.copy(alpha = 0.10f)
+    else Color.Black.copy(alpha = 0.06f)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (resolvedEnabled) {
+                    Modifier.dropdownTriggerGesture(
+                        state = triggerGesture,
+                        expanded = { show },
+                        onTap = toggle,
+                        onExpand = toggle,
+                    )
+                } else Modifier
+            )
+            .drawBehind {
+                if (triggerGesture.pressed) {
+                    // 与 DropdownPanelDragSelect 的命中高光同一口径（深色提白、浅色压黑）。
+                    // 颜色在组合期算好（主题色是 @Composable 读的）
+                    drawRect(pressMaskColor)
+                }
             }
-        }) {
+    ) {
+        DefaultItem(enabled = resolvedEnabled, title = title, desc = desc, onClick = null) {
             // 弹窗必须组合在锚点节点的**直接子布局内**：ListPopupLayout 的零尺寸 Spacer
             // 读 parentLayoutCoordinates 得锚点 bounds（原版 OverlayDropdownMenu 同构）
             Row(
@@ -109,6 +147,7 @@ fun SelectItem(
                     onDismissFinished = trigger::onDismissFinished,
                     backdrop = pageBackdrop,
                     collapseSize = trigger.size,
+                    dragSelectState = dragSelect,
                     collapseContent = {
                         DropdownValueCollapseContent(resolvedValue)
                     },

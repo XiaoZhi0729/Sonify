@@ -168,6 +168,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick as onSemanticsClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
@@ -273,7 +277,9 @@ import yos.music.player.ui.widgets.dropdown.DropdownTriggerState
 import yos.music.player.ui.widgets.dropdown.LiquidDropdownLayout
 import yos.music.player.ui.widgets.dropdown.LiquidOverlayDropdownPopup
 import yos.music.player.ui.widgets.dropdown.dropdownTriggerAlpha
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerGesture
 import yos.music.player.ui.widgets.dropdown.dropdownTriggerMeasure
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerGestureState
 import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerState
 import yos.music.player.ui.widgets.dropdown.stackBelowAnchorPositionProvider
 
@@ -1873,14 +1879,32 @@ internal fun PlayingList(
                             // 排序（破坏性重排，语义对齐上游 sortPlaylist）
                             // 走 1.6.5 玻璃弹窗引擎：与音质/「更多」菜单同材质同动画
                             val sortTrigger = rememberDropdownTriggerState(showSortMenu)
+                            // 跟手滑选：图标与面板共享同一份状态（长按展开后不停手滑选）
+                            val sortDragSelect = remember { DropdownPanelDragSelectState() }
+                            val sortTriggerGesture = rememberDropdownTriggerGestureState(sortDragSelect)
+                            val openSortMenu: () -> Unit = { showSortMenu = true }
                             Box(modifier = Modifier.dropdownTriggerMeasure(sortTrigger)) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_sort),
                                     contentDescription = stringResource(id = R.string.queue_sort),
+                                    // 点按与长按由同一个手势仲裁；不再叠 clickable
+                                    //（它会无条件消费 down，且长按抬手会二次触发点击）
                                     modifier = Modifier
                                         .size(26.dp)
                                         .dropdownTriggerAlpha(sortTrigger)
-                                        .clickable { showSortMenu = true }
+                                        .dropdownTriggerGesture(
+                                            state = sortTriggerGesture,
+                                            expanded = { showSortMenu },
+                                            onTap = openSortMenu,
+                                            onExpand = openSortMenu,
+                                        )
+                                        .semantics {
+                                            role = Role.Button
+                                            onSemanticsClick {
+                                                openSortMenu()
+                                                true
+                                            }
+                                        }
                                         .padding(3.dp)
                                 )
                                 LiquidOverlayDropdownPopup(
@@ -1890,6 +1914,7 @@ internal fun PlayingList(
                                     backdrop = LocalTitlePageBackdrop.current,
                                     surfaceAlpha = 0.6f,
                                     collapseSize = sortTrigger.size,
+                                    dragSelectState = sortDragSelect,
                                 ) {
                                     val sortOptions = listOf(
                                         R.string.queue_sort_title_asc to { descending: Boolean ->
@@ -2687,6 +2712,10 @@ internal fun ActionButtonsRow(
     // 长到位，玻璃底下先露一个洞），而且只有透明度、没有位移与缩放。
     val moreFollow = rememberLiquidDropdownFollowState()
 
+    // 跟手滑选：一级面板与触发区共享同一份状态 —— 长按「更多」展开后不停手就能直接滑选
+    val moreDragSelect = remember { DropdownPanelDragSelectState() }
+    val moreTriggerGesture = rememberDropdownTriggerGestureState(moreDragSelect)
+
     Row(
         modifier = modifier
             .overlayEffect(),
@@ -2695,6 +2724,11 @@ internal fun ActionButtonsRow(
         val dp = 28.dp
 
         val context = LocalContext.current
+        // 点按/长按共用同一入口（Context 在上面才取到，故声明在此）
+        val openMoreMenu: () -> Unit = {
+            Vibrator.click(context)
+            moreMenuOpen = true
+        }
         val scope = rememberCoroutineScope()
 
         Box(
@@ -2762,13 +2796,22 @@ internal fun ActionButtonsRow(
 
         Box(
             modifier = Modifier
-                .clickable(
-                    onClick = {
-                        Vibrator.click(context)
-                        moreMenuOpen = true
-                    },
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() })
+                // 点按与长按由同一个手势仲裁（长按 0.5s 展开后可不停手直接滑选）。
+                // 不能再叠 clickable：它会无条件消费 down，且在 up 时先 consume 再无条件
+                // onClick，长按抬手会被它二次触发一次点击。
+                .dropdownTriggerGesture(
+                    state = moreTriggerGesture,
+                    expanded = { moreMenuOpen },
+                    onTap = openMoreMenu,
+                    onExpand = openMoreMenu,
+                )
+                .semantics {
+                    role = Role.Button
+                    onSemanticsClick {
+                        openMoreMenu()
+                        true
+                    }
+                }
                 .size(dp)
                 .onGloballyPositioned { coords ->
                     val pos = coords.positionInWindow()
@@ -2822,6 +2865,7 @@ internal fun ActionButtonsRow(
         anchorBounds = moreAnchorBounds,
         onAnchorProgress = moreFollow::onProgress,
         onOpenArtist = onOpenArtist,
+        dragSelectState = moreDragSelect,
         onDismiss = { moreMenuOpen = false }
     )
 }
@@ -2866,6 +2910,8 @@ private fun NowPlayingMoreMenu(
     anchorBounds: IntRect,
     onAnchorProgress: (LiquidDropdownProgress) -> Unit,
     onOpenArtist: (String) -> Unit,
+    /** 与触发区共享的滑选状态：一级面板直接复用它（长按展开后不停手滑选） */
+    dragSelectState: DropdownPanelDragSelectState,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -2927,7 +2973,7 @@ private fun NowPlayingMoreMenu(
     val playlistsOpen = section == MoreSection.Playlists
 
     // 跟手滑选：一级入口行 + 倍速二级纯行菜单（歌单/睡眠含滑块与列表，不接）
-    val dragSelect = remember { DropdownPanelDragSelectState() }
+    val dragSelect = dragSelectState
     val speedDragSelect = remember { DropdownPanelDragSelectState() }
 
     // ---------- 一级：两行入口 ----------

@@ -148,7 +148,21 @@ class DropdownPanelEntry internal constructor() {
 }
 
 /**
- * 跟手滑选状态。由面板内容层创建，经 [LocalDropdownPanelDragSelect] 下发给菜单项。
+ * 面板侧：把展开进度登记给状态，供面板外的驱动方（长按触发区）判断命中时机。
+ *
+ * 必须**成对**登记与清理：状态对象由 `remember` 长期持有，面板离场后若 provider 还
+ * 指着已死亡的 `Animatable`，下次复用时 `currentFraction()` 会读到陈旧值。
+ * 用 SideEffect（而非组合期直写）保证写入发生在组合成功提交之后。
+ */
+@Composable
+fun DropdownPanelDragSelectState.registerFraction(progress: () -> Float) {
+    SideEffect { registerFractionProvider(progress) }
+    DisposableEffect(this) {
+        onDispose { registerFractionProvider(null) }
+    }
+}
+
+/** 跟手滑选状态。由面板内容层创建，经 [LocalDropdownPanelDragSelect] 下发给菜单项。
  *
  * 构造器放开为 public（2026-10-10）：创建方都是**模块外的面板**——
  * :app 的平板侧栏、:ui-shared 的玻璃菜单。internal 会让它们无法构造本状态。
@@ -177,6 +191,27 @@ class DropdownPanelDragSelectState(
 
     /** 面板左缘在 root 里的 x（横轴用，竖轴不读） */
     var panelLeftInRoot by mutableFloatStateOf(0f)
+
+    /**
+     * 面板展开进度提供者（0..1，可能过冲）。面板在组合期经
+     * `registerFractionProvider` 登记，供**面板外**的手势（长按触发区）判断时机：
+     *
+     * 面板生长期间内容走 graphicsLayer 缩放，而菜单项登记的是最终布局位（不含变换），
+     * 此时命中会让手指与看到的行错位。所以必须先等到 [DragSelectReadyFraction]。
+     *
+     * 未登记时返回 0f（而不是 1f）：没有面板就没有可命中的项，宁可不命中也不要静默错位。
+     */
+    private var fractionProvider: (() -> Float)? = null
+
+    internal fun registerFractionProvider(provider: (() -> Float)?) {
+        fractionProvider = provider
+    }
+
+    /** @return 当前面板展开进度；未登记 = 0f（不可命中） */
+    fun currentFraction(): Float = fractionProvider?.invoke() ?: 0f
+
+    /** 面板是否已长到可以命中菜单项的进度（同 [DragSelectReadyFraction]） */
+    fun isReadyForHitTest(): Boolean = currentFraction() >= DragSelectReadyFraction
 
     internal fun register(entry: DropdownPanelEntry) {
         if (!entries.contains(entry)) entries.add(entry)
@@ -220,6 +255,16 @@ class DropdownPanelDragSelectState(
         selected = hit
         return hit
     }
+
+    /**
+     * 面板**外**的驱动方（长按触发区）专用命中：入参是 root 坐标。
+     *
+     * 菜单项登记的是面板局部坐标（`boundsInRoot - panelTopInRoot/panelLeftInRoot`），
+     * 面板内手势喂的 `change.position` 天然就是节点本地坐标。面板外的驱动方手里只有
+     * root 坐标，换算这一步必须收在这里做 —— 让每个调用点自己减，迟早会漏。
+     */
+    internal fun hitTest2DInRoot(rootX: Float, rootY: Float): DropdownPanelEntry? =
+        hitTest2D(rootX - panelLeftInRoot, rootY - panelTopInRoot)
 
     internal fun clear() {
         selected = null

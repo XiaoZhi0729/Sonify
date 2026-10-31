@@ -351,6 +351,9 @@ fun DropdownDismissScrim(onDismiss: () -> Unit) {
  *
  * @param collapseSize 触发区实测尺寸（弹窗从这块内容原位长成面板）
  * @param collapseContent 收起态显示的内容（触发区副本），随容器长大淡出
+ * @param dragSelectState 调用方自带的跟手滑选状态。触发区若要「长按展开后不停手直接滑选」，
+ *   必须把**同一个实例**交给触发区的 [dropdownTriggerGesture] 与这里；
+ *   不传则本组件自建（老调用点行为不变）。
  */
 @Composable
 fun LiquidOverlayDropdownPopup(
@@ -370,12 +373,15 @@ fun LiquidOverlayDropdownPopup(
     forceWindowHost: Boolean = false,
     recedeFraction: (() -> Float)? = null,
     dragSelectEnabled: Boolean = true,
+    dragSelectState: DropdownPanelDragSelectState? = null,
     content: @Composable () -> Unit,
 ) {
-    // 跟手滑选状态必须由调用方持有：弹窗在独立窗口/宿主任意一侧，菜单项要靠它跨层回传选中
-    val dragSelectState = remember(dragSelectEnabled) {
+    // 跟手滑选状态必须由调用方持有：弹窗在独立窗口/宿主任意一侧，菜单项要靠它跨层回传选中。
+    // 调用方传了就用它（触发区与面板共享同一份），否则自建。
+    val sharedDragSelect = dragSelectState ?: remember(dragSelectEnabled) {
         if (dragSelectEnabled) DropdownPanelDragSelectState() else null
     }
+    val dragSelectState = if (dragSelectEnabled) sharedDragSelect else null
     LiquidDropdownLayout(
         expanded = show,
         onDismissRequest = onDismissRequest,

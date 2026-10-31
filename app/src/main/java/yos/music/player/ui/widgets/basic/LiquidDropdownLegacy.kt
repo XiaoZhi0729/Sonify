@@ -107,6 +107,7 @@ import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
 import yos.music.player.ui.widgets.dropdown.LocalDropdownPanelDragSelect
 import yos.music.player.ui.widgets.dropdown.computeDragTransform
 import yos.music.player.ui.widgets.dropdown.dropdownPanelDragSelect
+import yos.music.player.ui.widgets.dropdown.registerFraction
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.layout.boundsInRoot
@@ -633,6 +634,9 @@ private fun LiquidDropdownContent(
                 contentAlpha.snapTo(((current - 0.3f) / 0.4f).coerceIn(0f, 1f))
             }
     }
+
+    // 展开进度登记给状态：面板外的驱动方（长按触发区）据此判断何时能开始命中
+    dragSelectState?.registerFraction { fractionProgress() }
 
     Box(
         modifier = Modifier

@@ -941,6 +941,11 @@ fun ListPopupContent(
         surfaceAlpha = surfaceAlpha,
     )
 
+    // 展开进度登记给状态：面板外的驱动方（长按触发区）据此判断何时能开始命中。
+    // 挂在组合里而不是子槽位里 —— 槽位在 SubcomposeLayout 的作用域内，DisposableEffect
+    // 的清理时机与面板生命周期对不上。
+    dragSelectState?.registerFraction { fractionProgress() }
+
     // SubcomposeLayout：把测量提前到布局期，同一 pass 内先量内容、再用真实尺寸铺玻璃
     // 跟手拖动的形变挂在两个槽位的共同父层，玻璃壳才会一起变形；
     // 按压高光夹在材质层与内容层之间（见 [PopupGlassCanvas]）。

@@ -66,6 +66,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick as onSemanticsClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -94,6 +98,8 @@ import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
 import yos.music.player.ui.widgets.dropdown.LocalDropdownPanelDragSelect
 import yos.music.player.ui.widgets.dropdown.dropdownPanelEntry
+import yos.music.player.ui.widgets.dropdown.dropdownTriggerGesture
+import yos.music.player.ui.widgets.dropdown.rememberDropdownTriggerGestureState
 
 /** 两块页面（一级菜单 / 歌单列表）共用固定宽度：列宽按内容算，换页会跳宽。 */
 private val AddToPlaylistPanelWidth = 216.dp
@@ -186,6 +192,19 @@ fun SongAddToPlaylistButton(
         if (expanded) BlacklistState.ensureLoaded()
     }
 
+    // 跟手滑选：面板级**单一竖轴状态 + 二维命中**——顶排横钮靠 X 区间区分、
+    // 下方行靠 Y 区间区分，一次手势可跨区域自由滑选；歌单列表页置 null 让行回 clickable。
+    // 提到触发区前面：触发区手势要与面板共享同一份状态（长按展开后不停手滑选）。
+    val dragSelect = remember { DropdownPanelDragSelectState() }
+    val triggerGesture = rememberDropdownTriggerGestureState(dragSelect)
+    val openMenu: () -> Unit = {
+        // 每次打开都回到一级页，避免上次停在歌单列表
+        page = AddToPlaylistPage.Actions
+        anchorBounds = anchor.bounds
+        retainedForExit = true
+        expanded = true
+    }
+
     Box(
         modifier = modifier
             .size(40.dp)
@@ -202,7 +221,6 @@ fun SongAddToPlaylistButton(
             },
         contentAlignment = Alignment.Center
     ) {
-        val interactionSource = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -210,15 +228,20 @@ fun SongAddToPlaylistButton(
                 // 锚点若跟着走会形成逐帧抖动回环（同 HomeMenuButton）
                 .liquidDropdownAnchorFollow(follow)
                 .clip(YosRoundedCornerShape(12.dp))
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null
-                ) {
-                    // 每次打开都回到一级页，避免上次停在歌单列表
-                    page = AddToPlaylistPage.Actions
-                    anchorBounds = anchor.bounds
-                    retainedForExit = true
-                    expanded = true
+                // 点按与长按由同一个手势仲裁；不再叠 clickable
+                //（它会无条件消费 down，且长按抬手会二次触发点击）
+                .dropdownTriggerGesture(
+                    state = triggerGesture,
+                    expanded = { menuActive },
+                    onTap = openMenu,
+                    onExpand = openMenu,
+                )
+                .semantics {
+                    role = Role.Button
+                    onSemanticsClick {
+                        openMenu()
+                        true
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -231,8 +254,8 @@ fun SongAddToPlaylistButton(
         }
 
         // 跟手滑选：面板级**单一竖轴状态 + 二维命中**——顶排横钮靠 X 区间区分、
-        // 下方行靠 Y 区间区分，一次手势可跨区域自由滑选；歌单列表页置 null 让行回 clickable
-        val dragSelect = remember { DropdownPanelDragSelectState() }
+        // 下方行靠 Y 区间区分，一次手势可跨区域自由滑选；歌单列表页置 null 让行回 clickable。
+        // 状态在触发区那一层创建并与本弹层共享（长按展开后不停手滑选）。
         LiquidDropdownLayout(
             expanded = expanded,
             anchorBounds = anchorBounds,
