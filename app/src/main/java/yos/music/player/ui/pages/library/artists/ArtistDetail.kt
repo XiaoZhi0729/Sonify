@@ -57,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -732,6 +733,49 @@ fun ArtistDetail(
             label = "artistBackdropReveal"
         )
         val backdropAlpha = backdropAlphaState.value
+        // ---------- 录制层的「双绘 → blit」切换 ----------
+        // 本页是全工程唯一「自定义 onDraw + 挂在滚动容器上」的 backdrop：录制完因
+        // contentOnlyCapture=false 还要再 drawContent() 走一遍整页 op。稳态下这一步是纯浪费，
+        // 但**过渡期不能开**——种子色是目标色（accent），页面真实底色是 bgColorState 的动画
+        // 中间值，两者在渐变期间不相等；此时 blit 会把正在渐变的底色盖成一块纯色
+        // （2026-10-30 顶栏事故的复现路径）。
+        //
+        // 开的条件必须是**两条都落定**：揭示门 alpha 到 1（400ms）且底色动画等于目标色（600ms）。
+        // 只等 alpha 会早开 200ms，恰好落进底色仍在渐变的窗口里。
+        //
+        // 判据用容差而不是精确相等：sRGB 下 Color.VectorConverter 往返是 bit-exact 的，
+        // 但若将来底色换成非 sRGB 色域（Oklab 往返有 1LSB 误差），精确相等会永远不为真。
+        // 1/255 是 8bit 通道的量子，容差取其一半即「肉眼不可分辨」。
+        //
+        // ★失败安全：门永不开时最坏结果是「没优化」（退回旧的 drawContent），不会视觉回归。
+        // 两条 snapshotFlow 都在协程里读 State，**不在组合体读 bgColorState.value**
+        // （那会让整页在 600ms 渐变期逐帧重组，见文件内多处红线）。
+        //
+        // ★状态按「落定的目标色」存，而不是普通布尔：切歌手时 accent 立刻变化，组合期就能
+        // 判定出新色尚未落定（blitSettled=false），SideEffect 同帧把库内开关复位。
+        // 若用普通布尔，新组合那一帧仍是旧 true，会把满屏不透明的新 accent 种子 blit 上屏 → 闪一下纯色。
+        //
+        // 开启后底色层（ArtistBackdropFill）必须同步关掉：blit 上屏的已经是「种子色 + 内容」，
+        // 与实际背景逐像素相同，底下那层全屏 drawRect 变成纯重复填充（A3）。
+        var blitSettledFor by remember { mutableStateOf<Color?>(null) }
+        val blitSettled = blitSettledFor == artworkColors.accent
+        // 组合后、绘制前同步下发（不等协程调度），避免中间帧用的是过期开关。
+        SideEffect { pageBackdrop.setBlitRecordedContent(blitSettled) }
+        LaunchedEffect(artworkColors.accent) {
+            snapshotFlow { backdropAlphaState.value }.first { it >= 1f }
+            val target = artworkColors.accent
+            val tolerance = 0.5f / 255f
+            snapshotFlow { bgColorState.value }.first { color ->
+                kotlin.math.abs(color.red - target.red) <= tolerance &&
+                    kotlin.math.abs(color.green - target.green) <= tolerance &&
+                    kotlin.math.abs(color.blue - target.blue) <= tolerance &&
+                    kotlin.math.abs(color.alpha - target.alpha) <= tolerance
+            }
+            blitSettledFor = target
+        }
+        DisposableEffect(pageBackdrop) {
+            onDispose { pageBackdrop.setBlitRecordedContent(false) }
+        }
         // 注册给底栏遮罩的颜色 = 「当前实际显示的页面底色」：门未开时停在兜底色，
         // 门开后与照片/取色/倒影同一条 400ms 曲线滑到提取色，消除「底栏那段底部渐变
         // 抢先变成歌手色」的错位。derivedStateOf 让 NavPageVisual 在绘制期读到时
@@ -752,7 +796,9 @@ fun ArtistDetail(
         // （不能写成容器自身的 .background(bg)：gate 依赖 bakedHero，而 bakedHero 依赖
         //  maxWidth 派生的烘焙几何，只能在 BoxWithConstraints 作用域内求值。）
         // 全屏底色层：动画色在叶子组合里读（见 ArtistBackdropFill），避免渐变期整页重组。
-        ArtistBackdropFill(bgColorState, backdropAlpha)
+        // blit 开启后（[blitSettled]）上屏的录制层已是「种子色 + 内容」、与实际背景逐像素相同，
+        // 这层再画一遍是全屏纯色重复填充，故随落定一起退场。
+        ArtistBackdropFill(bgColorState, if (blitSettled) 0f else backdropAlpha)
         // Hero item 视口偏移由 [heroOffsetInViewport] 在**放置期**直接向 LazyListState 取：
         // 曾用 snapshotFlow 采集进普通状态再绘制期读——那条链路每帧要走「布局写 layoutInfo
         // → 帧末通知 → 协程调度 → 写 State → 下一帧失效」，最低晚一帧且延迟不定，表现为
