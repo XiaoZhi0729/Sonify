@@ -113,6 +113,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -3345,22 +3346,25 @@ private fun CoverMorphLayer(
             val tiltX = coverState.tiltX.value * tiltFade
             val tiltY = coverState.tiltY.value * tiltFade
             val pressValue = coverState.press.value
-            clipPath(path) {
-                if (tiltX != 0f || tiltY != 0f || pressValue > 0f) {
-                    drawTiltedCover(
-                        camera = tiltCamera,
-                        matrix = tiltMatrix,
-                        painter = painter,
-                        frame = frame,
-                        basePx = basePx,
-                        tiltX = tiltX,
-                        tiltY = tiltY,
-                        pressValue = pressValue,
-                        densityPx = density.density,
-                        path = path,
-                        strokeFade = strokeFade
-                    )
-                } else {
+            if (tiltX != 0f || tiltY != 0f || pressValue > 0f) {
+                // 倾斜路径：裁剪面在 drawTiltedCover 内部按同一矩阵变换后自己裁，
+                // 这里**不能**再套一层屏幕空间的 clipPath(path)——那会把倾斜后
+                // 伸出原矩形的部分切掉，圆角又变回直角。
+                drawTiltedCover(
+                    camera = tiltCamera,
+                    matrix = tiltMatrix,
+                    painter = painter,
+                    frame = frame,
+                    basePx = basePx,
+                    tiltX = tiltX,
+                    tiltY = tiltY,
+                    pressValue = pressValue,
+                    densityPx = density.density,
+                    path = path,
+                    strokeFade = strokeFade
+                )
+            } else {
+                clipPath(path) {
                     withTransform({
                         translate(frame.left, frame.top)
                         scale(scale, scale, pivot = Offset.Zero)
@@ -3555,31 +3559,56 @@ private fun DrawScope.drawTiltedCover(
         matrix.postScale(pressedScale, pressedScale, cx, cy)
     }
 
+    // 圆角裁剪面必须**跟着一起倾斜**。
+    //
+    // 第一版把 clip 留在屏幕空间（未变换的圆角矩形），结果是：图片倾斜后四边
+    // 向内缩、离开了裁剪窗口，窗口圆角处露出底色，而图片自身可见的边是直的
+    // ——观感就是"圆角被切成直角，而且外面多出一个不动的方框"（真机复现）。
+    // 那个"方框"其实就是这两道不倾斜的 12px 描边：图片缩进去了，描边还留在原位。
+    //
+    // 正解：把圆角路径按同一个透视矩阵变换成倾斜后的四边形/多边形，用它裁剪，
+    // 描边也画在变换后的路径上。这样裁剪窗口与图片严丝合缝，圆角保持圆角、
+    // 描边紧贴图片边缘，没有任何"盒子"残留。
+    //
+    // 为什么仍然不是"给整个 Canvas 套透视矩阵再 clipPath"：那样 clipPath 本身
+    // 落在非仿射矩阵下（Android 硬件加速行为不可靠）。这里是**先**把路径在
+    // CPU 侧变换好，再在单位矩阵下 clipPath——始终是仿射裁剪。
+    val tiltedPath = Path().apply {
+        // asAndroidPath 拿到的是底层 android.graphics.Path 的包装，transform 会
+        // 原地变换。这里先拷贝一份，避免污染调用方的 path（后面还会用到它）。
+        addPath(path)
+        asAndroidPath().transform(matrix)
+    }
+
     val canvas = drawContext.canvas
     canvas.save()
-    // 必须走 nativeCanvas：Compose 的 Canvas.concat 只接受
-    // androidx.compose.ui.graphics.Matrix，而透视矩阵只能由 android.graphics.Camera
-    // 产出（Compose 的 Matrix 没有 3D 透视）。save/restore 保证矩阵不外泄到
-    // 后续的描边绘制。
-    canvas.nativeCanvas.concat(matrix)
-    // 图片绘制本身沿用同一套"平移 + 等比缩放"（与不倾斜时完全一致），
-    // 透视矩阵已把它整体带歪。
-    withTransform({
-        translate(frame.left, frame.top)
-        scale(frame.scale, frame.scale, pivot = Offset.Zero)
-    }) {
-        drawPainterCropped(painter, Size(basePx, basePx))
+    // clipPath 在**单位矩阵**下执行：tiltedPath 已经在 CPU 侧变换好，
+    // 所以这是一次纯仿射裁剪，Android 硬件加速下行为可靠。
+    clipPath(tiltedPath) {
+        canvas.save()
+        // 必须走 nativeCanvas：Compose 的 Canvas.concat 只接受
+        // androidx.compose.ui.graphics.Matrix，而透视矩阵只能由
+        // android.graphics.Camera 产出（Compose 的 Matrix 没有 3D 透视）。
+        canvas.nativeCanvas.concat(matrix)
+        // 图片绘制本身沿用同一套"平移 + 等比缩放"（与不倾斜时完全一致），
+        // 透视矩阵已把它整体带歪。与上面裁剪面用的是**同一个 matrix**，
+        // 所以图片边缘与裁剪面严丝合缝（这是消除"方框"的关键）。
+        withTransform({
+            translate(frame.left, frame.top)
+            scale(frame.scale, frame.scale, pivot = Offset.Zero)
+        }) {
+            drawPainterCropped(painter, Size(basePx, basePx))
+        }
+        canvas.restore()
     }
     canvas.restore()
 
-    // 描边**不跟着倾斜**：它只有 12px 宽，18° 倾斜下的形变肉眼不可辨，
-    // 而留在屏幕空间能让它严格贴合上面那个圆角裁剪窗口——倾斜画会让描边
-    // 的四个角跑出裁剪面、在角部留下缺口。path 本来就是屏幕空间坐标
-    // （已按 frame.left/top 平移过），所以这里不需要任何变换。
+    // 描边同样画在倾斜后的路径上（不裁剪它，描边有一半宽度在路径外侧）。
+    // 用单位矩阵直接画变换好的路径，与真实节点"描边和图片同在一个图层"一致。
     if (strokeFade > 0.01f) {
-        drawPath(path, Color.Gray.copy(alpha = 0.1f * strokeFade), style = morphStroke)
+        drawPath(tiltedPath, Color.Gray.copy(alpha = 0.1f * strokeFade), style = morphStroke)
         drawPath(
-            path,
+            tiltedPath,
             Color.Gray.copy(alpha = 0.5f * strokeFade),
             style = morphStroke,
             blendMode = BlendMode.Overlay
