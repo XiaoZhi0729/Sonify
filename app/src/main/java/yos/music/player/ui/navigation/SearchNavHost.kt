@@ -11,6 +11,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 import yos.music.player.ui.pages.recognition.SongRecognitionPage
 import yos.music.player.ui.pages.search.SearchPage
@@ -42,6 +43,15 @@ fun SearchNavHost(
             }
             // 艺人域路由：与各 house 共享同一张图（漏注册即 "destination cannot be found"）
             artistGraph(navController, this@SharedTransitionLayout)
+            // 本地专辑页：播放页「前往该歌曲专辑」会往当前所在房子 push，
+            // 本地歌从本 Tab 进来时必须能找到该目的地
+            composable(UI.AlbumInfo) {
+                AlbumInfo(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedContentScope = this@composable
+                )
+            }
             // 听歌识曲：只从搜索页进入，故只在本 house 注册
             composable(UI.SongRecognition) {
                 SongRecognitionPage(navController = navController)

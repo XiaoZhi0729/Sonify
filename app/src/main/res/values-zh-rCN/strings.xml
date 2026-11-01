@@ -449,6 +449,7 @@
     <string name="add_to_playlist_back">返回</string>
     <!-- 歌曲行菜单的其它动作 -->
     <string name="song_menu_go_artist">前往艺人</string>
+    <string name="song_menu_go_album">前往该歌曲专辑</string>
     <string name="song_menu_favorite">喜爱</string>
     <string name="song_menu_unfavorite">取消喜爱</string>
     <string name="song_menu_play">播放</string>

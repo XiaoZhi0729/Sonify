@@ -397,6 +397,9 @@ fun NowPlaying(
     // 歌手名点击 → 艺人主页：由外壳在当前 Tab 的 NavHost 内导航并收回播放页。
     // 名字有效性（空/Unknown Artist）由外壳回调内部过滤。
     onOpenArtist: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」：同样由外壳在当前 Tab 内导航并收回播放页。
+    // 目标曲、专辑解析与失败提示都在外壳回调内完成，这里只传一个空参回调。
+    onOpenAlbum: () -> Unit = {},
     isPlayingStatusLambda: () -> Boolean,
     isPlayingOnChanged: (Boolean) -> Unit,
     nowPageLambda: () -> String,
@@ -720,6 +723,7 @@ fun NowPlaying(
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                     albumCoverSuppressed = albumCoverSuppressed,
                     onOpenArtist = onOpenArtist,
+                    onOpenAlbum = onOpenAlbum,
                     onOpenLogin = onOpenLogin
                 )
                 return@YosWrapper
@@ -1074,7 +1078,11 @@ fun NowPlaying(
                                                                     ),
                                                                     visible = isVisible,
                                                                 boundsTransform = MorphBoundsSpec
-                                                                )
+                                                                ),
+                                                                // 此前漏传：竖屏 Album 页「更多」里的「前往艺人」
+                                                                // 点了没反应，只有歌词/队列页与横屏生效
+                                                                onOpenArtist = onOpenArtist,
+                                                                onOpenAlbum = onOpenAlbum
                                                             )
                                                         }
                                                     }
@@ -1308,7 +1316,8 @@ fun NowPlaying(
                                 onAlbumClick = {
                                     nowPageOnChanged(Album)
                                 },
-                                onArtistClick = onOpenArtist
+                                onArtistClick = onOpenArtist,
+                                onOpenAlbum = onOpenAlbum
                             )
                         }
                     }
@@ -2698,6 +2707,8 @@ internal fun ActionButtonsRow(
     // 外部可传共享元素 modifier：页面切换时按钮行随封面/文字一起 morph
     modifier: Modifier = Modifier,
     onOpenArtist: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」：目标曲由外壳回调自己从 MediaController 读，故无参。
+    onOpenAlbum: () -> Unit = {},
 ) {
     var moreMenuOpen by remember { mutableStateOf(false) }
     // 「更多」按钮本体的窗口系边界，供玻璃弹层定位与展开方向判定。
@@ -2865,6 +2876,7 @@ internal fun ActionButtonsRow(
         anchorBounds = moreAnchorBounds,
         onAnchorProgress = moreFollow::onProgress,
         onOpenArtist = onOpenArtist,
+        onOpenAlbum = onOpenAlbum,
         dragSelectState = moreDragSelect,
         onDismiss = { moreMenuOpen = false }
     )
@@ -2910,6 +2922,7 @@ private fun NowPlayingMoreMenu(
     anchorBounds: IntRect,
     onAnchorProgress: (LiquidDropdownProgress) -> Unit,
     onOpenArtist: (String) -> Unit,
+    onOpenAlbum: () -> Unit,
     /** 与触发区共享的滑选状态：一级面板直接复用它（长按展开后不停手滑选） */
     dragSelectState: DropdownPanelDragSelectState,
     onDismiss: () -> Unit,
@@ -2919,10 +2932,14 @@ private fun NowPlayingMoreMenu(
     val sleepRemaining = MediaController.sleepTimerRemainingSeconds.intValue
     val speedTitle = stringResource(id = R.string.nowplaying_menu_speed)
     val sleepTitle = stringResource(id = R.string.nowplaying_menu_sleep_timer)
-    // 当前曲：前往艺人 / 添加至歌单 的目标（切歌时跟随重组）
+    // 当前曲：前往艺人 / 前往专辑 / 添加至歌单 的目标（切歌时跟随重组）
     val currentSong = MediaController.musicPlaying.value
     val artistName = currentSong?.artistsName?.trim().orEmpty()
     val showArtist = artistName.isNotEmpty() && artistName != defaultArtistsName
+    // 专辑标识：在线曲靠 hash（身份表在播放链解析时已登记 albumId），本地曲靠专辑名。
+    // 组合期不做任何查询，两条线索任一非空就放行——具体解析与失败提示由外壳回调负责。
+    val showAlbum = currentSong != null &&
+            (currentSong.album?.isNotBlank() == true || currentSong.kugouHash() != null)
     val showPlaylistPicker = currentSong != null
 
     // 二级状态与行锚点提在这一层：父面板写锚点、子面板读锚点
@@ -3012,13 +3029,27 @@ private fun NowPlayingMoreMenu(
                     }
                 )
             }
+            if (showAlbum) {
+                LiquidDropdownRow(
+                    text = stringResource(R.string.song_menu_go_album),
+                    selected = false,
+                    isFirst = !showArtist,
+                    showSelectedIcon = false,
+                    leadingIcon = painterResource(R.drawable.ic_song_menu_album),
+                    onClick = {
+                        Vibrator.click(context)
+                        onOpenAlbum()
+                        onDismiss()
+                    }
+                )
+            }
             if (showPlaylistPicker) {
                 MoreEntryRow(
                     title = stringResource(R.string.add_to_playlist_menu_entry),
                     value = null,
                     expanded = playlistsOpen,
                     leadingIcon = painterResource(R.drawable.ic_song_menu_playlist),
-                    isFirst = !showArtist,
+                    isFirst = !showArtist && !showAlbum,
                     onBounds = { playlistsRowBounds = it },
                     onClick = {
                         Vibrator.click(context)
@@ -3030,7 +3061,7 @@ private fun NowPlayingMoreMenu(
                 title = speedTitle,
                 value = "${currentSpeed}x",
                 expanded = speedOpen,
-                isFirst = !showArtist && !showPlaylistPicker,
+                isFirst = !showArtist && !showAlbum && !showPlaylistPicker,
                 onBounds = { speedRowBounds = it },
                 onClick = {
                     Vibrator.click(context)
@@ -3431,6 +3462,8 @@ private fun PlayingBar(
     onAlbumClick: () -> Unit,
     // 歌手名点击 → 艺人主页（ArtistsTapText 定位具体歌手，外壳回调内过滤无效名）
     onArtistClick: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」（外壳在当前 Tab 内导航并收回播放页）
+    onOpenAlbum: () -> Unit = {},
     // 歌名/歌手列的共享元素 modifier（由调用方传 sharedElement），空则无 morph
     titleModifier: Modifier = Modifier,
     // 收藏/更多按钮行的共享元素 modifier，同上
@@ -3510,7 +3543,7 @@ private fun PlayingBar(
         }
 
         YosWrapper {
-            ActionButtonsRow(musicPlayingLambda, modifier = actionsModifier, onOpenArtist = onArtistClick)
+            ActionButtonsRow(musicPlayingLambda, modifier = actionsModifier, onOpenArtist = onArtistClick, onOpenAlbum = onOpenAlbum)
         }
     }
 

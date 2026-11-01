@@ -11,6 +11,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.FavoriteSongsPage
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 
@@ -57,6 +58,15 @@ fun FavoritesNavHost(
             // 艺人域路由（歌手详情 + 子页 + 在线专辑详情）：播放页歌手名等入口在
             // 当前房子内 push，缺注册即抛 "destination cannot be found"。
             artistGraph(navController, this@SharedTransitionLayout)
+            // 本地专辑页：播放页「前往该歌曲专辑」会往当前所在房子 push
+            // （本地歌从「喜爱」Tab 进来时若缺注册即抛 "destination cannot be found"）。
+            composable(UI.AlbumInfo) {
+                AlbumInfo(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedContentScope = this@composable
+                )
+            }
             settingsGraph(
                 navController = navController,
                 onOpenLibrarySongs = navigator::openLibrarySongs

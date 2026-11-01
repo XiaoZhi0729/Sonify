@@ -20,6 +20,7 @@ import yos.music.player.ui.pages.discovery.RankDetail
 import yos.music.player.ui.pages.discovery.RankListDetail
 import yos.music.player.ui.pages.discovery.RecentPlayedDetail
 import yos.music.player.ui.pages.discovery.RecommendPlaylistsDetail
+import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
@@ -52,6 +53,15 @@ fun HomeNavHost(
             composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
             composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
             artistGraph(navController, this@SharedTransitionLayout)
+            // 本地专辑页：播放页「前往该歌曲专辑」会往**当前所在房子**push，本地歌从
+            // 主页/搜索/喜爱进来时会抛 "destination cannot be found"，故四张图都要注册
+            composable(UI.AlbumInfo) {
+                AlbumInfo(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedContentScope = this@composable
+                )
+            }
             composable(UI.RecommendPlaylistsDetail) {
                 RecommendPlaylistsDetail(
                     navController = navController,

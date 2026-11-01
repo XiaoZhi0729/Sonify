@@ -78,6 +78,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
@@ -1069,18 +1070,40 @@ fun rememberLiquidDropdownFollowState(
 }
 
 /**
- * 面板可用高度上限：锚点到窗口底的余量减去阴影外扩（24dp）与一点余量。
+ * 面板可用高度上限：锚点到窗口边缘的余量减去阴影外扩（24dp）与一点余量。
  *
- * 用 [LocalConfiguration] 的 screenHeightDp（不含系统栏的稳定尺寸）而不是窗口实高：
- * 偏小一侧，宁可少给空间也不要动画中途触发方向翻转。锚点还没测到时给一个宽上限
- * （下一帧就会被真实锚点纠正）。多窗口/旋转下配置变化会重组，上限跟着重算。
+ * **取锚点上下两侧的较大余量**，不是只算下方。定位引擎
+ * （[calculateDropdownPosition]）在下方放不下时会整体翻到锚点上方，所以面板真正
+ * 能用的高度是两侧的较大值；只按下方的余量封顶，会把"下方差一点、上方很空"的正常
+ * 面板误判成装不下，凭空塞进一个内滚（用户实测：播放页「更多」菜单新增一行后，
+ * 长度明明还够却变成了可滑动）。
+ *
+ * 高度基准用 [LocalWindowInfo] 的 containerSize（**窗口坐标系的真实高**，与
+ * [anchorBounds]、以及引擎里的 windowBounds 同一套坐标系），不再用
+ * [LocalConfiguration] 的 screenHeightDp —— 后者不含系统栏，在全面屏/边到边上比真实
+ * 窗口矮一截，是一处系统性少算。取不到（冷启动首帧为 0）时回退到 screenHeightDp。
+ *
+ * 锚点还没测到时给一个宽上限（下一帧就会被真实锚点纠正）。多窗口/旋转/分屏下
+ * 窗口尺寸变化会重组，上限跟着重算。超出的内容由列自带的 verticalScroll 兜底，
+ * 引擎在 measure 阶段另有一道硬卡（窗口高 − 底部遮罩），所以这里偏宽松是安全的。
  */
 @Composable
 fun liquidDropdownHeightCap(anchorBounds: IntRect, fallback: Dp = 420.dp): Dp {
     if (anchorBounds == IntRect.Zero) return fallback
     val density = LocalDensity.current
-    val screenPx = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    return with(density) { (screenPx - anchorBounds.bottom).coerceAtLeast(0f).toDp() }
+    val windowInfo = LocalWindowInfo.current
+    val containerPx = windowInfo.containerSize.height.toFloat()
+    val windowPx = if (containerPx > 0f) {
+        containerPx
+    } else {
+        with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    }
+    // 下方：面板展开时可见顶边压在锚点行上方，所以整段余量从锚点**顶边**量到窗口底
+    val spaceBelow = (windowPx - anchorBounds.top).coerceAtLeast(0f)
+    // 上方：翻上去时面板底边贴着锚点行，可用高度就是锚点顶边以上的全段
+    val spaceAbove = anchorBounds.bottom.toFloat().coerceAtLeast(0f)
+    val usablePx = maxOf(spaceBelow, spaceAbove)
+    return with(density) { usablePx.toDp() }
         .minus(40.dp)
         .coerceAtLeast(150.dp)
 }

@@ -146,6 +146,8 @@ internal fun NowPlayingLandscape(
     albumCoverSuppressed: () -> Boolean = { false },
     // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
     onOpenArtist: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」（外壳在当前 Tab 内导航并收回播放页）
+    onOpenAlbum: () -> Unit = {},
     // 评论页未登录 → 去登录（由外壳在当前 Tab 内 push 登录页）
     onOpenLogin: () -> Unit = {}
 ) {
@@ -184,6 +186,7 @@ internal fun NowPlayingLandscape(
             albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
             albumCoverSuppressed = albumCoverSuppressed,
             onOpenArtist = onOpenArtist,
+            onOpenAlbum = onOpenAlbum,
             onOpenLogin = onOpenLogin
         )
         return
@@ -318,7 +321,8 @@ internal fun NowPlayingLandscape(
                     albumCoverSuppressed = albumCoverSuppressed,
                     // 单击左列封面 = 开/关歌词（与右下歌词入口同一个 lambda）
                     onCoverClick = onLyrics,
-                    onOpenArtist = onOpenArtist
+                    onOpenArtist = onOpenArtist,
+                    onOpenAlbum = onOpenAlbum
                 )
             }
 
@@ -495,7 +499,9 @@ private fun LandscapeMediaColumn(
     // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
     onCoverClick: () -> Unit = {},
     // 歌手名点击 → 艺人主页
-    onOpenArtist: (String) -> Unit = {}
+    onOpenArtist: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」
+    onOpenAlbum: () -> Unit = {}
 ) {
     Column(
         modifier = modifier,
@@ -527,7 +533,8 @@ private fun LandscapeMediaColumn(
                 .width(contentWidth)
                 .padding(horizontal = 25.dp),
             thisMusicPlayingLambda = thisMusicPlayingLambda,
-            onOpenArtist = onOpenArtist
+            onOpenArtist = onOpenArtist,
+            onOpenAlbum = onOpenAlbum
         )
 
         // 进度/时间/传输（五键 shuffle+prev/play/next+repeat）/音量，定高不扩展
@@ -675,7 +682,9 @@ private fun LandscapeTitleBlock(
     modifier: Modifier = Modifier,
     thisMusicPlayingLambda: () -> YosMediaItem?,
     // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
-    onOpenArtist: (String) -> Unit = {}
+    onOpenArtist: (String) -> Unit = {},
+    // 更多菜单「前往该歌曲专辑」（导航与收回同上）
+    onOpenAlbum: () -> Unit = {}
 ) {
     YosWrapper {
         AnimatedContent(
@@ -712,7 +721,11 @@ private fun LandscapeTitleBlock(
                 }
 
                 YosWrapper {
-                    ActionButtonsRow(thisMusicPlayingLambda, onOpenArtist = onOpenArtist)
+                    ActionButtonsRow(
+                        thisMusicPlayingLambda,
+                        onOpenArtist = onOpenArtist,
+                        onOpenAlbum = onOpenAlbum
+                    )
                 }
             }
         }
@@ -763,6 +776,7 @@ private fun NowPlayingLandscapePhone(
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit,
     albumCoverSuppressed: () -> Boolean,
     onOpenArtist: (String) -> Unit = {},
+    onOpenAlbum: () -> Unit = {},
     onOpenLogin: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -835,7 +849,8 @@ private fun NowPlayingLandscapePhone(
                             .padding(bottom = if (page == Lyric) 4.dp else 20.dp)
                             .padding(horizontal = 32.dp),
                         thisMusicPlayingLambda = thisMusicPlayingLambda,
-                        onOpenArtist = onOpenArtist
+                        onOpenArtist = onOpenArtist,
+                        onOpenAlbum = onOpenAlbum
                     )
 
                     // 控件区 / 歌词 / 队列。不用水平滑入：手机横屏这块区域

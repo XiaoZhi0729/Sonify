@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -196,6 +197,8 @@ import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.libraries.artistsList
+import yos.music.player.data.libraries.artistsName
 import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.libraries.toMultipleArtists
@@ -203,7 +206,10 @@ import yos.music.player.data.models.ImageViewModel
 import yos.music.player.data.models.MainViewModel
 import yos.music.player.data.models.MediaViewModel
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.LibraryObject
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.data.objects.OnlineAlbumObject
+import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.ui.UI
 import yos.music.player.ui.navigation.AppNavigator
 import yos.music.player.ui.navigation.ArtistPageAppearance
@@ -904,6 +910,127 @@ class MainActivity : BaseActivity() {
                                     )
                                 }
                                 animatePlayerTo(0f)
+                            }
+                        }
+
+
+                        // 播放页「更多」→ 前往该歌曲专辑：与 openArtistFromPlayer 同一套收尾
+                        // （在当前房子内 push，再 animatePlayerTo(0f) 收回播放页，收回动画
+                        // 揭示的正是专辑页）。两条路径按曲目来源分：
+                        // - 在线曲（mediaId=kugou-online-<hash>）→ 在线专辑详情页。albumId 走
+                        //   歌曲身份表（解析歌曲时已登记，内存 miss 回源 MMKV，同步零网络）；
+                        //   查不到才退化成按专辑名搜索一次（那一路要发网络请求，故挂 scope）。
+                        // - 本地曲（无 hash）→ 本地专辑页 AlbumInfo（按 album 名索引）。
+                        // 目标无从解析时只提示、**不收播放页**——否则用户被丢回列表却什么都没打开。
+                        val openAlbumFromPlayer: () -> Unit = openAlbum@{
+                            val music = MediaController.musicPlaying.value ?: return@openAlbum
+                            val albumName = music.album?.trim().orEmpty()
+                            val hash = music.kugouHash()
+                            fun toastOpenFailed() {
+                                Toast.makeText(context, R.string.album_open_failed, Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                            // 栈顶已是同一张专辑时只收回，不重复入栈（与艺人入口同判据）
+                            fun topIsOnlineAlbum(id: String): Boolean {
+                                val top = activeEntry.value ?: return false
+                                return top.destination.route == UI.OnlineAlbumDetailPattern &&
+                                        top.arguments?.getString(UI.OnlineAlbumIdArg) == id
+                            }
+                            fun topIsLocalAlbum(name: String): Boolean {
+                                val top = activeEntry.value ?: return false
+                                return top.destination.route == UI.AlbumInfo &&
+                                        LibraryObject.getTargetAlbumName() == name
+                            }
+
+                            // 在线专辑：先把首屏快照塞进 holder（详情页取不到就渲染「未选中专辑」）
+                            fun navigateOnlineAlbum(albumId: String, name: String, cover: String) {
+                                if (topIsOnlineAlbum(albumId)) {
+                                    animatePlayerTo(0f)
+                                    return
+                                }
+                                OnlineAlbumObject.setSelected(
+                                    KugouNewAlbum(
+                                        albumId = albumId,
+                                        name = name,
+                                        singerName = music.artistsName
+                                            ?.trim()
+                                            ?.takeIf { it != defaultArtistsName }
+                                            .orEmpty(),
+                                        coverUrl = cover,
+                                        // 首屏未知，交给详情页/歌曲列表回填
+                                        songCount = 0,
+                                        publishTime = null
+                                    )
+                                )
+                                // 来源歌手：让详情页背景从该歌手色起渐（与艺人入口一致）
+                                val sourceArtistId = hash?.let { h ->
+                                    music.artistsList?.firstOrNull()?.trim()?.let { n ->
+                                        KugouRepository.performerIdFor(h, n)?.toString()
+                                    }
+                                }
+                                NavGuard.run {
+                                    activeHouseController.navigate(
+                                        UI.onlineAlbumRoute(albumId, sourceArtistId)
+                                    )
+                                }
+                                animatePlayerTo(0f)
+                            }
+
+                            if (hash == null) {
+                                // ---------- 本地曲 ----------
+                                // 空专辑名 / 索引里查不到该专辑都会让 AlbumInfo 落到提示页或
+                                // songs.first() 越界，直接就地提示。
+                                if (albumName.isEmpty() || MusicLibrary.Album[albumName].isEmpty()) {
+                                    toastOpenFailed()
+                                    return@openAlbum
+                                }
+                                if (!topIsLocalAlbum(albumName)) {
+                                    LibraryObject.setTargetAlbumName(albumName)
+                                    NavGuard.run { activeHouseController.navigate(UI.AlbumInfo) }
+                                }
+                                animatePlayerTo(0f)
+                            } else {
+                                // ---------- 在线曲 ----------
+                                val cover = music.thumb?.toString().orEmpty()
+                                val knownId = KugouRepository.songIdentityFor(hash)
+                                    ?.albumId
+                                    ?.takeIf { it > 0 }
+                                    ?.toString()
+                                if (knownId != null) {
+                                    if (albumName.isNotEmpty()) {
+                                        navigateOnlineAlbum(knownId, albumName, cover)
+                                    } else {
+                                        // 搜索来源的曲目没有专辑名：先补一次详情，
+                                        // 否则详情页首帧标题是空白的
+                                        scope.launch {
+                                            val detail = KugouRepository
+                                                .getAlbumDetail(knownId)
+                                                .getOrNull()
+                                            navigateOnlineAlbum(
+                                                albumId = knownId,
+                                                name = detail?.name?.takeIf { it.isNotBlank() }
+                                                    .orEmpty(),
+                                                cover = detail?.coverUrl
+                                                    ?.takeIf { it.isNotBlank() }
+                                                    ?: cover
+                                            )
+                                        }
+                                    }
+                                } else if (albumName.isEmpty()) {
+                                    toastOpenFailed()
+                                } else {
+                                    // 身份表没登记（老版本解析的歌）：按专辑名搜索一次
+                                    scope.launch {
+                                        val resolved = KugouRepository
+                                            .searchAlbumIdByName(albumName)
+                                            .getOrNull()
+                                        if (resolved.isNullOrBlank()) {
+                                            toastOpenFailed()
+                                        } else {
+                                            navigateOnlineAlbum(resolved, albumName, cover)
+                                        }
+                                    }
+                                }
                             }
                         }
 
