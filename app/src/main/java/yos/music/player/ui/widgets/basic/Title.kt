@@ -812,6 +812,25 @@ internal class TitleBarGlassContext(
 internal val LocalTitleBarGlass = compositionLocalOf<TitleBarGlassContext?> { null }
 
 /**
+ * 顶栏「更多」下拉菜单的采样源：「页面原始内容 + 顶栏材质表面」的组合层。
+ *
+ * 与 [LocalTitleBarGlass] 分开两条的**唯一原因**是开关语义不同：那条同时充当
+ * 「这颗钮是不是液态玻璃圆钮」的开关（[TitleBarIcon] 据此选 42dp 玻璃钮或 28dp
+ * 扁平圆钮），只能在「工具栏液态玻璃」开启时 provide；本条的消费者是
+ * [yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu]，两种开关状态下都应该
+ * 采到「顶栏已经模糊 + 叠过页面底色」的表面 —— 关闭玻璃时顶栏本身退化为均匀
+ * 14dp 模糊 + 0.7 页面色，同样把结果导出进 barSurfaceBackdrop，这里照样组合。
+ *
+ * 顶栏材质节点住在 AnimatedVisibility 里：滚回顶部后节点卸载，但导出层
+ * **不会**留下过期快照 —— detach 时 [com.kyant.backdrop.backdrops.LayerBackdrop]
+ * 的 layerCoordinates 被清空，采样直接 return（DrawBackdropNode.onDetach），
+ * 组合结果此时退化为纯页面内容。
+ *
+ * 类型是 [Backdrop] 而非 LayerBackdrop：下发的是 [rememberCombinedBackdrop] 的组合层。
+ */
+internal val LocalTitleBarMenuBackdrop = compositionLocalOf<Backdrop?> { null }
+
+/**
  * 设置页玻璃弹层（LiquidDropdown）的采样源：Title 页滚动内容层背景。
  * 弹层用它对背后的列表内容做 vibrancy+blur 玻璃化；无上下文时弹层走近实色兜底。
  */
@@ -1004,12 +1023,18 @@ fun TitleBar(
                             // 恒定半径模糊，并叠一层半透明页面底色，取代原先的纯色块。
                             // 走的是本库的 drawPlainBackdrop + blur，与底栏/迷你条的
                             // drawBackdrop 材质同一套 backdrop 链路（都不是 Haze）。
+                            //
+                            // exportedBackdrop 与玻璃分支同等传：栏内玻璃控件（顶栏「更多」
+                            // 下拉菜单）要采样「模糊 + 0.7 底色」之后的表面，而不是栏下原始
+                            // 内容。导出内容 = drawBackdropLayer + onDrawSurface，不含节点自身
+                            // 内容（见 DrawBackdropNode.drawCardContents）。
                             val pageColor =
                                 LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
                             Modifier.drawPlainBackdrop(
                                 backdrop = backdrop,
                                 shape = { androidx.compose.ui.graphics.RectangleShape },
                                 effects = { blur(14.dp.toPx()) },
+                                exportedBackdrop = barSurfaceBackdrop,
                                 onDrawSurface = { drawRect(pageColor.copy(alpha = 0.7f)) }
                             )
                         }
@@ -1108,20 +1133,28 @@ fun TitleBar(
 
                     if (rightBarIcon != null) {
                         Row(Modifier.fillMaxSize().padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-                            // 关闭"工具栏液态玻璃"时不提供玻璃上下文，TitleBarIcon 退回
-                            // flamingo 原始扁平圆钮（无 backdrop/折射/边缘光）。
+                            // 采样源两种开关状态都下发（见 LocalTitleBarMenuBackdrop）：
+                            // 关闭"工具栏液态玻璃"时顶栏照样把「14dp 模糊 + 0.7 页面色」
+                            // 导出进 barSurfaceBackdrop，「更多」菜单因此采到模糊后的表面。
+                            // LocalTitleBarGlass 仍只在开启时 provide —— 它是
+                            // TitleBarIcon 的玻璃钮开关，放开会让扁平圆钮变成 42dp 玻璃钮。
                             if (SettingsLibrary.BarBlurEffect) {
                                 CompositionLocalProvider(
                                     LocalTitleBarGlass provides TitleBarGlassContext(
                                         backdrop = barGlassBackdrop,
                                         backdropAlpha = { glassBackdropAlpha.value },
                                         shadowAlpha = { glassShadowAlpha.value }
-                                    )
+                                    ),
+                                    LocalTitleBarMenuBackdrop provides barGlassBackdrop
                                 ) {
                                     rightBarIcon()
                                 }
                             } else {
-                                rightBarIcon()
+                                CompositionLocalProvider(
+                                    LocalTitleBarMenuBackdrop provides barGlassBackdrop
+                                ) {
+                                    rightBarIcon()
+                                }
                             }
                         }
                     }

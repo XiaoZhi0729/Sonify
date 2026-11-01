@@ -1696,6 +1696,18 @@ class MainActivity : BaseActivity() {
                                     val shellAnimatingForDraw by rememberUpdatedState(
                                         shellAnimating
                                     )
+                                    // 运动期装饰层门禁的绘制期副本 + 廉价描边的几何/配色。
+                                    // 全部在 draw 阶段读取，不新增逐帧重组。
+                                    val shellDecorOffForDraw by rememberUpdatedState(
+                                        shellDecorationsOff(
+                                            glassProbe,
+                                            shellDragDisplaced.value,
+                                            playerMotionJob.value != null
+                                        )
+                                    )
+                                    val shellShapeForDraw by rememberUpdatedState(shellShape)
+                                    val shellIsNightForDraw by rememberUpdatedState(shellIsNight)
+                                    val shellFillAnimForDraw = remember(shellFillAnim) { shellFillAnim }
                                     val shellProgressForDraw by rememberUpdatedState(yosBottomSheetConfig.progress)
                                     val shellBackdropDrawEnabled by rememberUpdatedState(glassProbe.shellBackdropDraw)
                                     val shellColorForDraw by rememberUpdatedState(color)
@@ -1800,11 +1812,14 @@ class MainActivity : BaseActivity() {
                                                         // 完全一致）：WrapHighlightStyle 沿轮廓整圈连续，左右最深、
                                                         // 上下保留 baseline=0.4，黑边不会在上下消失。白色提亮高光
                                                         // 由下方 emptyBackdrop 覆盖层单独叠加。
-                                                        // 门禁保留：运动期 / progress>=0.5 / 探针 nohigh 时为 null
-                                                        // （库内 highlight 每帧 record 离屏层，展开掉帧主因）。
+                                                        //
+                                                        // 门禁：运动期一律摘掉（库内每帧 record 一个壳尺寸的离屏层
+                                                        // 并新建 BlurMaskFilter + 跑 AGSL，是这条动画的最大头，
+                                                        // 真机实测摘掉后"超级流畅"）；progress>=0.5 摘掉；探针
+                                                        // nohigh 摘掉。运动期观感由 drawShellCheapRim 补偿。
                                                         highlight = {
                                                             if (!glassProbe.shellHighlight ||
-                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1823,7 +1838,7 @@ class MainActivity : BaseActivity() {
                                                         },
                                                         shadow = {
                                                             if (!glassProbe.shellShadow ||
-                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1879,7 +1894,7 @@ class MainActivity : BaseActivity() {
                                                         // 分支：运动期/展开期/探针 nohigh 时不画。
                                                         highlight = {
                                                             if (!glassProbe.shellHighlight ||
-                                                                shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1897,7 +1912,7 @@ class MainActivity : BaseActivity() {
                                                             )
                                                         },
                                                         shadow = {
-                                                            if (shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                            if (shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                     playerMotionJob.value != null) ||
                                                                 yosBottomSheetConfig.progress >= 0.5f
                                                             ) null
@@ -1951,6 +1966,36 @@ class MainActivity : BaseActivity() {
                                                     }
                                                 } else Modifier
                                             )
+                                            // 运动期廉价描边：替代上方被摘掉的黑边环绕高光环与下方白高光层。
+                                            //
+                                            // 为什么需要它：运动期把三个昂贵装饰层（各一个壳尺寸上下的离屏
+                                            // 录制）全摘掉后，边缘会整个消失、起手/落位各一次硬切；这条用几条
+                                            // 绘制指令把观感补回来，成本与那三层差两个数量级。
+                                            //
+                                            // 挂在纯色覆盖层之后、白高光层之前：叠在壳面之上，与静止态的
+                                            // 叠层顺序（玻璃面 → 白边 → 黑环）一致。
+                                            //
+                                            // alpha 双语义：运动期按 progress 走 edgeFade 的补集（复刻"描边在
+                                            // 0.5 淡到 0"的原门禁，避免接近全屏时突然出现一圈描边）；落位后
+                                            // 复用 shellFillAnim 的 200ms 淡出，与重新出现的昂贵装饰层交叉过渡，
+                                            // 落位那一帧不会硬切。
+                                            .then(
+                                                if (glassProbe.motionCheapRim) {
+                                                    Modifier.drawBehind {
+                                                        val rimAlpha =
+                                                            if (shellDecorOffForDraw) {
+                                                                1f - smoothStep(0.30f, 0.50f, shellProgressForDraw)
+                                                            } else {
+                                                                shellFillAnimForDraw.value
+                                                            }
+                                                        drawShellCheapRim(
+                                                            shape = shellShapeForDraw,
+                                                            isNight = shellIsNightForDraw,
+                                                            glowAlpha = rimAlpha,
+                                                        )
+                                                    }
+                                                } else Modifier
+                                            )
                                             // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight
                                             // 一致）：angle=90 直上直下，亮在上下直边；挂在 emptyBackdrop 上
                                             // 不再采样玻璃内容，不会盖住下层的黑色环绕高光。门禁与黑边一致。
@@ -1961,7 +2006,7 @@ class MainActivity : BaseActivity() {
                                                     effects = {},
                                                     highlight = {
                                                         if (!glassProbe.shellHighlight ||
-                                                            shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                            shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                 playerMotionJob.value != null) ||
                                                             yosBottomSheetConfig.progress >= 0.5f
                                                         ) null
@@ -1987,7 +2032,7 @@ class MainActivity : BaseActivity() {
                                                         // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
                                                         // 门禁与白高光一致。
                                                         if (!glassProbe.shellHighlight ||
-                                                            shellInMotion(glassProbe, shellDragDisplaced.value,
+                                                            shellDecorationsOff(glassProbe, shellDragDisplaced.value,
                                                                 playerMotionJob.value != null) ||
                                                             yosBottomSheetConfig.progress >= 0.5f
                                                         ) {
@@ -2169,6 +2214,7 @@ class MainActivity : BaseActivity() {
                                                 mediaViewModel = mediaViewModel,
                                                 navController = rootNavController,
                                                 onOpenArtist = openArtistFromPlayer,
+                                                onOpenAlbum = openAlbumFromPlayer,
                                                 isPlayingStatusLambda = { isPlaying.value },
                                                 isPlayingOnChanged = {
                                                     isPlaying.value = it
@@ -3807,16 +3853,100 @@ private fun TabletMiniContent(
 }
 
 /**
- * 播放壳是否正处于运动中（拖拽中，或展开/收起动画的 Job 还活着）。
+ * 播放壳是否要在运动期（拖拽中，或展开/收起动画的 Job 还活着）**摘掉三个昂贵装饰层**
+ * （黑边环绕高光环 / 投影环 / 白高光层）。
  *
  * 写成文件级私有函数而不是 composable 内的局部 fun：局部 fun 一旦捕获外部变量，每次外层重组
  * 都会新建一个包装对象，而这个作用域在动画期间是逐帧重组的——正好是要优化的那条路径。
  *
  * 两个运动信号来自动画生命周期而不是延时/阈值判定：运动 Job 为 null 是"落定"的唯一可靠
  * 信号，用 progress==1 会因 anchor 漂移永远等不到（见 shellRadius 的同款注释）。
+ *
+ * 返回 true 时调用点的 highlight/shadow 槽拿到 null，库就不会建那两个每帧重录的离屏层。
+ * 观感由 [drawShellCheapRim] 用几条绘制指令补偿回来，见 [GlassProbe.motionCheapRim]。
  */
-private fun shellInMotion(
+private fun shellDecorationsOff(
     probe: GlassProbe,
     dragActive: Boolean,
     motionJobAlive: Boolean,
-): Boolean = probe.dropDecorationsInMotion && (dragActive || motionJobAlive)
+): Boolean = !probe.motionExpensiveDecorations && (dragActive || motionJobAlive)
+
+/**
+ * 运动期的**廉价描边**：替代被 [shellDecorationsOff] 摘掉的黑边环绕高光环与白高光层。
+ *
+ * 只用绘制指令，不开任何离屏层、不建模糊、不跑 RuntimeShader —— 与原来三个
+ * `highlightLayer.record()` / `shadowLayer.record()` 是全屏量级的差别。
+ *
+ * 目标观感对齐静止态的 ClassYaba 配方（数值见调用点的高光环与白高光层）：
+ *  - 黑边整圈环绕、左右最深、上下保留 baseline（原 WrapHighlightStyle angle=0 / baseline=0.4）；
+ *  - 白色提亮亮在上下直边（原 HighlightStyle.Default angle=90）；
+ *  - 上下各一条 6dp 白渐变带（原白高光层的 onDrawSurface）。
+ * 横向/纵向渐变是对原 AGSL 强度曲线的线性近似（falloff=0.9 本来也接近线性）。
+ *
+ * @param glowAlpha 整体淡出系数：运动期 1，落位后随 [animFillAlpha] 的 200ms 淡出一起退场，
+ *   与重新出现的昂贵装饰层重叠一小段，避免落位那一帧出现描边的硬切。
+ */
+private fun DrawScope.drawShellCheapRim(
+    shape: androidx.compose.ui.graphics.Shape,
+    isNight: Boolean,
+    glowAlpha: Float,
+) {
+    if (glowAlpha <= 0.001f) return
+    val outline = shape.createOutline(size, layoutDirection, this)
+
+    // ---- ① 黑边环绕（近似 WrapHighlightStyle：左右最深，中线保留 baseline=0.4）----
+    val rimAlpha = if (isNight) 0.4f else 0.5f
+    val rimColor = Color.Black.copy(alpha = rimAlpha * glowAlpha)
+    drawOutline(
+        outline = outline,
+        brush = Brush.horizontalGradient(
+            0f to rimColor,
+            // 垂直中线 = 上下边缘处的最弱值（baseline × 最深处），与 baseline=0.4 对齐
+            0.5f to rimColor.copy(alpha = rimColor.alpha * 0.4f),
+            1f to rimColor,
+        ),
+        style = Stroke(width = (if (isNight) 0.4f else 0.5f).dp.toPx()),
+        blendMode = BlendMode.SrcOver,
+    )
+
+    // ---- ② 白色提亮边（近似 HighlightStyle.Default angle=90：亮在上下直边）----
+    val whiteAlpha = if (isNight) 0.1f else 0.2f
+    val edgeColor = Color.White.copy(alpha = whiteAlpha * glowAlpha)
+    drawOutline(
+        outline = outline,
+        brush = Brush.verticalGradient(
+            0f to edgeColor,
+            // 左右中线处最弱（原 Default 的强度在 angle 垂直中点归零，这里留一丝以免断边）
+            0.5f to edgeColor.copy(alpha = edgeColor.alpha * 0.15f),
+            1f to edgeColor,
+        ),
+        style = Stroke(width = 1f.dp.toPx()),
+        blendMode = BlendMode.Plus,
+    )
+
+    // ---- ③ 上下两条白渐变带（原配方逐值照搬，含 6dp 高度与 Plus 叠加）----
+    val glowColor = Color.White.copy(alpha = whiteAlpha * glowAlpha)
+    val glowH = 6.dp.toPx()
+    if (size.height <= glowH * 2f || size.width <= 0f) return
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to glowColor,
+            1f to Color.Transparent,
+            startY = 0f,
+            endY = glowH,
+        ),
+        size = Size(size.width, glowH),
+        blendMode = BlendMode.Plus,
+    )
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color.Transparent,
+            1f to glowColor,
+            startY = size.height - glowH,
+            endY = size.height,
+        ),
+        topLeft = Offset(0f, size.height - glowH),
+        size = Size(size.width, glowH),
+        blendMode = BlendMode.Plus,
+    )
+}

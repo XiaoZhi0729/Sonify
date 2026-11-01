@@ -15,8 +15,9 @@ import android.provider.Settings
  * saveLayer 有 30 次来自底栏。所以只量壳会得出"玻璃不是瓶颈"的错误结论。
  *
  * **形状是"默认 = 线上应有的行为"**，开关只做消融，所以同一个包就能自己 A/B，不需要两个构建、
- * 也不受编译期差异污染。两个例外：[dropDecorationsInMotion] 量不出收益所以默认关；
- * [producerAlwaysMounted] 默认保持改动前的常驻行为（按需挂载有首帧闪空 backdrop 的未验证风险）。
+ * 也不受编译期差异污染。例外：[motionExpensiveDecorations] 默认 **false**（运动期摘掉三个昂贵
+ * 装饰层已是线上行为，见该字段注释），[producerAlwaysMounted] 默认保持改动前的常驻行为
+ * （按需挂载有首帧闪空 backdrop 的未验证风险）。
  *
  * 默认路径已用**逐像素 A/B** 验过与改动前一致：HEAD 构建与本构建在同一受控页面（搜索页，底栏
  * 背后为纯黑）同位置截图，底栏带与迷你条带的逐通道平均差均为 0.00；而故意打开 `navcontainer`
@@ -53,14 +54,34 @@ data class GlassProbe(
     val shellProducer: Boolean = true,
     /** 壳内背景光效是否绘制。它每帧 invalidate，逼着全屏生产者重录。开关：nobgeff */
     val shellBackgroundEffect: Boolean = true,
-    /** 运动期间（拖拽中或动画 Job 存活）是否摘掉高光环与投影环。
+    /**
+     * 运动期间（拖拽中或动画 Job 存活）是否**照画**壳的三个昂贵装饰层
+     * （黑边环绕高光环 / 投影环 / 白高光层）。
      *
-     * **默认关**：这台机器上同包 A/B 量不出收益（帧耗时中位数 23.3ms vs 22.7ms，在 ±3ms 噪声内），
-     * 而它确实改了观感——动画期间描边和投影会消失。不为零收益的东西付出可见代价。
-     * （旧机那批 ab*.txt 里 highlight 值 ~17ms 的结论在本机不复现，见下方 scope 说明。）
-     * 开关：dropdecor
+     * **默认 false = 运动期一律摘掉**。理由不再是"本机量不出收益"，而是**量出来了**：
+     * 2026-10-31 在 onyx 上置 `dropdecor` 实测，开关播放器从"卡"变成"超级超级流畅"
+     * （用户原话），且静止态观感完全不变——说明这三层就是这条动画的全部大头。
+     *
+     * 机制（对照库源码）：`HighlightNode.draw` 每帧 `highlightLayer.record(壳尺寸)` 并新建
+     * BlurMaskFilter、跑 WrapHighlight 的 AGSL RuntimeShader；`ShadowNode.draw` 每帧录一个
+     * `壳 + radius*4`（radius 默认 24dp → 四条边各 +96dp，近满时比屏还大）的离屏层并强制
+     * Offscreen 合成；白高光层挂在 emptyBackdrop 上，其 highlight 同样每帧录一层壳尺寸。
+     * 三层合计 ≈ 每帧 3 个接近全屏的离屏录制。
+     *
+     * 注意历史上"本机量不出收益"的旧结论（帧耗时 23.3 vs 22.7，在噪声内）已被这次真机
+     * 感知结果推翻：噪声里的帧耗时中位数掩盖了重尾，观感差异远比中位数显著。
+     *
+     * 开关：motiondecor（置 true = 恢复旧行为，仅供同包 A/B）
      */
-    val dropDecorationsInMotion: Boolean = false,
+    val motionExpensiveDecorations: Boolean = false,
+    /**
+     * 运动期用一条**廉价描边**补偿被摘掉的装饰层：单条横向渐变 stroke（近似黑边环绕高光）
+     * + 上下两条白渐变带（与静止态同配方）。只有几条绘制指令，无离屏层、无模糊、无 RuntimeShader。
+     *
+     * 默认 true。置 false 就等于"运动期完全没有描边"，用于量这条补偿本身的成本。
+     * 开关：nocheaprim
+     */
+    val motionCheapRim: Boolean = true,
 
     // ---- 底栏 scope（上一批开关只覆盖播放壳，所以量不到真正的主因）----------------
 
@@ -159,7 +180,8 @@ data class GlassProbe(
             "nolum" to { copy(shellLuminance = false) },
             "noproducer" to { copy(shellProducer = false) },
             "nobgeff" to { copy(shellBackgroundEffect = false) },
-            "dropdecor" to { copy(dropDecorationsInMotion = true) },
+            "dropdecor" to { copy(motionExpensiveDecorations = true) },
+            "nocheaprim" to { copy(motionCheapRim = false) },
             "nohiddendraw" to { copy(houseLayersDrawWhenHidden = false) },
             "housemodalpha" to { copy(houseModulateAlpha = true) },
             "navplain" to { copy(navContainerGlass = false, navHiddenProducer = false, navTabGlass = false) },

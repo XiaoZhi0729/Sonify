@@ -28,6 +28,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.emptyBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitleBarGlass
+import yos.music.player.ui.widgets.basic.LocalTitleBarMenuBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -85,10 +86,15 @@ fun TitleBarGlassMenu(
     val barGlass = LocalTitleBarGlass.current
     val materialAlpha = if (barGlass != null) barGlass.backdropAlpha() else 1f
     val pageBackdrop = LocalTitlePageBackdrop.current ?: remember { emptyBackdrop() }
-    // 优先用顶栏给出的组合层（页面内容 + 顶栏材质表面）——顶栏玻璃上下文存在时
-    // 说明本菜单正渲染在 TitleBar 的 rightBarIcon 槽内，与返回键采同一份背景，
-    // 两者在滚动叠加模糊表面后的明暗必须一致。
-    val resolvedBackdrop = backdrop ?: barGlass?.backdrop ?: pageBackdrop
+    // 采样源优先级（从高到低）：
+    // 1. 调用方显式传的 backdrop；
+    // 2. 顶栏玻璃上下文（仅「工具栏液态玻璃」开启时存在）：页面内容 + 顶栏材质表面；
+    // 3. 顶栏菜单采样源（开关两种状态都下发）：同上组合层 —— 关闭玻璃时顶栏是
+    //    14dp 均匀模糊 + 0.7 页面色，同样导出进 barSurfaceBackdrop，故这里采到的
+    //    仍是"模糊后的表面"而不是栏下原始内容；
+    // 4. 页面内容层（兜底：不在顶栏槽内、或页面无 Title 脚手架时）。
+    val resolvedBackdrop = backdrop ?: barGlass?.backdrop
+        ?: LocalTitleBarMenuBackdrop.current ?: pageBackdrop
     val hapticFeedback = LocalHapticFeedback.current
     val density = LocalDensity.current
     val shadowPaddingPx = with(density) { LiquidGlassDropdownShadowPadding.toPx() }
