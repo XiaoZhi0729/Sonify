@@ -33,4 +33,20 @@ internal object PlaylistTrackOrder {
             compareBy<KugouPlaylistTrack> { it.sortOrder }.thenByDescending { it.collectTime }
         )
     }
+
+    /**
+     * 歌单封面源：取「最新添加歌曲」的封面——即 `sort` 最小的那首（`sort=0` 是列表第一行）。
+     *
+     * 排序口径与 [byServerSort] 一致（并列时收藏时间新的在前），缺 `sort` 的曲目不参与
+     * 比较：绝不能让它冒充第一首，那等于用一首位置未知的歌决定整张封面。
+     * 封面为空的曲目跳过（取下一首），全无可用封面时返回 null 由调用方回落服务端 `pic`。
+     */
+    fun newestCover(tracks: List<KugouPlaylistTrack>): String? =
+        tracks.asSequence()
+            .filter { !it.coverUrl.isNullOrEmpty() }
+            .filter { it.sortOrder != PLAYLIST_SORT_MISSING }
+            .minWithOrNull(
+                compareBy<KugouPlaylistTrack> { it.sortOrder }.thenByDescending { it.collectTime }
+            )
+            ?.coverUrl
 }

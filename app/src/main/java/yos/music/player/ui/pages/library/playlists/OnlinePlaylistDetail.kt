@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -100,7 +101,9 @@ import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.CollectedPlaylistsObject
 import yos.music.player.data.objects.MyPlaylistsCache
+import yos.music.player.data.objects.PlaylistCoverCache
 import yos.music.player.data.repositories.KugouPlaylist
+import yos.music.player.data.repositories.PlaylistTrackOrder
 import yos.music.player.data.repositories.playlistSourceIdentity
 import yos.music.player.ui.UI
 import yos.music.player.native.KugouApiService
@@ -179,7 +182,13 @@ fun OnlinePlaylistDetail(
     val source = routeSelection?.source
     val playlistId = routeSelection?.id
     val playlistName = routeSelection?.name.orEmpty()
-    val coverUrl = routeSelection?.cover.orEmpty()
+    // 封面是可变的：进页带的是列表页给的图，拿到歌单内全量曲目后按「最新添加歌曲的封面」
+    // 校正（用户自定义过封面时不校正）。见下方 loadTracks 成功分支。
+    val routeCover = routeSelection?.cover.orEmpty()
+    val coverState = remember(playlistId, KugouAccountState.userid) {
+        mutableStateOf(routeCover)
+    }
+    val coverUrl = coverState.value
     val songCount = routeSelection?.songCount
     val playlistIntro = routeSelection?.intro
     val hasSelection = routeSelection != null
@@ -273,7 +282,13 @@ fun OnlinePlaylistDetail(
         if (source == PlaylistSelection.Source.User) {
             MyPlaylistsCache.get().onSuccess { list ->
                 if (accountUserid == KugouAccountState.userid) {
-                    userEntry.value = list.firstOrNull { it.listid == playlistId || it.gid == playlistId }
+                    val entry = list.firstOrNull { it.listid == playlistId || it.gid == playlistId }
+                    userEntry.value = entry
+                    // 首帧封面校正：路由带来的可能是列表页「尾部页推测」的结果或过期值，
+                    // 命中按版本校验的缓存就用它；随后全量曲目加载完成会再精确校正一次。
+                    entry?.let { PlaylistCoverCache.read(it) }?.let { cached ->
+                        if (cached != coverState.value) coverState.value = cached
+                    }
                 }
             }
         }
@@ -357,18 +372,30 @@ fun OnlinePlaylistDetail(
     LaunchedEffect(Unit) {
         snapshotFlow { searchExpanded.value }.drop(1).collect { expanded ->
             if (expanded) {
-                // 键盘要**立刻**弹：之前等 shape 收敛（f≥0.995）才 requestFocus，
-                // 用户点完要干等 300~400ms 才看到键盘，反馈迟钝。
+                // 键盘要**立刻**弹，不等形变收敛（之前等 f≥0.995，用户点完要干等
+                // 300~400ms 才见到键盘）。
                 //
-                // 展开层在 f=0 时就已参与组合（expandedLayerPresent 跟随 expanded），
-                // 输入框节点此刻已存在，所以点完当帧就能聚焦。
-                // 唯一要注意的是 requestFocus 只能在节点 attach 之后调用：
-                // 用 yield() 让出一次，等这次组合/布局跑完再请求。
+                // 但「立刻」不等于「同一协程帧」：这一刻展开层还没组合、
+                // BasicTextField 节点也不在窗口里，requestFocus 会静默失败
+                // （又被 runCatching 吞掉，表现为「点了没反应，得再手动点一下」）。
+                // 必须等到那一帧真正跑完组合 + 布局 + 绘制，节点 attach 之后才行 ——
+                // 用 withFrameNanos 等一个真实的绘制帧，而不是 yield()。
                 //
-                // 焦点落在 42dp 宽的输入框上会不会撑变形？不会 ——
-                // 输入框的宽度由外层 layout 决定（跟随 fraction），焦点不影响布局。
-                kotlinx.coroutines.yield()
-                runCatching { searchFieldFocus.requestFocus() }
+                // 这样键盘仍然远早于动画结束出现：形变是 300ms 级的，而这里只等 1~2 帧。
+                //
+                // 再加一层重试兜底：设备忙/首帧较慢时单帧可能还没 attach。
+                // FocusRequester 在目标节点尚未 attach 时会抛 IllegalStateException，
+                // 隔一帧重试即可；最多三次（总计不到 50ms，感知仍是「立即」）。
+                //
+                // 不探测「是否真的拿到了焦点」：FocusRequester 没有这个 API，
+                // 而这里只要保证键盘被请求过 —— 输入框一旦 attach 就会自动成为焦点。
+                for (attempt in 0 until 3) {
+                    withFrameNanos { }
+                    if (runCatching { searchFieldFocus.requestFocus() }.isSuccess) break
+                }
+                // 即使三次都被拒（极端：节点始终未 attach），也把键盘请求发出去：
+                // 用户至少能看到键盘，焦点会在节点 attach 后自动落上 ——
+                // 这比「点了什么都不发生」是更好的降级。
                 keyboardController?.show()
             } else {
                 snapshotFlow { searchMorph.value }.first { it <= 0.005f }
@@ -501,6 +528,23 @@ fun OnlinePlaylistDetail(
             result
                 .onSuccess { list ->
                     tracks.value = list
+                    // 封面校正：这里的曲目已按服务端 sort 升序排好，第一首就是「最新添加」
+                    // 的那首（列表第一行），比列表页的尾部页猜测更精确且零网络。
+                    // 仅在确定歌单属于本账号且没自定义过封面时覆盖；userEntry 尚未读到
+                    // （null）时不动，避免自定义封面先被顶掉再翻回来。
+                    if (source == PlaylistSelection.Source.User && list.isNotEmpty()) {
+                        val entry = userEntry.value
+                        val entryId = entry?.listid?.ifEmpty { entry.gid }
+                        val applicable = entry != null && entry.usesTrackCover && !entry.isCustomPic
+                        if (applicable) {
+                            PlaylistTrackOrder.newestCover(list)?.let { newest ->
+                                if (coverState.value != newest) coverState.value = newest
+                                entryId?.takeIf { it.isNotEmpty() }?.let {
+                                    PlaylistCoverCache.write(it, PlaylistCoverCache.version(entry), newest)
+                                }
+                            }
+                        }
+                    }
                     // 挂起歌单的待加歌在 ops 队列里（服务端列表为空是常态），不能误报空态
                     val hasQueuedAdds = pendingEntry.value?.ops?.any { it.startsWith("A|") } == true
                     status.value = if (list.isEmpty() && !hasQueuedAdds) "empty" else "ok"
@@ -1097,6 +1141,9 @@ fun OnlinePlaylistDetail(
                                 if (tracks.value.isNotEmpty()) {
                                     OnlinePlaylistCache.write(context, pageCacheKey, tracks.value)
                                 }
+                                // 歌单内容变了，封面缓存作废；封面随后按剩余曲目就地重算
+                                PlaylistCoverCache.invalidate(playlistId.orEmpty())
+                                PlaylistTrackOrder.newestCover(tracks.value)?.let { coverState.value = it }
                             }
                             KugouSyncCoordinator.notifyPlaylistsChanged()
                         }
@@ -1135,7 +1182,12 @@ fun OnlinePlaylistDetail(
                 result
                     .onSuccess {
                         if (entry != null) pendingEntry.value = PendingPlaylistStore.get(entry.localId)
-                        else loadTracks()
+                        else {
+                            // 加歌后封面要跟着变（新歌成为「最新添加」）；作废缓存再重拉，
+                            // 重拉成功的 onSuccess 分支会用新曲目重新定位封面
+                            PlaylistCoverCache.invalidate(playlistId.orEmpty())
+                            loadTracks()
+                        }
                         // 通知歌单列表等页面同步（歌曲数/封面变化）
                         KugouSyncCoordinator.notifyPlaylistsChanged()
                     }

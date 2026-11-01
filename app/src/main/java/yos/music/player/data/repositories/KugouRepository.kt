@@ -97,7 +97,13 @@ data class KugouPlaylist(
     @SerializedName("specialId") val specialId: String = "",
     @SerializedName("listCreateUserid") val listCreateUserid: String = "",
     @SerializedName("listCreateGid") val listCreateGid: String = "",
-    @SerializedName("isEdit") val isEdit: Boolean? = null
+    @SerializedName("isEdit") val isEdit: Boolean? = null,
+    /** `is_custom_pic=1`：用户在这个歌单上自定义过封面，服务端 `pic` 是用户选的图
+     *  （路径 `/custom/{size}/`），必须原样保留；`0` 是服务端自动生成的封面（`/stdmusic/{size}/`），
+     *  按「最新添加歌曲的封面」重建。 */
+    @SerializedName("isCustomPic") val isCustomPic: Boolean = false,
+    /** `list_ver`：服务端歌单版本号，加删歌/重排序都会变，用作封面缓存的失效依据。 */
+    @SerializedName("listVer") val listVer: Int = 0
 ) {
     val isCollectedPlaylist: Boolean get() = type == 1 && (source == 1 || source == 3)
     /** The original source gid is separate from this account's listid (the delete target). */
@@ -105,6 +111,9 @@ data class KugouPlaylist(
         listCreateGid
     val canEditTracks: Boolean get() = type != 1 && !isCollectedPlaylist && source != 2 &&
         (isEdit ?: (type == 0 && (source == 0 || source == 1)))
+    /** 封面是否由「歌单内最新添加歌曲」决定：仅自己创建的歌单与系统歌单（我喜欢/默认收藏）。
+     *  收藏的他人歌单（[isCollectedPlaylist]）与收藏的专辑（source==2）沿用服务端封面。 */
+    val usesTrackCover: Boolean get() = !isCollectedPlaylist && source != 2
 }
 
 /** 精选歌单（/top/playlist 实测：data.special_list[]；封面 imgurl/flexible_cover 含 {size}）。
@@ -3009,8 +3018,8 @@ object KugouRepository {
             runCatching {
                 val p = arr.getJSONObject(i)
                 // 封面取链对齐 Dart KugouPlaylistBrief：sizable_cover/imgurl/img/pic/cover_url/cover；
-                // 实测部分歌单（如默认“我喜欢”）这些字段均为空，
-                // 由 resolvePlaylistCover 通过 /playlist/detail 兜底
+                // 实测部分歌单（如默认“我喜欢”）这些字段均为空，此时封面由
+                // PlaylistCoverCache 按「歌单内最新添加歌曲」重建
                 val rawCover = p.optString("sizable_cover", "")
                     .ifEmpty { p.optString("imgurl", "") }
                     .ifEmpty { p.optString("img", "") }
@@ -3036,7 +3045,13 @@ object KugouRepository {
                         "1", "true" -> true
                         "0", "false" -> false
                         else -> null
-                    }
+                    },
+                    // 自定义封面标记：1/"true" 才保留服务端 pic，其余按最新歌曲重建封面
+                    isCustomPic = when (p.opt("is_custom_pic")?.toString()) {
+                        "1", "true" -> true
+                        else -> false
+                    },
+                    listVer = p.optInt("list_ver", 0)
                 )
             }.getOrNull()
         }.filter { it.listid.isNotEmpty() || it.gid.isNotEmpty() }
@@ -3263,6 +3278,11 @@ object KugouRepository {
      * 歌单封面兜底（情况 B）：/user/playlist 的 pic/imgurl 为空时，
      * 通过 /playlist/detail?ids=<gid> 取封面（对齐 Dart getPlaylistDetail + KugouPlaylistBrief 取链）。
      * 接口也未返回封面时返回 null（情况 C，UI 用默认占位图，不伪造 URL）。
+     *
+     * 目前的调用者是 [PlaylistCoverCache] 的调用方之外没有：封面规则已改为
+     * 「歌单内最新添加歌曲的封面」，只有取不到曲目封面时才需要服务端封面，
+     * 而那种情况直接沿用 `/user/playlist` 已解析的 `coverUrl` 即可。
+     * 保留此函数供「已知 gid 但没有任何歌单元数据」的场景使用。
      */
     suspend fun resolvePlaylistCover(playlist: KugouPlaylist): String? = withContext(Dispatchers.IO) {
         try {
@@ -3720,26 +3740,64 @@ suspend fun getRecommendPlaylistSongCount(globalCollectionId: String): Result<In
         }
 
     /**
-     * 歌单封面兜底第三级：/user/playlist 与 /playlist/detail 均无封面时，
-     * 取歌单第一页歌曲中第一首有封面的歌作为歌单封面（不伪造 URL，全无则 null）。
-     * 只拉首页小批量（pagesize=30），避免为一张封面拉全量曲目。
+     * 歌单封面取值：取歌单内**最新添加**歌曲的封面（`sort` 最小的那首）。
+     *
+     * 关键在分页方向：`/playlist/track/all/new` 的数组按 `collecttime` 旧→新返回
+     * （实测 100 首歌单 `page=1` 首曲 `sort=99`，即最旧的排在最前），所以「最新添加的
+     * 那批歌」在**尾部**。取首屏页会拿到歌单里最早加的那首歌的封面。
+     *
+     * 先按 `songCount` 一次把全量拉下来（实测 `pagesize` 可超 100 且 `page=1` 就能
+     * 拿到全部），只有在返回条数明显不足、且拿不到可用封面时才退化到尾部页——
+     * 这样不依赖「page 越大越新」这个未验证的假设。仍无可用封面返回 null，
+     * 由调用方保留服务端 `pic`。
      */
-    suspend fun resolvePlaylistCoverFromTracks(listid: String): String? =
+    suspend fun resolvePlaylistCoverFromTracks(listid: String, songCount: Int): String? =
         withContext(Dispatchers.IO) {
             try {
-                KugouApiService.getInstance().getPlaylistSongsByListid(listid, 1, 30)
-                    .getOrNull()?.let { json ->
-                        val data = json.optJSONObject("data") ?: json
-                        val arr = data.optJSONArray("info")
-                            ?: data.optJSONArray("songs")
-                            ?: data.optJSONArray("list")
-                        arr?.let { parsePlaylistTracks(it) }
-                    }?.firstOrNull { !it.coverUrl.isNullOrEmpty() }?.coverUrl
+                if (listid.isEmpty() || songCount <= 0) return@withContext null
+                val api = KugouApiService.getInstance()
+                // 一次拉全量：与 getPlaylistSongs 同款分页字段（info/songs/list 三形态）
+                val fullJson = api.getPlaylistSongsByListid(listid, 1, songCount.coerceAtMost(MAX_COVER_FETCH))
+                    .getOrNull()
+                val full = fullJson?.let { parseTrackArray(it) }
+                val fromFull = full?.let { PlaylistTrackOrder.newestCover(it) }
+                if (!fromFull.isNullOrEmpty()) return@withContext fromFull
+                // 退化：全量里没有可用封面（或响应被截断）时，逐页往后翻到最后
+                val pages = ((songCount + NEWEST_COVER_PAGE_SIZE - 1) / NEWEST_COVER_PAGE_SIZE)
+                    .coerceIn(1, MAX_COVER_PAGES)
+                var page = pages
+                repeat(TAIL_PAGE_FALLBACKS + 1) {
+                    if (page < 1) return@repeat
+                    val arr = api.getPlaylistSongsByListid(listid, page, NEWEST_COVER_PAGE_SIZE)
+                        .getOrNull()?.let { parseTrackArray(it) }
+                    val cover = arr?.let { PlaylistTrackOrder.newestCover(it) }
+                    if (!cover.isNullOrEmpty()) return@withContext cover
+                    page -= 1
+                }
+                null
             } catch (e: Exception) {
                 Log.e(TAG, "resolvePlaylistCoverFromTracks exception", e)
                 null
             }
         }
+
+    /** 曲目数组三形态（info/songs/list），取封面与拉全量共用。 */
+    private fun parseTrackArray(json: JSONObject): List<KugouPlaylistTrack>? {
+        val data = json.optJSONObject("data") ?: json
+        val arr = data.optJSONArray("info")
+            ?: data.optJSONArray("songs")
+            ?: data.optJSONArray("list")
+            ?: return null
+        return parsePlaylistTracks(arr)
+    }
+
+    /** 取封面时单次请求的曲目上限（防止异常大歌单一次拉爆）。 */
+    private const val MAX_COVER_FETCH = 1000
+
+    /** 退化到尾部页时的页大小与页数上限。 */
+    private const val NEWEST_COVER_PAGE_SIZE = 30
+    private const val MAX_COVER_PAGES = 40
+    private const val TAIL_PAGE_FALLBACKS = 2
 
     /** 搜索结果 → 仅展示用 [YosMediaItem]（uri 为空，复用现有 MusicList Item 视觉规范）。 */
     fun toDisplayMediaItem(song: KugouSearchSong): YosMediaItem = YosMediaItem(

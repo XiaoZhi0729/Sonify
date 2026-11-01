@@ -40,6 +40,7 @@ import yos.music.player.R
 import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.CollectedPlaylistsObject
+import yos.music.player.data.objects.PlaylistCoverCache
 import android.widget.Toast
 import yos.music.player.data.repositories.KugouPlaylist
 import yos.music.player.data.repositories.KugouRepository
@@ -75,12 +76,9 @@ import yos.music.player.ui.navigation.popBackStackSafely
  * + 统一分割线，与本地歌曲列表一致。
  */
 
-/** 已解析歌单封面持久缓存（listid/gid → url）：「我喜欢」等系统歌单在 /user/playlist
- *  返回里封面字段为空，三级兜底是网络请求，不缓存的话每次进列表页行封面都会先空窗
- *  显示兜底占位图再"弹出"；落盘后进页（含冷启动）即用上次解析结果。 */
-private val playlistCoverCache: MMKV by lazy { MMKV.mmkvWithID("kugou_playlist_cover_cache") }
-
-/** 删除传播挂起存储：删除已提交但云端尚未消失（~5s）期间跨页面/跨冷启存续。 */
+/**
+ * 删除传播挂起存储：删除已提交但云端尚未消失（~5s）期间跨页面/跨冷启存续。
+ */
 private val playlistDeletePending: MMKV
     get() = MMKV.mmkvWithID("kugou_playlist_pending_del_${KugouAccountState.userid.orEmpty()}")
 
@@ -167,13 +165,13 @@ fun OnlinePlaylists(
                     // 空壳显示出来只会造成困惑；一旦有歌（count>0）照常出现。
                     // 只按 is_def 判定，勿用名字匹配（酷狗可能返回同名普通歌单）。
                     val visibleRaw = CollectedPlaylistsObject.mergeEntries(rawList).filterNot { it.source == 2 || (it.isDef == 1 && it.songCount == 0) }
-                    // 先立即填充上次解析出的封面（MMKV 落盘）：「我喜欢」等系统歌单
-                    // /user/playlist 不返回封面，进页瞬间行 coverUrl 为空会先闪兜底占位图，
-                    // 种子数据消掉空窗；下方后台兜底仍会重跑，结果变化时行内热更新
+                    // 首帧封面：封面规则 =「歌单内最新添加歌曲的封面」，除非用户自定义过封面
+                    // （is_custom_pic=1，服务端 pic 就是用户选的图）或这是别人/收藏的歌单。
+                    // 命中上次算好的缓存就先用它（零网络），否则先用服务端 pic 顶上，
+                    // 避免行封面先空窗再"弹出"；随后后台重算，结果变化时行内热更新。
                     var list = visibleRaw.map { pl ->
-                        if (pl.coverUrl.isEmpty()) {
-                            pl.copy(coverUrl = playlistCoverCache.decodeString(pl.listid.ifEmpty { pl.gid }).orEmpty())
-                        } else pl
+                        val cached = PlaylistCoverCache.read(pl)
+                        if (cached != null) pl.copy(coverUrl = cached) else pl
                     }
                     // ---- 挂起删除合并 ----
                     // id/名字仍在服务端列表 → 继续过滤；已消失 → 清除挂起
@@ -205,25 +203,22 @@ fun OnlinePlaylists(
                         }
                     }
 
-                    // 空封面歌单兜底（情况 B）：惰性走 /playlist/detail，不阻塞列表渲染；
-                    // 详情接口也无封面时再降级取歌单内第一首有封面的歌（情况 C），
-                    // 三级都无则保持空（占位图展示，不伪造 URL）
+                    // 封面规整（后台）：自己创建的歌单（含「我喜欢」「默认收藏」）封面 =
+                    // 歌单内最新添加歌曲的封面，除非用户自定义过封面。缓存按 listVer+count
+                    // 校验，只有歌单内容真变了才重算；算不出来的保留服务端 pic，不清空。
                     scope.launch {
-                        visibleRaw.filter { it.coverUrl.isEmpty() }.forEach { pl ->
-                            if (accountUserid != KugouAccountState.userid) return@forEach
-                            var cover = KugouRepository.resolvePlaylistCover(pl)
-                            if (cover.isNullOrEmpty()) {
-                                cover = KugouRepository.resolvePlaylistCoverFromTracks(
-                                    pl.listid.ifEmpty { pl.gid }
-                                )
-                            }
-                            if (!cover.isNullOrEmpty() && accountUserid == KugouAccountState.userid) {
-                                playlistCoverCache.encode(pl.listid.ifEmpty { pl.gid }, cover)
+                        visibleRaw.filter { it.usesTrackCover && !it.isCustomPic && it.songCount > 0 }
+                            .forEach { pl ->
+                                if (accountUserid != KugouAccountState.userid) return@forEach
+                                val cover = PlaylistCoverCache.ensure(pl) ?: return@forEach
+                                if (accountUserid != KugouAccountState.userid) return@forEach
+                                val key = playlistKey(pl)
                                 playlists.value = playlists.value.map {
-                                    if (it.listid == pl.listid && it.gid == pl.gid) it.copy(coverUrl = cover) else it
+                                    if (playlistKey(it) == key && it.coverUrl != cover) {
+                                        it.copy(coverUrl = cover)
+                                    } else it
                                 }
                             }
-                        }
                     }
                     playlists.value = list
                     if (list.isEmpty()) {

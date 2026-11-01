@@ -13,6 +13,7 @@ import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.PlaylistCoverCache
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.navigation.PlaylistSelection
@@ -67,14 +68,15 @@ fun FavoriteSongsPage(
             return@LaunchedEffect
         }
         val listid = fav.listid.ifEmpty { fav.gid }
-        // 封面：接口字段优先；为空时沿用已解析的封面（resolvePlaylistCover 无缓存、每次都走网络）
-        var cover = fav.coverUrl.ifEmpty { selection.value?.cover.orEmpty() }
+        // 封面规则与其他在线歌单一致：最新添加歌曲的封面（用户自定义过封面则沿用服务端 pic）。
+        // 命中缓存零网络；算不出来时保留接口字段，不清空。
+        var cover = PlaylistCoverCache.read(fav).orEmpty()
+        if (cover.isEmpty()) cover = fav.coverUrl.ifEmpty { selection.value?.cover.orEmpty() }
         if (cover.isEmpty()) {
-            cover = runCatching { KugouRepository.resolvePlaylistCover(fav) }.getOrNull().orEmpty()
+            cover = runCatching { PlaylistCoverCache.ensure(fav) }.getOrNull().orEmpty()
         }
         if (cover.isEmpty()) {
-            cover = runCatching { KugouRepository.resolvePlaylistCoverFromTracks(listid) }
-                .getOrNull().orEmpty()
+            cover = fav.coverUrl
         }
         selection.value = PlaylistSelection(
             source = PlaylistSelection.Source.User,

@@ -187,18 +187,21 @@ internal fun MorphSearchField(
     // 展开层是否参与组合。折叠态必须为 false（否则隐形输入框会吞掉圆钮的点击），
     // 收起时延后一个动画时长再卸载，让淡出能播完。
     //
-    // 用 remember（不带 key）+ 显式同步，而不是 remember(expanded)：
-    // 带 key 会在每次展开/收起的瞬间重建状态，收起延迟还没跑完就被重置，
-    // 展开层可能被提前卸载（淡出被截断）或被遗留（下次进来仍占着点击区）。
-    var expandedLayerPresent by remember { mutableStateOf(expanded) }
+    // 展开方向必须**同步**参与组合（不能靠 LaunchedEffect 补一个 true）：
+    // 调用方点完搜索钮就要立刻 requestFocus，如果展开层还等下一次重组才出现，
+    // 那一帧的 FocusRequester 是悬空的 —— 表现为「点了没反应，得再手动点一下输入框」。
+    // 所以展开时直接由 expanded 决定，只有收起方向才走延迟卸载。
+    var keepMountedWhileCollapsing by remember { mutableStateOf(false) }
     LaunchedEffect(expanded) {
         if (expanded) {
-            expandedLayerPresent = true
+            keepMountedWhileCollapsing = true
         } else {
             delay(SearchMorphDurationMs)
-            expandedLayerPresent = false
+            keepMountedWhileCollapsing = false
         }
     }
+    // expanded 为 true 的那一帧就已经是 true —— FocusRequester 在同帧可用
+    val expandedLayerPresent = expanded || keepMountedWhileCollapsing
 
     // 外层：铺满操作行（调用方已给固定高度），只负责按插值后的坐标摆放内层
     Box(
