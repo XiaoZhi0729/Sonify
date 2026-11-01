@@ -259,8 +259,8 @@
     <string name="settings_performance_lyric_timing_offset">歌詞タイミング調整</string>
     <string name="settings_performance_lyric_timing_offset_desc">正の値で歌詞が早く、負の値で遅く表示されます。</string>
     <string name="settings_performance_lyric_device_title">デバイス歌詞</string>
-    <string name="settings_performance_lyric_bluetooth_lyric">カーオーディオ用 Bluetooth 歌詞</string>
-    <string name="settings_performance_lyric_bluetooth_lyric_desc">音声が Bluetooth で再生されているとき、現在の歌詞行をカーナビに表示します。カーナビと通知は同じメディアセッションを共有するため、通知のタイトルも連動して切り替わります。</string>
+    <string name="settings_performance_lyric_notification">通知の歌詞</string>
+    <string name="settings_performance_lyric_notification_desc">現在の歌詞行を通知、ロック画面、カーナビに表示します。音声の出力方法には関係ありません。オフにすると曲名が表示されます。</string>
     <string name="settings_others_about_contact_us">お問い合わせ</string>
     <string name="settings_others_about_contact_us_desc">Telegram チャンネルにアクセスしてください。</string>
     <string name="settings_others_about_developer_coolapk">開発者のCoolApkページへ。</string>

@@ -343,8 +343,8 @@
     <string name="settings_performance_lyric_timing_offset">歌词时间偏移</string>
     <string name="settings_performance_lyric_timing_offset_desc">正值让歌词提前显示，负值让歌词延后显示。</string>
     <string name="settings_performance_lyric_device_title">设备歌词</string>
-    <string name="settings_performance_lyric_bluetooth_lyric">车载蓝牙歌词</string>
-    <string name="settings_performance_lyric_bluetooth_lyric_desc">音频走蓝牙时，把当前歌词行显示在车机上。车机与通知栏共用同一条媒体会话，所以通知栏标题也会同步变化。</string>
+    <string name="settings_performance_lyric_notification">通知栏歌词</string>
+    <string name="settings_performance_lyric_notification_desc">把当前歌词行显示在通知栏、锁屏与车机上，不受音频输出方式影响。关闭后这些位置显示歌名。</string>
     <string name="settings_others_about_contact_us">联系我们</string>
     <string name="settings_others_about_contact_us_desc">前往我们的 Telegram 频道。</string>
     <string name="settings_others_about_developer_coolapk">前往开发者的酷安主页。</string>

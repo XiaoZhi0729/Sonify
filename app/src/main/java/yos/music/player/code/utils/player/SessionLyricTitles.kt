@@ -1,12 +1,12 @@
 package yos.music.player.code.utils.player
 
 /**
- * 车载蓝牙歌词的元数据改写规则（纯函数，便于单测）。
+ * 通知栏歌词的元数据改写规则（纯函数，便于单测）。
  *
- * 车机 AVRCP 只读标准 MediaMetadata：把当前歌词行写进 title，artist 让位给
- * 「歌手 - 歌名」，让车机同时看得到正在唱什么、以及这是哪首歌。
+ * 通知栏/锁屏/车机读的都是同一条 MediaSession 的标准 MediaMetadata：把当前歌词行写进
+ * title，artist 让位给「歌手 - 歌名」，让副标题同时看得到正在唱什么、以及这是哪首歌。
  */
-object BluetoothSessionTitles {
+object SessionLyricTitles {
 
     /**
      * 歌词行生效时的标题。空白行返回 null——空标题会让部分车机显示空白行，

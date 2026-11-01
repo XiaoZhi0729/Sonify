@@ -150,24 +150,24 @@ fun LyricSetting(navController: NavController) =
 
                         GroupSpacer()
 
-                        // 设备歌词：把当前行写进会话标题，供车机/蓝牙设备显示
+                        // 设备歌词：把当前行写进会话标题，通知栏/锁屏/车机一起显示
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
 
                         RoundColumn {
                             SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_bluetooth_lyric),
+                                title = stringResource(id = R.string.settings_performance_lyric_notification),
                                 onClick = {
-                                    SettingsLibrary.BluetoothLyricEnabled =
-                                        !SettingsLibrary.BluetoothLyricEnabled
+                                    SettingsLibrary.NotificationLyricEnabled =
+                                        !SettingsLibrary.NotificationLyricEnabled
                                     // 关闭时立刻把通知栏/车机标题还给歌名，不等下一行歌词
-                                    if (!SettingsLibrary.BluetoothLyricEnabled) {
-                                        MediaController.clearBluetoothLyric()
+                                    if (!SettingsLibrary.NotificationLyricEnabled) {
+                                        MediaController.clearSessionLyric()
                                     }
                                 },
-                                checkedLambda = { SettingsLibrary.BluetoothLyricEnabled }
+                                checkedLambda = { SettingsLibrary.NotificationLyricEnabled }
                             )
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_bluetooth_lyric_desc))
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_notification_desc))
 
                         GroupSpacer()
 

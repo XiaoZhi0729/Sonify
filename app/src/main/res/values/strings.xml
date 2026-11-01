@@ -343,8 +343,8 @@
     <string name="settings_performance_lyric_timing_offset">Lyric Timing Offset</string>
     <string name="settings_performance_lyric_timing_offset_desc">Positive values show lyrics earlier, negative values show them later.</string>
     <string name="settings_performance_lyric_device_title">Device Lyrics</string>
-    <string name="settings_performance_lyric_bluetooth_lyric">Car Bluetooth Lyrics</string>
-    <string name="settings_performance_lyric_bluetooth_lyric_desc">Show the current lyric line on your car head unit while audio is routed to Bluetooth. The notification title changes too, because car units and notifications share the same media session.</string>
+    <string name="settings_performance_lyric_notification">Notification Lyrics</string>
+    <string name="settings_performance_lyric_notification_desc">Show the current lyric line in the notification, on the lock screen and on your car head unit, regardless of the audio output. When off, these show the song title.</string>
     <string name="settings_others_about_contact_us">Contact Us</string>
     <string name="settings_others_about_contact_us_desc">Visit our Telegram channel.</string>
     <string name="settings_others_about_developer_coolapk">Visit the developer\'s CoolApk profile.</string>

@@ -171,7 +171,13 @@ fun Settings(navController: NavController) =
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_play_history),
                                 // desc = stringResource(id = R.string.settings_play_history_desc),
-                                onClick = { },
+                                // 这里以前是空实现 onClick = { }：点了开关完全不动，只能靠
+                                // 「重置所有设置」去改；而 MusicLibrary.recordRecentlyPlayed
+                                // 一直在真读这个值，等于「最近播放」的记录关不掉。
+                                onClick = {
+                                    SettingsLibrary.ListenHistory =
+                                        !SettingsLibrary.ListenHistory
+                                },
                                 checkedLambda = { SettingsLibrary.ListenHistory }
                             )
 
@@ -237,6 +243,12 @@ fun Settings(navController: NavController) =
                             Divider()
                             LabelItem(title = stringResource(id = R.string.settings_storage_data_storage)) {
                                 navController.toUI(UI.Settings.DataStorage)
+                            }
+                            Divider()
+                            // 设备编解码器清单：纯只读诊断（列的是系统全部 audio/video codec），
+                            // 放在「音频解码器」页会被误以为能改，所以归到诊断这一组。
+                            LabelItem(title = stringResource(id = R.string.settings_audio_exoplayer_support_mediacodec)) {
+                                navController.toUI(UI.Settings.MediaCodec)
                             }
                             Divider()
                             DiagLogSwitchItem()

@@ -79,8 +79,7 @@ import yos.music.player.code.utils.lrc.LyricInfoSerializer
 import yos.music.player.code.MediaController as YosControllerObject
 import yos.music.player.code.utils.player.CrossfadeExo
 import yos.music.player.code.vocalsep.VocalSeparationController
-import yos.music.player.code.utils.player.BluetoothOutputMonitor
-import yos.music.player.code.utils.player.BluetoothSessionTitles
+import yos.music.player.code.utils.player.SessionLyricTitles
 import yos.music.player.code.utils.player.FadeExo
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
@@ -844,14 +843,14 @@ object MediaController {
                             }
                         }
 
-                        // 车载蓝牙歌词：不放在上面的 isPlaying 门控里——暂停后车机仍应停在
-                        // 当前行，且开关关闭/蓝牙断开时要能自愈回歌名。本段的判据是
+                        // 通知栏歌词：不放在上面的 isPlaying 门控里——暂停后通知栏仍应停在
+                        // 当前行，且开关关闭时要能自愈回歌名。本段的判据是
                         // 「目标标题 ≠ 会话条目标题」，重复读取只做一次比较，无副作用。
                         runCatching {
                             val currentMediaId = musicPlaying.value?.mediaId
                             val entries = MediaViewModelObject.lrcEntries.value
                             // 歌词归属门禁：切歌瞬间旧的 lrcEntries 还没清空，不加这道
-                            // 校验就会把上一首的歌词推给车机
+                            // 校验就会把上一首的歌词推给通知栏
                             val owned = currentMediaId != null &&
                                 MediaViewModelObject.lyricMediaId.value == currentMediaId
                             val lineIndex = when {
@@ -869,7 +868,7 @@ object MediaController {
                                 ?.mainLyric?.joinToString("") { it.second }
                                 ?.trim()
                                 ?.takeIf { it.isNotEmpty() }
-                            setBluetoothLyricLine(line)
+                            setSessionLyricLine(line)
                         }
                     }
 
@@ -1192,52 +1191,52 @@ object MediaController {
         return lyricSessionGeneration
     }
 
-    // ---------- 车载蓝牙歌词 ----------
+    // ---------- 通知栏歌词 ----------
     //
-    // 车机 AVRCP 只读标准 MediaMetadata（title/artist/album/封面），没有专用歌词通道：
-    // 把当前歌词行写进 title、artist 改成「歌手 - 歌名」，由系统自行映射到车机。
+    // 通知栏、锁屏、车机 AVRCP 与系统媒体控件读的都是同一条 MediaSession 的
+    // MediaMetadata（title/artist/album/封面），没有专用歌词通道：把当前歌词行写进
+    // title、artist 改成「歌手 - 歌名」，四处就一起变成歌词。与音频走不走蓝牙无关。
     // media3 1.4.0 的 replaceMediaItem 在 URI 未变时走 updateMediaSourcesWithMediaItems
     // 原位更新，不重建 MediaSource、不重新 prepare、不重置进度、不触发
     // onMediaItemTransition——所以逐行改写不会打到换曲逻辑（历史上报/歌词重置）。
 
     /** 逐行提交的最小间隔：位置抖动会让同一行反复触发，合并窗口内只提交一次。 */
-    private const val BT_LYRIC_MIN_COMMIT_INTERVAL_MS = 300L
+    private const val LYRIC_MIN_COMMIT_INTERVAL_MS = 300L
 
     /** 待下发的当前歌词行；null 表示恢复真实歌名。 */
-    private var bluetoothLyricLine: String? = null
-    private var bluetoothLyricCommitAt = 0L
-    private var bluetoothLyricPending: Runnable? = null
+    private var sessionLyricLine: String? = null
+    private var sessionLyricCommitAt = 0L
+    private var sessionLyricPending: Runnable? = null
 
     /**
      * 会话标题当前是否被本功能改写过。没有这个状态就不能安全地按「标题与原始值不一致」
      * 去纠偏：功能关闭时若 musicPlaying 与条目本就有别的差异，每 70ms 的 ticker 会把
      * 不相干的标题差异当成待纠正的漂移，静默改写别人正在维护的元数据。
      */
-    private var bluetoothTitleRewritten = false
+    private var sessionTitleRewritten = false
 
-    private fun bluetoothLyricActive(): Boolean =
-        BluetoothOutputMonitor.isActive && SettingsLibrary.BluetoothLyricEnabled
+    private fun sessionLyricActive(): Boolean = SettingsLibrary.NotificationLyricEnabled
 
-    private fun bluetoothLyricDesiredLine(): String? =
-        if (bluetoothLyricActive()) bluetoothLyricLine?.takeIf { it.isNotBlank() } else null
+    private fun sessionLyricDesiredLine(): String? =
+        if (sessionLyricActive()) sessionLyricLine?.takeIf { it.isNotBlank() } else null
 
     /**
      * 会话标题的目标值；null 表示**不要碰标题**。
      *
-     * 只有两种情况允许改写：蓝牙歌词正在生效（写当前行），或本功能此前改写过、现在
+     * 只有两种情况允许改写：通知栏歌词正在生效（写当前行），或本功能此前改写过、现在
      * 需要复原（写回原始歌名）。功能从未介入时一律返回 null——元数据标题归其它链路管，
      * 这里不能因为 musicPlaying 与条目有任何差异就顺手覆盖。
      */
     private fun desiredSessionTitle(original: YosMediaItem?): String? {
-        BluetoothSessionTitles.titleFor(bluetoothLyricDesiredLine())?.let { return it }
-        return if (bluetoothTitleRewritten) original?.title else null
+        SessionLyricTitles.titleFor(sessionLyricDesiredLine())?.let { return it }
+        return if (sessionTitleRewritten) original?.title else null
     }
 
-    /** 蓝牙歌词生效时 artist 让位给「歌手 - 歌名」，把曲名保留给车机可见。 */
+    /** 歌词生效时 artist 让位给「歌手 - 歌名」，把曲名保留在副标题里可见。 */
     private fun desiredSessionArtist(original: YosMediaItem?): String? {
-        val line = bluetoothLyricDesiredLine()
-        if (line == null) return if (bluetoothTitleRewritten) original?.artists else null
-        return BluetoothSessionTitles.artistFor(original?.title, original?.artists, line)
+        val line = sessionLyricDesiredLine()
+        if (line == null) return if (sessionTitleRewritten) original?.artists else null
+        return SessionLyricTitles.artistFor(original?.title, original?.artists, line)
     }
 
     private fun sessionTitleMatches(item: MediaItem, original: YosMediaItem?): Boolean {
@@ -1249,38 +1248,38 @@ object MediaController {
     }
 
     /**
-     * 下发当前歌词行（null = 恢复真实歌名）。由服务侧 70ms ticker 与设置页/路由回调调用。
+     * 下发当前歌词行（null = 恢复真实歌名）。由服务侧 70ms ticker 与设置页调用。
      *
      * 判据是「目标标题与实际会话条目标题不一致」而不是「行变了」：音质切换、队列排序都会
-     * 用原始 YosMediaItem 重建条目把标题还原成歌名，按行去重会导致车机停在歌名直到下一行。
+     * 用原始 YosMediaItem 重建条目把标题还原成歌名，按行去重会导致通知栏停在歌名直到下一行。
      */
-    fun setBluetoothLyricLine(line: String?) {
-        bluetoothLyricLine = line
+    fun setSessionLyricLine(line: String?) {
+        sessionLyricLine = line
         // 功能未激活、且本功能从未改写过会话标题：绝不触碰会话。ticker 是 70ms 一次的，
         // 不加这道门禁会把与本功能无关的元数据差异当成漂移反复纠正。
-        if (!bluetoothLyricActive() && !bluetoothTitleRewritten) return
+        if (!sessionLyricActive() && !sessionTitleRewritten) return
         val controller = mediaControl ?: return
         val item = controller.currentMediaItem ?: return
         if (!sessionMediaMatches(item)) return
         val original = musicPlaying.value ?: return
         if (sessionTitleMatches(item, original)) {
             // 会话已处于目标状态：按目标是不是歌词行同步标记，供关闭后自愈
-            bluetoothTitleRewritten = bluetoothLyricDesiredLine() != null
+            sessionTitleRewritten = sessionLyricDesiredLine() != null
             return
         }
-        scheduleBluetoothLyricCommit()
+        scheduleSessionLyricCommit()
     }
 
-    /** 关闭开关/断开蓝牙：立即恢复真实歌名，不等下一行。 */
-    fun clearBluetoothLyric() {
-        setBluetoothLyricLine(null)
+    /** 关闭开关：立即恢复真实歌名，不等下一行。 */
+    fun clearSessionLyric() {
+        setSessionLyricLine(null)
     }
 
     /** 切歌时丢弃在途的当前行与已排队的提交（不动会话，避免把旧歌名写到新条目上）。 */
-    internal fun resetBluetoothLyricTracking() {
-        bluetoothLyricPending?.let { lyricHandler.removeCallbacks(it) }
-        bluetoothLyricPending = null
-        bluetoothLyricLine = null
+    internal fun resetSessionLyricTracking() {
+        sessionLyricPending?.let { lyricHandler.removeCallbacks(it) }
+        sessionLyricPending = null
+        sessionLyricLine = null
     }
 
     /**
@@ -1290,17 +1289,17 @@ object MediaController {
     private fun sessionMediaMatches(item: MediaItem): Boolean =
         item.mediaId != null && item.mediaId == musicPlaying.value?.mediaId
 
-    private fun scheduleBluetoothLyricCommit() {
-        if (bluetoothLyricPending != null) return
-        val sinceLast = SystemClock.uptimeMillis() - bluetoothLyricCommitAt
-        val delay = (BT_LYRIC_MIN_COMMIT_INTERVAL_MS - sinceLast).coerceAtLeast(0L)
-        val run = Runnable { runBluetoothLyricCommit() }
-        bluetoothLyricPending = run
+    private fun scheduleSessionLyricCommit() {
+        if (sessionLyricPending != null) return
+        val sinceLast = SystemClock.uptimeMillis() - sessionLyricCommitAt
+        val delay = (LYRIC_MIN_COMMIT_INTERVAL_MS - sinceLast).coerceAtLeast(0L)
+        val run = Runnable { runSessionLyricCommit() }
+        sessionLyricPending = run
         lyricHandler.postDelayed(run, delay)
     }
 
-    private fun runBluetoothLyricCommit() {
-        bluetoothLyricPending = null
+    private fun runSessionLyricCommit() {
+        sessionLyricPending = null
         runCatching {
             val controller = mediaControl ?: return
             val index = controller.currentMediaItemIndex
@@ -1323,16 +1322,16 @@ object MediaController {
                 index,
                 item.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
             )
-            bluetoothLyricCommitAt = SystemClock.uptimeMillis()
-            bluetoothTitleRewritten = bluetoothLyricDesiredLine() != null
+            sessionLyricCommitAt = SystemClock.uptimeMillis()
+            sessionTitleRewritten = sessionLyricDesiredLine() != null
             YosDiagnostics.log(
-                "BTLYRIC",
+                "LYRIC_SESSION",
                 "id" to item.mediaId,
                 "line" to desiredSessionTitle(original),
-                "restore" to (bluetoothLyricDesiredLine() == null)
+                "restore" to (sessionLyricDesiredLine() == null)
             )
         }.onFailure { e ->
-            YosDiagnostics.log("BTLYRIC_ERR", "why" to e.toString())
+            YosDiagnostics.log("LYRIC_SESSION_ERR", "why" to e.toString())
         }
     }
 
@@ -1926,10 +1925,17 @@ class YosPlaybackService : MediaSessionService() {
                     SettingsLibrary.HardwareAudioTrackPlayBackParams
                 )
                 .setExtensionRendererMode(
+                    // 三档语义（2026-11-01 修正）：以前 Auto 指向 PREFER，而 YosRenderFactory
+                    // 又自己把手build 的 FFmpeg 排在第一位，导致三档全都走软解（详见
+                    // YosRenderFactory.buildAudioRenderers 的注释）。现在软解由
+                    // DefaultRenderersFactory 自己插，档位才真正对应行为：
+                    //   Auto   = ON   → 硬件优先，软解兜底（硬解不支持的格式才轮到 FFmpeg）
+                    //   FFmpeg = PREFER → 软解优先（用于排查硬件解码出的怪声/无声）
+                    //   System = OFF  → 只用硬件
                     when (SettingsLibrary.Codec) {
-                        "Auto" -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                        "Auto" -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                         "System" -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                        else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                        else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                     }
                 )
         // 主/副 player 各持一份（LoadControl 不能跨 player 共享实例）。
@@ -2402,14 +2408,6 @@ class YosPlaybackService : MediaSessionService() {
             }
         }
 
-        // 车载蓝牙歌词：路由变化时立即自愈——断开蓝牙要马上把通知栏标题还给歌名，
-        // 不能等下一行歌词（暂停时根本没有下一行）。
-        BluetoothOutputMonitor.onChanged = { active ->
-            YosDiagnostics.log("BTLYRIC_ROUTE", "bt" to active)
-            yos.music.player.code.MediaController.clearBluetoothLyric()
-        }
-        BluetoothOutputMonitor.start(applicationContext)
-
         onServiceRunning()
     }
 
@@ -2485,7 +2483,8 @@ class YosPlaybackService : MediaSessionService() {
         val item = currentPlayer?.currentMediaItem
         val auto = yos.music.player.data.objects.PlaybackBlockState.raise(
             mediaId = item?.mediaId,
-            title = item?.mediaMetadata?.title?.toString(),
+            // 歌名取原始条目：会话条目的 title 已被通知栏歌词改写成当前歌词行
+            title = musicPlaying.value?.title,
             challenge = challenge,
             eventId = cause.eventId,
             edt = cause.edt,
@@ -2510,7 +2509,10 @@ class YosPlaybackService : MediaSessionService() {
         YosDiagnostics.log("SKIP_TO_NEXT", "attempt" to OnlineSkipState.failureCount())
         // 失败跳歌属于"不是自然播完"：副 player 里备着的可能正是这首坏曲
         CrossfadeExo.abort("error_skip")
-        val title = failedItem.mediaMetadata.title?.toString()?.takeIf { it.isNotEmpty() }
+        // 歌名取原始条目：会话条目的 title 已被通知栏歌词改写成当前歌词行
+        val original = musicPlaying.value?.takeIf { it.mediaId == failedItem.mediaId }
+        val title = original?.title?.takeIf { it.isNotEmpty() }
+            ?: failedItem.mediaMetadata.title?.toString()?.takeIf { it.isNotEmpty() }
         val toastMsg =
             if (title != null) "《$title》$reason，已跳到下一首" else "$reason，已跳到下一首"
         Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show()
@@ -2605,7 +2607,10 @@ class YosPlaybackService : MediaSessionService() {
         if (listener != null) forwardingPlayer?.removeListener(listener)
         // ② 焦点交接：副 player 预取期不抢焦点，此刻以主 player 身份接管
         //    （旧 player 收到焦点丢失而暂停——它已无人监听、音量为 0、即将释放）
-        secondary.setAudioAttributes(attrs, true)
+        //    第二个参数是 handleAudioFocus，必须跟主 player 建厂时用的同一个设置值：
+        //    以前写死 true，导致用户关掉「音频焦点」后只要发生一次自动淡入切歌，
+        //    焦点控制就悄悄回来了（设置项在下次重启前形同虚设）。
+        secondary.setAudioAttributes(attrs, SettingsLibrary.AudioAttributes)
         secondary.volume = 1f
         // ③ 重建会话外壳并迁移监听器/诊断心跳
         val newForwarding = makeForwardingPlayer(secondary)
@@ -2683,9 +2688,9 @@ class YosPlaybackService : MediaSessionService() {
         // 更新，不清就会在切歌窗口里拿旧曲的码率/采样率给新曲判档（闪一下别的值）。
         MediaViewModelObject.bitrate.intValue = 0
         MediaViewModelObject.samplingRate.intValue = 0
-        // 车载蓝牙歌词：新歌的歌词还没加载，先丢弃上一首的当前行，不让它被推到新车；
+        // 通知栏歌词：新歌的歌词还没加载，先丢弃上一首的当前行，不让它被推到通知栏；
         // 这里只清状态不写会话——此刻 musicPlaying 还停在上一首，写回会张冠李戴。
-        yos.music.player.code.MediaController.resetBluetoothLyricTracking()
+        yos.music.player.code.MediaController.resetSessionLyricTracking()
         mediaItem?.let { item ->
             // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem）：当前曲的完整
             // YosMediaItem（时长/日期等）按 mediaId 从队列快照取，快照缺失再查库，
@@ -2946,9 +2951,6 @@ class YosPlaybackService : MediaSessionService() {
         OnlineSkipState.detach()
         // 先退过渡：它持有副 player（独立于会话），放在 session 释放前后都会漏，显式收尾
         CrossfadeExo.release()
-        // 蓝牙路由监听要早于会话释放注销：回调会去碰 mediaControl
-        BluetoothOutputMonitor.onChanged = null
-        BluetoothOutputMonitor.stop()
         mediaSession?.run {
             // player 是会话外壳（ForwardingPlayer），release 透传到当前真 player——
             // 无论是否发生过扶正，释放的都是音频真相那一侧

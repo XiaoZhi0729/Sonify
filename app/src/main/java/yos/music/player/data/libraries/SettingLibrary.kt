@@ -154,16 +154,18 @@ object SettingsLibrary {
     )
 
     /**
-     * 车载蓝牙歌词：检测到蓝牙音频输出时，把当前歌词行写进媒体会话的标题下发到车机。
-     * 车机 AVRCP 只认标准的 title/artist 字段，没有专用歌词通道；因此开启且连着蓝牙时，
-     * 通知栏与锁屏的标题也会同步变成歌词行（同一条 MediaSession，无法只影响车机）。
-     * 默认关：日常用扬声器/耳机时标题保持歌名。
+     * 通知栏歌词：把当前歌词行写进媒体会话的标题。
+     *
+     * 通知栏、锁屏、系统媒体控件与车机 AVRCP 读的都是同一条 MediaSession 的
+     * MediaMetadata，没有专用歌词通道——改写 title/artist 会让四处一起变成歌词，
+     * 与音频走不走蓝牙无关（早期只在蓝牙输出时生效，故 key 里留着 bluetooth）。
+     * 默认开：这是本 App 通知栏呈现歌词的方式。
      */
     @Stable
-    var BluetoothLyricEnabled by mutableDataSaverStateOf(
+    var NotificationLyricEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_bluetooth_lyric",
-        initialValue = false
+        initialValue = true
     )
 
     /**
@@ -333,7 +335,12 @@ object SettingsLibrary {
     )
 
     /**
-     * 音频浮点输出
+     * 音频浮点输出。
+     *
+     * **已停用（2026-11-01）**：只保留键与读取，实际不再影响播放——[yos.music.player.code.YosRenderFactory]
+     * 建 sink 时无条件关掉 float 分支。原因是 media3 1.4.0 的 float 分支会静默丢弃所有人声分离
+     * 处理器，而本工程解码输出日常是 16-bit、该分支本就不触发：收益为零、触发即破坏。
+     * 设置页对应开关也已停用。留着这个字段只为旧安装的已存值能被安全读回，不做迁移。
      */
     @Stable
     var AudioFloatOutput by mutableDataSaverStateOf(
@@ -538,7 +545,7 @@ object SettingsLibrary {
         LyricLineBalance = false
         LyricBlurEffect = false
         LyricHdrEffect = false
-        BluetoothLyricEnabled = false
+        NotificationLyricEnabled = true
         LyricFontScale = 1.0f
         SmartWordByWordLyric = false
         LyricTimingOffset = 0
