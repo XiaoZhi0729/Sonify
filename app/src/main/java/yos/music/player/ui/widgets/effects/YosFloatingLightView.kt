@@ -72,7 +72,19 @@ fun YosFloatingLight(
     album: () -> Uri?,
     isPlaying: () -> Boolean,
     nowPage: () -> String,
-    showMiniPlayer: Boolean
+    showMiniPlayer: Boolean,
+    /**
+     * 运动期门禁：返回 false 时停掉漂移相位推进，画面冻结在当前帧。
+     *
+     * 存在的理由：播放壳展开/收起动画期间，壳表面已被材质门禁切成纯色过渡层，背景光效
+     * 只剩三到五成可见度且压在 65% 遮罩下；而它每帧推进相位会让全屏 backdrop 生产者
+     * 跟着重录。实测（onyx release）整块关掉：Issue 10.8→8.5ms、p50 30.4→25.8ms、
+     * 超 33ms 帧 43.5%→22.5%。
+     *
+     * 默认 `{ true }`：画廊等其它调用点行为零变化。**不要**在这里默认读 GlassProbe——
+     * 那会让画廊也受播放壳运动状态影响。
+     */
+    enabled: () -> Boolean = { true }
 ) {
     val drawable = remember {
         mutableStateOf<Drawable?>(null)
@@ -154,7 +166,8 @@ fun YosFloatingLight(
                 isPlaying = isPlaying,
                 nowPage = nowPage,
                 showMiniPlayer = showMiniPlayer,
-                fallbackToBlack = useBackground.value
+                fallbackToBlack = useBackground.value,
+                enabled = enabled
             )
         }
     }
@@ -167,7 +180,8 @@ private fun BackgroundLayer(
     isPlaying: () -> Boolean,
     nowPage: () -> String,
     showMiniPlayer: Boolean,
-    fallbackToBlack: Boolean
+    fallbackToBlack: Boolean,
+    enabled: () -> Boolean = { true }
 ) {
     val context = LocalContext.current
     val layerDrawable = remember(drawable) {
@@ -188,6 +202,15 @@ private fun BackgroundLayer(
         var accMs = 0f
         while (true) {
             withFrameNanos { now ->
+                // 运动期门禁：不推进相位，画面冻结在当前帧。这里读的是 State.value
+                // （见调用点的 rememberUpdatedState），在协程里读快照状态不会让任何
+                // composition 失效——只是这一帧不再写 phaseSec，生产者也就不会跟着重录。
+                // 复位 lastNanos/accMs：恢复后的第一帧不产生相位跳变。
+                if (!enabled()) {
+                    lastNanos = -1L
+                    accMs = 0f
+                    return@withFrameNanos
+                }
                 if (lastNanos < 0L) {
                     lastNanos = now
                     return@withFrameNanos

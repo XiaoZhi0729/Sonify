@@ -272,7 +272,6 @@ import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
-import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 import yos.music.player.ui.widgets.basic.LocalBottomOverlayHeight
 import yos.music.player.ui.widgets.dropdown.DropdownPanelDragSelectState
 import yos.music.player.ui.widgets.dropdown.DropdownTriggerState
@@ -392,7 +391,7 @@ private val MaterialFadeOutTransitionSpec
 @ExperimentalSharedTransitionApi
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-fun NowPlaying(
+internal fun NowPlaying(
     mainViewModel: MainViewModel,
     mediaViewModel: MediaViewModel,
     navController: NavController,
@@ -419,6 +418,10 @@ fun NowPlaying(
     // 外壳封面 morph 进行中时为 true：本节点停止绘制，
     // 避免与外壳的单封面层同时画出两张图。
     albumCoverSuppressed: () -> Boolean = { false },
+    // 封面按压动效状态：**由外壳层建立并传入**（不是这里 remember）。
+    // 切页后封面改由外壳 CoverMorphLayer 绘制，它也要读同一份状态才能把
+    // 松手时的倾角接着画完；状态建在本函数内则外壳读不到（松手一帧抹平）。
+    coverState: CoverArtworkState,
     // 评论页未登录时点「去登录」：由外壳在当前 Tab 的房子内 push 登录页并收回播放页
     // （播放页的 rootNavController 只挂 SharedNavHost，不能直接 navigate）。
     onOpenLogin: () -> Unit = {},
@@ -722,6 +725,7 @@ fun NowPlaying(
                     onWhile = onWhileAction,
                     lyricState = lyricScrollState,
                     onControlGesture = onControlGesture,
+                    coverState = coverState,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                     albumCoverSuppressed = albumCoverSuppressed,
                     onOpenArtist = onOpenArtist,
@@ -744,13 +748,8 @@ fun NowPlaying(
             derivedStateOf { buttonEnabled.value && alpha.value != 0f }
         }*/
 
-            // 封面交互动效状态：在竖屏常驻层建立并驱动，供**两个渲染面**共用——
-            // 大封面（按下当下）与顶栏小封面（转场交接后 morph 画的就是它那一层）。
-            // 驱动放在这里而不是渲染节点里，否则换层时动效会跟着一起消失。
-            // 触感给在按下那一刻，不跟着立即生效的点击走。
-            val coverState = rememberCoverArtworkState(
-                feedback = { Vibrator.click(context) }
-            )
+            // 封面交互动效状态由外壳层建立并传入（见参数 coverState）：
+            // 切页后外壳 CoverMorphLayer 是唯一的封面绘制者，必须读同一份状态。
 
             val scope = rememberCoroutineScope()
 
@@ -4985,8 +4984,24 @@ private fun VolumeSlider(
     }
 }
 
-/** 高潮起点标记的宽度。高度恒等于轨道高度（7dp 常态 / 10.5dp 按下），不越出画布。 */
+/** 高潮起点标记的宽度。 */
 private val ClimaxMarkWidth = 2.5.dp
+
+/**
+ * 标记高度相对轨道高度的比例：比轨道矮一档。
+ *
+ * 标记与已播放段同为纯白，若同高就会读成"已播放段的一部分"；矮一档才一眼是标记。
+ */
+private const val ClimaxMarkHeightRatio = 0.7f
+
+/**
+ * 播放头追近时的淡出长度：在这个距离内把标记淡到 0。
+ *
+ * 已播放段是纯白圆头，与纯白标记同色；两者的墨迹在中心距小于
+ * 「圆头半径 + 标记半宽」时必然相碰，粘成一坨白块，越过之后标记又瞬间消失（跳变）。
+ * 让它在被追上之前就淡干净，两段之间永远留得住间距，也没有跳变。
+ */
+private val ClimaxMarkFadeLength = 5.dp
 
 @Composable
 private fun Track(
@@ -5022,23 +5037,6 @@ private fun Track(
             trackStrokeWidth,
             StrokeCap.Round
         )
-        // 高潮起点标记：只在播放头**之后**（未播放段）出现——播放掠过即消失，
-        // 与 MD3 的高潮带「被已播放段裁掉」同一语义；同时保证它永远压在 50% 白的
-        // 轨道上，纯白才有对比度（压在纯白已播放段上会看不见）。
-        // 用 drawRoundRect 而不是 drawLine+Rounded：圆头会向外多出半个线宽，
-        // 被 M3 Slider 的轨道裁剪切平，端点处会露出半截方口。
-        if (climaxFraction != null &&
-            climaxFraction > sliderPositions.activeRange.endInclusive
-        ) {
-            val markX = lerp(sliderStart, sliderEnd, climaxFraction).x
-            val markHalf = ClimaxMarkWidth.toPx() / 2f
-            drawRoundRect(
-                color = Color.White,
-                topLeft = Offset(markX - markHalf, center.y - height.toPx() / 2f),
-                size = Size(ClimaxMarkWidth.toPx(), height.toPx()),
-                cornerRadius = CornerRadius(markHalf)
-            )
-        }
         val sliderValueEnd = Offset(
             sliderStart.x +
                     (sliderEnd.x - sliderStart.x) * sliderPositions.activeRange.endInclusive,
@@ -5058,6 +5056,32 @@ private fun Track(
             trackStrokeWidth,
             StrokeCap.Round
         )
+        // 高潮起点标记：只在播放头**之后**（未播放段）出现，并在被追上之前淡出。
+        //
+        // 画在已播放段之后，是因为已播放段是纯白不透明圆头——先画标记会被它整块盖掉。
+        //
+        // 淡出的必要性：已播放段圆头与标记同为纯白，两者墨迹在中心距小于
+        // 「圆头半径 + 标记半宽」时必然相碰，粘成一坨白块（像轨道断了一截）；
+        // 越过之后标记又瞬间消失（跳变）。按到播放头的距离淡出，保证接触前已经淡干净。
+        if (climaxFraction != null) {
+            val markX = lerp(sliderStart, sliderEnd, climaxFraction).x
+            // RTL 下"播放头之后"是 x 更小的一侧
+            val gapPx = if (isRtl) sliderValueEnd.x - markX else markX - sliderValueEnd.x
+            if (gapPx > 0f) {
+                val fade = (gapPx / ClimaxMarkFadeLength.toPx()).coerceIn(0f, 1f)
+                if (fade > 0f) {
+                    val markHalf = ClimaxMarkWidth.toPx() / 2f
+                    // 矮一档：同高会被读成已播放段的延伸，矮一档才一眼是标记
+                    val markHalfHeight = height.toPx() * ClimaxMarkHeightRatio / 2f
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = fade),
+                        topLeft = Offset(markX - markHalf, center.y - markHalfHeight),
+                        size = Size(ClimaxMarkWidth.toPx(), markHalfHeight * 2f),
+                        cornerRadius = CornerRadius(markHalf)
+                    )
+                }
+            }
+        }
         sliderPositions.tickFractions.groupBy {
             it > sliderPositions.activeRange.endInclusive ||
                     it < sliderPositions.activeRange.start

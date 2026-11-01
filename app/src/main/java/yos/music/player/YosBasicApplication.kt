@@ -243,8 +243,12 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
 
         // 迷你播放器在 MediaSession 异步连接前就会组合；先用上次保存的条目填充标题和封面，
         // 避免首帧显示默认占位。媒体会话连接后仍按下方恢复流程校正当前条目，不会因此自动播放。
+        //
+        // 这一份快照同时供下面媒体控制器连接后的恢复流程复用：loadPlayStatus() 每次都要
+        // 新建 Gson 并反序列化整份播放状态，同一次冷启动里读两遍纯属白付。
+        val restoredPlayStatus = runCatching { MusicLibrary.loadPlayStatus() }.getOrNull()
         runCatching {
-            MusicLibrary.loadPlayStatus().music?.let { lastMusic ->
+            restoredPlayStatus?.music?.let { lastMusic ->
                 yos.music.player.code.MediaController.musicPlaying.value = lastMusic
                 MediaViewModelObject.bitmap.value = lastMusic.thumb
             }
@@ -270,7 +274,8 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val playListData = MusicLibrary.loadPlayList()
-                        val playStatusData = MusicLibrary.loadPlayStatus()
+                        // 复用上面主线程那次读取的快照；只有那次失败（null）时才回源重读。
+                        val playStatusData = restoredPlayStatus ?: MusicLibrary.loadPlayStatus()
 
                         println("prepare 读取历史")
                         if (playListData.mainMusicList != null) {

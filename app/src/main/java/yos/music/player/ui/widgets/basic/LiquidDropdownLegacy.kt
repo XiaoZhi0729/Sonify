@@ -1072,11 +1072,16 @@ fun rememberLiquidDropdownFollowState(
 /**
  * 面板可用高度上限：锚点到窗口边缘的余量减去阴影外扩（24dp）与一点余量。
  *
- * **取锚点上下两侧的较大余量**，不是只算下方。定位引擎
- * （[calculateDropdownPosition]）在下方放不下时会整体翻到锚点上方，所以面板真正
- * 能用的高度是两侧的较大值；只按下方的余量封顶，会把"下方差一点、上方很空"的正常
- * 面板误判成装不下，凭空塞进一个内滚（用户实测：播放页「更多」菜单新增一行后，
- * 长度明明还够却变成了可滑动）。
+ * **可用哪一侧的余量，取决于面板的摆位**（[placement]），这一点必须显式传进来：
+ *
+ * - [LiquidDropdownPlacement.OverlayAnchor]（一级菜单）：锚点下方放不下时会整体翻到
+ *   上方，所以真正能用的是**上下两侧的较大值**。只按下方的余量封顶，会把"下方差一点、
+ *   上方很空"的正常面板误判成装不下，凭空塞进一个内滚（用户实测：播放页「更多」菜单
+ *   新增一行后，长度明明还够却变成了可滑动）。
+ * - [LiquidDropdownPlacement.StackBelowAnchor]（二级堆叠子面板）：它贴着一级面板里的
+ *   某一行**往下**长，是"这一行底下还剩多少"的关系。给它按两侧取大会让它吃掉整块上方
+ *   空间，面板从约 245dp 涨到约 528dp —— 又长又臭，而且把父面板整块盖掉，
+ *   用户实测"弹出和返回的目标位置都是错的"。
  *
  * 高度基准用 [LocalWindowInfo] 的 containerSize（**窗口坐标系的真实高**，与
  * [anchorBounds]、以及引擎里的 windowBounds 同一套坐标系），不再用
@@ -1088,7 +1093,11 @@ fun rememberLiquidDropdownFollowState(
  * 引擎在 measure 阶段另有一道硬卡（窗口高 − 底部遮罩），所以这里偏宽松是安全的。
  */
 @Composable
-fun liquidDropdownHeightCap(anchorBounds: IntRect, fallback: Dp = 420.dp): Dp {
+fun liquidDropdownHeightCap(
+    anchorBounds: IntRect,
+    placement: LiquidDropdownPlacement = LiquidDropdownPlacement.OverlayAnchor,
+    fallback: Dp = 420.dp,
+): Dp {
     if (anchorBounds == IntRect.Zero) return fallback
     val density = LocalDensity.current
     val windowInfo = LocalWindowInfo.current
@@ -1098,11 +1107,21 @@ fun liquidDropdownHeightCap(anchorBounds: IntRect, fallback: Dp = 420.dp): Dp {
     } else {
         with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     }
-    // 下方：面板展开时可见顶边压在锚点行上方，所以整段余量从锚点**顶边**量到窗口底
-    val spaceBelow = (windowPx - anchorBounds.top).coerceAtLeast(0f)
-    // 上方：翻上去时面板底边贴着锚点行，可用高度就是锚点顶边以上的全段
-    val spaceAbove = anchorBounds.bottom.toFloat().coerceAtLeast(0f)
-    val usablePx = maxOf(spaceBelow, spaceAbove)
+    val usablePx = when (placement) {
+        // 堆叠子面板：只往下长，上限就是"这一行下缘到窗口底"，与引擎的 spaceBelow 同源
+        // （引擎里还额外让出 StackGap，这点差异由下面的 40dp 余量吸收）
+        LiquidDropdownPlacement.StackBelowAnchor ->
+            (windowPx - anchorBounds.bottom).coerceAtLeast(0f)
+
+        // 一级菜单：会翻到上方，取两侧较大值
+        LiquidDropdownPlacement.OverlayAnchor -> {
+            // 下方：面板可见顶边压在锚点行上方，整段余量从锚点**顶边**量到窗口底
+            val spaceBelow = (windowPx - anchorBounds.top).coerceAtLeast(0f)
+            // 上方：翻上去时面板底边贴着锚点行，可用高度就是锚点顶边以上的全段
+            val spaceAbove = anchorBounds.bottom.toFloat().coerceAtLeast(0f)
+            maxOf(spaceBelow, spaceAbove)
+        }
+    }
     return with(density) { usablePx.toDp() }
         .minus(40.dp)
         .coerceAtLeast(150.dp)

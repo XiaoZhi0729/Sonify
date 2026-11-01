@@ -77,8 +77,13 @@ private const val CoverArtworkMaxTilt = 18f
 private const val CoverArtworkMinTiltFraction = 0.45f
 // 按下缩到 0.97：轻点常落在封面正中，此时按位置算的倾角接近 0（正面压下去本就不该歪），
 // 缩放就是唯一对所有触点都成立的按压反馈——留足一档，别让它被忽略。
-private const val CoverArtworkPressScaleDrop = 0.03f
-private const val CoverArtworkCameraDistance = 12f
+internal const val CoverArtworkPressScaleDrop = 0.03f
+// 相机距离（dp）。**像素换算在消费侧做**：Compose 的 cameraDistance 单位是像素
+// （反编译 GraphicsLayerV23.setCameraDistance 确认，中间无 density 乘法），所以
+// coverArtworkEffect 写 `CoverArtworkCameraDistance * density * scale`。
+// 外壳的 CoverMorphLayer 用 android.graphics.Camera 复刻同一透视，必须用同一条
+// 换算公式，否则接管/交回那一刻透视强度会跳。改这里等于同时改两个渲染面。
+internal const val CoverArtworkCameraDistance = 12f
 // 松手时倾角快速归零（不参与回弹）：160ms 内基本走完，封面落位时已经摆正。
 private const val CoverArtworkTiltReleaseMillis = 160
 // 抬手后"补满按下"的时长：点击是立即切页的，按下那半段（长按约 300ms 才到位）会在飞行里
@@ -154,6 +159,10 @@ internal class CoverArtworkState {
 /**
  * 建立封面状态并启动驱动。**必须在播放页宿主（跨页面切换常驻）里调用一次**，
  * 不要放进某个会随转场离开组合的渲染子树。
+ *
+ * 竖屏下这个宿主是 MainActivity 的播放器外壳层（不是 NowPlaying 内部）：外壳的
+ * CoverMorphLayer 是"切页后唯一的封面绘制者"，它也必须读同一份状态，才能把
+ * 松手时的倾角接着画完。见 CoverMorphLayer 的 coverState 参数。
  *
  * @param feedback 庆祝触感（确认是按压之后才给，不是按下瞬间）。
  */

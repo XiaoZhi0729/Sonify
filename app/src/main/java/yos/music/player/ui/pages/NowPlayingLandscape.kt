@@ -63,7 +63,6 @@ import com.blankj.utilcode.util.TimeUtils
 import yos.music.player.ui.widgets.basic.navigationBarsPadding
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import yos.music.player.code.utils.lrc.LyricEntry
-import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.artistsName
@@ -81,10 +80,10 @@ import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.kugouHash
+import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
-import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 
 /**
  * 播放页横屏适配入口：手机与平板是两套结构，在函数内按 smallestScreenWidthDp 分流。
@@ -144,6 +143,10 @@ internal fun NowPlayingLandscape(
     // 外壳封面 morph 进行中时为 true：本节点停止绘制，
     // 避免与外壳单封面层同时画出两张图。
     albumCoverSuppressed: () -> Boolean = { false },
+    // 封面按压动效状态：由外壳层建立并传入（横屏与竖屏共用同一份）。
+    // 切页后封面改由外壳 CoverMorphLayer 绘制，它也要读同一份状态才能把
+    // 松手时的倾角接着画完；状态在这里 remember 则外壳读不到（松手一帧抹平）。
+    coverState: CoverArtworkState,
     // 歌手名点击 → 艺人主页（导航与收回由外壳回调负责）
     onOpenArtist: (String) -> Unit = {},
     // 更多菜单「前往该歌曲专辑」（外壳在当前 Tab 内导航并收回播放页）
@@ -185,6 +188,7 @@ internal fun NowPlayingLandscape(
             onControlGesture = onControlGesture,
             albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
             albumCoverSuppressed = albumCoverSuppressed,
+            coverState = coverState,
             onOpenArtist = onOpenArtist,
             onOpenAlbum = onOpenAlbum,
             onOpenLogin = onOpenLogin
@@ -319,6 +323,7 @@ internal fun NowPlayingLandscape(
                     onControlGesture = onControlGesture,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                     albumCoverSuppressed = albumCoverSuppressed,
+                    coverState = coverState,
                     // 单击左列封面 = 开/关歌词（与右下歌词入口同一个 lambda）
                     onCoverClick = onLyrics,
                     onOpenArtist = onOpenArtist,
@@ -496,6 +501,8 @@ private fun LandscapeMediaColumn(
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
     // 外壳封面 morph 进行中时为 true：本节点在图层面隐藏，由外壳单封面层接管。
     albumCoverSuppressed: () -> Boolean = { false },
+    // 封面按压动效状态：由外壳层建立并传入（见 NowPlayingLandscape 的同名参数）。
+    coverState: CoverArtworkState,
     // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
     onCoverClick: () -> Unit = {},
     // 歌手名点击 → 艺人主页
@@ -522,6 +529,7 @@ private fun LandscapeMediaColumn(
                 thisMusicPlayingLambda = thisMusicPlayingLambda,
                 albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                 albumCoverSuppressed = albumCoverSuppressed,
+                coverState = coverState,
                 onCoverClick = onCoverClick
             )
         }
@@ -591,6 +599,8 @@ private fun LandscapeAlbumCover(
     topPadding: Dp = 8.dp,
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit = {},
     albumCoverSuppressed: () -> Boolean = { false },
+    // 封面按压动效状态：由外壳层建立并传入（见 NowPlayingLandscape 的同名参数）。
+    coverState: CoverArtworkState,
     // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
     onCoverClick: () -> Unit = {}
 ) {
@@ -609,12 +619,9 @@ private fun LandscapeAlbumCover(
             visibilityThreshold = 0.001f
         )
 
-        val context = LocalContext.current
         // 单击封面 = 开/关歌词：手势节点（外框）写状态，渲染面（图片）读状态。
-        // 触感给在按下那一刻，不跟着立即生效的点击走。
-        val coverState = rememberCoverArtworkState(
-            feedback = { Vibrator.click(context) }
-        )
+        // 状态由外壳层建立并传入（见参数 coverState）——切页后外壳 CoverMorphLayer
+        // 是唯一的封面绘制者，必须读同一份，否则松手时倾角被一帧抹平。
         // 闸门：横屏左列封面在所有子页面都是同一张大封面，没有"小封面态"，所以恒为 true。
         // 外壳封面 morph 期间不再作为闸门（那是 300~500ms 瞬时窗口，会把按下那一刻的动效
         // 整段挡掉；此刻真封面虽透明，但把动效挡掉只会让"点了没反应"，不做这件事）。
@@ -775,6 +782,8 @@ private fun NowPlayingLandscapePhone(
     onControlGesture: (Boolean) -> Unit,
     albumCoverCoordsOnChanged: (LayoutCoordinates) -> Unit,
     albumCoverSuppressed: () -> Boolean,
+    // 封面按压动效状态：由外壳层建立并传入（见 NowPlayingLandscape 的同名参数）。
+    coverState: CoverArtworkState,
     onOpenArtist: (String) -> Unit = {},
     onOpenAlbum: () -> Unit = {},
     onOpenLogin: () -> Unit = {}
@@ -823,6 +832,7 @@ private fun NowPlayingLandscapePhone(
                     thisMusicPlayingLambda = thisMusicPlayingLambda,
                     albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                     albumCoverSuppressed = albumCoverSuppressed,
+                    coverState = coverState,
                     // 单击封面 = 开/关歌词
                     onCoverClick = onLyrics
                 )

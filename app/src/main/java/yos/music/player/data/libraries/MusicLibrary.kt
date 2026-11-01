@@ -310,21 +310,22 @@ object MusicLibrary {
         return loadData(playStatusKey) ?: PlayStatus(null, 0L, false, 0)
     }
 
+    // 播放状态/队列的读写落在播放、切歌的热路径上，且每次冷启动都要在主线程反序列化
+    // 一次播放状态。GsonBuilder.create() 要遍历注册全部 TypeAdapterFactory，不是零成本，
+    // 而 Gson 实例本身不可变、线程安全 —— 建一次复用即可（UriTypeAdapter 无状态）。
+    private val gson: com.google.gson.Gson by lazy {
+        GsonBuilder().registerTypeAdapter(Uri::class.java, UriTypeAdapter()).create()
+    }
+
     private inline fun <reified T> updateData(key: String, value: T) {
-        val gson = GsonBuilder().registerTypeAdapter(Uri::class.java, UriTypeAdapter()).create()
-        val mmkv = MMKV.mmkvWithID(mmkvID)
         val json = gson.toJson(value)
-        mmkv.encode(key, json)
+        MMKV.mmkvWithID(mmkvID).encode(key, json)
     }
 
     private inline fun <reified T> loadData(key: String): T? {
-        val gson = GsonBuilder().registerTypeAdapter(Uri::class.java, UriTypeAdapter()).create()
-        val mmkv = MMKV.mmkvWithID(mmkvID)
-        val json = mmkv.decodeString(key)
-        return json?.let {
-            val type = object : TypeToken<T>() {}.type
-            gson.fromJson(it, type)
-        }
+        val json = MMKV.mmkvWithID(mmkvID).decodeString(key) ?: return null
+        val type = object : TypeToken<T>() {}.type
+        return gson.fromJson(json, type)
     }
 
     fun hideFolder(folder: Folder) {
