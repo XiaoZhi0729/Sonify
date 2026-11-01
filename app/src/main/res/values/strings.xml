@@ -370,6 +370,8 @@
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">Display the volume adjustment bar at the bottom of the playback page.</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry">Comments Entry</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">Show the comments entry button on the player page.</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark">Climax Marker</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">Mark where the climax begins on the progress bar (online songs).</string>
     <string name="settings_performance_ui_theme">Theme</string>
     <string name="settings_performance_ui_theme_light">Light</string>
     <string name="settings_performance_ui_theme_dark">Dark</string>

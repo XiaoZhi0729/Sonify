@@ -150,6 +150,27 @@ fun UserInterfaceSetting(navController: NavController) =
 
                         RoundColumn {
                             SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_nowplaying_show_climax_mark),
+                                onClick = {
+                                    val next = !SettingsLibrary.NowPlayingShowClimaxMark
+                                    SettingsLibrary.NowPlayingShowClimaxMark = next
+                                    // 立刻响应开关：关掉时清标记，打开时给当前曲补一次请求，
+                                    // 否则要等下一次切歌才有数据。
+                                    if (next) {
+                                        yos.music.player.data.objects.SongClimaxState.onSettingEnabled()
+                                    } else {
+                                        yos.music.player.data.objects.SongClimaxState.onSettingDisabled()
+                                    }
+                                },
+                                checkedLambda = { SettingsLibrary.NowPlayingShowClimaxMark }
+                            )
+                        }
+
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_nowplaying_show_climax_mark_desc))
+                        GroupSpacerMedium()
+
+                        RoundColumn {
+                            SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album),
                                 // desc = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album_desc),
                                 onClick = {

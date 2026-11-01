@@ -370,6 +370,8 @@
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">在播放界面的下部显示音量调节条。</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry">评论入口</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">在播放页底部显示评论入口按钮。</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark">高潮片段标记</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">在进度条上标出高潮开始的位置（在线歌曲）。</string>
     <string name="settings_performance_ui_theme">主题</string>
     <string name="settings_performance_ui_theme_light">浅色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>

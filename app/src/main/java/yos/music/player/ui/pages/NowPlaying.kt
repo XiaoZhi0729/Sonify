@@ -233,6 +233,8 @@ import yos.music.player.data.models.MainViewModel
 import yos.music.player.data.models.MediaViewModel
 import yos.music.player.data.objects.MainViewModelObject
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.data.objects.SongClimaxState
+import yos.music.player.data.repositories.climaxMarkFraction
 import yos.music.player.ui.pages.NowPlayingPage.Album
 import yos.music.player.ui.pages.NowPlayingPage.Lyric
 import yos.music.player.ui.pages.NowPlayingPage.Comment
@@ -3008,7 +3010,8 @@ private fun NowPlayingMoreMenu(
         dragSelectState = dragSelect
     ) {
         // 宽度钉死让父子两块面板对齐（列宽取前 8 个子项固有宽度，不钉会随内容跳）；
-        // 高度按锚点到屏底余量封顶，超出部分走列自带的 verticalScroll 内滚
+        // 高度按锚点到屏底余量封顶，超出部分走列自带的 verticalScroll 内滚。
+        // 一级面板走默认 OverlayAnchor（下方放不下会翻到上方，故取上下两侧较大余量）
         LiquidDropdownColumn(
             modifier = Modifier
                 .width(MoreMenuPanelWidth)
@@ -3103,7 +3106,11 @@ private fun NowPlayingMoreMenu(
             currentSong?.let { song ->
                 AddToPlaylistPickerPanel(
                     song = song,
-                    heightCap = liquidDropdownHeightCap(subAnchor),
+                    // 二级堆叠面板只往下长，上限只能是这一行下缘到窗口底
+                    heightCap = liquidDropdownHeightCap(
+                        subAnchor,
+                        LiquidDropdownPlacement.StackBelowAnchor
+                    ),
                     onBack = { section = MoreSection.Root },
                     onDismiss = onDismiss,
                 )
@@ -3112,7 +3119,12 @@ private fun NowPlayingMoreMenu(
             LiquidDropdownColumn(
                 modifier = Modifier
                     .width(MoreMenuPanelWidth)
-                    .heightIn(max = liquidDropdownHeightCap(subAnchor)),
+                    .heightIn(
+                        max = liquidDropdownHeightCap(
+                            subAnchor,
+                            LiquidDropdownPlacement.StackBelowAnchor
+                        )
+                    ),
                 onFitsOnScreen = { fits -> speedDragSelect.fitsOnScreen = fits }
             ) {
                 if (displayedSection == MoreSection.Speed) {
@@ -4446,7 +4458,15 @@ internal fun PlayerControl(
                             Track(
                                 sliderPositions = SliderPositions(
                                     initialActiveRange = 0f..(sliderPosition.floatValue / playingDuration.longValue)
-                                ), height = sliderTrackHeight
+                                ), height = sliderTrackHeight,
+                                // 高潮起点标记：数据由切歌时 SongClimaxState 异步取到，
+                                // 状态变化会重组重绘；时长未知/本地曲/开关关闭时为 null。
+                                climaxFraction = if (SettingsLibrary.NowPlayingShowClimaxMark) {
+                                    climaxMarkFraction(
+                                        SongClimaxState.startMs,
+                                        playingDuration.longValue
+                                    )
+                                } else null
                             )
                         }
                     )
@@ -4965,11 +4985,16 @@ private fun VolumeSlider(
     }
 }
 
+/** 高潮起点标记的宽度。高度恒等于轨道高度（7dp 常态 / 10.5dp 按下），不越出画布。 */
+private val ClimaxMarkWidth = 2.5.dp
+
 @Composable
 private fun Track(
     sliderPositions: SliderPositions,
     modifier: Modifier = Modifier,
-    height: Dp
+    height: Dp,
+    // 高潮起点在轨道上的归一化位置（0..1）。null = 不画（本地曲/无数据/开关关闭）。
+    climaxFraction: Float? = null
 ) = YosWrapper {
     val inactiveTrackColor = Color.White.copy(alpha = 0.5f)
     val activeTrackColor = Color.White
@@ -4997,6 +5022,23 @@ private fun Track(
             trackStrokeWidth,
             StrokeCap.Round
         )
+        // 高潮起点标记：只在播放头**之后**（未播放段）出现——播放掠过即消失，
+        // 与 MD3 的高潮带「被已播放段裁掉」同一语义；同时保证它永远压在 50% 白的
+        // 轨道上，纯白才有对比度（压在纯白已播放段上会看不见）。
+        // 用 drawRoundRect 而不是 drawLine+Rounded：圆头会向外多出半个线宽，
+        // 被 M3 Slider 的轨道裁剪切平，端点处会露出半截方口。
+        if (climaxFraction != null &&
+            climaxFraction > sliderPositions.activeRange.endInclusive
+        ) {
+            val markX = lerp(sliderStart, sliderEnd, climaxFraction).x
+            val markHalf = ClimaxMarkWidth.toPx() / 2f
+            drawRoundRect(
+                color = Color.White,
+                topLeft = Offset(markX - markHalf, center.y - height.toPx() / 2f),
+                size = Size(ClimaxMarkWidth.toPx(), height.toPx()),
+                cornerRadius = CornerRadius(markHalf)
+            )
+        }
         val sliderValueEnd = Offset(
             sliderStart.x +
                     (sliderEnd.x - sliderStart.x) * sliderPositions.activeRange.endInclusive,

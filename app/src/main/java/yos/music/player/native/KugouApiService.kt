@@ -1407,6 +1407,40 @@ class KugouApiService private constructor() {
             }
         }
 
+    /**
+     * 歌曲高潮片段（副歌区间）。
+     *
+     * 严格对应 Rust 路由（kugou_api_server/rust/src/modules/misc.rs::handle_song_climax，
+     * mod.rs 注册为 `/song/climax`）：
+     *   GET /song/climax?hash=<FileHash>
+     * 上游是 `https://expendablekmrcdn.kugou.com/v1/audio_climax/audio`，返回
+     * `{ start_time, end_time }`（毫秒，服务端预计算，客户端不做任何音频分析）。
+     *
+     * Rust 侧只读 `hash`（按逗号切分成数组），**不认 album_audio_id**，故只传 hash。
+     * 不带 x-apicache-bypass：该数据不随时间变化，让服务端 2 分钟 apicache 分担重复请求。
+     *
+     * 非 2xx 也把 body 原样带回（[httpGetAllowNonOk]）：上游业务错误（status:0 /
+     * error_code）常包在 502 里，属于"这首歌没有高潮"的合法结果，交给解析层判 null。
+     */
+    suspend fun getSongClimax(hash: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val (code, body) = httpGetAllowNonOk("/song/climax", mapOf("hash" to hash.lowercase()))
+            Log.d(TAG, "/song/climax -> HTTP $code, body length=${body.length}")
+            val json = runCatching { JSONObject(body) }.getOrNull()
+            when {
+                json != null -> Result.success(json)
+                code !in 200..299 -> Result.failure(IOException("/song/climax HTTP $code"))
+                else -> Result.failure(IOException("/song/climax invalid JSON body"))
+            }
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            Log.e(TAG, "getSongClimax exception", e)
+            Result.failure(e)
+        }
+    }
+
     /** 楼层回复（/comment/floor）：special_id 取评论区 childrenid，tid 为楼层根评论 id。 */
     suspend fun getCommentFloor(
         specialId: String,

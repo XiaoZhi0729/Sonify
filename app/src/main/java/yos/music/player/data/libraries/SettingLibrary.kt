@@ -29,6 +29,18 @@ object SettingsLibrary {
     )
 
     /**
+     * 是否在进度条上标出高潮起点（在线歌曲，数据来自酷狗服务端预计算）。
+     *
+     * 关闭时不发 `/song/climax` 请求——不只是不画，还省掉一次网络往返。
+     */
+    @Stable
+    var NowPlayingShowClimaxMark by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_show_climax_mark",
+        initialValue = true
+    )
+
+    /**
      * 应用主题
      */
     @Stable

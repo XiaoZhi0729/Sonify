@@ -278,6 +278,8 @@
     <string name="settings_performance_ui_nowplaying_show_volume_bar_desc">再生画面の下部に音量調節バーを表示します。</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry">コメント入口</string>
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">再生ページの下部にコメント入口ボタンを表示します。</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark">サビのマーカー</string>
+    <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">進行バー上にサビの開始位置を表示します（オンライン曲）。</string>
     <string name="settings_performance_ui_theme">テーマ</string>
     <string name="settings_performance_ui_theme_light">ライト</string>
     <string name="settings_performance_ui_theme_dark">ダーク</string>

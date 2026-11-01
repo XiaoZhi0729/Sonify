@@ -2704,6 +2704,9 @@ class YosPlaybackService : MediaSessionService() {
             // 缓存元数据索引：切歌时记下 hash→歌名/歌手/封面，供设置页「按歌曲清理缓存」显示歌名。
             // 与 recordRecentlyPlayed 同点位（同为一次 MMKV 写入），独立于「播放历史」开关。
             yos.music.player.data.objects.CacheSongIndex.record(yosItem)
+            // 高潮片段：进度条标记的数据源。与 CacheSongIndex.record 同点位——命中磁盘
+            // 缓存时只是一次 MMKV 读，未命中才起后台请求；本地曲直接清空不发请求。
+            yos.music.player.data.objects.SongClimaxState.onTrackChanged(yosItem.mediaId)
             // 换曲即刷新在线态镜像：isPlaying 由播放器真正态取（onIsPlayingChanged 也会推）
             pushListeningOnline(
                 currentPlayer?.isPlaying ?: MediaViewModelObject.isPlaying.value,
