@@ -87,6 +87,7 @@ import yos.music.player.data.objects.BlacklistState
 import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.MyPlaylistsCache
+import yos.music.player.data.objects.PlaylistCoverCache
 import yos.music.player.data.repositories.FavoriteRepository
 import yos.music.player.data.repositories.KugouPlaylist
 import yos.music.player.data.repositories.KugouRepository
@@ -941,7 +942,14 @@ private fun buildPlaylistOptions(playlists: List<KugouPlaylist>): List<PlaylistO
         .mapNotNull { playlist ->
             val key = playlist.listid.ifEmpty { playlist.gid }
             if (key.isEmpty()) null
-            else PlaylistOption(key, playlist.name, playlist.songCount, coverUrl = playlist.coverUrl)
+            // 封面与列表页/详情页同源：命中已算好的「最新添加歌曲封面」就用它，否则用服务端 pic。
+            // 这里只读缓存不发请求——弹层是轻量选择器，不该为几行封面打网络。
+            else PlaylistOption(
+                key,
+                playlist.name,
+                playlist.songCount,
+                coverUrl = PlaylistCoverCache.read(playlist) ?: playlist.coverUrl
+            )
         }
     val remoteNames = remote.mapTo(HashSet()) { it.name }
     val pending = PendingPlaylistStore.all()
