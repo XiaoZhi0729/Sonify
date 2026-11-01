@@ -83,20 +83,6 @@ data class GlassProbe(
      */
     val motionCheapRim: Boolean = true,
 
-    /**
-     * 运动期（展开/收起播放壳的动画中）是否**照画**壳内背景光效（YosFloatingLight）。
-     *
-     * **默认 false = 运动期冻结漂移并停画**。实测依据（onyx release，冷启后首次展开）：
-     * 整块关掉背景光效（`nobgeff`）后 Issue 10.8→8.5ms、p50 30.4→25.8ms、
-     * 超 33ms 的帧 43.5%→22.5%。背景光效是这条动画里唯一"每帧推进状态"的组件，
-     * 而它冻结的那几帧在观感上被 65% 遮罩与纯色过渡层吃掉（见调用点注释）。
-     *
-     * 注意与 [shellBackgroundEffect] 的区别：那一位是**整体**不挂载（消融用，永久生效）；
-     * 本位置 true 才是复现旧行为（运动期照画），语义与 [motionExpensiveDecorations] 一致。
-     * 开关：motionbgeff
-     */
-    val motionBackgroundEffect: Boolean = false,
-
     // ---- 底栏 scope（上一批开关只覆盖播放壳，所以量不到真正的主因）----------------
 
     /**
@@ -196,8 +182,6 @@ data class GlassProbe(
             "nobgeff" to { copy(shellBackgroundEffect = false) },
             "dropdecor" to { copy(motionExpensiveDecorations = true) },
             "nocheaprim" to { copy(motionCheapRim = false) },
-            // 置 true = 恢复旧行为（运动期照画背景光效），供同包 A/B
-            "motionbgeff" to { copy(motionBackgroundEffect = true) },
             "nohiddendraw" to { copy(houseLayersDrawWhenHidden = false) },
             "housemodalpha" to { copy(houseModulateAlpha = true) },
             "navplain" to { copy(navContainerGlass = false, navHiddenProducer = false, navTabGlass = false) },
