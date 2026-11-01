@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.vocalsep.VocalSeparationController
 import yos.music.player.data.libraries.SettingsLibrary
 
@@ -102,6 +103,15 @@ object VocalSeparationState {
         }
         phase = if (enabled) Phase.On else Phase.Off
         VocalSeparationController.setEnabled(enabled)
+        // UI 侧动作与音频侧必须能对上号：只有这里记了、处理器侧没有 VSEP_SET，
+        // 说明广播没送到任何处理器（多半是播放器还没注册）。
+        YosDiagnostics.log(
+            "VSEP_UI", "on" to enabled,
+            "r" to ratio, "avail" to available, "mid" to mediaId,
+            "persisted" to runCatching {
+                SettingsLibrary.VocalSeparationDefaultRatio
+            }.getOrDefault(-1f)
+        )
     }
 
     fun updateRatio(value: Float) {

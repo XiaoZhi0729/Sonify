@@ -256,9 +256,8 @@
     <string name="settings_performance">Appearance</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">Hardware-level Audio Speed Adjustment</string>
     <string name="settings_audio_exoplayer_decode">Decode Output</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output">Floating Point Audio Output</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output_desc">Output floating point audio as much as possible.</string>
     <string name="settings_audio_exoplayer_decode_codec">Audio Decoder</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto uses the device decoder when available and falls back to FFmpeg; FFmpeg forces software decoding; System uses the device decoder only.</string>
     <string name="settings_audio_exoplayer_behaviors">Behaviors</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">Audio Focus</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">When enabled, it will not play along with other apps.</string>

@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.vocalsep.MssEngine
 import java.nio.ByteBuffer
 
@@ -61,6 +62,26 @@ class VocalSeparationProcessor(
 
         /** 输出 FIFO 容量（帧）：够缓冲 8 块，正常路径远用不满。 */
         private const val FIFO_FRAMES = 8 * MssEngine.CHUNK
+
+        /** 块级证据最多记几条（拖动进度条会反复 flush，不设上限会刷屏）。 */
+        private const val MAX_BLOCK_LOGS = 6
+    }
+
+    /** 块级 RMS（只看能量，不做判定）：日志里用来说明"这一块到底有没有音频"。 */
+    private fun rms(a: FloatArray): Float {
+        var s = 0.0
+        for (v in a) s += (v.toDouble() * v)
+        return kotlin.math.sqrt(s / a.size).toFloat()
+    }
+
+    /** 编码名：日志里写数字没人愿意去查 C 常量表。 */
+    private fun encodingName(encoding: Int): String = when (encoding) {
+        C.ENCODING_PCM_8BIT -> "u8"
+        C.ENCODING_PCM_16BIT -> "s16"
+        C.ENCODING_PCM_24BIT -> "s24"
+        C.ENCODING_PCM_32BIT -> "s32"
+        C.ENCODING_PCM_FLOAT -> "f32"
+        else -> "?$encoding"
     }
 
     // ---- 控制层写入（volatile：写点在主线程，读点在播放线程）----
@@ -114,8 +135,23 @@ class VocalSeparationProcessor(
     private var nanBlocks = 0
     private var errorBlocks = 0
 
+    /** 首块分离结果是否已记录（只记一次：每块都记会把日志刷满且无新信息）。 */
+    private var blocksLogged = false
+
+    /** 已记过的块级证据条数上限：拖动进度条会频繁 flush，不设上限日志会被刷屏。 */
+    private var blockLogCount = 0
+
+    /** [onConfigure] 调用次数（sink 层回查用，见 [configureCount]）。 */
+    @Volatile
+    private var configureCountValue = 0
+
+    /** 是否已记录"音频真的流进本处理器"（只记一次）。 */
+    private var inputSeen = false
+
     fun setEnabled(enabled: Boolean) {
         targetEnabled = enabled
+        // 开关是用户唯一的动作，必须落盘：日志里"点了开但没 VSEP_CONF"这类结论全靠它定位。
+        YosDiagnostics.log("VSEP_SET", "on" to enabled, "r" to targetRatio, "usable" to !failed)
     }
 
     fun setRatio(ratio: Float) {
@@ -128,6 +164,14 @@ class VocalSeparationProcessor(
 
     /** 引擎是否仍然可用（模型存在且没被判故障）。 */
     fun isUsable(): Boolean = !failed
+
+    /**
+     * [onConfigure] 被调用过几次。
+     *
+     * 供 sink 层回查"处理器到底有没有进音频管线"：处理器自己不执行时无法自救，
+     * 只有从管线入口往回看才能区分"配置了但没数据"与"压根没配置"。
+     */
+    fun configureCount(): Int = configureCountValue
 
     /**
      * 换曲 / seek 后清引擎状态。
@@ -146,10 +190,21 @@ class VocalSeparationProcessor(
     // ---------------------------------------------------------------- 配置
 
     override fun onConfigure(inputFormat: AudioFormat): AudioFormat {
+        configureCountValue++
         val supported = inputFormat.channelCount == 2 &&
             (inputFormat.encoding == C.ENCODING_PCM_16BIT ||
                 inputFormat.encoding == C.ENCODING_PCM_FLOAT)
         formatSupported = supported
+        // 本方法只在处理器真的被装进音频管线时才会被调用。因此这条日志同时回答了两个问题：
+        // "sink 有没有采纳处理器"（无此行 = 管线里根本没有它）与"进来的格式是什么"。
+        YosDiagnostics.log(
+            "VSEP_CONF",
+            "ch" to inputFormat.channelCount,
+            "sr" to inputFormat.sampleRate,
+            "enc" to encodingName(inputFormat.encoding),
+            "ok" to supported,
+            "enabled" to targetEnabled
+        )
         if (!supported) {
             // 返回输入格式即可；isActive()==false 时 BaseAudioProcessor.configure 对外
             // 返回 NOT_SET，音频链不会采纳它
@@ -179,6 +234,8 @@ class VocalSeparationProcessor(
         clearBuffers()
         nanBlocks = 0
         errorBlocks = 0
+        // 首块证据按"每段音频"重来：seek/换曲后需要重新确认这一段也真的跑起来了
+        blocksLogged = false
         // 开关态保持：flush 只发生在 seek/重配，不代表用户关掉了功能
     }
 
@@ -209,6 +266,19 @@ class VocalSeparationProcessor(
     override fun queueInput(inputBuffer: ByteBuffer) {
         val inputBytes = inputBuffer.remaining()
         if (inputBytes <= 0) return
+        // 一次性证据：音频数据真的流过本处理器。没有这行就说明处理器压根没在管线里
+        // （例如 sink 走了 float 分支把自定义处理器整个丢掉），与"跑起来但没效果"是两回事。
+        if (!inputSeen) {
+            inputSeen = true
+            YosDiagnostics.log(
+                "VSEP_IN",
+                "bytes" to inputBytes,
+                "sr" to sampleRate,
+                "enc" to encodingName(encoding),
+                "enabled" to targetEnabled,
+                "mix" to rampedMix
+            )
+        }
         val frameBytes = bytesPerSample * 2
         val frames = inputBytes / frameBytes
         val tailBytes = inputBytes - frames * frameBytes
@@ -292,6 +362,15 @@ class VocalSeparationProcessor(
         val stems = try {
             eng.process(block, MssEngine.CHUNK)
         } catch (t: Throwable) {
+            // 第一次失败必须留证据：早先这一路径只会累加计数，16 块之后才判故障，
+            // 用户只看到"没反应"，事后无从知道 TFLite 在这台机器上抛的是什么。
+            if (errorBlocks == 0) {
+                YosDiagnostics.log(
+                    "VSEP_ERR", "what" to "infer",
+                    "type" to t.javaClass.simpleName,
+                    "msg" to runCatching { t.message }.getOrNull()
+                )
+            }
             if (++errorBlocks >= MAX_ERROR_BLOCKS) fail("inference_failed")
             // 失败块直通：把本块干声推进 FIFO，保证内容连续
             pushFifo(block, MssEngine.CHUNK)
@@ -315,7 +394,28 @@ class VocalSeparationProcessor(
         }
         nanBlocks = 0
 
-        // 线性混音：r = 原声含量。r=0 只剩伴奏，r=1 完全是原声。
+        // 分离结果是不是"真的分了"：只有在这里能量比才有确定含义——两条轨是同一块
+        // 输入的产物。若 accomp 与 vocals 的能量和≈干声、且各占一半，说明模型在这台
+        // 机器上跑出了近似"恒等拆分"（TFLite 指令集差异的典型表现），那时"开关能点、
+        // 听感没变化"就有了实证，不必再猜。只在首块记一次，不污染日志。
+        if (!blocksLogged && blockLogCount < MAX_BLOCK_LOGS) {
+            blocksLogged = true
+            blockLogCount++
+            val dRms = rms(block)
+            val vRms = rms(vocals)
+            val aRms = rms(accomp)
+            YosDiagnostics.log(
+                "VSEP_BLOCK",
+                "dry" to dRms,
+                "voc" to vRms,
+                "acc" to aRms,
+                "dry2" to (dRms * dRms),
+                "wet2" to (vRms * vRms + aRms * aRms),
+                "r" to rampedRatio,
+                "mix" to rampedMix
+            )
+        }
+
         // 不能用等功率（sin/cos）：分离出的伴奏与原声**同源高度相关**
         // （dry ≈ vocals + accomp），线性交叉淡化恰好等价于 accomp + r·vocals，
         // 等功率会在中段过冲约 +3 dB。
@@ -410,7 +510,23 @@ class VocalSeparationProcessor(
     private fun resolveEngine(): MssEngine? {
         if (engineResolved) return engine
         engineResolved = true
-        engine = runCatching { engineProvider() }.getOrNull()
+        // 这是整条链路最容易"静默落空"的一步：模型缺失/TFLite 加载失败时只会退成直通，
+        // 用户看到的现象就是"点了开关但声音没变"。必须把失败原因原样记下来。
+        engine = runCatching { engineProvider() }
+            .onFailure { t ->
+                YosDiagnostics.log(
+                    "VSEP_ERR", "what" to "engine",
+                    "type" to t.javaClass.simpleName,
+                    "msg" to runCatching { t.message }.getOrNull()
+                )
+            }
+            .getOrNull()
+        YosDiagnostics.log(
+            "VSEP_ENG",
+            "ok" to (engine != null),
+            "cpus" to Runtime.getRuntime().availableProcessors(),
+            "threads" to (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 6)
+        )
         if (engine == null) {
             failed = true
             targetEnabled = false
@@ -423,6 +539,7 @@ class VocalSeparationProcessor(
         if (failed) return
         failed = true
         targetEnabled = false
+        YosDiagnostics.log("VSEP_FAIL", "why" to reason)
         onUnavailable(reason)
     }
 

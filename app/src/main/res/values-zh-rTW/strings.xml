@@ -177,9 +177,8 @@
     <string name="settings_performance">外觀</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">硬體級音頻速度調整</string>
     <string name="settings_audio_exoplayer_decode">解碼輸出</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output">浮點音頻輸出</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output_desc">儘可能輸出浮點音頻。</string>
     <string name="settings_audio_exoplayer_decode_codec">音頻解碼器</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto 優先使用裝置解碼，裝置不支援時回退到 FFmpeg；FFmpeg 強制軟體解碼（排查雜音時可試）；System 只使用裝置解碼。</string>
     <string name="settings_audio_exoplayer_behaviors">行為</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">音頻焦點</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">開啟後不會和其它應用一同播放。</string>

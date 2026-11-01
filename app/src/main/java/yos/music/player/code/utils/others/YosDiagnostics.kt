@@ -64,7 +64,7 @@ object YosDiagnostics {
         "RESOLVE_FAIL", "RESOLVE_SLOW", "OPEN_FAIL", "OPEN_SLOW", "STATE", "ISPLAYING", "SUPPRESSION",
         "GAP", "STALL", "STATE_LIE", "SCREEN_ON", "SCREEN_OFF", "DOZE", "SAVER",
         "SLEEP_START", "SLEEP_STOP", "SLEEP_FIRED", "PREPARE", "TRANSITION", "CRASH", "HEADSET", "EXPORT",
-        "SVC_CMD", "TLMUT", "SRC", "LYRIC_"
+        "SVC_CMD", "TLMUT", "SRC", "LYRIC_", "VSEP_"
     )
 
     /** 行格式固定是 `… pid=<数字> <事件名> k=v …`，事件名就取 pid 后第一个 token。 */
@@ -512,6 +512,27 @@ object YosDiagnostics {
                 w.write("REG_DEV.path: cache=后端命中 device_info.json 直接回 dfid（重注册是空转）；upstream=真的重新注册了设备\n")
                 w.write("VERIFY_BLOCK: 播放被上游风控（20028）拦下；challenge=eventid（可直接换验证码）/edt（拿它试一试）/none（没有可完成的入口）；auto=是否自动弹了说明框\n")
                 w.write("VERIFY_ACTION: 用户在说明框里的动作（verify/retry/login/dismiss）与结果（Verified/Cancelled/Unsupported/NoChallenge/Rejected）\n")
+                w.write("\n== 人声分离（VSEP）判读：按时间顺序看，缺哪一条就断在哪一步 ==\n")
+                w.write("VSEP_MODEL.present: 包内是否带模型（false=开源构建不带，功能整体不可用，与设备无关）\n")
+                w.write("VSEP_ATTACH.pkey: 哪台播放器的处理器注册上了（primary/secondary），count=已注册数\n")
+                w.write("VSEP_UI: 用户真的点了开关（on/r/avail）。没有这条=没操作，不是 bug\n")
+                w.write("VSEP_SETALL.n: 开关广播给了几个处理器。n=0 而 VSEP_UI 有 = 处理器一个都没注册\n")
+                w.write("VSEP_SET.on+usable: 处理器确实收到了开关。usable=false 表示引擎已被判故障\n")
+                w.write("VSEP_CONF: 处理器被音频管线 configure（无此行=管线里没有它，多半走了 float 分支被整条丢弃）\n")
+                w.write("  .ch 必须是 2、.enc 必须是 s16 或 f32、.ok=1；ok=0 说明解码输出不是立体声16bit/float，处理器按设计直通\n")
+                w.write("VSEP_IN: 音频数据真的流过处理器（无此行 = 只配置了但没数据，等价没生效）\n")
+                w.write("VSEP_ENG.ok / VSEP_ERR: 模型加载与解释器建立结果；VSEP_ERR 带 type/msg，就是真正的失败原因\n")
+                w.write("VSEP_BLOCK: 首块分离结果。dry=干声RMS，voc/acc=两路RMS。\n")
+                w.write("  判据：acc≈0 且 voc≈dry → 伴奏轨是空的（模型没真正分离）；voc≈acc≈dry/2 → 近似恒等拆分；\n")
+                w.write("  wet2≈dry2 说明分离保能量（正常）；r/mix 为当时的原声含量与开关度（mix=1 才是全湿）\n")
+                w.write("VSEP_FAIL.why: inference_failed（每块都抛异常）/ non_finite_output（输出 NaN）/ model_unavailable\n")
+                w.write("VSEP_SINK: sink 建立时拿到的 float 请求与设置值（float_req=ExoPlayer 传入，float_setting=用户设置）\n")
+                w.write("VSEP_FMT: sink 收到的**真实输入格式**与处理器是否被管线 configure。\n")
+                w.write("  .mime 不是 audio/raw → 走了 offload/passthrough 分支，管线为空，任何 AudioProcessor 都不会生效\n")
+                w.write("  .confd=0（且 mime=audio/raw）→ 命中 float 分支被丢弃：需 float_req=false 才进管线\n")
+                w.write("  .pcm=s24/s32/f32 → 解码器给的是高分辨率 PCM，正是 float 分支的触发条件\n")
+                w.write("VSEP_BUF: sink 首块数据的字节数；有它说明音频确实在流，只是没经过处理器\n")
+                w.write("VSEP_REND: 该播放器装配的渲染器列表与 sink 身份，用来排除'实际出声的是另一个 sink'\n")
                 w.write("\n== 系统侧对照（本机 adb 执行，用来验证本报告的 pos 推进是否等于真出声）==\n")
                 w.write("dumpsys media.audio_flinger | grep -A2 'yos.music'\n")
                 w.write("  每行 sessions/actual_seconds 是真出声时长；frozen-while-active 计数=播放中被冻结次数\n")

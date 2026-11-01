@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.vocalsep.MssEngine
 import yos.music.player.data.vocalsep.TfliteMssModel
 import yos.music.player.data.vocalsep.VocalSepModels
@@ -77,6 +78,12 @@ object VocalSeparationController {
         processor.setEnabled(enabled && processor.isUsable())
         processor.setRatio(ratio)
         processors[playerKey] = processor
+        YosDiagnostics.log(
+            "VSEP_ATTACH", "pkey" to playerKey,
+            "count" to processors.size,
+            "on" to enabled,
+            "r" to ratio
+        )
     }
 
     fun detach(playerKey: String) {
@@ -167,6 +174,9 @@ object VocalSeparationController {
     }
 
     private fun broadcastEnabled() {
+        // 记录"广播给了几个处理器"：若这里是 0，用户点什么都不会生效——
+        // 那是"播放器还没注册处理器"与"处理器跑不起来"的分水岭。
+        YosDiagnostics.log("VSEP_SETALL", "on" to enabled, "n" to processors.size)
         processors.values.forEach { p ->
             // 引擎已判故障的处理器不要被重新打开（否则每块都白跑一次失败路径）
             p.setEnabled(enabled && p.isUsable())

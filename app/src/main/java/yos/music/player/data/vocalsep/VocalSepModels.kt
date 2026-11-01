@@ -2,6 +2,7 @@ package yos.music.player.data.vocalsep
 
 import android.content.Context
 import org.tensorflow.lite.Interpreter
+import yos.music.player.code.utils.others.YosDiagnostics
 import java.io.File
 import java.io.FileOutputStream
 
@@ -36,7 +37,15 @@ object VocalSepModels {
     fun isModelPresent(context: Context): Boolean = runCatching {
         context.assets.open("$ASSET_DIR/$MODEL_NAME").use { it.read() }
         true
-    }.getOrDefault(false)
+    }.getOrDefault(false).also { present ->
+        // 开源构建不带模型：这条能立刻把"包本身没有模型"与"模型有但加载失败"分开。
+        YosDiagnostics.log(
+            "VSEP_MODEL",
+            "present" to present,
+            "asset_bytes" to runCatching { assetLength(context) }.getOrNull(),
+            "abi" to android.os.Build.SUPPORTED_ABIS.firstOrNull()
+        )
+    }
 
     /**
      * 建一个**新的**解释器（每个播放器一份）。
@@ -54,6 +63,15 @@ object VocalSepModels {
             setNumThreads((Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 6))
         }
         Interpreter(file, options)
+    }.onFailure { t ->
+        // 这一层失败（.so 加载 / 模型解析 / 内存不足）在 UI 上只表现为"按钮置灰"，
+        // 没有日志就只能靠猜设备差异。把类型与消息原样留下。
+        YosDiagnostics.log(
+            "VSEP_ERR", "what" to "model_load",
+            "type" to t.javaClass.simpleName,
+            "msg" to runCatching { t.message }.getOrNull(),
+            "model_len" to runCatching { cachedFile?.length() }.getOrNull()
+        )
     }.getOrNull()
 
     /** assets → filesDir 拷贝；已存在且长度一致则直接复用。 */

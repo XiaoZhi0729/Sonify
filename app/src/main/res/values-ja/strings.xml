@@ -177,9 +177,8 @@
     <string name="settings_performance">外観</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">ハードウェアレベルの音声速度調整</string>
     <string name="settings_audio_exoplayer_decode">デコード出力</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output">浮動小数点音声出力</string>
-    <string name="settings_audio_exoplayer_decode_audio_float_output_desc">可能な限り浮動小数点音声を出力します。</string>
     <string name="settings_audio_exoplayer_decode_codec">音声デコーダ</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto はデバイスのデコーダを優先し、非対応時は FFmpeg にフォールバックします。FFmpeg はソフトウェアデコードを強制（異音の切り分け用）、System はデバイスのデコーダのみを使用します。</string>
     <string name="settings_audio_exoplayer_behaviors">動作</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">音声フォーカス</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">有効にすると、他のアプリと同時に再生しません。</string>
