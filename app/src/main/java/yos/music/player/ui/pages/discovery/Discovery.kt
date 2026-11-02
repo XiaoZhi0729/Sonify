@@ -316,7 +316,9 @@ fun Discovery(
                         HomeEmptyState(onEdit = { enterEdit() })
                     }
                 } else {
-                    visibleSections.forEach { cfg ->
+                    visibleSections.forEachIndexed { sectionIndex, cfg ->
+                        // 启动浮现的第几块：0 是大标题，所以板块从 1 起。
+                        val revealIndex = sectionIndex + 1
                         when (HomeSectionId.fromKey(cfg.id)) {
         // ① 最近播放横向大卡列表（取色模糊背景，无数据则不渲染，无空状态）
                             HomeSectionId.RecentlyPlayed -> item("RecentlyPlayed") {
@@ -326,6 +328,7 @@ fun Discovery(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp)
+                        .then(yos.music.player.ui.launch.launchRevealModifier(revealIndex))
                 ) {
                     // Header：标题 + 箭头（与 DiscoverySectionHeader 同款视觉），点击进入详情页
                     Row(
@@ -371,6 +374,7 @@ fun Discovery(
                 hasData = everySongs.value.isNotEmpty(),
                 status = everyStatus.value,
                 shimmer = shimmer,
+                revealIndex = revealIndex,
                 skeleton = { HomeSkeletonSongColumn(shimmer) }
             ) {
                 Column(
@@ -393,6 +397,7 @@ fun Discovery(
                 hasData = recommendPlaylists.value.isNotEmpty(),
                 status = recommendPlaylistsStatus.value,
                 shimmer = shimmer,
+                revealIndex = revealIndex,
                 emptyText = stringResource(id = R.string.discovery_recommend_playlists_empty),
                 skeleton = { HomeSkeletonCardRail(shimmer, AlbumCardCoverToTitleGap) }
             ) {
@@ -457,6 +462,7 @@ fun Discovery(
                 hasData = newSongs.value.isNotEmpty(),
                 status = newSongsStatus.value,
                 shimmer = shimmer,
+                revealIndex = revealIndex,
                 skeleton = { HomeSkeletonSongColumn(shimmer) }
             ) {
                 Column(
@@ -480,6 +486,7 @@ fun Discovery(
                 hasData = newAlbums.value.isNotEmpty(),
                 status = newAlbumsStatus.value,
                 shimmer = shimmer,
+                revealIndex = revealIndex,
                 skeleton = { HomeSkeletonCardRail(shimmer, AlbumCardCoverToTitleGap) }
             ) {
                 Column(
@@ -534,6 +541,7 @@ fun Discovery(
                 hasData = rankList.value.isNotEmpty(),
                 status = status.value,
                 shimmer = shimmer,
+                revealIndex = revealIndex,
                 skeleton = { HomeSkeletonCardRail(shimmer) }
             ) {
                 Column(
@@ -643,6 +651,9 @@ fun Discovery(
         Title(
             title = if (isEdit) stringResource(id = R.string.home_edit_title)
             else stringResource(id = R.string.page_home_title),
+            // 启动浮现第 0 块：大标题最先上浮。只在非编辑态参与
+            // （编辑态是用户主动进入的另一套界面，不该重演开屏）。
+            revealIndex = if (isEdit) null else 0,
             onBack = if (isEdit) ({ requestExit() }) else null,
             rightBarIcon = if (isEdit) ({
                 val locked = dragHolder.active || resetAnimating.value
@@ -753,6 +764,8 @@ private fun DiscoverySectionSlot(
     shimmer: SkeletonShimmer,
     skeleton: @Composable () -> Unit,
     emptyText: String? = null,
+    // 启动浮现的第几块（null = 不参与，用于非主页调用点）
+    revealIndex: Int? = null,
     content: @Composable () -> Unit
 ) {
     val failed = status.startsWith("error:")
@@ -779,7 +792,10 @@ private fun DiscoverySectionSlot(
         }
     }
 
-    Box(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().then(
+        if (revealIndex != null) yos.music.player.ui.launch.launchRevealModifier(revealIndex)
+        else Modifier
+    )) {
         val contentModifier = if (contentAnimating) {
             Modifier.graphicsLayer {
                 compositingStrategy = CompositingStrategy.ModulateAlpha

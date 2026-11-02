@@ -7,4 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- 开屏幕布色：系统闪屏背景与 Compose 幕布必须是同一个值，
+         否则两者交接时会露出不同颜色的边。 -->
+    <color name="launch_curtain">#FFF54047</color>
 </resources>

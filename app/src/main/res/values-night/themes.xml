@@ -10,14 +10,22 @@
         <item name="android:windowBackground">@android:color/background_dark</item>
     </style>
 
+    <!-- 开屏主题（深色）：红底 + **黑色** Logo。
+         黑色不是品牌色，而是在模拟"幕布挖开的洞" —— 洞里透出的是首页底色，
+         深色首页是黑的。两者同色，交接时才不会白↔黑跳一下。
+         MainActivity 还会按应用内主题设置在 super.onCreate 之前 setTheme 覆盖，
+         以覆盖"应用强制深色但系统浅色"这类组合。 -->
     <style name="SplashTheme" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo_dark</item>
+        <item name="windowSplashScreenBackground">@color/launch_curtain</item>
         <item name="postSplashScreenTheme">@style/Theme.Flamingo</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
-        <item name="android:windowBackground">@android:color/background_dark</item>
+        <item name="android:windowBackground">@color/launch_curtain</item>
     </style>
+
+    <style name="SplashTheme.Dark" parent="SplashTheme" />
 </resources>

@@ -7,17 +7,30 @@
         <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
-        <item name="android:windowBackground">@android:color/background_dark</item>
+        <!-- 浅色主题下这里原本误写成 background_dark：闪屏撤场到 Compose 首帧之间会闪一下黑。
+             与 Surface 的底色（浅色=白）保持一致。 -->
+        <item name="android:windowBackground">@android:color/background_light</item>
     </style>
 
+    <!-- 开屏主题（浅色）：品牌红底 + **白色** Logo。
+         白色不是品牌色，而是在模拟"幕布挖开的洞" —— 洞里透出的是首页底色，
+         浅色主题下首页是白的。两者同色，交接时才不会白↔黑跳一下。 -->
     <style name="SplashTheme" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo_white</item>
+        <item name="windowSplashScreenBackground">@color/launch_curtain</item>
         <item name="postSplashScreenTheme">@style/Theme.Flamingo</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar" tools:targetApi="m">true</item>
-        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
-        <item name="android:windowBackground">@android:color/background_light</item>
+        <item name="android:windowBackground">@color/launch_curtain</item>
+    </style>
+
+    <!-- 开屏主题（深色）：同样的红底，但 Logo 是**黑色**（深色首页的底色）。
+         由 MainActivity 在 onCreate 里按应用自身的主题设置选择，
+         不能只依赖 values-night —— 应用内可以手动强制深色而系统仍是浅色。 -->
+    <style name="SplashTheme.Dark" parent="SplashTheme">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo_dark</item>
     </style>
 </resources>

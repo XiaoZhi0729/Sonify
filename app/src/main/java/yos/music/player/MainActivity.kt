@@ -278,14 +278,80 @@ class MainActivity : BaseActivity() {
 
     private val imageViewModel: ImageViewModel by viewModels()
 
+    /**
+     * 开屏交接标志：Compose 的启动幕布已经画出第一帧。
+     * 系统闪屏一直保持到它为 true，避免"闪屏撤场 → 首帧"之间露出 windowBackground，
+     * 也就是用户看到的那种硬切/白闪。
+     */
+    private var launchCurtainReady by mutableStateOf(false)
+
+    /**
+     * 本次启动是否播放开幕动画。
+     *
+     * 只在**冷启动**播放：从后台回来、旋转、进程内重建都不该再演一遍。
+     * 必须在 onCreate 里取，超时后 savedInstanceState 会被系统填上。
+     */
+    private var playLaunchCurtain = false
+
+    /**
+     * 系统闪屏是否已经彻底撤场。
+     *
+     * 幕布动画以它为起点，不以"首帧"为起点：系统闪屏撤场带淡出动画，
+     * 它是一块**实心品牌红**，而 Compose 幕布此刻已挖好 Logo 形状的洞。
+     * 两者交叉淡化时洞里会短暂混出一层粉色。所以接管退出动画：撤销淡出、
+     * 立即移除闪屏，再放行动画。
+     */
+    private var splashDismissed by mutableStateOf(false)
+
+    /**
+     * 按应用自身主题设置，挑浅色/深色的开屏主题。
+     *
+     * 闪屏 Logo 的颜色其实是"首页底色的模拟"：浅色主题下首页是白的，深色是黑的。
+     * 系统闪屏只会读 res 主题，因此必须在这里按用户设置显式覆盖，
+     * 否则"应用内强制深色 + 系统浅色"的组合会让 Logo 白↔黑跳一下。
+     */
+    private fun applySplashThemeForCurrentSetting() {
+        val setting = yos.music.player.data.libraries.SettingsLibrary.CustomTheme
+        val dark = when (setting) {
+            "Dark" -> true
+            "Light" -> false
+            // Auto：跟随系统
+            else -> (resources.configuration.uiMode and
+                    android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                    android.content.res.Configuration.UI_MODE_NIGHT_YES
+        }
+        setTheme(if (dark) R.style.SplashTheme_Dark else R.style.SplashTheme)
+    }
+
     @Suppress("DEPRECATION")
     @OptIn(
         ExperimentalAnimationApi::class,
         ExperimentalSharedTransitionApi::class
     )
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 开屏必须跟随**应用自身**的主题设置，不能只靠 values-night：
+        // 应用内可以手动强制深色，而系统仍是浅色，那样闪屏 Logo 会白↔黑跳一下
+        // （浅色首页的洞是白的、深色首页的洞是黑的）。
+        // 必须在 super.onCreate 之前换主题：窗口/闪屏在 super.onCreate 里就已按主题建好了。
+        // MMKV 在 Application.onCreate 已初始化，这里读设置是安全的。
+        applySplashThemeForCurrentSetting()
         super.onCreate(savedInstanceState)
-        installSplashScreen()
+        playLaunchCurtain = savedInstanceState == null
+        val splashStartUptime = android.os.SystemClock.uptimeMillis()
+        val splash = installSplashScreen()
+        splash.setOnExitAnimationListener { provider ->
+            // 立即移除，不做淡出：闪屏与幕布都是品牌红，硬切在这一层完全看不见，
+            // 而淡出会露出"洞里混色"的那一层。
+            provider.view.animate().setDuration(0L).withEndAction {
+                provider.remove()
+            }.start()
+            splashDismissed = true
+        }
+        splash.setKeepOnScreenCondition {
+            // 兜底 2s：万一首帧因为异常迟迟画不出来，也不能把用户永久卡在闪屏上。
+            !launchCurtainReady &&
+                    android.os.SystemClock.uptimeMillis() - splashStartUptime < 2000L
+        }
         enableEdgeToEdge()
         // debug 验收钩子：adb shell am start ... --es debug_block edt|eventid|none
         // 直接拉起"被风控"说明框，用来截图核对文案与按钮（release 包不编译这段）。
@@ -311,6 +377,43 @@ class MainActivity : BaseActivity() {
         setContent {
             YosMusicTheme {
                 ProvideRawWindowInsets {
+                    // 开屏幕布：品牌红整屏，中间按 Logo 轮廓挖洞，洞里就是首页。
+                    // 放在这里是为了让整棵树（含首页板块、底栏、播放壳）都能读到
+                    // LocalLaunchReveal；幕布本体在最后作为最上层兄弟节点绘制。
+                    val launchCurtainState = yos.music.player.ui.launch.rememberLaunchCurtainState(
+                        // 等系统闪屏彻底撤场再起跑：闪屏是实心红，幕布此刻已有 Logo 形状的洞，
+                        // 淡出期交叉会混出一层粉色。详见 splashDismissed 的注释。
+                        play = playLaunchCurtain,
+                        ready = splashDismissed,
+                        onFinish = { }
+                    )
+                    var launchCurtainAlive by remember("MainActivity_launchCurtainAlive") {
+                        mutableStateOf(playLaunchCurtain)
+                    }
+                    LaunchedEffect(Unit) {
+                        // 幕布已经参与组合并即将绘制首帧：放行系统闪屏。
+                        withFrameNanos { }
+                        launchCurtainReady = true
+                    }
+                    LaunchedEffect(launchCurtainState.finished) {
+                        // 状态落定后移出组合，运行期零成本。
+                        if (launchCurtainState.finished) launchCurtainAlive = false
+                    }
+                    // 首页各块的浮现进度。
+                    //
+                    // **必须是一个函数而不是数值**：各块在绘制期调用它读取时间轴，
+                    // 这样动画每帧只让绘制失效、不会让整棵首页重组。
+                    // （本工程已多次踩到"组合期读动画值 → 整页重组"的坑。）
+                    // remember(launchCurtainAlive)：动画结束后换成 active=false 的新实例，
+                    // 所有浮现修饰符随之摘掉，运行期零残留。
+                    val launchReveal = remember(launchCurtainAlive, launchCurtainState) {
+                        yos.music.player.ui.launch.LaunchRevealScope(launchCurtainAlive) { index ->
+                            yos.music.player.ui.launch.staggerReveal(
+                                launchCurtainState.grow.floatValue,
+                                index
+                            )
+                        }
+                    }
                     yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
                     // 20028 二次验证弹窗：挂在根组合，播放链路触发时也能弹（Dialog 自带独立窗口，
                     // 不参与下面这棵树的布局与测量）。显示与否只看 pendingCaptcha。
@@ -1275,7 +1378,8 @@ class MainActivity : BaseActivity() {
                                     // 下拉的定位/高度上限要避开迷你条 + 底栏：把实测的底部
                                     // 遮罩高度传给房子内的所有 LiquidDropdown。
                                     CompositionLocalProvider(
-                                        LocalBottomOverlayHeight provides bottomScrimHeight
+                                        LocalBottomOverlayHeight provides bottomScrimHeight,
+                                        yos.music.player.ui.launch.LocalLaunchReveal provides launchReveal
                                     ) {
                                         AppTabsShell(
                                             selectedHouse = selectedHouse.value,
@@ -1294,6 +1398,9 @@ class MainActivity : BaseActivity() {
                                     }
                                 }
 
+                                CompositionLocalProvider(
+                                    yos.music.player.ui.launch.LocalLaunchReveal provides launchReveal
+                                ) {
                                 NavBottomVisual(
                                     // 全屏沉浸页（画廊）层叠修正：画廊路由在 Library house
                                     // （AppTabsShell 内），与底栏的命中测试竞争发生在本根节点与
@@ -1337,6 +1444,7 @@ class MainActivity : BaseActivity() {
                                     parentWidth = parentWidth,
                                     glassProbe = glassProbe,
                                 )
+                                }
                             }
 
 
@@ -2429,6 +2537,18 @@ class MainActivity : BaseActivity() {
                             }
 
                         }
+
+                        // 启动幕布：压在所有内容之上（含底栏、迷你条、全屏播放页），
+                        // 因为它是不透明的品牌红遮挡层 + 一个 Logo 形状的洞。
+                        // 整段结束后 launchCurtainAlive 变 false，本层离开组合，运行期零成本。
+                        if (launchCurtainAlive) {
+                            yos.music.player.ui.launch.LaunchCurtain(
+                                state = launchCurtainState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(100f)
+                            )
+                        }
                     }
                 }
             }
@@ -2662,7 +2782,10 @@ YosWrapper {
                         )
                     // 命中测试门禁挂在**紧贴底栏内容**的这个节点上（不是外层 fillMaxSize）：
                     // 画廊页里底栏不可见但仍会响应点击，点了会直接跳 Tab。
-                    .then(chromePointerGate),
+                    .then(chromePointerGate)
+                    // 开屏浮现（第 7 块，最后一块）：绘制期读时间轴，
+                    // 不进组合、不触发重组。
+                    .then(yos.music.player.ui.launch.launchRevealModifier(7)),
                 backdrop = navBackdrop
             )
         }

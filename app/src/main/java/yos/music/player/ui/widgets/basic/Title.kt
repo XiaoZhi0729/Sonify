@@ -200,6 +200,9 @@ fun Title(
     // 大标题水平 padding：默认 20dp（主页/详情页内容体系）；
     // 设置系页面/资料库用 ListHeader(32dp) 分组标题，传 32.dp 与之对齐。
     titleHorizontalPadding: Dp = 20.dp,
+    // 启动浮现的第几块（null = 不参与）。只作用于**大标题文案本身**：
+    // 整页那个 layerBackdrop 录制层不能加 alpha，否则会给它多建一层离屏缓冲。
+    revealIndex: Int? = null,
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
     // 下拉刷新（opt-in）：传 onRefresh 才启用；未传时列表路径逐像素不变
@@ -221,6 +224,7 @@ fun Title(
         topRightIcon = topRightIcon,
         onTopRightIcon = onTopRightIcon,
         titleHorizontalPadding = titleHorizontalPadding,
+        revealIndex = revealIndex,
         onRefresh = onRefresh,
         refreshing = refreshing,
         content = content
@@ -281,6 +285,8 @@ private fun BaseTitle(
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
+    // 启动浮现的第几块（null = 不参与）
+    revealIndex: Int? = null,
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
     content: Any
@@ -316,6 +322,7 @@ private fun BaseTitle(
             onTopRightIcon = onTopRightIcon,
             titleHorizontalPadding = titleHorizontalPadding,
             listState = listState,
+            revealIndex = revealIndex,
             onRefresh = onRefresh,
             refreshing = refreshing,
             content = content as LazyListScope.() -> Unit
@@ -492,6 +499,8 @@ private fun BaseTitleList(
     // 外部持有 listState（滚动加载更多等场景需要观察滚动位置）；默认内部自建
     listState: LazyListState = rememberLazyListState(),
     titleHorizontalPadding: Dp = 20.dp,
+    // 启动浮现的第几块（null = 不参与）。只作用于大标题文案本身。
+    revealIndex: Int? = null,
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
     content: LazyListScope.() -> Unit
@@ -538,7 +547,11 @@ private fun BaseTitleList(
                     contentPadding = PaddingValues(top = 54.dp + extraTopPadding)
                 ) {
                     item("title") {
-                        Column {
+                        Column(
+                            if (revealIndex != null)
+                                yos.music.player.ui.launch.launchRevealModifier(revealIndex)
+                            else Modifier
+                        ) {
                             Spacer(modifier = Modifier.statusBarsHeight())
                             TitleItem(
                                 title,
