@@ -156,13 +156,25 @@ object SettingsLibrary {
     )
 
     /**
-     * HDR 歌词：歌词层改用加色混合（BlendMode.Plus），在封面上产生泛光。
+     * HDR 高光：歌词层改用加色混合（BlendMode.Plus），在封面上产生泛光；
+     * 设备支持时，正在唱的那一句还会用超过 SDR 白的亮度真 HDR 发光。
      */
     @Stable
     var LyricHdrEffect by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_hdr_effect",
         initialValue = false
+    )
+
+    /**
+     * HDR 高光强度 0..1：用掉屏幕可用亮度余量的多少。
+     * 只在 [LyricHdrEffect] 打开、且系统支持 HDR 时生效。
+     */
+    @Stable
+    var LyricHdrStrength by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_hdr_strength",
+        initialValue = 0.6f
     )
 
     /**
@@ -570,6 +582,7 @@ object SettingsLibrary {
         LyricLineBalance = false
         LyricBlurEffect = false
         LyricHdrEffect = false
+        LyricHdrStrength = 0.6f
         NotificationLyricEnabled = true
         LyricFontScale = 1.0f
         SmartWordByWordLyric = false

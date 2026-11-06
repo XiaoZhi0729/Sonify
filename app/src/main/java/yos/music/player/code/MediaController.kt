@@ -1963,6 +1963,10 @@ class YosPlaybackService : MediaSessionService() {
             // 在线歌曲惰性 URL 解析：占位符 URI 在播放前才解析真实 CDN URL（本地歌曲透传不变）
             .setMediaSourceFactory(buildKugouMediaSourceFactory(this))
             .build()
+        // 熄屏续播的 CPU 保障：不设的话是默认 WAKE_MODE_NONE，熄屏后系统可以随时冻结本进程
+        //（11-03 真机事故：冻结 40 分钟，连诊断心跳都停写）。LOCAL 而不是 NETWORK——
+        // 纯音频不需要 WifiLock，NETWORK 会额外持一把早已废弃的高性能 Wi-Fi 锁。
+        player.setWakeMode(C.WAKE_MODE_LOCAL)
         currentPlayer = player
 
         // ---------- 歌曲平滑过渡（Crossfade） ----------
@@ -1987,6 +1991,8 @@ class YosPlaybackService : MediaSessionService() {
                             else PlaybackRequestPurpose.CROSSFADE_PREFETCH
                         })
                         .build()
+                    // 副 player 也要持锁：淡变窗口内它是唯一在发声的那一路
+                    secondary.setWakeMode(C.WAKE_MODE_LOCAL)
                     secondary
             },
             onPromote = ::promoteSecondary,
@@ -2130,6 +2136,13 @@ class YosPlaybackService : MediaSessionService() {
                         //（该状态只在 /song/url 回 token 拒绝时置位，可能是瞬时判定）。
                         yos.music.player.data.objects.KugouAccountState.onPlaybackSucceeded()
                     }
+                    // 引擎真态回写：同时收敛 targetStatus 与 isPlaying（淡变进行中只更新后者）。
+                    // 淡变之外引擎自己变了（自然播完、出错、被外部暂停），targetStatus 会停在
+                    // 旧值，ForwardingPlayer.isPlaying() 就长期谎报——STATE_LIE 记录的就是这个。
+                    FadeExo.syncFromEngine(
+                        isPlayingNow = isPlaying,
+                        playbackState = currentPlayer?.playbackState ?: Player.STATE_IDLE
+                    )
                     MediaViewModelObject.isPlaying.value = isPlaying
                     pushListeningOnline(isPlaying, currentPlayer?.currentMediaItem?.mediaId)
                     // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）

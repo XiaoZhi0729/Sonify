@@ -154,6 +154,26 @@ internal class CoverArtworkState {
 
     /** 本次按压是否已确认（庆祝只发一次）。只在驱动里读写，不需要参与重组。 */
     internal var confirmed = false
+
+    /**
+     * 是否处于"按压反馈可见"的窗口（按下中，或松手后倾角/缩放尚未归零）。
+     *
+     * 这是给**外壳封面层**用的开关：外壳那层是纯 Canvas，画不了 3D，
+     * 倾斜期间需要临时切到一个真实节点去画封面。
+     *
+     * **不要在组合期直接读这个 getter**——它每次都订阅三个 Animatable，
+     * 会让整层逐帧重组。调用方必须用 `derivedStateOf { state.isTilting }`
+     * 包一层（只在布尔翻转时才失效）。
+     *
+     * 判据同时看 pressed 与动画值：松手后 driver 还要跑 140ms 补满 +
+     * 160ms 倾角归零 + 弹簧回弹，这段必须继续由倾斜节点画，否则又会
+     * 在"松手那一刻"换人。阈值取很小，只为在动画彻底停下后关闭窗口。
+     */
+    internal val isTilting: Boolean
+        get() = pressed.value ||
+                press.value > 0.0005f ||
+                tiltX.value != 0f ||
+                tiltY.value != 0f
 }
 
 /**

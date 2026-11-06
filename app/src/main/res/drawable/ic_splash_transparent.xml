@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统闪屏图标：**透明占位**。
+     开屏 Logo 完全由 Compose 幕布绘制（淡入、上浮、淡出），系统闪屏只负责铺背景色。
+     这样做的原因：系统闪屏的图标尺寸/遮罩规则随 API 版本变化（31+ 与兼容库各有一套），
+     Compose 无法逐像素对上，交接时会出现 Logo 突然放大/缩小一下的跳变。
+     把闪屏图标留空后，交接处两边都只有背景色，零跳变；Logo 从 alpha 0 渐显，
+     正好就是"元素渐显浮现"的效果。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1dp"
+    android:height="1dp"
+    android:viewportWidth="1"
+    android:viewportHeight="1" />

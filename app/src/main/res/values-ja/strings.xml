@@ -81,6 +81,16 @@
     <string name="search_type_special">プレイリスト</string>
     <string name="search_type_lyric">歌詞</string>
     <string name="search_request_failed">リクエストに失敗しました</string>
+    <string name="search_history">検索履歴</string>
+    <string name="search_hot">急上昇ワード</string>
+    <string name="search_clear_history">消去</string>
+    <string name="search_recent">最近の検索</string>
+    <string name="search_recent_empty">最近の検索はありません</string>
+    <string name="search_browse_categories">カテゴリを探す</string>
+    <string name="search_clear_input">入力を消去</string>
+    <string name="search_no_result_hint">別のキーワードを試すか、入力ミスを確認してください</string>
+    <string name="search_top_result">トップヒット</string>
+    <string name="search_more">その他</string>
     <string name="discovery_coming_soon">新曲、ランキング、厳選プレイリストが近日公開予定…</string>
     <string name="discovery_rank_title">ランキング</string>
     <string name="discovery_rank_empty">ランキングデータがありません</string>
@@ -101,6 +111,9 @@
     <string name="online_albums_login_tip">ログインするとライブラリのアルバムを表示できます</string>
     <string name="album_collect_add">ライブラリに追加</string>
     <string name="album_collect_remove">ライブラリに追加済み</string>
+    <!-- アルバム詳細の右上「その他」メニューのお気に入り項目 -->
+    <string name="album_more_collect">お気に入り</string>
+    <string name="album_more_collected">解除する</string>
     <string name="album_collect_failed">追加に失敗しました。もう一度お試しください</string>
     <string name="album_uncollect_failed">削除に失敗しました。もう一度お試しください</string>
     <string name="album_uncollect_not_found">保存したアルバムが見つかりません</string>
@@ -215,8 +228,10 @@
     <string name="normal_button_sort_descending">降順</string>
     <string name="settings_performance_lyric_blur_effect">歌詞のぼかし</string>
     <string name="settings_performance_lyric_blur_effect_desc">歌詞ビューのぼかし効果、パフォーマンスに問題を引き起こす可能性があります。</string>
-    <string name="settings_performance_lyric_hdr_effect">HDR 歌詞</string>
-    <string name="settings_performance_lyric_hdr_effect_desc">加算合成で歌詞がジャケット上で発光し、HDR に近い見た目になります。</string>
+    <string name="settings_performance_lyric_hdr_effect">HDR ハイライト（実験的）</string>
+    <string name="settings_performance_lyric_hdr_effect_desc">歌っている行が SDR の白より明るく発光します。Android 14 以上と HDR 対応ディスプレイが必要で、それ以外では加算合成の発光に自動的に戻ります。</string>
+    <string name="settings_performance_lyric_hdr_strength">ハイライトの強さ</string>
+    <string name="settings_performance_lyric_hdr_strength_desc">ディスプレイの余剰輝度をどれだけ使うか。高いほど明るくなりますが、バッテリーの消費も増えます。</string>
     <string name="settings_performance_lyric_title">歌詞表示</string>
     <string name="settings_performance_lyric_style">スタイル</string>
     <string name="settings_performance_lyric_others">その他</string>

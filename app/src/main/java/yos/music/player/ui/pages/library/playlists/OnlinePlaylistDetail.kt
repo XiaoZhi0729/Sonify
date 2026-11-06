@@ -124,8 +124,6 @@ import yos.music.player.ui.pages.library.DetailSongRowWide
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
-import yos.music.player.ui.pages.library.artists.ArtistCollectButton
-import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
@@ -150,6 +148,7 @@ import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
+import yos.music.player.ui.widgets.dropdown.isDropdownDarkTheme
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 import yos.music.player.ui.navigation.popBackStackSafely
 
@@ -341,13 +340,14 @@ fun OnlinePlaylistDetail(
         { index -> removeTarget.value = displayTracks.getOrNull(index) }
     } else null
 
-    // ---------- 页内搜索（仅自有歌单） ----------
+    // ---------- 页内搜索（所有在线歌单） ----------
     // 只是把操作行右侧那颗圆钮形变成输入框，输入内容**直接过滤列表本身**：
     // 不加遮罩、不锁滚动、不换骨架，列表始终按原来的方式滚动与点击。
     //
-    // 只对自有歌单开放：第三格原来是「添加歌曲」，现在被「搜索」占用；非自有歌单的第三格
-    // 保持收藏钮不变（用户裁决）。判定沿用 editAllowed，与加歌/删歌同一套权限。
-    val searchEnabled = editAllowed
+    // 与 editAllowed 解耦：搜索是只读操作，精选/推荐/他人的歌单同样需要。
+    // 于是操作行第三格在所有歌单上都是搜索钮，「收藏」圆钮挪进了右上「更多」菜单
+    // （与专辑页同一套做法）。
+    val searchEnabled = true
     val searchExpanded = remember("OnlinePlaylistDetail_searchExpanded") { mutableStateOf(false) }
     val searchQuery = remember("OnlinePlaylistDetail_searchQuery") {
         mutableStateOf(TextFieldValue(""))
@@ -828,11 +828,7 @@ fun OnlinePlaylistDetail(
                                     keyboardController?.show()
                                 },
                                 searchMorphFraction = searchMorph,
-                                searchExpanded = searchExpanded.value,
-                                collected = collected,
-                                collectEnabled = collectEnabled,
-                                collectDescription = collectDescription,
-                                onToggleCollect = { toggleCollect() }
+                                searchExpanded = searchExpanded.value
                             )
                         }
                     }
@@ -1084,23 +1080,56 @@ fun OnlinePlaylistDetail(
                         adaptiveLuminance = true,
                         contentColor = contentColor,
                     ) {
-                        // 「添加歌曲」从操作行挪到这里（自有歌单）：搜索钮占用了原来的
-                        // 第三格。非自有歌单仍显示占位项，保持原样。
+                        // 菜单项视觉对齐歌曲行「三个点」菜单：行首 20dp 图标 + 项间分割线，
+                        // 图标与分割线跟随菜单自身文字色（不跟页面封面色底）。
+                        //
+                        // 「添加歌曲」：原来在操作行第三格，那格让给了搜索钮（仅自有歌单）。
                         if (editAllowed) {
                             LiquidGlassDropdownMenuItem(
                                 text = stringResource(id = R.string.online_playlist_add_songs),
                                 onClick = {
-                                    menuOpen.value = false
+                                    // 先弹层再关菜单：面板先收起会盖住按压遮罩的渲染
                                     showAddDialog.value = true
+                                    menuOpen.value = false
+                                },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_song_menu_plus_circle),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = playlistMenuTextColor()
+                                    )
                                 },
                             )
-                        } else {
-                            LiquidGlassDropdownMenuItem(
-                                text = stringResource(id = R.string.online_album_more_placeholder),
-                                enabled = false,
-                                onClick = {},
-                            )
+                            PlaylistMenuItemDivider()
                         }
+                        // 「收藏」：原来在非自有歌单的操作行第三格，现在那格也是搜索钮，
+                        // 所以所有歌单的收藏都挪到这里（与专辑页一致）。
+                        // 不设 enabled=false：菜单按压高亮由面板手势层按 enabled 过滤，
+                        // 禁用时连遮罩都不会画（见 DropdownPanelDragSelect.hitTest）。
+                        LiquidGlassDropdownMenuItem(
+                            text = stringResource(
+                                id = if (collected) R.string.album_more_collected
+                                else R.string.album_more_collect
+                            ),
+                            // 先执行再关菜单：反过来面板会先收起，
+                            // 这一项的按压遮罩来不及渲染
+                            onClick = {
+                                toggleCollect()
+                                menuOpen.value = false
+                            },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (collected) R.drawable.ic_song_menu_star
+                                        else R.drawable.ic_song_menu_star_outline
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = playlistMenuTextColor()
+                                )
+                            },
+                        )
                     }
                 }
             )
@@ -1251,11 +1280,7 @@ private fun PlaylistHeaderCompact(
     onSearchQueryChange: (TextFieldValue) -> Unit,
     onSearchClear: () -> Unit,
     searchMorphFraction: State<Float>,
-    searchExpanded: Boolean,
-    collected: Boolean,
-    collectEnabled: Boolean,
-    collectDescription: String,
-    onToggleCollect: () -> Unit
+    searchExpanded: Boolean
 ) {
     Column(
         Modifier
@@ -1377,27 +1402,6 @@ private fun PlaylistHeaderCompact(
                     searchExpanded = searchExpanded,
                     onOpenSearch = onSearch
                 )
-            } else {
-                // 非自有歌单：无搜索入口，原样走共享组件（零改动）
-                val geometry = remember(maxWidth) { PlayActionGeometry(maxWidth) }
-                YosWrapper {
-                    CompactPlayActionRow(
-                        foregroundColor = contentColor,
-                        playEnabled = playEnabled,
-                        onShuffle = onShuffle,
-                        onPlayAll = onPlayAll,
-                        trailing = {
-                            ArtistCollectButton(
-                                collected = collected,
-                                enabled = collectEnabled,
-                                iconTint = contentColor,
-                                containerColor = contentColor.copy(alpha = 0.18f),
-                                description = collectDescription,
-                                onClick = onToggleCollect
-                            )
-                        }
-                    )
-                }
             }
         }
 
@@ -1528,5 +1532,30 @@ private fun AddSongsDialog(
         positiveContent = stringResource(id = R.string.common_ok),
         onPositive = onDismiss,
         wide = true
+    )
+}
+
+/**
+ * 右上菜单内的文字/图标色。
+ *
+ * 与 `LiquidGlassDropdownMenuItem` 内部同一份推导：菜单是一块独立的玻璃面，
+ * 跟随 App 深浅主题，不跟随页面封面色底 —— 否则图标会与菜单文字脱节。
+ */
+@Composable
+private fun playlistMenuTextColor(): Color =
+    if (isDropdownDarkTheme()) Color(0xFFE8E4DE) else Color(0xFF1A1A1A)
+
+/**
+ * 右上菜单的项间分割线（规格对齐歌曲行「三个点」菜单的 MenuDivider：
+ * 0.5dp 细线 + 左右缩进），颜色跟随菜单文字色。
+ */
+@Composable
+private fun PlaylistMenuItemDivider() {
+    Spacer(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 5.dp)
+            .height(0.5.dp)
+            .background(playlistMenuTextColor().copy(alpha = 0.12f))
     )
 }

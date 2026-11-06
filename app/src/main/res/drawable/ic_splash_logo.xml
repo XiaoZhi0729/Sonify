@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统闪屏 Logo：**品牌红**字形，形状与应用内 Compose 幕布画的完全一致。
+
+     这块画布为什么留白（viewport 532，字形占 106/532 ≈ 20%）：
+     Android 12+ 会把 windowSplashScreenAnimatedIcon 的 drawable **拉伸铺满**固定的
+     图标容器（规范 288dp；它是 dp，与屏幕密度无关，但实际机型可能不同）。
+     字形占画布的比例决定了两段最终有多大：
+       字形宽 = 容器宽 × (106 / 532) ≈ 288dp × 19.9% ≈ 57.4dp
+     这正好等于应用内动画 Logo 的设计尺寸（104dp 画布 × 106/192 ≈ 57.4dp），
+     所以首屏和进入后看到的是同一个大小。
+
+     translate 的算法（这是"不在正中间"的根因，别再按宽度算）：
+     原始字形的包围盒在 viewport 192 坐标系里是 x:43~149、y:32~159.38，
+     中心在 (96, 95.69)。要让它在 532 的画布里居中，必须让这个中心落到 (266, 266)：
+       translateX = 266 - 96    = 170
+       translateY = 266 - 95.69 = 170.31
+     按"宽度"算 (532-106)/2 = 213 会把字形推到右下角 —— 之前就是这么错的。
+
+     Compose 侧的换算依赖 viewportWidth/Height，改这里必须同步改 LaunchCurtain.kt 的 SplashViewport。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="532"
+    android:viewportHeight="532">
+    <group
+        android:translateX="170"
+        android:translateY="170.31">
+        <path
+            android:fillColor="#FFF54047"
+            android:pathData="M149,56.5V34.5V32L84,46.5L82.5,116.5L43,125.5V159.38L104,146L105.5,66L149,56.5Z" />
+    </group>
+</vector>

@@ -123,4 +123,53 @@ class PlaylistTrackFilterTest {
         assertFalse((null as String?).containsQuery("a"))
         assertTrue("abc".containsQuery("b"))
     }
+
+    // ── 泛化版本（在线专辑共用） ────────────────────────────────
+
+    private data class AlbumSong(val name: String?, val author: String?)
+
+    @Test
+    fun `generic filter works on any track type`() {
+        // 在线专辑用 KugouNewSong（字段 name/author），不能直接复用歌单轨道类型，
+        // 所以过滤逻辑泛化到「两个取值函数」。这里用最小替身验证同一套语义。
+        val album = listOf(
+            AlbumSong("花日", "Diary"),
+            AlbumSong("Planetarium", "Justin Hurwitz"),
+            AlbumSong("爱乐之城", "Kam Ridr"),
+            AlbumSong("なんでもないや", "上白石萌音")
+        )
+        val byName = filterTracks(album, "花日", { it.name }, { it.author })
+        assertEquals(1, byName.size)
+        assertEquals(0, byName.first().first)
+
+        // 歌手命中
+        val byArtist = filterTracks(album, "justin", { it.name }, { it.author })
+        assertEquals(1, byArtist.size)
+        assertEquals(1, byArtist.first().first)
+
+        // 空查询返回全部且索引恒等
+        val all = filterTracks(album, "  ", { it.name }, { it.author })
+        assertEquals(album.size, all.size)
+        all.forEachIndexed { i, pair -> assertEquals(i, pair.first) }
+    }
+
+    @Test
+    fun `generic filter keeps original index after skipping`() {
+        // 关键回归：跳过的元素不能影响后续元素的原索引（否则会播错歌）
+        val album = listOf(
+            AlbumSong("A", "x"),
+            AlbumSong("B", "y"),
+            AlbumSong("C", "x")
+        )
+        val hit = filterTracks(album, "c", { it.name }, { it.author })
+        assertEquals(1, hit.size)
+        assertEquals(2, hit.first().first)
+    }
+
+    @Test
+    fun `generic filter tolerates null fields`() {
+        val album = listOf(AlbumSong(null, null), AlbumSong("ok", null))
+        assertTrue(filterTracks(album, "ok", { it.name }, { it.author }).size == 1)
+        assertTrue(filterTracks(album, "zzz", { it.name }, { it.author }).isEmpty())
+    }
 }

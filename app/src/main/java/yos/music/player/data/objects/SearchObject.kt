@@ -75,6 +75,17 @@ object SearchObject {
     /** 最近一次实际执行搜索的关键词（判断联想区 vs 结果区的依据）。 */
     val lastSearched = mutableStateOf<String?>(null)
 
+    /**
+     * 搜索是否处于「激活」态：决定空关键词时展示浏览区（分类砖块 + 热搜榜）
+     * 还是最近搜索列表。
+     *
+     * 不用输入框的 focus 状态驱动：搜索框是 LazyColumn 的 item，滚出屏幕即被销毁、
+     * focus 随之丢失，用 focus 会让历史列表在滚动时莫名消失。
+     * 置 true：点输入框、发起搜索、点历史/热搜/联想词条。
+     * 置 false：只由「取消」按钮负责。
+     */
+    val searchActive = mutableStateOf(false)
+
     private fun historyMmkv() = MMKV.mmkvWithID("yos_search")
 
     private fun loadHistoryFromDisk(): List<String> = runCatching {
@@ -94,6 +105,22 @@ object SearchObject {
     fun clearHistory() {
         history.value = emptyList()
         runCatching { historyMmkv().removeValueForKey(HISTORY_KEY) }
+    }
+
+    /**
+     * 删除单条历史。必须重新落盘——[clearHistory] 之外的写入口只有
+     * [recordHistory]，不在这里 encode 的话删除只在内存生效，重启后复活。
+     */
+    fun removeHistory(index: Int) {
+        if (index !in history.value.indices) return
+        history.value = history.value.filterIndexed { i, _ -> i != index }
+        runCatching {
+            if (history.value.isEmpty()) {
+                historyMmkv().removeValueForKey(HISTORY_KEY)
+            } else {
+                historyMmkv().encode(HISTORY_KEY, gson.toJson(history.value))
+            }
+        }
     }
 
     /** 切换结果类型；切回已搜过的类型不重置状态（由页面按缓存判断是否补拉）。 */

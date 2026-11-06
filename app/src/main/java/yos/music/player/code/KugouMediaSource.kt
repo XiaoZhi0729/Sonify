@@ -91,6 +91,12 @@ class KugouResolvingDataSource(
     /** active 是否是零网络的纯缓存通道：读失败与代理健康无关，不得标记代理故障。 */
     private var activeIsCacheOnly = false
 
+    /** 本次 open 的通道名与目标曲 hash：read 失败时只有它能说清"哪条通道、哪首曲"读不出来。 */
+    private var activeChannel: String = "upstream"
+    private var activeHash: String? = null
+
+    /** 本次 open 起已读出的字节数：失败点靠它定位（DataSource 接口本身不暴露 position）。 */
+    private var activeBytesRead: Long = 0L
     override fun open(dataSpec: DataSpec): Long {
         val openedAt = SystemClock.elapsedRealtime()
         if (dataSpec.uri.scheme != KugouRepository.PLACEHOLDER_SCHEME) {
@@ -100,6 +106,10 @@ class KugouResolvingDataSource(
         }
         val hash = dataSpec.uri.lastPathSegment
             ?: throw IOException("在线占位符 URI 缺少 hash: ${dataSpec.uri}")
+        // 入口先落一行：没有它，"通道卡住几十秒"与"根本没开始"在日志上是同一个样子
+        //（11-05 那次 67 秒 BUFFERING 就是靠这条缺席才查不出卡在哪一步）
+        activeHash = hash
+        YosDiagnostics.log("OPEN_START", "hash" to hash, "pos" to dataSpec.position)
         // 意图单一来源：与 UI 读同一个 QualityIntentResolver（本曲覆盖优先，否则按网络取偏好），
         // 不再在解析线程里各自现读全局偏好——那是"UI 显示 A 档、音频按 B 档解析"的根源
         val decision = QualityIntentResolver.resolve(hash, appContext)
@@ -108,7 +118,11 @@ class KugouResolvingDataSource(
         val upgrade = cachedUpgradeFor(hash, decision)
         // 零网络快路径：整首缓存已在本地，连 /song/url 都不请求。失败（被 LRU 淘汰、
         // 缓存文件损坏等）静默回退到下面的联网解析，用户侧不该感知到这次尝试。
-        if (upgrade != null && upgrade.fullyCached) {
+        // 近期失败过的 key 直接跳过：索引说"整首在本地"但字节读不出来时，反复重试只会
+        // 卡住播放（真机实测 67 秒），而联网解析是确定能出结果的那条路。
+        if (upgrade != null && upgrade.fullyCached &&
+            !cacheOnlyFailedRecently(hash, SystemClock.elapsedRealtime())
+        ) {
             tryOpenFromCacheOnly(hash, decision, upgrade)?.let { return it }
         }
         // 未整首缓存但有升级结论：按**升级后的档位**请求，剩余字节续写进同一份缓存，
@@ -213,10 +227,22 @@ class KugouResolvingDataSource(
             read
         } catch (e: IOException) {
             logOpenFail(spec, hash, startedAt, e)
+            // 快路径失败必须留痕：以前注释写着"不留痕迹"，结果 11-05 那次 67 秒卡死
+            // 在日志上完全看不出是反复回退这条通道造成的。
+            YosDiagnostics.log(
+                "CACHE_ONLY_MISS", "hash" to hash, "tier" to choice.tier,
+                "cost" to (SystemClock.elapsedRealtime() - startedAt),
+                "why" to (e.message ?: e.javaClass.simpleName)
+            )
             runCatching { source.close() }
             resetChannel()
             null
         } catch (e: Exception) {
+            YosDiagnostics.log(
+                "CACHE_ONLY_MISS", "hash" to hash, "tier" to choice.tier,
+                "cost" to (SystemClock.elapsedRealtime() - startedAt),
+                "why" to e.javaClass.simpleName
+            )
             runCatching { source.close() }
             resetChannel()
             null
@@ -228,12 +254,19 @@ class KugouResolvingDataSource(
         active = upstream
         activeIsDirect = false
         activeIsCacheOnly = false
+        activeBytesRead = 0L
     }
 
     /** 选通道：本地/非 http 走原 upstream；在线 http(s) 在代理与直连间二选一（各带缓存版本）。 */
     private fun selectChannel(online: Boolean, preferDirect: Boolean, cacheOnly: Boolean) {
         activeIsDirect = online && !cacheOnly && preferDirect
         activeIsCacheOnly = online && cacheOnly
+        activeChannel = when {
+            !online -> "upstream"
+            cacheOnly -> if (cacheOnlyUpstream != null) "cache_only" else "upstream"
+            preferDirect -> if (directCachedUpstream != null) "direct" else "direct_plain"
+            else -> if (cachedUpstream != null) "proxy_cached" else "proxy_plain"
+        }
         active = when {
             !online -> upstream
             cacheOnly -> cacheOnlyUpstream ?: upstream
@@ -381,9 +414,20 @@ class KugouResolvingDataSource(
     // 不必再白等一轮连接超时。异常照旧上抛，由 ExoPlayer 的退避重试重新 open。
     // 纯缓存通道读失败与代理无关（它根本不联网），不能把这份故障记忆记到代理头上。
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int = try {
-        active.read(buffer, offset, length)
+        active.read(buffer, offset, length).also { if (it > 0) activeBytesRead += it }
     } catch (e: IOException) {
         if (!activeIsDirect && !activeIsCacheOnly) OnlineProxyHealth.markProxyFailed()
+        // 读失败此前完全无痕：open 成功只代表"通道接受了一次 open"，不代表字节真能读出来。
+        // 缓存空洞/文件损坏走的就是这条路——它会让 ExoPlayer 无限退避重试，而日志一片空白。
+        YosDiagnostics.log(
+            "READ_FAIL", "via" to activeChannel, "hash" to activeHash,
+            "read" to activeBytesRead, "why" to (e.message ?: e.javaClass.simpleName)
+        )
+        // 纯缓存通道读到一半就失败 = 索引与真实字节不一致。记进负缓存，让下一次 open
+        // 别再走这条死路，直接联网解析。
+        if (activeIsCacheOnly) {
+            activeHash?.let { markCacheOnlyFailed(it, SystemClock.elapsedRealtime()) }
+        }
         throw e
     }
 
@@ -391,7 +435,6 @@ class KugouResolvingDataSource(
         active.close()
         resetChannel()
     }
-
     override fun getUri(): android.net.Uri? = active.uri
 
     override fun addTransferListener(transferListener: TransferListener) {
@@ -418,6 +461,38 @@ class KugouResolvingDataSource(
         private val lastDowngradeToastLock = Any()
         private var lastDowngradeToastKey: String? = null
         private var lastDowngradeToastAt = 0L
+
+        /**
+         * cache-only 快路径的负缓存。
+         *
+         * 为什么必须有：`fullyCached` 是从缓存索引的 span 推出来的，索引与真实字节可能不一致
+         * （LRU 淘汰了文件、写入中断）。这种情况下 open 会成功返回长度，read 却撞空洞抛
+         * IOException，ExoPlayer 按 5 秒上限退避重试，于是形成"每 3~5 秒撞一次、永远撞不通"
+         * 的循环——真机实测卡了 67 秒，期间 CACHE_ONLY 记了 23 次"成功"。
+         *
+         * 记住失败过的 key 一小段时间，期间直接跳过快路径走联网解析，让播放能继续。
+         */
+        private val cacheOnlyFailLock = Any()
+        private val cacheOnlyFailUntil = HashMap<String, Long>()
+        private const val CACHE_ONLY_FAIL_COOLDOWN_MS = 5 * 60 * 1000L
+
+        private fun cacheOnlyFailedRecently(key: String, now: Long): Boolean =
+            synchronized(cacheOnlyFailLock) {
+                val until = cacheOnlyFailUntil[key] ?: return false
+                if (until <= now) {
+                    cacheOnlyFailUntil.remove(key)
+                    return false
+                }
+                true
+            }
+
+        private fun markCacheOnlyFailed(key: String, now: Long) {
+            synchronized(cacheOnlyFailLock) {
+                // 表只装最近失败过的几首，避免长期运行无限增长
+                if (cacheOnlyFailUntil.size > 32) cacheOnlyFailUntil.clear()
+                cacheOnlyFailUntil[key] = now + CACHE_ONLY_FAIL_COOLDOWN_MS
+            }
+        }
     }
 }
 

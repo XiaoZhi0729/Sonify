@@ -190,6 +190,7 @@ import androidx.media3.common.Player.REPEAT_MODE_ALL
 import androidx.media3.common.Player.REPEAT_MODE_ONE
 import yos.music.player.code.MediaController
 import yos.music.player.code.MediaController.mediaControl
+import yos.music.player.code.hdr.LyricHdrWindowGate
 import yos.music.player.code.YosPlaybackService
 import yos.music.player.code.utils.others.GlassDiagnostics
 import yos.music.player.code.utils.others.GlassProbe
@@ -260,6 +261,7 @@ import yos.music.player.ui.widgets.effects.CoverArtworkCameraDistance
 import yos.music.player.ui.widgets.effects.CoverArtworkPressScaleDrop
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -297,18 +299,43 @@ class MainActivity : BaseActivity() {
      * 系统闪屏是否已经彻底撤场。
      *
      * 幕布动画以它为起点，不以"首帧"为起点：系统闪屏撤场带淡出动画，
-     * 它是一块**实心品牌红**，而 Compose 幕布此刻已挖好 Logo 形状的洞。
-     * 两者交叉淡化时洞里会短暂混出一层粉色。所以接管退出动画：撤销淡出、
-     * 立即移除闪屏，再放行动画。
+     * 而 Compose 幕布此刻已经画好同一张底色的第一帧 + 同一个 Logo。
+     * 两者交叉淡化本身看不出问题，但闪屏的淡出会在屏幕上叠出一层半透明，
+     * 让"Logo 淡入"的起始变得不干净。所以接管退出动画：撤销淡出、立即移除闪屏，
+     * 再放行动画。
      */
     private var splashDismissed by mutableStateOf(false)
 
     /**
+     * 系统闪屏 Logo 的实测几何（尺寸 px + 垂直中心 px）。
+     *
+     * 由 [measureSplashLogo] 在闪屏撤场时写入，Compose 幕布读它对齐位置与大小，
+     * 让"系统闪屏 → Compose 幕布"的交接看不出是两段。
+     */
+    private val launchStartMetrics = yos.music.player.ui.launch.LaunchStartMetrics()
+
+    /**
+     * 量出系统闪屏图标容器的真实尺寸。
+     *
+     * 只取尺寸：两段的**大小**由"容器宽 × 字形在 viewport 中的占比"推出（见
+     * LaunchCurtain.kt 的 SplashViewport），因此任何容器 dp / 屏幕密度都自动对齐。
+     * 位置不取这里的值 —— 两段一律以屏幕正中为准，否则系统把图标抬高后，
+     * 进入后的动画 Logo 会跟着偏离中心。
+     */
+    private fun measureSplashLogo(provider: androidx.core.splashscreen.SplashScreenViewProvider) {
+        runCatching {
+            val icon = provider.iconView ?: return
+            if (icon.width <= 0 || icon.height <= 0) return
+            launchStartMetrics.update(containerPx = minOf(icon.width, icon.height).toFloat())
+        }
+    }
+
+    /**
      * 按应用自身主题设置，挑浅色/深色的开屏主题。
      *
-     * 闪屏 Logo 的颜色其实是"首页底色的模拟"：浅色主题下首页是白的，深色是黑的。
+     * 闪屏底色就是"首页底色"：浅色主题下是白，深色是黑；Logo 两种主题下都是品牌红。
      * 系统闪屏只会读 res 主题，因此必须在这里按用户设置显式覆盖，
-     * 否则"应用内强制深色 + 系统浅色"的组合会让 Logo 白↔黑跳一下。
+     * 否则"应用内强制深色 + 系统浅色"的组合会让开屏底色白↔黑跳一下。
      */
     private fun applySplashThemeForCurrentSetting() {
         val setting = yos.music.player.data.libraries.SettingsLibrary.CustomTheme
@@ -340,8 +367,12 @@ class MainActivity : BaseActivity() {
         val splashStartUptime = android.os.SystemClock.uptimeMillis()
         val splash = installSplashScreen()
         splash.setOnExitAnimationListener { provider ->
-            // 立即移除，不做淡出：闪屏与幕布都是品牌红，硬切在这一层完全看不见，
-            // 而淡出会露出"洞里混色"的那一层。
+            // 系统闪屏退场前，量一次它 Logo 的真实几何交给 Compose 幕布。
+            // 两个阶段画的是同一张 path，但系统会把同一张 vector 渲染成不同尺寸、
+            // 还常把它抬到屏幕中心之上。不量的话交接瞬间 Logo 会"突然变大 + 跳一下"。
+            measureSplashLogo(provider)
+            // 立即移除，不做淡出：闪屏与幕布此刻是同一张底色 + 同一个 Logo，硬切看不见，
+            // 而淡出会凭空叠出一层半透明，让 Logo 淡入的起始不干净。
             provider.view.animate().setDuration(0L).withEndAction {
                 provider.remove()
             }.start()
@@ -377,12 +408,12 @@ class MainActivity : BaseActivity() {
         setContent {
             YosMusicTheme {
                 ProvideRawWindowInsets {
-                    // 开屏幕布：品牌红整屏，中间按 Logo 轮廓挖洞，洞里就是首页。
+                    // 开屏幕布：整屏页面底色 + 正中品牌红 Logo，纯淡入淡出（不缩放、不挖洞）。
                     // 放在这里是为了让整棵树（含首页板块、底栏、播放壳）都能读到
                     // LocalLaunchReveal；幕布本体在最后作为最上层兄弟节点绘制。
                     val launchCurtainState = yos.music.player.ui.launch.rememberLaunchCurtainState(
-                        // 等系统闪屏彻底撤场再起跑：闪屏是实心红，幕布此刻已有 Logo 形状的洞，
-                        // 淡出期交叉会混出一层粉色。详见 splashDismissed 的注释。
+                        // 等系统闪屏彻底撤场再起跑：两者是同一张底 + 同一个 Logo，
+                        // 闪屏的淡出会在其上叠出一层半透明，让 Logo 淡入的起始不干净。
                         play = playLaunchCurtain,
                         ready = splashDismissed,
                         onFinish = { }
@@ -399,6 +430,16 @@ class MainActivity : BaseActivity() {
                         // 状态落定后移出组合，运行期零成本。
                         if (launchCurtainState.finished) launchCurtainAlive = false
                     }
+                    LaunchedEffect(Unit) {
+                        // 看门狗：幕布是不透明遮挡层，任何原因没退场都会表现为"整屏白"。
+                        // 这里给一个远大于总时长的硬截止，超时强制撤场——宁可少一段动画，
+                        // 也绝不能让用户对着一屏底色。
+                        kotlinx.coroutines.delay(yos.music.player.ui.launch.LaunchTotalMs.toLong() + 700L)
+                        if (launchCurtainAlive) {
+                            launchCurtainState.forceFinish()
+                            launchCurtainAlive = false
+                        }
+                    }
                     // 首页各块的浮现进度。
                     //
                     // **必须是一个函数而不是数值**：各块在绘制期调用它读取时间轴，
@@ -408,10 +449,7 @@ class MainActivity : BaseActivity() {
                     // 所有浮现修饰符随之摘掉，运行期零残留。
                     val launchReveal = remember(launchCurtainAlive, launchCurtainState) {
                         yos.music.player.ui.launch.LaunchRevealScope(launchCurtainAlive) { index ->
-                            yos.music.player.ui.launch.staggerReveal(
-                                launchCurtainState.grow.floatValue,
-                                index
-                            )
+                            launchCurtainState.revealAt(index)
                         }
                     }
                     yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
@@ -1171,6 +1209,10 @@ class MainActivity : BaseActivity() {
                         val miniPlayerVisible = remember("MainActivity_miniPlayerVisible") {
                             derivedStateOf { yosBottomSheetConfig.progress < 0.16f }
                         }
+                        // HDR 窗口只随播放壳展开：歌词页之外没有 HDR 内容，全应用常开只会
+                        // 白白提背光耗电。门禁带滞回且自成小节点，避免整块外壳跟着重组。
+                        LyricHdrWindowGate(progress = { yosBottomSheetConfig.progress })
+
                         // hideAppChrome 是组合期的普通 Boolean；derivedStateOf 的闭包只捕获
                         // 创建时的值，必须经 rememberUpdatedState 转成 State 才能在 lambda 内
                         // 读到最新值（否则切页后门禁永远停在首次组合的结果）。
@@ -2558,12 +2600,15 @@ class MainActivity : BaseActivity() {
 
                         }
 
-                        // 启动幕布：压在所有内容之上（含底栏、迷你条、全屏播放页），
-                        // 因为它是不透明的品牌红遮挡层 + 一个 Logo 形状的洞。
+                        // 启动幕布：整屏页面底色 + 正中品牌红 Logo，压在所有内容之上
+                        // （含底栏、迷你条、全屏播放页）。
                         // 整段结束后 launchCurtainAlive 变 false，本层离开组合，运行期零成本。
                         if (launchCurtainAlive) {
                             yos.music.player.ui.launch.LaunchCurtain(
                                 state = launchCurtainState,
+                                // 沿用系统闪屏 Logo 的实测几何：两段画的是同一张 path，
+                                // 尺寸与位置对齐后，交接处看不出换人。
+                                startMetrics = launchStartMetrics,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .zIndex(100f)
@@ -3271,6 +3316,12 @@ private fun lerpRect(a: Rect, b: Rect, t: Float): Rect = Rect(
  *  - 不挂 Offscreen / backdrop / blur：这些是展开掉帧的已知主因，
  *    圆角用 clipPath 完成，描边用极便宜的路径描边，阴影只做一次模糊；
  *  - active 为 false 时整层不绘制，静止端点交回原封面节点。
+ *
+ * 按压 3D 倾斜（coverState）：切页那一刻画封面的人从"大封面 Compose 节点"换成
+ * 本层 Canvas，但 Canvas 不懂倾斜。所以倾斜期间改由下面那个**真实图片节点**接力：
+ * 它的变换直接用 `coverArtworkEffect(coverState)`——与 NowPlaying 里大封面是同一个
+ * modifier、同一份 state，旋转/缩放/cameraDistance 自动逐项一致，交接不跳。
+ * Canvas 只保留阴影与不倾斜的底子，两者靠同一个状态互斥，绝不同帧画两张。
  */
 @Composable
 private fun CoverMorphLayer(
@@ -3281,7 +3332,7 @@ private fun CoverMorphLayer(
     bitmap: () -> Any?,
     handoffRect: Rect? = null,
     // 封面按压动效状态（外壳层建立）。切页那一刻画封面的人从"大封面 Compose 节点"
-    // 换成"本层 Canvas"，两者必须读同一份状态，否则松手时的倾角/缩放会在换人
+    // 换成"本层"，两者必须读同一份状态，否则松手时的倾角/缩放会在换人
     // 那一帧被抹平（真机表现：按下有动画、松手直接复位）。
     coverState: CoverArtworkState,
     modifier: Modifier = Modifier
@@ -3307,11 +3358,6 @@ private fun CoverMorphLayer(
     val shadowType = ShadowType.Large
     val shadowBlurPx = with(density) { shadowType.blur.toPx() }
     val shadowPaint = remember { Paint() }
-    // 透视变换（按压 3D 倾斜）用的 Camera 与 Matrix：**必须 remember**。
-    // android.graphics.Camera 内部持有原生矩阵，每帧 new 会持续分配并拖慢绘制；
-    // Matrix 同理。二者只在本层的绘制块里按帧 set/取，不跨线程。
-    val tiltCamera = remember { android.graphics.Camera() }
-    val tiltMatrix = remember { android.graphics.Matrix() }
     // 全屏端点底边淡出用的离屏图层 paint：saveLayer 只覆盖淡出带本身
     //（≈1.12×层宽 × 0.28×层宽），不是整层——离屏开销与真实节点的图层同级。
     val fadeLayerPaint = remember { Paint() }
@@ -3334,6 +3380,10 @@ private fun CoverMorphLayer(
     // 容器顶边上方 497px（=(155−1150)/2），缩到迷你尺寸后整块跑到壳外被裁，
     // 表现为展开起点封面完全消失。绘制在容器自身的画布上则完全没有这个问题：
     // 画布尺寸恒等于外壳，坐标就是外壳坐标，不存在任何对齐偏移。
+    //
+    // 唯一的例外是倾斜接力节点（见下方 tiltNodeActive）：它必须是个真实节点
+    // 才能拿到 graphicsLayer 的 3D 能力，因此显式用 requiredSize + 手动偏移
+    // 定位，绕开"超出父容器被居中"这条规则。
     val painter = coil.compose.rememberAsyncImagePainter(
         model = remember(url) {
             coil.request.ImageRequest.Builder(context)
@@ -3357,6 +3407,9 @@ private fun CoverMorphLayer(
         }
     )
 
+    // Canvas 与倾斜接力节点是兄弟：Canvas 负责阴影/描边/非倾斜态封面，
+    // 倾斜节点只在按压期间接手封面。Box 只做定位容器，不建立图层。
+    Box(modifier = Modifier.fillMaxSize()) {
     Canvas(
         modifier = modifier.onGloballyPositioned { geometry.hero = it }
     ) {
@@ -3443,41 +3496,15 @@ private fun CoverMorphLayer(
         }
         val fadeEndY = frame.top + side + extPx
         val fadeStartY = fadeEndY - fadeLen
+        // 倾斜接力节点接管封面与描边时，本画布不再画它们（避免同帧两张）。
+        // 门禁在**绘制期**读取 State，不参与组合，不会引起重组。
+        val tiltHoldsCover = coverState.tiltX.value != 0f ||
+                coverState.tiltY.value != 0f ||
+                coverState.press.value > 0f
         if (!fullScreenEndpoint) {
             // 卡片端点（迷你/顶栏/普通大封面）：整块不透明 + 两道描边。
-            //
-            // 按压 3D 倾斜：本层是切页后的唯一封面绘制者，大封面按下的倾角/缩放
-            // 必须由这里接着画完（否则松手那一帧换人，倾角被一帧抹平）。
-            //
-            // 圆角裁剪留在屏幕空间（未变换的 path），透视矩阵只包图片绘制。
-            // 原因是 Android 的 Canvas.clipPath 在非仿射（透视）矩阵下行为不可靠
-            // （硬件加速下会退化成矩形近似）。已知代价：图片倾斜后四边内缩，
-            // 裁剪窗口的圆角处露出底色，外面看起来像多了一个不动的框——
-            // 这是当前版本的已知观感，修它需要让裁剪面也跟着倾斜（尚未做）。
-            //
-            // 倾角按**页面封面档位**衰减（pageT：1=大封面档、0=顶栏 69dp 档），
-            // 不能用 p——p 是外壳展开进度，单击封面切页时它恒为 1（播放页早已展开），
-            // 用它算会让倾角恒为 0，等于把本修复原地抹掉。
-            val tiltFade = frame.pageT.coerceIn(0f, 1f)
-            val tiltX = coverState.tiltX.value * tiltFade
-            val tiltY = coverState.tiltY.value * tiltFade
-            val pressValue = coverState.press.value
             clipPath(path) {
-                if (tiltX != 0f || tiltY != 0f || pressValue > 0f) {
-                    drawTiltedCover(
-                        camera = tiltCamera,
-                        matrix = tiltMatrix,
-                        painter = painter,
-                        frame = frame,
-                        basePx = basePx,
-                        tiltX = tiltX,
-                        tiltY = tiltY,
-                        pressValue = pressValue,
-                        densityPx = density.density,
-                        path = path,
-                        strokeFade = strokeFade
-                    )
-                } else {
+                if (!tiltHoldsCover) {
                     withTransform({
                         translate(frame.left, frame.top)
                         scale(scale, scale, pivot = Offset.Zero)
@@ -3601,126 +3628,78 @@ private fun CoverMorphLayer(
             drawContext.canvas.restore()
         }
     }
-}
 
-// 封面阴影透明度上限，与 ShadowImageWithCache 的默认 shadowAlpha 一致。
-private const val morphShadowAlpha = 0.23f
-
-// 封面 morph 阴影的垂直偏移权重两端点：顶栏 69dp 封面档用 ShadowType.Small(0.11)、
-// 大封面档用 ShadowType.Large(0.08)。按 pageT 插值，交接瞬间阴影不跳。
-private val morphShadowOffsetYBar = ShadowType.Small.offsetY
-private val morphShadowOffsetYAlbum = ShadowType.Large.offsetY
-
-/**
- * 在**已按圆角裁剪的屏幕空间**里，把封面按按压倾角与缩放画出来。
- *
- * 与 `coverArtworkEffect`（Compose 渲染面）逐项同源，交接那一刻不跳：
- *  - 倾角：`coverState.tiltX/tiltY` 直接是度数，与 `graphicsLayer.rotationX/Y` 同义；
- *  - 缩放：`1 - CoverArtworkPressScaleDrop * press`，与 `scaleX/scaleY` 同义；
- *  - 相机距离：`CoverArtworkCameraDistance * density * frame.scale`。**单位是像素**
- *    （Compose 的 cameraDistance 直通 RenderNode.setCameraDistance，中间无 density
- *    乘法），所以这里也必须先乘 density 转 px，再按当帧 scale 做同伦补偿。
- *
- * 矩阵构造的两个坑：
- *  1. `android.graphics.Camera` 的 z 轴朝向屏幕内为正，而 cameraDistance 的语义是
- *     "相机到图层平面的距离"，取负才是等效位置。
- *  2. Camera 的旋转支点在原点，必须先平移到封面中心、转完再平移回去，
- *     否则整块会绕画布左上角甩出去。
- *
- * 为什么不用 `graphicsLayer` 给整个 Canvas 加变换：本层是全屏 Canvas，
- * 加图层等于每帧重建全屏离屏纹理（项目已实测为掉帧主因，见 NavPageVisual 注释）。
- * 直接在绘制矩阵上 concat 只改绘制变换，不建层。
- */
-/**
- * 在**已按圆角裁剪的屏幕空间**里，把封面按按压倾角与缩放画出来。
- *
- * 与 `coverArtworkEffect`（Compose 渲染面）逐项同源，交接那一刻不跳：
- *  - 倾角：`coverState.tiltX/tiltY` 直接是度数，与 `graphicsLayer.rotationX/Y` 同义；
- *  - 缩放：`1 - CoverArtworkPressScaleDrop * press`，与 `scaleX/scaleY` 同义；
- *  - 相机距离：`CoverArtworkCameraDistance * density * frame.scale`。**单位是像素**
- *    （Compose 的 cameraDistance 直通 RenderNode.setCameraDistance，中间无 density
- *    乘法），所以这里也必须先乘 density 转 px，再按当帧 scale 做同伦补偿。
- *
- * 矩阵构造的两个坑：
- *  1. `android.graphics.Camera` 的 z 轴朝向屏幕内为正，而 Compose/RenderNode 的
- *     cameraDistance 语义是"相机到图层平面的距离"，取负才是等效位置。
- *  2. Camera 的旋转支点在原点，必须先平移到封面中心、转完再平移回去，
- *     否则整块会绕画布左上角甩出去。
- *
- * 为什么不用 `graphicsLayer` 给整个 Canvas 加变换：本层是全屏 Canvas，
- * 加图层等于每帧重建全屏离屏纹理（项目已实测为掉帧主因，见 NavPageVisual 注释）。
- * 直接在绘制矩阵上 concat 只改绘制变换，不建层。
- */
-private fun DrawScope.drawTiltedCover(
-    camera: android.graphics.Camera,
-    matrix: android.graphics.Matrix,
-    painter: androidx.compose.ui.graphics.painter.Painter,
-    frame: MorphFrame,
-    basePx: Float,
-    tiltX: Float,
-    tiltY: Float,
-    pressValue: Float,
-    densityPx: Float,
-    path: androidx.compose.ui.graphics.Path,
-    strokeFade: Float
-) {
-    val cx = frame.left + frame.size / 2f
-    val cy = frame.top + frame.size / 2f
-
-    // 相机距离与 Compose 渲染面同源：dp → px。
+    // 倾斜接力节点：真 3D 变换只有真实节点能给（Canvas 手写透视的单位与
+    // RenderNode 不是同一套，实测会失真成"被拉伸"）。这里直接用
+    // coverArtworkEffect(coverState)——与 NowPlaying 大封面同一个 modifier、
+    // 同一份 state，旋转/缩放/cameraDistance 自动逐项一致。
     //
-    // 关键是不能乘 frame.scale。真实节点（coverArtworkEffect）里写的是
-    // `CoverArtworkCameraDistance * density * scale`，那个 scale 是"本层尺寸 / 大封面尺寸"，
-    // 在真实大封面节点上恒为 1——也就是说大封面用的就是这个 dp→px 的固定值。
-    // 外壳这一层虽然会缩到 69dp，但倾角已按 pageT 衰减到接近 0，
-    // 这里再按 scale 缩相机距离只会让中途几帧的透视畸变突然放大。
-    val cameraDistancePx = CoverArtworkCameraDistance * densityPx
-    camera.save()
-    camera.setLocation(0f, 0f, -cameraDistancePx)
-    camera.rotateX(tiltX)
-    camera.rotateY(tiltY)
-    camera.getMatrix(matrix)
-    camera.restore()
-
-    // 支点移到封面中心（Camera 默认绕原点旋转）。
-    matrix.preTranslate(-cx, -cy)
-    matrix.postTranslate(cx, cy)
-
-    // 按压缩放：与 graphicsLayer 的 scaleX/scaleY 同义，支点同为封面中心。
-    val pressedScale = 1f - CoverArtworkPressScaleDrop * pressValue
-    if (pressedScale != 1f) {
-        matrix.postScale(pressedScale, pressedScale, cx, cy)
+    // 层级顺序照抄 ShadowImage：**外层倾斜、内层 clip**。反过来（同一层同时
+    // 设 rotation + clip）时裁剪面停留在未旋转的矩形，四角被固定矩形切掉，
+    // 表现为"圆角变直角 + 外面多一个不动的框"（About.kt 里记过同一坑）。
+    //
+    // 定位必须显式：节点比父容器大时 Compose 会居中放置（本文件上方记过
+    // 实测偏 497px），而外壳收起时只有 62dp 高、节点是 460dp。所以用
+    // Box(TopStart) + offset + requiredSize 钉住左上角，不让它被居中。
+    if (MorphCoverTiltNodeEnabled) {
+        // 组合期只读"是否还在倾斜"这一个布尔：用 derivedStateOf 包一层，
+        // 整个按压周期只翻转两次（开始/结束）。直接读 coverState.isTilting
+        // 会订阅三个 Animatable，导致整层逐帧重组。
+        // 逐帧的倾角数值仍在 graphicsLayer / 绘制块里读，不进组合。
+        val tiltWindow = remember("CoverMorphLayer_tiltWindow") {
+            derivedStateOf { coverState.isTilting }
+        }
+        if (active() && tiltWindow.value && !fullScreenEndpoint) {
+            val frame = resolveMorphFrame(
+                geometry,
+                geometry.hero,
+                progress(),
+                pageProgress(),
+                basePx,
+                handoffRect = handoffRect,
+                fullScreen = false
+            )
+            if (frame != null) {
+                val side = frame.size
+                val p = progress().coerceIn(0f, 1f)
+                val pageCornerDp = morphCornerBarDp +
+                        (morphCornerEndDp - morphCornerBarDp) * frame.pageT
+                val radiusDp = (morphCornerStartDp +
+                        (pageCornerDp - morphCornerStartDp) * p).dp
+                val sideDp = with(density) { side.toDp() }
+                val leftDp = with(density) { frame.left.toDp() }
+                val topDp = with(density) { frame.top.toDp() }
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+                    // 外层：倾斜 + 缩放 + 相机距离，全部由 coverArtworkEffect 提供
+                    // （与真实封面节点同源）。圆角裁剪放在**内层**，这样裁剪面
+                    // 随内容一起旋转，而不是停在原地切成直角。
+                    Box(
+                        modifier = Modifier
+                            .offset(x = leftDp, y = topDp)
+                            .requiredSize(sideDp)
+                            .coverArtworkEffect(
+                                state = coverState,
+                                cornerRadius = radiusDp,
+                                rimHighlight = false
+                            )
+                    ) {
+                        Image(
+                            painter = painter,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    compositingStrategy = CompositingStrategy.Offscreen
+                                    clip = true
+                                    this.shape = YosRoundedCornerShape(radiusDp)
+                                }
+                        )
+                    }
+                }
+            }
+        }
     }
-
-    val canvas = drawContext.canvas
-    canvas.save()
-    // 必须走 nativeCanvas：Compose 的 Canvas.concat 只接受
-    // androidx.compose.ui.graphics.Matrix，而透视矩阵只能由 android.graphics.Camera
-    // 产出（Compose 的 Matrix 没有 3D 透视）。save/restore 保证矩阵不外泄到
-    // 后续的描边绘制。
-    canvas.nativeCanvas.concat(matrix)
-    // 图片绘制本身沿用同一套"平移 + 等比缩放"（与不倾斜时完全一致），
-    // 透视矩阵已把它整体带歪。
-    withTransform({
-        translate(frame.left, frame.top)
-        scale(frame.scale, frame.scale, pivot = Offset.Zero)
-    }) {
-        drawPainterCropped(painter, Size(basePx, basePx))
-    }
-    canvas.restore()
-
-    // 描边**不跟着倾斜**：它只有 12px 宽，18° 倾斜下的形变肉眼不可辨，
-    // 而留在屏幕空间能让它严格贴合上面那个圆角裁剪窗口——倾斜画会让描边
-    // 的四个角跑出裁剪面、在角部留下缺口。path 本来就是屏幕空间坐标
-    // （已按 frame.left/top 平移过），所以这里不需要任何变换。
-    if (strokeFade > 0.01f) {
-        drawPath(path, Color.Gray.copy(alpha = 0.1f * strokeFade), style = morphStroke)
-        drawPath(
-            path,
-            Color.Gray.copy(alpha = 0.5f * strokeFade),
-            style = morphStroke,
-            blendMode = BlendMode.Overlay
-        )
     }
 }
 
@@ -3748,6 +3727,19 @@ private fun DrawScope.drawPainterCropped(
         with(painter) { draw(Size(dw, dh), alpha = alpha) }
     }
 }
+
+// 封面按压 3D 倾斜的"接力节点"总开关。
+// 关闭后退回纯 Canvas 行为：倾角在切页那一刻会被抹平（松手看不到回弹），
+// 但封面绘制完全走原来的路径。留这个开关是为了出问题时能一键对比/回退。
+private const val MorphCoverTiltNodeEnabled = true
+
+// 封面阴影透明度上限，与 ShadowImageWithCache 的默认 shadowAlpha 一致。
+private const val morphShadowAlpha = 0.23f
+
+// 封面 morph 阴影的垂直偏移权重两端点：顶栏 69dp 封面档用 ShadowType.Small(0.11)、
+// 大封面档用 ShadowType.Large(0.08)。按 pageT 插值，交接瞬间阴影不跳。
+private val morphShadowOffsetYBar = ShadowType.Small.offsetY
+private val morphShadowOffsetYAlbum = ShadowType.Large.offsetY
 
 // 全屏端点底边淡出的离屏图层向外扩的余量（px）：让描边（12px、半宽 6px）与
 // 抗锯齿边也落在图层内，被同一条 DstIn 渐变擦除。
@@ -3918,9 +3910,9 @@ private fun PlayPauseButton(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(bounded = false),
                 onClick = {
-                    val newValue = !MediaViewModelObject.isPlaying.value
-                    MediaViewModelObject.isPlaying.value = newValue
-                    if (newValue) {
+                    // 只发命令，不预写播放态：fadePlay/fadePause 内部会同步写入目标态，
+                    // 而这里先写会在 mediaControl 为 null / 命令失败时留下永久错误图标。
+                    if (!MediaViewModelObject.isPlaying.value) {
                         MediaController.mediaControl?.fadePlay()
                     } else {
                         MediaController.mediaControl?.fadePause()

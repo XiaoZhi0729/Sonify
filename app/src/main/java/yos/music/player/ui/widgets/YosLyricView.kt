@@ -147,6 +147,8 @@ import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLyricsView
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsAnchor
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsFade
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLineText
+import yos.music.player.code.hdr.LyricHdr
+import yos.music.player.code.hdr.hdrSolidBrush
 
 // ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
 // 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由歌词页按当前封面更新。
@@ -289,6 +291,15 @@ fun YosLyricViewLib(
             if (tintArgb != null && tintArgb != 0) Color(tintArgb) else Color.White
     }
     val textColor = lerp(Color.White, LyricCoverTint.color.value, LyricSungCoverMix)
+
+    // 真 HDR 高光：窗口没切到 HDR（未展开 / 系统不支持 / 开关关闭）时 boost 恒为 1，
+    // hdrBrush 为 null，整条链路退回原来的 8 位栅格 + 加色泛光。
+    // 读 boost 会订阅 headroom / strength 的变化，屏幕余量一变就重算画刷。
+    val hdrBoost =
+        if (SettingsLibrary.LyricHdrEffect) LyricHdr.boost(SettingsLibrary.LyricHdrStrength) else 1f
+    val hdrBrush = remember(hdrBoost, textColor) {
+        if (hdrBoost > 1.001f) hdrSolidBrush(textColor.copy(alpha = 1f), hdrBoost) else null
+    }
 
     val lyrics = remember(entries) {
         buildSyncedLyrics(entries, otherSideForLines)
@@ -440,8 +451,12 @@ fun YosLyricViewLib(
                     accompanimentLineTextStyle = style.copy(fontSize = 22.sp),
                     phoneticTextStyle = style.copy(fontSize = 18.sp),
                     textColor = textColor,
-                    // HDR：加色混合，让歌词在封面上泛光
+                    // 加色混合：让歌词在封面上泛光。真 HDR 生效时（hdrBrush != null）
+                    // 库里会给当前焦点行单独退回 SrcOver——扩展亮度已经超过 SDR 白，
+                    // 再叠一层加色会把整行推过屏幕上限变成死白。
                     blendMode = if (SettingsLibrary.LyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver,
+                    hdrBrush = hdrBrush,
+                    hdrBoost = hdrBoost,
                     useBlurEffect = blurLambda(),
                     showTranslation = translationLambda(),
                     showPhonetic = false,

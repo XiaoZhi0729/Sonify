@@ -12,25 +12,28 @@
         <item name="android:windowBackground">@android:color/background_light</item>
     </style>
 
-    <!-- 开屏主题（浅色）：品牌红底 + **白色** Logo。
-         白色不是品牌色，而是在模拟"幕布挖开的洞" —— 洞里透出的是首页底色，
-         浅色主题下首页是白的。两者同色，交接时才不会白↔黑跳一下。 -->
+    <!-- 开屏主题（浅色）：**页面底色（白）+ 品牌红 Logo**。
+         底色刻意不是品牌红：开屏页与首页表面同色，"底色淡去"这一步视觉上不可见，
+         交接天然无缝；观众看到的只有「Logo 浮现 → Logo 退场 → 内容浮现」三拍。
+         系统闪屏也画同一个 Logo：冷启动最初那段（窗口还没交给 Compose）就已经能看到
+         品牌标识，而不是先一片空底色再突然冒出 Logo。 -->
     <style name="SplashTheme" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo_white</item>
-        <item name="windowSplashScreenBackground">@color/launch_curtain</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="windowSplashScreenBackground">@color/launch_surface</item>
         <item name="postSplashScreenTheme">@style/Theme.Flamingo</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
-        <item name="android:windowBackground">@color/launch_curtain</item>
+        <item name="android:windowBackground">@color/launch_surface</item>
     </style>
 
-    <!-- 开屏主题（深色）：同样的红底，但 Logo 是**黑色**（深色首页的底色）。
+    <!-- 开屏主题（深色）：同样的做法，底色换成**页面底色（黑）**。
          由 MainActivity 在 onCreate 里按应用自身的主题设置选择，
          不能只依赖 values-night —— 应用内可以手动强制深色而系统仍是浅色。 -->
     <style name="SplashTheme.Dark" parent="SplashTheme">
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo_dark</item>
+        <item name="windowSplashScreenBackground">@color/launch_surface_dark</item>
+        <item name="android:windowBackground">@color/launch_surface_dark</item>
     </style>
 </resources>

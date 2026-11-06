@@ -4540,8 +4540,9 @@ internal fun PlayerControl(
                                         }
                                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                             TransportButton(playButtonSize, {
-                                                isPlayingOnChanged(!isPlayingLambda())
-                                                onStatus(isPlayingLambda())
+                                                // 不在这里预写播放态：fadePlay/fadePause 内部已同步写，
+                                                // 而这里先写会在命令失败时留下永久错误状态。
+                                                onStatus(!isPlayingLambda())
                                             }) {
                                                 PlayPauseIcon(isPlayingLambda)
                                             }
@@ -4576,8 +4577,7 @@ internal fun PlayerControl(
                                         Spacer(modifier = Modifier.width(transportSpacing))
 
                                         TransportButton(playButtonSize, {
-                                            isPlayingOnChanged(!isPlayingLambda())
-                                            onStatus(isPlayingLambda())
+                                            onStatus(!isPlayingLambda())
                                         }) {
                                             PlayPauseIcon(isPlayingLambda)
                                         }
@@ -4620,8 +4620,7 @@ internal fun PlayerControl(
                                 Spacer(modifier = Modifier.width(transportSpacing))
 
                                 TransportButton(playButtonSize, {
-                                    isPlayingOnChanged(!isPlayingLambda())
-                                    onStatus(isPlayingLambda())
+                                    onStatus(!isPlayingLambda())
                                 }) {
                                     PlayPauseIcon(isPlayingLambda)
                                 }

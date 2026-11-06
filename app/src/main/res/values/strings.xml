@@ -124,6 +124,10 @@
     <string name="online_albums_login_tip">Sign in to Kugou to see albums in your library</string>
     <string name="album_collect_add">Add to Library</string>
     <string name="album_collect_remove">Added to Library</string>
+    <!-- 专辑详情页右上「更多」菜单里的收藏项（与圆钮的无障碍文案分开：
+         菜单是可见文字，措辞可以更具体） -->
+    <string name="album_more_collect">Favorite</string>
+    <string name="album_more_collected">Unfavorite</string>
     <string name="album_collect_failed">Failed to add. Try again</string>
     <string name="album_uncollect_failed">Failed to remove. Try again</string>
     <string name="album_uncollect_not_found">Couldn\'t find the saved album</string>
@@ -191,6 +195,13 @@
     <string name="search_history">Search History</string>
     <string name="search_hot">Hot Searches</string>
     <string name="search_clear_history">Clear</string>
+    <string name="search_recent">Recent Searches</string>
+    <string name="search_recent_empty">No recent searches</string>
+    <string name="search_browse_categories">Browse Categories</string>
+    <string name="search_clear_input">Clear input</string>
+    <string name="search_no_result_hint">Try another keyword, or check for typos</string>
+    <string name="search_top_result">Top Result</string>
+    <string name="search_more">More</string>
     <string name="search_load_more">Load more</string>
     <string name="settings_library_show_local_library">Show Local Library</string>
     <string name="settings_library_title">Local Library</string>
@@ -294,8 +305,10 @@
     <string name="normal_button_sort_descending">Descending</string>
     <string name="settings_performance_lyric_blur_effect">Lyric Blur</string>
     <string name="settings_performance_lyric_blur_effect_desc">Blur effect of the lyrics view, which may cause performance issues.</string>
-    <string name="settings_performance_lyric_hdr_effect">HDR lyrics</string>
-    <string name="settings_performance_lyric_hdr_effect_desc">Additive blending makes lyrics bloom over the artwork, closer to an HDR look.</string>
+    <string name="settings_performance_lyric_hdr_effect">HDR highlight (experimental)</string>
+    <string name="settings_performance_lyric_hdr_effect_desc">The line being sung glows brighter than SDR white. Needs Android 14 or later and an HDR display; otherwise it falls back to additive blooming.</string>
+    <string name="settings_performance_lyric_hdr_strength">Highlight strength</string>
+    <string name="settings_performance_lyric_hdr_strength_desc">How much of the display\'s available brightness headroom to use. Higher values look brighter but drain the battery faster.</string>
     <string name="settings_performance_lyric_title">Lyric Display</string>
     <string name="settings_performance_lyric_style">Style</string>
     <string name="settings_performance_lyric_others">Others</string>

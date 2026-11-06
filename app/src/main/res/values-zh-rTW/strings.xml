@@ -80,6 +80,16 @@
     <string name="search_type_special">歌單</string>
     <string name="search_type_lyric">歌詞</string>
     <string name="search_request_failed">請求失敗</string>
+    <string name="search_history">搜尋紀錄</string>
+    <string name="search_hot">熱搜榜</string>
+    <string name="search_clear_history">清除</string>
+    <string name="search_recent">最近搜尋</string>
+    <string name="search_recent_empty">暫無最近搜尋</string>
+    <string name="search_browse_categories">瀏覽分類</string>
+    <string name="search_clear_input">清除輸入</string>
+    <string name="search_no_result_hint">換個關鍵詞試試，或檢查有沒有錯別字</string>
+    <string name="search_top_result">最佳結果</string>
+    <string name="search_more">更多</string>
     <string name="common_cancel">取消</string>
     <string name="discovery_coming_soon">新歌、排行榜與精選歌單即將到來…</string>
     <string name="discovery_rank_title">排行榜</string>
@@ -101,6 +111,9 @@
     <string name="online_albums_login_tip">登入酷狗後可查看資料庫中的專輯</string>
     <string name="album_collect_add">加入資料庫</string>
     <string name="album_collect_remove">已加入資料庫</string>
+    <!-- 專輯詳情頁右上「更多」選單中的收藏項 -->
+    <string name="album_more_collect">收藏此專輯</string>
+    <string name="album_more_collected">取消收藏</string>
     <string name="album_collect_failed">收藏失敗，請重試</string>
     <string name="album_uncollect_failed">取消收藏失敗，請重試</string>
     <string name="album_uncollect_not_found">找不到收藏記錄，無法取消</string>
@@ -215,8 +228,10 @@
     <string name="normal_button_sort_descending">降序</string>
     <string name="settings_performance_lyric_blur_effect">歌詞模糊</string>
     <string name="settings_performance_lyric_blur_effect_desc">歌詞視圖的模糊效果，可能導致性能問題。</string>
-    <string name="settings_performance_lyric_hdr_effect">HDR 歌詞</string>
-    <string name="settings_performance_lyric_hdr_effect_desc">疊加混合讓歌詞在封面上泛光，觀感更接近 HDR。</string>
+    <string name="settings_performance_lyric_hdr_effect">HDR 高光（實驗性）</string>
+    <string name="settings_performance_lyric_hdr_effect_desc">正在唱的這一句用高於 SDR 白的亮度發光。需要 Android 14 以上和支援 HDR 的螢幕，其他情況自動退回疊加泛光。</string>
+    <string name="settings_performance_lyric_hdr_strength">高光強度</string>
+    <string name="settings_performance_lyric_hdr_strength_desc">用掉螢幕可用亮度餘量的多少。調高更亮，也更耗電。</string>
     <string name="settings_performance_lyric_title">歌詞顯示</string>
     <string name="settings_performance_lyric_style">樣式</string>
     <string name="settings_performance_lyric_others">其它</string>

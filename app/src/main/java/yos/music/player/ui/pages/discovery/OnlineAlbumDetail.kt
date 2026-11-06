@@ -1,5 +1,15 @@
 package yos.music.player.ui.pages.discovery
 
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import yos.music.player.ui.widgets.dropdown.isDropdownDarkTheme
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.BoxWithConstraints
+import yos.music.player.ui.pages.library.playlists.PlayActionRowMotion
+import yos.music.player.ui.pages.library.playlists.PlaylistEmptyState
+import yos.music.player.ui.pages.library.playlists.SearchFieldExpandedHeight
+import yos.music.player.ui.pages.library.playlists.filterTracks
+import yos.music.player.ui.pages.library.playlists.rememberPageSearch
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -92,7 +102,6 @@ import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistCollectButton
-import yos.music.player.ui.pages.library.artists.CompactPlayActionRow
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
@@ -201,6 +210,12 @@ fun OnlineAlbumDetail(
             navController.navigate(UI.Settings.KugouLogin)
             return
         }
+        // 收藏列表还没落地时直接忽略：此时 collected 是错的（恒 false），
+        // 点下去会发出与真实状态相反的请求。
+        // 注意**不要**把它做成菜单项的 enabled=false —— 菜单的按压高亮由面板手势层
+        // 按 enabled 过滤（DropdownPanelDragSelect.hitTest 里 `it.enabled &&`），
+        // 一旦禁用就连按下去的半透明遮罩都没有，读起来像「这个菜单项坏了」。
+        if (!collectReady) return
         val target = album
         val wasCollected = collected
         // 收藏接口需要 artistId；详情接口没回来时传空（上游按 0 处理）
@@ -289,6 +304,31 @@ fun OnlineAlbumDetail(
 
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
+
+    // ---------- 页内搜索 ----------
+    // 与在线歌单详情页共用同一套逻辑（PageSearchState / rememberPageSearch）。
+    // 在线专辑是只读页面，所有专辑都能搜，不像歌单那样要编辑权限。
+    val search = rememberPageSearch(resetKey = albumId)
+    // 搜索时渲染过滤结果，但每行带着**原索引**：播放队列始终是整张专辑，
+    // 点击按原位置播放。分隔线判据也必须用过滤结果的长度。
+    val visibleTracks: List<Pair<Int, KugouNewSong>> =
+        remember(trackItems, search.keyword) {
+            filterTracks(
+                tracks = trackItems,
+                query = search.keyword,
+                name = { it.name },
+                artist = { it.author }
+            )
+        }
+    // 与 visibleTracks 同一次状态派生，满足 LazyItemKeys 的红线 1
+    val visibleKeys = remember(visibleTracks, songKeys) {
+        visibleTracks.map { (originalIndex, _) ->
+            songKeys.getOrElse(originalIndex) { "oob_$originalIndex" }
+        }
+    }
+    val searching = search.filtering
+    // 返回键：先收起搜索，再次返回才退页
+    BackHandler(enabled = search.expanded) { search.dismiss() }
 
     // ---------- 骨架与内容淡入 ----------
     // 骨架只在「没歌 + 仍在加载/未失败」时出现（与主页 sectionShowsSkeleton 同判据）。
@@ -542,11 +582,19 @@ fun OnlineAlbumDetail(
                             .padding(top = 4.dp)
                     )
 
-                    // 操作行：与歌单页共用同一几何（随机 · 播放胶囊 · 加入/收藏），
-                    // 播放胶囊取剩余空间的 2/3。三个按钮全部由页面文字色派生：
-                    // 浅色封面底上翻成深色胶囊+深色图标，深色封面底上保持白胶囊+白图标。
-                    YosWrapper {
-                        CompactPlayActionRow(
+                    // 操作行：随机 · 播放胶囊 · 搜索（与歌单页同一套形变与挤压动画）。
+                    // 三个控件由同一个形变进度驱动，播放胶囊取剩余空间的 2/3。
+                    // 「加入资料库」已挪进右上「更多」菜单（搜索钮占用了原来那一格）。
+                    // 三个按钮全部由页面文字色派生：浅色封面底上翻成深色，
+                    // 深色封面底上保持白胶囊+白图标。
+                    BoxWithConstraints(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(SearchFieldExpandedHeight + 14.dp + 10.dp)
+                            .padding(top = 14.dp, bottom = 10.dp)
+                    ) {
+                        PlayActionRowMotion(
+                            fraction = search.morph,
                             foregroundColor = contentColor,
                             playEnabled = queue.value.isNotEmpty(),
                             onShuffle = {
@@ -562,19 +610,15 @@ fun OnlineAlbumDetail(
                                 MediaController.mediaControl?.shuffleModeEnabled = false
                                 playAt(0)
                             },
-                            modifier = Modifier.padding(top = 14.dp, bottom = 10.dp),
-                            trailing = {
-                                // 加入资料库：未收藏「+」、已收藏「✓」，点击后两个图标互相形变
-                                ArtistCollectButton(
-                                    collected = collected,
-                                    iconSize = 24.dp,
-                                    iconTint = contentColor,
-                                    containerColor = contentColor.copy(alpha = 0.18f),
-                                    enabled = !collectBusy && collectReady
-                                ) {
-                                    toggleCollect()
-                                }
-                            }
+                            searchQuery = search.query,
+                            onSearchQueryChange = { search.query = it },
+                            onSearchClear = {
+                                search.clearQuery()
+                                search.fieldFocus.requestFocus()
+                            },
+                            searchFocus = search.fieldFocus,
+                            searchExpanded = search.expanded,
+                            onOpenSearch = { search.open() }
                         )
                     }
 
@@ -596,13 +640,27 @@ fun OnlineAlbumDetail(
             }
 
             item("Status") {
-                // error / empty 仍走状态行；loading 交给下面的骨架
-                OnlineStatusItem(
-                    status = status.value,
-                    loadingText = stringResource(id = R.string.online_playlist_loading_songs),
-                    emptyText = stringResource(id = R.string.online_album_songs_empty),
-                    contentColor = contentColor
-                )
+                // error / empty 仍走状态行；loading 交给下面的骨架。
+                // 搜索无结果：复用歌单页的空态组件（资料库同款图标 + 布局），只换文案。
+                if (searching && visibleTracks.isEmpty() && trackItems.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillParentMaxWidth()
+                            .fillParentMaxHeight(0.32f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PlaylistEmptyState(
+                            text = stringResource(id = R.string.online_playlist_search_no_match)
+                        )
+                    }
+                } else {
+                    OnlineStatusItem(
+                        status = status.value,
+                        loadingText = stringResource(id = R.string.online_playlist_loading_songs),
+                        emptyText = stringResource(id = R.string.online_album_songs_empty),
+                        contentColor = contentColor
+                    )
+                }
             }
 
             // 骨架：专辑行没有封面、行首是 24dp 序号列，必须用 AlbumTrackSkeleton
@@ -619,10 +677,14 @@ fun OnlineAlbumDetail(
             }
 
             itemsIndexed(
-                trackItems,
-                key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
-            ) { index, song ->
-                key(songKeys.getOrElse(index) { "oob_$index" }) {
+                visibleTracks,
+                key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } }
+            ) { index, pair ->
+                // 搜索时用**原索引**：播放队列是整张专辑，点第几条就播第几条；
+                // 序号仍显示专辑内原始曲目号（不是过滤后的序号）。
+                val originalIndex = pair.first
+                val song = pair.second
+                key(visibleKeys.getOrElse(index) { "oob_$index" }) {
                     // 专辑歌曲行（无封面）：行首显示专辑内序号；
                     // 点击 → 全部歌曲进队列，从被点击歌曲开始播放。
                     // alpha 走页面级共享曲线：所有可见行同时渐入。
@@ -635,20 +697,20 @@ fun OnlineAlbumDetail(
                         if (isWideScreen) {
                             AlbumTrackRowWide(
                                 music = KugouRepository.toDisplayMediaItem(song),
-                                trackNumber = index + 1
-                            ) { playAt(index) }
+                                trackNumber = originalIndex + 1
+                            ) { playAt(originalIndex) }
                         } else {
                             AlbumTrackRow(
                                 music = KugouRepository.toDisplayMediaItem(song),
-                                trackNumber = index + 1,
+                                trackNumber = originalIndex + 1,
                                 mainArtists = albumArtistNames
-                            ) { playAt(index) }
+                            ) { playAt(originalIndex) }
                         }
                     }
                 }
 
                 key("divider_$index") {
-                    if (index < trackItems.size - 1) {
+                    if (index < visibleTracks.size - 1) {
                         Spacer(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -670,14 +732,15 @@ fun OnlineAlbumDetail(
                 OnlineAlbumDivider()
             }
 
-            // 末尾统计行（与本地专辑页 AlbumInfo 的「N 首歌曲, 约 M 分钟」一致）
-            if (trackItems.isNotEmpty()) {
+            // 末尾统计行（与本地专辑页 AlbumInfo 的「N 首歌曲, 约 M 分钟」一致）。
+            // 搜索时统计命中的曲目，跟列表同步。
+            if (visibleTracks.isNotEmpty()) {
                 item("AlbumOthers") {
                     Text(
                         text = stringResource(
                             id = R.string.page_library_album_info_others,
-                            trackItems.size,
-                            (trackItems.sumOf { it.durationMs } / 60000).toInt()
+                            visibleTracks.size,
+                            (visibleTracks.sumOf { it.second.durationMs } / 60000).toInt()
                         ),
                         fontSize = 15.sp,
                         modifier = Modifier
@@ -698,7 +761,10 @@ fun OnlineAlbumDetail(
             // TitleBar 默认是主题红，在彩色底上会脏。
             TitleBar(
                 title = detail.value?.name?.takeIf { it.isNotEmpty() } ?: album.name,
-                onBack = { navController.popBackStackSafely() },
+                // 搜索展开时，顶栏返回键与系统返回键同样只收起搜索，不退页
+                onBack = {
+                    if (search.expanded) search.dismiss() else navController.popBackStackSafely()
+                },
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
                 backIconTint = contentColor,
@@ -717,24 +783,64 @@ fun OnlineAlbumDetail(
                         adaptiveLuminance = true,
                         contentColor = contentColor,
                     ) {
+                        // 样式对齐歌曲行「三个点」菜单：每项都有行首图标，项与项之间插分割线。
                         menuArtists.firstOrNull()?.let { artist ->
                             LiquidGlassDropdownMenuItem(
                                 text = stringResource(id = R.string.online_album_more_view_artist),
                                 onClick = {
-                                    menuOpen = false
+                                    // 先导航再关菜单：反过来会让面板先收起，
+                                    // 遮挡住这一项的按压遮罩渲染
                                     navController.navigate(
                                         UI.artistDetailRoute(
                                             artistId = artist.id.takeIf { it.isNotEmpty() },
                                             artistName = artist.name
                                         )
                                     )
+                                    menuOpen = false
+                                },
+                                icon = {
+                                    Icon(
+                                        // 与歌曲行「三个点」菜单的「前往艺人」用同一个图标，
+                                        // 两处入口看起来才像同一套菜单
+                                        painter = painterResource(R.drawable.ic_song_recognition),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = albumMenuTextColor()
+                                    )
                                 },
                             )
+                            AlbumMenuItemDivider()
                         }
+                        // 收藏整个专辑（原来操作行第三格那颗圆钮，那格让给了搜索钮）。
+                        // 文案随收藏状态切换。
+                        //
+                        // 这里**不设 enabled=false**：菜单的按压高亮由面板手势层按
+                        // enabled 过滤（DropdownPanelDragSelect.hitTest 里 `it.enabled &&`），
+                        // 禁用状态下连按下去的半透明遮罩都不会出现，读起来像菜单项坏了。
+                        // 忙碌/未就绪的拦截放在 toggleCollect() 内部。
                         LiquidGlassDropdownMenuItem(
-                            text = stringResource(id = R.string.online_album_more_placeholder),
-                            enabled = false,
-                            onClick = {},
+                            text = stringResource(
+                                id = if (collected) R.string.album_more_collected
+                                else R.string.album_more_collect
+                            ),
+                            onClick = {
+                                // 先出手再关菜单：忙碌/未就绪时 toggleCollect 是空操作，
+                                // 但如果先关菜单，用户会看到「面板收起 + 什么都没发生」，
+                                // 连按压遮罩都来不及渲染。
+                                toggleCollect()
+                                menuOpen = false
+                            },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (collected) R.drawable.ic_song_menu_star
+                                        else R.drawable.ic_song_menu_star_outline
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = albumMenuTextColor()
+                                )
+                            },
                         )
                     }
                 }
@@ -809,3 +915,33 @@ private fun OnlineAlbumDivider(modifier: Modifier = Modifier) =
             .height(0.5.dp)
             .background(LocalContentColor.current)
     )
+
+/**
+ * 右上菜单里的项间分割线。
+ *
+ * 规格对齐歌曲行「三个点」菜单（AddToPlaylistMenu.MenuDivider：细线 + 左右缩进），
+ * 但颜色跟随玻璃菜单自身的文字色而不是页面底色 —— 菜单是独立材质面，
+ * 用页面内容色画会与菜单文字对不上。
+ */
+@Composable
+private fun AlbumMenuItemDivider() {
+    val contentColor = albumMenuTextColor()
+    Spacer(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 5.dp)
+            .height(0.5.dp)
+            .background(contentColor.copy(alpha = 0.12f))
+    )
+}
+
+/**
+ * 玻璃菜单内的文字/图标色。
+ *
+ * 与 `LiquidGlassDropdownMenuItem` 内部用的是同一份推导（跟随 App 深浅主题，
+ * 不跟随页面封面色底）：菜单是一块独立的玻璃面，图标若按页面 contentColor 着色
+ * 会在彩色封面上与菜单文字脱节。
+ */
+@Composable
+private fun albumMenuTextColor(): Color =
+    if (isDropdownDarkTheme()) Color(0xFFE8E4DE) else Color(0xFF1A1A1A)

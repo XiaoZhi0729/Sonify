@@ -124,6 +124,9 @@
     <string name="online_albums_login_tip">登录酷狗后可查看资料库里的专辑</string>
     <string name="album_collect_add">加入资料库</string>
     <string name="album_collect_remove">已加入资料库</string>
+    <!-- 专辑详情页右上「更多」菜单里的收藏项 -->
+    <string name="album_more_collect">收藏此专辑</string>
+    <string name="album_more_collected">取消收藏</string>
     <string name="album_collect_failed">收藏失败，请重试</string>
     <string name="album_uncollect_failed">取消收藏失败，请重试</string>
     <string name="album_uncollect_not_found">找不到收藏记录，无法取消</string>
@@ -191,6 +194,13 @@
     <string name="search_history">搜索历史</string>
     <string name="search_hot">热搜榜</string>
     <string name="search_clear_history">清空</string>
+    <string name="search_recent">最近搜索</string>
+    <string name="search_recent_empty">暂无最近搜索</string>
+    <string name="search_browse_categories">浏览分类</string>
+    <string name="search_clear_input">清除输入</string>
+    <string name="search_no_result_hint">换个关键词试试，或者检查有没有错别字</string>
+    <string name="search_top_result">最佳结果</string>
+    <string name="search_more">更多</string>
     <string name="search_load_more">加载更多</string>
     <string name="settings_library_show_local_library">显示本地资料库</string>
     <string name="settings_library_title">本地资料库</string>
@@ -294,8 +304,10 @@
     <string name="normal_button_sort_descending">降序</string>
     <string name="settings_performance_lyric_blur_effect">歌词模糊</string>
     <string name="settings_performance_lyric_blur_effect_desc">歌词视图的模糊效果，可能导致性能问题。</string>
-    <string name="settings_performance_lyric_hdr_effect">HDR 歌词</string>
-    <string name="settings_performance_lyric_hdr_effect_desc">叠加混合让歌词在封面上泛光，观感更接近 HDR。</string>
+    <string name="settings_performance_lyric_hdr_effect">HDR 高光（实验性）</string>
+    <string name="settings_performance_lyric_hdr_effect_desc">正在唱的这一句用高于 SDR 白的亮度发光。需要 Android 14 以上和支持 HDR 的屏幕，其他情况自动退回叠加泛光。</string>
+    <string name="settings_performance_lyric_hdr_strength">高光强度</string>
+    <string name="settings_performance_lyric_hdr_strength_desc">用掉屏幕可用亮度余量的多少。调高更亮，也更耗电。</string>
     <string name="settings_performance_lyric_title">歌词显示</string>
     <string name="settings_performance_lyric_style">样式</string>
     <string name="settings_performance_lyric_others">其它</string>

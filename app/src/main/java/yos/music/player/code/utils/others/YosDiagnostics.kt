@@ -64,7 +64,9 @@ object YosDiagnostics {
         "RESOLVE_FAIL", "RESOLVE_SLOW", "OPEN_FAIL", "OPEN_SLOW", "STATE", "ISPLAYING", "SUPPRESSION",
         "GAP", "STALL", "STATE_LIE", "SCREEN_ON", "SCREEN_OFF", "DOZE", "SAVER",
         "SLEEP_START", "SLEEP_STOP", "SLEEP_FIRED", "PREPARE", "TRANSITION", "CRASH", "HEADSET", "EXPORT",
-        "SVC_CMD", "TLMUT", "SRC", "LYRIC_", "VSEP_"
+        "SVC_CMD", "TLMUT", "SRC", "LYRIC_", "VSEP_",
+        // 在线音频通道的黑洞：读失败与通道选择此前完全无日志，"卡住"与"没开始"无法区分
+        "READ_FAIL", "OPEN_START", "CACHE_ONLY_MISS"
     )
 
     /** 行格式固定是 `… pid=<数字> <事件名> k=v …`，事件名就取 pid 后第一个 token。 */

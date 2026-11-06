@@ -1,17 +1,41 @@
 package yos.music.player.ui.pages.settings.performance
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import io.github.alexzhirkevich.cupertino.CupertinoSlider
+import io.github.alexzhirkevich.cupertino.theme.CupertinoTheme
+import kotlin.math.roundToInt
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.GroupSpacerMedium
 import yos.music.player.ui.pages.settings.ListHeader
@@ -191,13 +215,87 @@ fun LyricSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.LyricHdrEffect }
                             )
+                            // 强度滑杆只在 HDR 打开时露出：关着的时候它没有任何可调观感
+                            if (SettingsLibrary.LyricHdrEffect) {
+                                Divider()
+                                LyricHdrStrengthItem()
+                            }
                         }
 
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_blur_effect_desc))
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc))
+                        if (SettingsLibrary.LyricHdrEffect) {
+                            ListHeader(content = stringResource(id = R.string.settings_performance_lyric_hdr_strength_desc))
+                        }
                         GroupSpacer()
                     }
                 }
             }
         )
     }
+
+/**
+ * HDR 高光强度：用掉屏幕可用亮度余量的多少（0–100%）。
+ *
+ * 本地状态作为拖动期间的实时源：CupertinoSlider 内部用动画插值，直接读设置项
+ * 会在手指还没抬起来时被持久化值拽回去，滑起来一顿一顿的。
+ */
+@Composable
+private fun LyricHdrStrengthItem() {
+    var value by remember("LyricHdrStrengthItem") {
+        mutableFloatStateOf(SettingsLibrary.LyricHdrStrength.coerceIn(0f, 1f))
+    }
+    val interactionSource = remember("LyricHdrStrengthItem_interaction") {
+        MutableInteractionSource()
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(id = R.string.settings_performance_lyric_hdr_strength),
+                fontSize = 16.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "${(value * 100f).roundToInt()}%",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        CupertinoTheme {
+            CupertinoSlider(
+                value = value,
+                onValueChange = {
+                    value = it
+                    SettingsLibrary.LyricHdrStrength = it
+                },
+                valueRange = 0f..1f,
+                thumb = {
+                    Spacer(
+                        Modifier
+                            .size(23.dp)
+                            .hoverable(interactionSource = interactionSource)
+                            .shadow(
+                                8.dp,
+                                CircleShape,
+                                clip = false,
+                                spotColor = Color.Black.copy(alpha = 0.55f)
+                            )
+                            .background(Color.White, CircleShape)
+                    )
+                },
+                interactionSource = interactionSource,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+            )
+        }
+    }
+}

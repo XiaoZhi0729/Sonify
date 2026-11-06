@@ -7,7 +7,10 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <!-- 开屏幕布色：系统闪屏背景与 Compose 幕布必须是同一个值，
-         否则两者交接时会露出不同颜色的边。 -->
-    <color name="launch_curtain">#FFF54047</color>
+    <!-- 开屏表面色：必须与首页表面色（浅色=白 / 深色=黑）逐像素相同。
+         开屏页与首页同色，"底色淡去"这一步视觉上不可见，交接才无缝。
+         系统闪屏背景与 Compose 幕布都读这两个值，改一处必须同时改另一处：
+         Compose 侧见 LaunchCurtain.kt 的 `background withNight backgroundDark`。 -->
+    <color name="launch_surface">#FFFFFFFF</color>
+    <color name="launch_surface_dark">#FF000000</color>
 </resources>

@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.onClick as onSemanticsClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -622,6 +623,12 @@ fun LiquidGlassDropdownMenuItem(
                 fontSize = 15.6.sp,
                 fontWeight = FontWeight.Medium,
                 color = textColor,
+                // 单行 + 超长省略：面板宽度固定 200dp（它参与缩放/位移/命中的几何计算，
+                // 不能改成自适应），文字区实际只有约 106dp —— 7 个汉字就会换行。
+                // 菜单项一换行，行高翻倍、整块面板被撑变形，所以这里硬性限制单行。
+                // 文案侧仍应控制在 6 字以内，省略只是兜底。
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             if (trailing != null) {

@@ -54,7 +54,8 @@ private val ackLibraries = listOf(
     AckEntry("Gson", "JSON 解析", "https://github.com/google/gson"),
     AckEntry("TinyPinyin", "拼音索引", "https://github.com/promeG/TinyPinyin"),
     AckEntry("TagLib", "音频元数据解析", "https://github.com/Kyant0/taglib"),
-    AckEntry("Lyric Getter API", "歌词获取接口", "https://github.com/xiaowine/Lyric-Getter-Api")
+    AckEntry("Lyric Getter API", "歌词获取接口", "https://github.com/xiaowine/Lyric-Getter-Api"),
+    AckEntry("mochi-compose", "HDR 高光的实现来源（Apache-2.0）", "https://github.com/feice11/mochi-compose")
 )
 
 @Composable

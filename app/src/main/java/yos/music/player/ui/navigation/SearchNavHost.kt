@@ -11,6 +11,14 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
+import yos.music.player.ui.pages.discovery.NewAlbumsDetail
+import yos.music.player.ui.pages.discovery.NewSongsDetail
+import yos.music.player.ui.pages.discovery.PersonalFmDetail
+import yos.music.player.ui.pages.discovery.RankDetail
+import yos.music.player.ui.pages.discovery.RankListDetail
+import yos.music.player.ui.pages.discovery.RecommendPlaylistsDetail
+import yos.music.player.ui.pages.gallery.MusicGalleryPage
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 import yos.music.player.ui.pages.recognition.SongRecognitionPage
@@ -62,6 +70,44 @@ fun SearchNavHost(
             // 听歌识曲：只从搜索页进入，故只在本 house 注册
             composable(UI.SongRecognition) {
                 SongRecognitionPage(navController = navController)
+            }
+            // ---------- 搜索页「浏览分类」砖块的目标 ----------
+            // 这些页面原本只在 Home/Library 的图里注册。搜索页的分类砖块会往**当前
+            // house** push，漏注册即 "destination cannot be found" 崩溃。
+            // 注意 RankListDetail 内部还会再 push UI.RankDetail（点某张榜单），
+            // 所以 RankDetail 也必须一并注册，否则二级跳转崩。
+            composable(UI.NewSongsDetail) { NewSongsDetail(navController) }
+            composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
+            composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
+            composable(UI.MusicGallery) { MusicGalleryPage(navController) }
+            composable(UI.RankDetail) {
+                RankDetail(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
+            }
+            composable(UI.RankListDetail) {
+                RankListDetail(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
+            }
+            composable(UI.NewAlbumsDetail) {
+                NewAlbumsDetail(
+                    navController = navController,
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
+            }
+            composable(UI.RecommendPlaylistsDetail) {
+                RecommendPlaylistsDetail(
+                    navController = navController,
+                    onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
             }
             composable(
                 route = UI.OnlinePlaylistDetailPattern,

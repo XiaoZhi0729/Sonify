@@ -20,6 +20,10 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 熄屏续播：没有它 ExoPlayer 只能跑在 WAKE_MODE_NONE 下，
+         OEM（尤其 HyperOS 的 PowerKeeper）会把播放进程冻结，表现为播放几十秒后静默、
+         亮屏才原地续播。真机事故（11-03）曾因此冻结 40 分钟。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
