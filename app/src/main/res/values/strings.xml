@@ -315,6 +315,8 @@
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album_desc">Draw the album cover edge-to-edge as the playback page background. The cover no longer scales with the playback state.</string>
     <string name="settings_performance_ui_nowplaying_background_effect">Background Dynamic Effect</string>
     <string name="settings_performance_ui_nowplaying_background_effect_desc">Dynamic effect of the playback page background, which may cause performance issues.</string>
+    <string name="settings_performance_ui_track_backdrop_gradient">Album Color Background</string>
+    <string name="settings_performance_ui_track_backdrop_gradient_desc">Tints the background of the four tabs with a soft gradient extracted from the cover of the current song. Off by default.</string>
     <string name="page_library_playlists_add_title">Create New Playlist…</string>
     <string name="page_library_playlists_fav_title">Favorite Songs</string>
     <string name="settings_performance_notification_title">Media Notifications</string>

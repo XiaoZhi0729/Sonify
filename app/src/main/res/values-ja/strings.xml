@@ -231,6 +231,8 @@
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album_desc">カバーを再生ページいっぱいの背景として表示し、再生状態による拡縮を行いません。</string>
     <string name="settings_performance_ui_nowplaying_background_effect">背景の動的効果</string>
     <string name="settings_performance_ui_nowplaying_background_effect_desc">再生ページの背景の動的効果、パフォーマンスに問題を引き起こす可能性があります。</string>
+    <string name="settings_performance_ui_track_backdrop_gradient">カバー色の背景</string>
+    <string name="settings_performance_ui_track_backdrop_gradient_desc">再生中の曲のカバーから抽出した柔らかなグラデーションを、4つのメインページの背景に使います。既定ではオフです。</string>
     <string name="page_library_playlists_add_title">新しいプレイリストを作成…</string>
     <string name="page_library_playlists_fav_title">お気に入りの曲</string>
     <string name="settings_performance_notification_title">メディア通知</string>

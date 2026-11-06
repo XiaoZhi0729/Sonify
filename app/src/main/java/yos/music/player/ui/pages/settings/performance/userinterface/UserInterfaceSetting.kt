@@ -198,6 +198,21 @@ fun UserInterfaceSetting(navController: NavController) =
 
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_nowplaying_background_effect_desc))
 
+                        GroupSpacerMedium()
+
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_track_backdrop_gradient),
+                                onClick = {
+                                    SettingsLibrary.TrackBackdropGradient =
+                                        !SettingsLibrary.TrackBackdropGradient
+                                },
+                                checkedLambda = { SettingsLibrary.TrackBackdropGradient }
+                            )
+                        }
+
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_track_backdrop_gradient_desc))
+
                         GroupSpacer()
                     }
                 }

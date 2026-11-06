@@ -40,14 +40,23 @@ fun HomeNavHost(
             popEnterTransition = { fadeIn() },
             popExitTransition = { fadeOut() }
         ) {
-            composable(UI.HomePage) {
-                Discovery(
-                    navController = navController,
-                    onOpenSettings = { navigator.openSettings(HouseId.Home) },
-                    onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
-                    sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
-                )
+            composable(UI.HomePage) { entry ->
+                // 封面取色渐变只作用于本 Tab 根页；同 NavHost 下的二级页不包，
+                // 继续用各自的提取色（艺人页 / 专辑页 / 歌单页）。
+                // entryId + scrimTransition 用于把本页底色注册进底栏遮罩混合，
+                // 使底栏换色与页面淡入淡出同帧同曲线。
+                PageGradientRoot(
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
+                ) {
+                    Discovery(
+                        navController = navController,
+                        onOpenSettings = { navigator.openSettings(HouseId.Home) },
+                        onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
+                        sharedTransitionScope = this@SharedTransitionLayout,
+                        animatedVisibilityScope = this@composable
+                    )
+                }
             }
             composable(UI.RecentPlayedDetail) { RecentPlayedDetail(navController) }
             composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }

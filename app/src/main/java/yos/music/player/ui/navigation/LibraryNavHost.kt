@@ -42,12 +42,19 @@ fun LibraryNavHost(
             popEnterTransition = { fadeIn() },
             popExitTransition = { fadeOut() }
         ) {
-        composable(UI.Library) {
-            Library(
-                navController = navController,
-                onOpenSettings = { navigator.openSettings(HouseId.Library) },
-                onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
-            )
+        composable(UI.Library) { entry ->
+            // 封面取色渐变只作用于本 Tab 根页；二级页不包，继续用各自提取色。
+            // entryId + scrimTransition 让底栏换色与本页淡入淡出同帧同曲线。
+            PageGradientRoot(
+                entryId = entry.id,
+                scrimTransition = scrimTransition()
+            ) {
+                Library(
+                    navController = navController,
+                    onOpenSettings = { navigator.openSettings(HouseId.Library) },
+                    onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
+                )
+            }
         }
         composable(UI.PlayLists) { PlayLists(navController) }
         composable(UI.NormalMusic) { NormalMusic(navController) }

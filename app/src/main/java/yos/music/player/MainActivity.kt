@@ -650,6 +650,13 @@ class MainActivity : BaseActivity() {
                         // 注册色即各页已提取的调色板 State，绘制期整形为玻璃着色。
                         // isDark 经 rememberUpdatedState 进闭包，绘制期读取不触发重组。
                         val isNightForTint = rememberUpdatedState(isFlamingoInDarkMode())
+                        // 封面取色渐变：外壳算一次，三个 Tab 根页共用同一份
+                        // （各自再算会得到独立推进的交叉淡化，颜色对不上）。
+                        // 底栏遮罩色不在这里读它——渐变页会把自己的底部色注册进
+                        // ArtistPageAppearance，由页面自己的进出场进度驱动换色，
+                        // 从而与页面淡入淡出同帧同曲线。
+                        val trackGradient = yos.music.player.ui.navigation.TrackBackdrop
+                            .rememberBlendedGradient()
                         val tintColorProvider: () -> Color = remember(activeEntry) {
                             {
                                 ArtistPageAppearance.blendedTintColor(
@@ -662,10 +669,17 @@ class MainActivity : BaseActivity() {
                             activeEntry, rootEntry, defaultScrimColor
                         ) {
                             {
-                                // SharedNavHost's empty destination exposes the selected house.
-                                // Any shared overlay must stop sampling the artist beneath it.
+                                // 底栏 65% 遮罩色由**页面自己注册**（见 PageGradientRoot /
+                                // ArtistChildBackground），按该页进出场进度混入默认色，
+                                // 与页面淡入淡出同帧同曲线。
+                                //
+                                // ★这里不能再按「当前路由是不是染色页」直接翻转成渐变色：
+                                // 那是瞬跳，与页面的 spring 淡入淡出节奏完全对不上
+                                // （实测观感是"页面还在慢慢淡、底栏已经跳完了"）。
+                                // 渐变页把自己的底部色注册进同一张表，于是换色自然与
+                                // 页面过渡同速率、同时机。
                                 if (rootEntry.value?.destination?.route == "shared_empty") {
-                                    // 不再只取当前 entry 的注册色：把每个生效的艺人页注册按其
+                                    // 不再只取当前 entry 的注册色：把每个生效的注册页按其
                                     // 进出场过渡进度混入默认色——进度与页面淡入淡出同帧同曲线，
                                     // 遮罩换色因此与页面进退场共享同一时机（详见 ArtistPageAppearance）。
                                     ArtistPageAppearance.blendedScrimColor(
@@ -1257,6 +1271,11 @@ class MainActivity : BaseActivity() {
                         val pageBackgroundActiveId = rememberUpdatedState(activeEntry.value?.id)
                         val pageBackgroundProvider: () -> Color = remember {
                             {
+                                // 底衬色维持原逻辑：渐变页会把自己的底色注册进
+                                // ArtistPageAppearance（见 PageGradientRoot），因此
+                                // 两个渐变页互转时这里已能取到按进度混合的渐变色；
+                                // 与普通页互转时回退主题底（普通页自身不铺底色）。
+                                // 不要再按路由白名单直接塞渐变色——那是瞬跳。
                                 ArtistPageAppearance.transitioningBackdropColor(
                                     activeId = pageBackgroundActiveId.value
                                 ) ?: defaultPageBackground.value
@@ -1389,7 +1408,8 @@ class MainActivity : BaseActivity() {
                                             favoritesController = favoritesNavController,
                                             navigator = appNavigator,
                                             modifier = Modifier.fillMaxSize(),
-                                            probe = glassProbe
+                                            probe = glassProbe,
+                                            trackGradient = trackGradient
                                         )
                                         SharedNavHost(
                                             navController = rootNavController,

@@ -97,6 +97,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.navigation.LocalPageGradient
+import yos.music.player.ui.navigation.PageGradient
 import yos.music.player.ui.theme.withNight
 
 /*@OptIn(ExperimentalCupertinoApi::class)
@@ -339,6 +341,20 @@ private fun BaseTitle(
 val LocalTitlePageColor = compositionLocalOf<Color?> { null }
 
 /**
+ * 顶栏模糊的 tint 色：页面底色，或（封面取色渐变激活时）渐变的平均色。
+ *
+ * 必须走平均色而不是顶端色：顶栏下方覆盖的是渐变的顶部若干百分比，而模糊采样会
+ * 把顶栏附近整段内容都揉进来，用平均色更接近模糊后的实际观感，顶栏与页面之间不会
+ * 出现一条可见的色差带。
+ */
+@Composable
+private fun titleBarPageColor(): Color {
+    val fallback = LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
+    val gradient = LocalPageGradient.current ?: return fallback
+    return gradient.averageColor(fallback)
+}
+
+/**
  * 顶栏模糊的采样源：带不透明底色的层背景。
  * 先用 drawRect 铺满 3× 尺寸的底色作种子，再 drawContent；列表/网格本身透明，
  * 故不会透出黑底。参考页（BaseTitleGrid/BaseTitleList）与自带滚动列表的详情页共用。
@@ -350,25 +366,47 @@ val LocalTitlePageColor = compositionLocalOf<Color?> { null }
  * drawContent。**仅当 seed 色恒等于页面真实背景色时才可开启**，否则两者像素不同——
  * 典型反例是底色走 animateColorAsState 的页面（种子用目标色，背景是动画中间值，
  * 过渡期会被这层盖成纯色）。纯色底页面可安全开启。
+ *
+ * [gradient] 非空时种子改用整屏纵向渐变（封面取色）。**渐变一律走绘制期读取**，
+ * 不进 `remember` 的键：否则交叉淡化每推进一档就新建一个 LayerBackdrop，顶栏模糊
+ * 采样被反复重置。渐变画在与底色同一层里，[blit] 的前提（种子 == 真实像素）
+ * 依然成立，故不受影响。
  */
 @Composable
 fun rememberTitleBackdrop(
     pageColorOverride: Color? = null,
-    blit: Boolean = false
+    blit: Boolean = false,
+    gradient: PageGradient? = null
 ): LayerBackdrop {
     val pageColor = pageColorOverride
         ?: LocalTitlePageColor.current
         ?: (Color.White withNight Color.Black)
-    val onDraw: ContentDrawScope.() -> Unit = remember(pageColor) {
+    val onDraw: ContentDrawScope.() -> Unit = remember(pageColor, gradient) {
         {
-            drawRect(
-                color = pageColor,
-                size = Size(size.width * 3f, size.height * 3f),
-                topLeft = Offset(-size.width, -size.height)
-            )
+            // 渐变优先：绘制期取当前值，交叉淡化推进只失效重绘，不重建 backdrop。
+            //
+            // 种子层是 3× 尺寸、录制后被裁到节点范围，可见的只有画布中间三分之一，
+            // 所以必须用 tripleCanvasBrush（把整条渐变映射到 1/3–2/3），否则页面
+            // 只能看到渐变的中段。上下各三分之一用首尾色平铺，不露空白。
+            val active = gradient?.current()
+            if (active != null) {
+                drawRect(
+                    brush = active.tripleCanvasBrush,
+                    size = Size(size.width * 3f, size.height * 3f),
+                    topLeft = Offset(-size.width, -size.height)
+                )
+            } else {
+                drawRect(
+                    color = pageColor,
+                    size = Size(size.width * 3f, size.height * 3f),
+                    topLeft = Offset(-size.width, -size.height)
+                )
+            }
             drawContent()
         }
     }
+    // blit 保持调用方的值：种子层就是屏幕上可见的页面底色，渐变画在同一层里，
+    // 因此「种子 == 真实像素」这条前提在渐变激活时依然成立，blit 依旧安全。
     return rememberLayerBackdrop(onDraw = onDraw, blitRecordedContent = blit)
 }
 
@@ -412,7 +450,11 @@ private fun BaseTitleGrid(
     // blit=true：Base 页底色恒为 LocalTitlePageColor（无 provider 时即主题白/黑，与
     // shell 的 colorScheme.background 严格相等），种子色与真实背景逐像素一致，
     // 录制层可直接上屏，省掉整页内容的第二遍绘制。
-    val titleBackdrop = rememberTitleBackdrop(blit = true)
+    //
+    // 封面取色渐变激活时（LocalPageGradient 非空）种子改画渐变；渐变与底色画在
+    // 同一层里，blit 前提依旧成立（见 rememberTitleBackdrop 文档）。
+    val pageGradient = LocalPageGradient.current
+    val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
 
     CompositionLocalProvider(
@@ -527,7 +569,11 @@ private fun BaseTitleList(
     // blit=true：Base 页底色恒为 LocalTitlePageColor（无 provider 时即主题白/黑，与
     // shell 的 colorScheme.background 严格相等），种子色与真实背景逐像素一致，
     // 录制层可直接上屏，省掉整页内容的第二遍绘制。
-    val titleBackdrop = rememberTitleBackdrop(blit = true)
+    //
+    // 封面取色渐变激活时（LocalPageGradient 非空）种子改画渐变；渐变与底色画在
+    // 同一层里，blit 前提依旧成立（见 rememberTitleBackdrop 文档）。
+    val pageGradient = LocalPageGradient.current
+    val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
 
     CompositionLocalProvider(
@@ -1021,8 +1067,7 @@ fun TitleBar(
                         if (SettingsLibrary.BarBlurEffect) {
                             // 顶栏表面色 = 页面底色：设置页是分组灰、其余页白/黑。
                             // 若这里仍写死近白，灰底设置页的顶栏会被染白而与背景脱节。
-                            val pageColor =
-                                LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
+                            val pageColor = titleBarPageColor()
                             // 真·渐进模糊：半径随 Y 从 12dp 连续收到 0，并向栏下多延伸
                             // 40dp 作为淡出尾巴（见 titleBarProgressiveBlur）。
                             // 这样淡出不会被顶栏底边裁断，过渡长度也更接近原参考实现。
@@ -1041,8 +1086,7 @@ fun TitleBar(
                             // 下拉菜单）要采样「模糊 + 0.7 底色」之后的表面，而不是栏下原始
                             // 内容。导出内容 = drawBackdropLayer + onDrawSurface，不含节点自身
                             // 内容（见 DrawBackdropNode.drawCardContents）。
-                            val pageColor =
-                                LocalTitlePageColor.current ?: (Color.White withNight Color.Black)
+                            val pageColor = titleBarPageColor()
                             Modifier.drawPlainBackdrop(
                                 backdrop = backdrop,
                                 shape = { androidx.compose.ui.graphics.RectangleShape },

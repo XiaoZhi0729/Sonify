@@ -221,6 +221,19 @@ object SettingsLibrary {
     )
 
     /**
+     * 封面取色背景：四个 Tab 首页的整页底色改为当前歌曲封面提取的柔和纵向渐变。
+     *
+     * 默认关闭——开启后整屏底色会随歌曲变化，属于明显的视觉风格改变，
+     * 由用户主动选择（与「背景动态效果」同一惯例）。
+     */
+    @Stable
+    var TrackBackdropGradient by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_track_backdrop_gradient",
+        initialValue = false
+    )
+
+    /**
      * 全屏静态封面：封面铺满播放页作为背景（高清方图贴边裁切 + 同图放大模糊副本打底），
      * 且不再随播放/暂停缩放。键名与 Flamingo 同项逐字一致。
      */

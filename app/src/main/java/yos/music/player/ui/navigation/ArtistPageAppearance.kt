@@ -19,7 +19,15 @@ import androidx.compose.ui.graphics.toArgb
 /** 一个注册页对底栏遮罩的贡献：页面背景色 + 其进出场过渡进度。 */
 class ScrimRegistration internal constructor(
     val color: State<Color>,
-    val transition: PageScrimTransition
+    val transition: PageScrimTransition,
+    /**
+     * 是否参与底栏玻璃的 tint 着色。
+     *
+     * 封面取色页注册时传 false：它只需要底栏遮罩色跟随渐变（否则底部出现色带），
+     * 但玻璃本身应保持原样——用户裁决「只跟随采样 + 修遮罩色」，不额外加 tint。
+     * 若让它参与 tint，底栏玻璃会被封面色明显染色，与裁决不符。
+     */
+    val contributesTint: Boolean = true
 )
 
 /** 页面进出场进度：与页面 fadeIn/fadeOut 同帧同曲线，转场结束/被保留时 transitioning=false。 */
@@ -33,8 +41,13 @@ object ArtistPageAppearance {
     val activeEntryId = mutableStateOf<String?>(null)
     private val registrations: SnapshotStateMap<String, ScrimRegistration> = mutableStateMapOf()
 
-    fun register(id: String, color: State<Color>, transition: PageScrimTransition): ScrimRegistration {
-        val registration = ScrimRegistration(color, transition)
+    fun register(
+        id: String,
+        color: State<Color>,
+        transition: PageScrimTransition,
+        contributesTint: Boolean = true
+    ): ScrimRegistration {
+        val registration = ScrimRegistration(color, transition, contributesTint)
         registrations[id] = registration
         return registration
     }
@@ -122,6 +135,8 @@ object ArtistPageAppearance {
     fun blendedTintColor(default: Color, activeId: String?, tintOf: (Color) -> Color): Color {
         var result = default
         for ((id, registration) in registrations) {
+            // 封面取色页只参与遮罩色，不参与玻璃着色（见 ScrimRegistration.contributesTint）
+            if (!registration.contributesTint) continue
             val progress = registration.transition.progress.value
             if (progress <= 0f) continue
             if (id != activeId && !registration.transition.transitioning.value) continue

@@ -315,6 +315,8 @@
     <string name="settings_performance_ui_nowplaying_static_fullscreen_album_desc">封面铺满播放页面作为背景，且不再随播放状态缩放。</string>
     <string name="settings_performance_ui_nowplaying_background_effect">背景动态效果</string>
     <string name="settings_performance_ui_nowplaying_background_effect_desc">播放页面背景的动态效果，可能导致性能问题。</string>
+    <string name="settings_performance_ui_track_backdrop_gradient">封面取色背景</string>
+    <string name="settings_performance_ui_track_backdrop_gradient_desc">从当前歌曲封面提取柔和的渐变色，用作四个主页面的整页背景。默认关闭。</string>
     <string name="page_library_playlists_add_title">新建播放列表…</string>
     <string name="page_library_playlists_fav_title">喜爱的歌曲</string>
     <string name="settings_performance_notification_title">媒体通知</string>

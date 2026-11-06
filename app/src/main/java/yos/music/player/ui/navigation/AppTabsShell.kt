@@ -33,6 +33,9 @@ fun AppTabsShell(
     navigator: AppNavigator,
     modifier: Modifier = Modifier,
     probe: GlassProbe = GlassProbe.Default,
+    // 封面取色渐变源：由外壳算好传入，四个 Tab 根页各自 opt-in（见 PageGradientRoot）。
+    // 只在根页生效，二级页（艺人页/专辑页/歌单页）继续用各自的提取色。
+    trackGradient: TrackBackdropGradient? = null,
 ) {
     val homeAlpha by animateFloatAsState(
         targetValue = if (selectedHouse == HouseId.Home) 1f else 0f,
@@ -77,56 +80,58 @@ fun AppTabsShell(
     BackHandler(enabled = true) { activeBackOwner.dispatchBack() }
 
     Box(modifier) {
-        HouseLayer(
-            alpha = homeAlpha,
-            active = selectedHouse == HouseId.Home,
-            drawWhenHidden = probe.houseLayersDrawWhenHidden,
-            modulateAlpha = probe.houseModulateAlpha,
-            backOwner = homeBackOwner,
-        ) {
-            CompositionLocalProvider(
-                LocalArtistNavigator provides rememberArtistNavigator(homeController)
+        CompositionLocalProvider(LocalTrackGradientSource provides trackGradient) {
+            HouseLayer(
+                alpha = homeAlpha,
+                active = selectedHouse == HouseId.Home,
+                drawWhenHidden = probe.houseLayersDrawWhenHidden,
+                modulateAlpha = probe.houseModulateAlpha,
+                backOwner = homeBackOwner,
             ) {
-                HomeNavHost(homeController, navigator)
+                CompositionLocalProvider(
+                    LocalArtistNavigator provides rememberArtistNavigator(homeController)
+                ) {
+                    HomeNavHost(homeController, navigator)
+                }
             }
-        }
-        HouseLayer(
-            alpha = libraryAlpha,
-            active = selectedHouse == HouseId.Library,
-            drawWhenHidden = probe.houseLayersDrawWhenHidden,
-            modulateAlpha = probe.houseModulateAlpha,
-            backOwner = libraryBackOwner,
-        ) {
-            CompositionLocalProvider(
-                LocalArtistNavigator provides rememberArtistNavigator(libraryController)
+            HouseLayer(
+                alpha = libraryAlpha,
+                active = selectedHouse == HouseId.Library,
+                drawWhenHidden = probe.houseLayersDrawWhenHidden,
+                modulateAlpha = probe.houseModulateAlpha,
+                backOwner = libraryBackOwner,
             ) {
-                LibraryNavHost(libraryController, navigator)
+                CompositionLocalProvider(
+                    LocalArtistNavigator provides rememberArtistNavigator(libraryController)
+                ) {
+                    LibraryNavHost(libraryController, navigator)
+                }
             }
-        }
-        HouseLayer(
-            alpha = searchAlpha,
-            active = selectedHouse == HouseId.Search,
-            drawWhenHidden = probe.houseLayersDrawWhenHidden,
-            modulateAlpha = probe.houseModulateAlpha,
-            backOwner = searchBackOwner,
-        ) {
-            CompositionLocalProvider(
-                LocalArtistNavigator provides rememberArtistNavigator(searchController)
+            HouseLayer(
+                alpha = searchAlpha,
+                active = selectedHouse == HouseId.Search,
+                drawWhenHidden = probe.houseLayersDrawWhenHidden,
+                modulateAlpha = probe.houseModulateAlpha,
+                backOwner = searchBackOwner,
             ) {
-                SearchNavHost(searchController, navigator)
+                CompositionLocalProvider(
+                    LocalArtistNavigator provides rememberArtistNavigator(searchController)
+                ) {
+                    SearchNavHost(searchController, navigator)
+                }
             }
-        }
-        HouseLayer(
-            alpha = favoritesAlpha,
-            active = selectedHouse == HouseId.Favorites,
-            drawWhenHidden = probe.houseLayersDrawWhenHidden,
-            modulateAlpha = probe.houseModulateAlpha,
-            backOwner = favoritesBackOwner,
-        ) {
-            CompositionLocalProvider(
-                LocalArtistNavigator provides rememberArtistNavigator(favoritesController)
+            HouseLayer(
+                alpha = favoritesAlpha,
+                active = selectedHouse == HouseId.Favorites,
+                drawWhenHidden = probe.houseLayersDrawWhenHidden,
+                modulateAlpha = probe.houseModulateAlpha,
+                backOwner = favoritesBackOwner,
             ) {
-                FavoritesNavHost(favoritesController, navigator)
+                CompositionLocalProvider(
+                    LocalArtistNavigator provides rememberArtistNavigator(favoritesController)
+                ) {
+                    FavoritesNavHost(favoritesController, navigator)
+                }
             }
         }
     }

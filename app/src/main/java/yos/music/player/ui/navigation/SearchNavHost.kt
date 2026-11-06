@@ -33,13 +33,20 @@ fun SearchNavHost(
             popEnterTransition = { fadeIn() },
             popExitTransition = { fadeOut() }
         ) {
-            composable(UI.Search) {
-                SearchPage(
-                    navController = navController,
-                    onOpenSettings = { navigator.openSettings(HouseId.Search) },
-                    sharedTransitionScope = this@SharedTransitionLayout,
-                    animatedVisibilityScope = this@composable
-                )
+            composable(UI.Search) { entry ->
+                // 封面取色渐变只作用于本 Tab 根页；二级页不包，继续用各自提取色。
+                // entryId + scrimTransition 让底栏换色与本页淡入淡出同帧同曲线。
+                PageGradientRoot(
+                    entryId = entry.id,
+                    scrimTransition = scrimTransition()
+                ) {
+                    SearchPage(
+                        navController = navController,
+                        onOpenSettings = { navigator.openSettings(HouseId.Search) },
+                        sharedTransitionScope = this@SharedTransitionLayout,
+                        animatedVisibilityScope = this@composable
+                    )
+                }
             }
             // 艺人域路由：与各 house 共享同一张图（漏注册即 "destination cannot be found"）
             artistGraph(navController, this@SharedTransitionLayout)
