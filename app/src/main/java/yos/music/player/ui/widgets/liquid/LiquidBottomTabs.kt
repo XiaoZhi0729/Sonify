@@ -314,7 +314,8 @@ fun LiquidBottomTabs(
         }
 
         // Tab 图标/文字用主题内容色（底栏已放弃自适应亮度适配）。
-        // 玻璃模糊强度倍率：只乘下面的玻璃容器分支；磨砂分支的 12dp 是"无玻璃材质"回退，不乘。
+        // 玻璃模糊强度倍率：乘在玻璃容器分支 + tabsBackdrop 生产者行（Tab 指示器采样源）
+        // 两处同源的 4dp 上；磨砂分支的 12dp 是"无玻璃材质"回退，不乘。
         val glassScale = glassBlurScale
         CompositionLocalProvider(
             LocalGlassContentColor provides null
@@ -463,7 +464,11 @@ fun LiquidBottomTabs(
                             effects = {
                                 val progress = dampedDragAnimation.pressProgress
                                 vibrancy()
-                                blur(4f.dp.toPx())
+                                // 与容器玻璃分支的 4dp 同源：这行是 Tab 指示器采样源
+                                // (tabsBackdrop) 的模糊。指示器自身静止态没有 blur，只有 lens(0)，
+                                // 它看到的玻璃模糊全来自这里。必须同乘 glassScale，否则调节
+                                // 「玻璃效果调节」时指示器里的模糊恒定 4dp 不受影响。
+                                blur(4f.dp.toPx() * glassScale)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     lens(
                                         16f.dp.toPx() * progress,

@@ -7,7 +7,8 @@ import yos.music.player.data.libraries.SettingsLibrary
  *
  * 只乘在**玻璃控件**的模糊半径上，口径集中在这里，新增玻璃控件时务必接上：
  * - [yos.music.player.ui.widgets.basic.LiquidTopBarButton]（顶栏圆钮，含自适应亮度分支）
- * - [LiquidBottomTabs] 玻璃容器（非玻璃磨砂分支的 12dp 不乘）
+ * - [LiquidBottomTabs] 玻璃容器 + tabsBackdrop 生产者行的 4dp（后者是选中 Tab 玻璃
+ *   指示器静止态唯一的模糊来源；两处同源必须同乘，非玻璃磨砂分支的 12dp 不乘）
  * - MainActivity `PlayerShell`（迷你播放器 / 播放页外壳）
  * - [yos.music.player.ui.widgets.liquid.LiquidSwitch] 玻璃拇指
  * - [yos.music.player.ui.widgets.basic.LiquidDropdown] 下拉面板
