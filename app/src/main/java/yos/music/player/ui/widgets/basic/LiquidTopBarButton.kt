@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.painter.Painter
@@ -46,12 +47,6 @@ import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 import kotlin.math.ceil
-
-/** 非自适应路径的稳定单例 onDrawBackdrop（库默认值同款）：内联 lambda 会被
- * DrawBackdropElement.equals 判为参数变化，每次重组都 invalidateDrawCache。 */
-private val DefaultButtonOnDrawBackdrop: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit = {
-    it()
-}
 
 /**
  * 顶栏液态玻璃圆钮（移植自 NexioSchedule LiquidTopBarButton，材质保持一致）：
@@ -82,29 +77,37 @@ fun LiquidTopBarButton(
     backdropAlpha: () -> Float = { 1f },
     shadowAlpha: () -> Float = { 1f },
     iconTint: Color = Color.Unspecified,
+    /**
+     * **无圆形玻璃底时**（顶栏未滚动，`backdropAlpha ≈ 0`）的图标色。
+     *
+     * 圆底由材质层的 `layerBlock` 按 backdropAlpha 淡出，而图标是它的兄弟节点、不跟着淡：
+     * 滚动前那颗钮只剩一个图标悬在页面裸背景上。背景不是主题白/黑的页面
+     * （专辑/歌单/艺人页是封面提取色）上，固定的黑 85% / 白 85% 会与背景融为一体。
+     *
+     * 传入页面文字色后，图标色按 backdropAlpha 在「本参数（无底，需要自适应）」与
+     * 「固定主题色（有底）」之间**绘制期**交叉淡化 —— 不新增状态、不触发逐帧重组。
+     * null = 不做自适应，任何滚动位置都用固定主题色（主题底色页面的正确行为）。
+     */
+    idleIconTint: Color? = null,
     containerColor: Color = Color.Unspecified,
     draggable: Boolean = false,
-    adaptiveLuminance: Boolean = false
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val isLightTheme = !isFlamingoInDarkMode()
     // 玻璃模糊强度倍率：在组合体内读，拖动设置页滑块时这颗按钮当场跟着变
     val glassScale = glassBlurScale
-    // 自适应亮度共享设施（AdaptiveLuminanceGlass demo 同款，实现见 BackdropAdaptiveLuminance）；
-    // null = 关闭或 API<31，走主题静态材质。
-    val luminance = rememberAdaptiveBackdropLuminance(
-        enabled = adaptiveLuminance,
-        tag = "LiquidTopBarButton",
-        initialLuminance = if (isLightTheme) 1f else 0f
-    )
-    val adaptiveContentColor = luminance?.contentColor() ?: Color.White
+    // 材质与底栏胶囊 / 迷你播放器收起态同源（不再做自适应亮度采样）：
+    // 表面色固定白 / #1C1C1E、alpha 0.5，页面若有封面提取色则在其上叠一层 tint
+    // （浓度与 HSV 整形见 accentTintOf，明度被钳在安全区间，白面永远透得出来）。
+    val accentTint = LocalTitleBarAccentTint.current
     val currentOnClick by rememberUpdatedState(onClick)
     val resolvedContainerColor = if (containerColor != Color.Unspecified) containerColor
-    else if (luminance != null) Color.White.copy(alpha = 0.10f)
-    else if (isLightTheme) Color(0xFFFFFFFF).copy(0.76f)
-    else Color(0xFF242424).copy(0.84f)
-    val edgeLightColor = if (luminance != null) adaptiveContentColor.copy(alpha = 0.55f)
-    else if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
+    else if (isLightTheme) Color(0xFFFFFFFF).copy(0.5f)
+    else Color(0xFF1C1C1E).copy(0.5f)
+    val resolvedContentColor =
+        if (isLightTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.85f)
+    val edgeLightColor =
+        if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
     // 描边分两套，与 ClassYaba LiquidButton 的判据一致：那边也是按**应用主题**
     // （GlasenseTheme.darkTheme）分流，不看 backdrop 亮度。本次只复刻浅色那套，
     // 深色保持项目原状（整圈均匀白环），所以这里只判主题。
@@ -191,15 +194,12 @@ fun LiquidTopBarButton(
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { CircleShape },
+                    // 与底栏胶囊 / 迷你播放器收起态逐项对齐：vibrancy + blur(4dp) + lens(8,24)。
+                    // lens 保留 8/24（底栏是 16/32，但那是 58dp 高的全宽胶囊；42dp 小圆上
+                    // 16dp 折射带宽占比过大，会糊成一圈）。
                     effects = {
-                        if (luminance != null) {
-                            val l = luminance.l()
-                            adaptiveGlassColorControls(l)
-                            blur(adaptiveBlurPx(8f.dp.toPx(), l) * glassScale)
-                        } else {
-                            vibrancy()
-                            blur(4.dp.toPx() * glassScale)
-                        }
+                        vibrancy()
+                        blur(4.dp.toPx() * glassScale)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             lens(8f.dp.toPx(), 24f.dp.toPx())
                         }
@@ -213,10 +213,13 @@ fun LiquidTopBarButton(
                         // 只保留滚动联动的玻璃淡入；按压/拖动变换已上移到外层整体图层
                         alpha = backdropAlpha()
                     },
-                    onDrawBackdrop = if (luminance != null) luminance.onDrawBackdrop
-                    else DefaultButtonOnDrawBackdrop,
                     onDrawSurface = {
                         drawRect(resolvedContainerColor)
+                        // 封面提取色 tint：画在表面色之上、描边高光之下，层序与底栏
+                        // containerSurfaceDraw 一致。无提取色的页面为 null，等于不叠。
+                        if (accentTint != null && accentTint.alpha > 0.005f) {
+                            drawRect(accentTint)
+                        }
                         drawRect(Color.Black.copy(alpha = 0.03f * interactiveHighlight.pressProgress))
                     }
                 )
@@ -237,16 +240,31 @@ fun LiquidTopBarButton(
                 .then(if (draggable) interactiveHighlight.gestureModifier else interactiveHighlight.pressOnlyModifier)
                 .zIndex(0f)
         )
+        // 图标着色：需要自适应时按 backdropAlpha 在「无底的页面色」与「有底的主题色」
+        // 之间绘制期混色（见 idleIconTint 注释）。用 ColorFilter.tint 挂在绘制期求值，
+        // 不经过 Icon 的 tint 参数，避免逐帧重组。
+        val baseIconTint = if (iconTint != Color.Unspecified) iconTint else resolvedContentColor
+        val idleTint = idleIconTint
+        val iconModifier = Modifier
+            .size(iconSize)
+            .offset(iconOffset.x, iconOffset.y)
+            .zIndex(1f)
+            .then(
+                if (idleTint != null) {
+                    Modifier.graphicsLayer {
+                        // 圆底消失 = 图标直接压在页面背景上 → 用页面文字色
+                        val presence = backdropAlpha().coerceIn(0f, 1f)
+                        colorFilter = ColorFilter.tint(
+                            androidx.compose.ui.graphics.lerp(idleTint, baseIconTint, presence)
+                        )
+                    }
+                } else Modifier
+            )
         Icon(
             painter = icon,
             contentDescription = contentDescription,
-            modifier = Modifier
-                .size(iconSize)
-                .offset(iconOffset.x, iconOffset.y)
-                .zIndex(1f),
-            tint = if (iconTint != Color.Unspecified) iconTint
-            else if (luminance != null) adaptiveContentColor
-            else if (isLightTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.85f)
+            modifier = iconModifier,
+            tint = if (idleTint != null) Color.White else baseIconTint
         )
     }
 }

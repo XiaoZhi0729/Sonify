@@ -143,8 +143,10 @@ import yos.music.player.data.repositories.KugouArtistDetailData
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.navigation.ArtistArtworkColors
 import yos.music.player.ui.navigation.artistIdentityRgb
+import yos.music.player.ui.navigation.accentTintOf
 import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.PageScrimTransition
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHost
@@ -641,6 +643,10 @@ fun ArtistDetail(
     CompositionLocalProvider(
         LocalContentColor provides contentColor,
         LocalTitlePageBackdrop provides pageBackdrop,
+        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 歌手图提取色 tint）。
+        // 用 artworkColors.accent（remember 值，非动画色），不在组合期读 bgColorState ——
+        // 那会让整页在 600ms 底色渐变期间逐帧重组（见上方注释）。
+        LocalTitleBarAccentTint provides accentTintOf(artworkColors.accent, isDark),
         LocalTitleOverlayHost provides overlayHost,
     ) {
     val bgDrawHolder = remember { longArrayOf(Long.MIN_VALUE) }
@@ -1330,8 +1336,9 @@ fun ArtistDetail(
                                 iconOffset = DpOffset((-2).dp, 0.dp),
                                 backdropAlpha = { barAlpha },
                                 shadowAlpha = { barAlpha },
-                                draggable = true,
-                                adaptiveLuminance = ArtistPageAppearance.activeEntryId.value == entryId
+                                // 圆底未出现时图标压在歌手图底色上：用页面文字色自适应
+                                idleIconTint = contentColor,
+                                draggable = true
                             )
                         } else {
                             Box(

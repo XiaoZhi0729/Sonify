@@ -86,10 +86,21 @@ data class DragTransform(
 )
 
 /**
+ * 收起态（fraction=0，即顶栏那颗 42dp 圆钮）对齐 LiquidTopBarButton 的按压形变：
+ * 放大 +6dp 当量（42dp 上 ≈14%），倾斜量 = minDimension × 0.05 × 按压点偏移/最大边。
+ * 展开成面板后按 [DragStretchRatio] / tanh 跟手那一套走（面板面积大，纯缩放不够跟手）。
+ */
+private const val CollapsedPressScaleDp = 6f
+private const val CollapsedPressTiltRatio = 0.05f
+
+/**
  * 按压缩放 + 沿拖动方向拉伸 + tanh 阻尼跟手位移。菜单面板与整宽按钮共用这一套。
  *
  * 注意 penalty 只乘在**拉伸**项上（[DragTransform] 的 scaleX/scaleY），
  * 位移项走 tanh 且以 minDimension 归一化，不受宽高比惩罚影响。
+ *
+ * 两套形变按 fraction 连续插值：f=0 完全等于顶栏液态玻璃圆钮（LiquidTopBarButton）
+ * 的按压手感，f=1 完全是面板原手感，展开动画中途不会跳变。
  *
  * @param shapeAspectRatio 长宽比惩罚的基准，null = 用实测宽高比。
  *   接近方形的面板传 null 即可（实测就是它的正常形状）。
@@ -108,18 +119,39 @@ fun computeDragTransform(
 ): DragTransform {
     val selfH = height.coerceAtLeast(1f)
     val minDim = minOf(width, selfH).coerceAtLeast(1f)
-    val pressScale = 1f + with(density) { 4f.dp.toPx() } / selfH * pressProgress.coerceAtLeast(0f)
+    val f = fraction.coerceIn(0f, 1f)
+    val press = pressProgress.coerceAtLeast(0f)
+    val pressScale = 1f + with(density) { 4f.dp.toPx() } / selfH * press
     // 竖向行程基准按展开进度收紧（菜单就几行高，竖向行程天然短）
-    val refY = minDim * (1f - (1f - VerticalDragRefScale) * fraction.coerceIn(0f, 1f))
+    val refY = minDim * (1f - (1f - VerticalDragRefScale) * f)
     val base = shapeAspectRatio
     val penaltyX = (base ?: width / selfH).coerceAtMost(AspectPenaltyFloor)
     val penaltyY = (base?.let { 1f / it } ?: (selfH / width)).coerceAtMost(AspectPenaltyFloor)
     val angle = atan2(offset.y, offset.x)
-    return DragTransform(
+    val panelTransform = DragTransform(
         scaleX = pressScale + DragStretchRatio * abs(cos(angle) * offset.x / minDim) * penaltyX,
         scaleY = pressScale + DragStretchRatio * abs(sin(angle) * offset.y / refY) * penaltyY,
         translationX = minDim * tanh(0.08f * offset.x / minDim),
         translationY = minDim * tanh(0.08f * offset.y / minDim),
+    )
+    if (f >= 1f) return panelTransform
+    // 收起态（= 顶栏圆钮）：+6dp 纯缩放 + 按压点倾斜，无拉伸、无 tanh 位移。
+    // 倾斜照抄 LiquidTopBarButton：minDimension × 0.05 × pressOffset / maxDimension。
+    val maxDim = maxOf(width, selfH).coerceAtLeast(1f)
+    val collapsedScale = 1f + with(density) { CollapsedPressScaleDp.dp.toPx() } / selfH * press
+    val collapsedTransform = DragTransform(
+        scaleX = collapsedScale,
+        scaleY = collapsedScale,
+        translationX = minDim * CollapsedPressTiltRatio * offset.x / maxDim,
+        translationY = minDim * CollapsedPressTiltRatio * offset.y / maxDim,
+    )
+    return DragTransform(
+        scaleX = collapsedTransform.scaleX + (panelTransform.scaleX - collapsedTransform.scaleX) * f,
+        scaleY = collapsedTransform.scaleY + (panelTransform.scaleY - collapsedTransform.scaleY) * f,
+        translationX = collapsedTransform.translationX +
+                (panelTransform.translationX - collapsedTransform.translationX) * f,
+        translationY = collapsedTransform.translationY +
+                (panelTransform.translationY - collapsedTransform.translationY) * f,
     )
 }
 

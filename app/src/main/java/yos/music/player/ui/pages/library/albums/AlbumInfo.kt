@@ -66,6 +66,9 @@ import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.ImageQuality
+import yos.music.player.ui.widgets.basic.coverScrollMotion
+import yos.music.player.ui.widgets.basic.coverTitleFade
+import yos.music.player.ui.widgets.basic.rememberCoverScrollMotion
 import yos.music.player.ui.widgets.basic.enterCoverCorner
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.Title
@@ -139,6 +142,8 @@ fun AlbumInfo(
             }*/
 
             val state = rememberLazyListState()
+            // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
+            val coverMotion = rememberCoverScrollMotion(state)
             // blit=true：本页无自带背景层，底色即 shell 的主题白/黑，与种子色严格相等，
             // 录制层可直接上屏，省掉整页内容的第二遍绘制。
             val titleBackdrop = rememberTitleBackdrop(blit = true)
@@ -239,6 +244,8 @@ fun AlbumInfo(
                                     }
                                 } else Modifier
                             )
+                            // 滚动动效只挂封面：挂到外层会把标题/按钮一起模糊掉
+                            .coverScrollMotion(coverMotion)
                         Box(coverModifier) {
                             ShadowImage(
                                 modifier = Modifier.fillMaxSize(),
@@ -251,6 +258,15 @@ fun AlbumInfo(
                             )
                         }
 
+                        // 只有「标题区」（专辑名 / 歌手 / 类型）参与淡出。
+                        // 播放控件是常驻操作，不随封面退场。
+                        // 封面必须排除在外（alpha 会乘到所有子孙上，封面会被叠两次）。
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .coverTitleFade(coverMotion),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                         Spacer(modifier = Modifier.height(14.dp))
 
                         Text(
@@ -278,6 +294,7 @@ fun AlbumInfo(
                                 .alpha(0.4f)
                                 .padding(top = 2.dp)
                         )
+                        } // 标题区淡出层结束：以下的操作行常驻，不参与淡出
 
                         YosWrapper {
                             Row(

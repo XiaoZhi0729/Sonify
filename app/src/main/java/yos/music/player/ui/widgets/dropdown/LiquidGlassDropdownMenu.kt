@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -73,12 +74,9 @@ import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.roundToInt
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
-import yos.music.player.ui.widgets.basic.adaptiveBlurPx
-import yos.music.player.ui.widgets.basic.adaptiveGlassColorControls
-import yos.music.player.ui.widgets.basic.rememberAdaptiveBackdropLuminance
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
@@ -102,12 +100,28 @@ private val PanelWidth = 200.dp
 private val PanelCornerRadius = 25.dp
 
 /**
+ * 面板玻璃模糊半径。收起态那颗钮与展开后的面板用同一个值 —— 用户要求"展开态和收起态
+ * 观感一致"。与底栏胶囊 / 迷你播放器同一档（4dp）。
+ */
+private const val PanelBlur = 4f
+
+/**
  * 面板外投射阴影档位。⚠️ ListPopup.kt 的 popupPanelShadow 有一份**同值副本**
  * （那边是 miuix 通用组件，不反向依赖 app 层），调整时两处必须同步，否则两种弹窗阴影深浅不一。
+ *
+ * 收起态（f=0，就是顶栏那颗圆钮）按 LiquidTopBarButton 的数值走：
+ * 浅 #12000000 / 深 #20000000、模糊 10dp；展开成面板后插值回本文件原有的
+ * 面板档位（#1A/#2E、模糊 12dp）。两组值都必须保留 —— 面板面积大，
+ * 用钮的浅阴影会显得"浮不起来"。
  */
 private val ShadowColorLight = Color(0x1A000000)
 private val ShadowColorDark = Color(0x2E000000)
+/** 收起态阴影色（= LiquidTopBarButton 的 shadowColor） */
+private val CollapsedShadowColorLight = Color(0x12000000)
+private val CollapsedShadowColorDark = Color(0x20000000)
 private const val ShadowBlur = 12f
+/** 收起态阴影模糊半径（= LiquidTopBarButton 的 10f * density） */
+private const val CollapsedShadowBlur = 10f
 private const val ShadowExtend = 2f
 /** 阴影 alpha 会被放大这么多倍 —— 环形路径重复描边会累积浓度 */
 private const val ShadowAlphaGain = 3.2f
@@ -134,12 +148,19 @@ fun LiquidGlassDropdownMenu(
     offsetPx: () -> Offset = { Offset.Zero },
     // 顶栏滚动材质透明度：收起态跟随它渐显渐隐，展开时按 fraction 渐显
     materialAlpha: Float = 1f,
-    // 收起态跟随顶栏返回键的配色。两个开关分别对应返回键的两条分支：
-    //  - adaptiveLuminance：「工具栏液态玻璃」开启时按 backdrop 亮度翻黑白（同 LiquidTopBarButton）；
-    //  - contentColor：「工具栏液态玻璃」关闭后的扁平分支，图标用页面文字色（同 TitleBar 的 backIconTint）。
-    // 默认都关/为空 → 完全保持原有主题配色，未传参的调用点行为逐像素不变。
-    adaptiveLuminance: Boolean = false,
+    // 收起态跟随顶栏返回键的配色：
+    //  - 玻璃开启时：材质与底栏胶囊 / 迷你播放器收起态同源（固定表面色 + 页面提取色 tint），
+    //    不再做自适应亮度采样 —— 与 LiquidTopBarButton 逐项对齐；
+    //  - 「工具栏液态玻璃」关闭后：图标用页面文字色（同 TitleBar 的 backIconTint）。
+    // contentColor 为空 → 完全保持原有主题配色，未传参的调用点行为逐像素不变。
     contentColor: Color? = null,
+    /**
+     * 圆底未出现（顶栏未滚动，`materialVisible ≈ 0`）时收起态图标的颜色。
+     * 同 [yos.music.player.ui.widgets.basic.LiquidTopBarButton] 的 idleIconTint：
+     * 无圆底时图标压在页面裸背景上，固定黑/白会与封面底色融为一体。
+     * null = 不做自适应（主题底色页面的正确行为）。
+     */
+    idleIconTint: Color? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isLightTheme = !isDropdownDarkTheme()
@@ -151,6 +172,9 @@ fun LiquidGlassDropdownMenu(
     // 形状在收起↔展开间连续变化（42dp 正圆 → 200dp × 面板高圆角矩形），而且
     // `squircle()` 每次调用都新建实例，而 ShapeProvider 按**引用**比较形状、引用一变就
     // 重算 outline。这里 remember 成单实例，供材质、阴影、描边共用同一份。
+    // 注：收起态用 squircle(25dp)（42dp 下被钳成正圆），与顶栏返回键的 CircleShape
+    // 边缘折射有亚像素级差异；未对齐是因为按 f 切 Shape 需在组合期读 fraction，
+    // 会逐帧重组并重算 outline，代价远大于收益。
     val panelShape = remember { squircle(PanelCornerRadius, smoothBand = true) }
     // 浅色模式的黑环走 ClassYaba 配方（左右最深、上下保留 baseline 0.4）：与顶栏圆钮
     // （LiquidTopBarButton）、设置页预览控件同一套。深色不移植，保持项目原状。
@@ -158,27 +182,23 @@ fun LiquidGlassDropdownMenu(
         if (isLightTheme) classyabaBlackRim else null
 
     // 「工具栏液态玻璃」关闭时收起态是纯图标（无圆底/边光/投影），与 TitleBar 的扁平返回键同形；
-    // 开启时是那颗 42dp 玻璃钮，配色按 backdrop 亮度自适应 —— 两条分支都不再看 App 深浅主题。
+    // 开启时是那颗 42dp 玻璃钮，材质与底栏 / 迷你条收起态同源（固定色 + 提取色 tint）。
     val glassOn = SettingsLibrary.BarBlurEffect
-    val luminance = rememberAdaptiveBackdropLuminance(
-        enabled = glassOn && adaptiveLuminance,
-        tag = "LiquidGlassDropdownMenu",
-        initialLuminance = if (isLightTheme) 1f else 0f
-    )
-    val adaptiveContentColor = luminance?.contentColor()
-    // 展开态是面板：必须保留实底保证菜单项可读，只有收起态才是那颗钮。
-    val panelContainerColor = if (isLightTheme) Color(0xFFFAFAFA).copy(0.76f)
-        else Color(0xFF242424).copy(0.84f)
+    // 玻璃表面：与 LiquidTopBarButton / 底栏胶囊同值（白或 #1C1C1E，alpha 0.5）。
+    // 展开态面板与收起态那颗钮**同材质** —— 同一个表面色、同一个 4dp 模糊、同一层 tint。
+    // 原先面板用更实的 #FAFAFA 0.76 / #242424 0.84 保证阅读面不透明，
+    // 统一后靠 tint 与黑环描边维持层次（用户要求两态观感一致）。
+    val glassSurfaceColor = if (isLightTheme) Color(0xFFFFFFFF).copy(0.5f)
+        else Color(0xFF1C1C1E).copy(0.5f)
+    val accentTint = LocalTitleBarAccentTint.current
     val collapsedContainerColor = when {
-        adaptiveContentColor != null -> Color.White.copy(alpha = 0.10f)
-        glassOn -> panelContainerColor
+        glassOn -> glassSurfaceColor
         else -> Color.Transparent
     }
-    val triggerIconTint = adaptiveContentColor
-        ?: when {
-            glassOn && isLightTheme -> Color.Black.copy(alpha = 0.85f)
-            glassOn -> Color.White.copy(alpha = 0.85f)
-            else -> contentColor ?: MaterialTheme.colorScheme.primary
+    val triggerIconTint = when {
+        glassOn && isLightTheme -> Color.Black.copy(alpha = 0.85f)
+        glassOn -> Color.White.copy(alpha = 0.85f)
+        else -> contentColor ?: MaterialTheme.colorScheme.primary
         }
     // 锚点迁移进度：比尺寸更快到 1，先"移向面板中心"再放大
     val originProgress = remember { Animatable(0f) }
@@ -212,7 +232,13 @@ fun LiquidGlassDropdownMenu(
             // 半径上限 150dp：不用 minDimension，否则菜单项越多面板越高、光晕越大。
             // 收起态是 42dp 小圆，min 会自动退回自身尺寸，光晕不会漫出圆外。
             radiusBaseDp = 150.dp,
-            lightPeakAlpha = 0.05f,
+            // 收起态对齐顶栏返回键（LiquidTopBarButton 用 InteractiveHighlight 默认 0.15）；
+            // 展开成实底阅读面后按 1.6.5 全局规则收到 0.05（近白底加白会被截断成白斑）。
+            // 手算而不用 lerp：本文件导入的是 unit.lerp（只认 Dp/TextUnit），Float 版在 util 包。
+            lightPeakAlpha = {
+                val frac = fraction.value.coerceIn(0f, 1f)
+                0.15f + (0.05f - 0.15f) * frac
+            },
             isDarkMode = !isLightTheme,
         )
     }
@@ -294,10 +320,6 @@ fun LiquidGlassDropdownMenu(
 
     // 读 fraction 驱动尺寸；不钳到 1，保留 spring 过冲（末尾回弹）
     val f = fraction.value
-    // 模糊随展开过渡（收起 8dp → 展开 24dp）。折射 lens(8, 24) 必须保持常量：它作用在边缘 SDF 上，
-    // 随面板变大反而会让边缘变形。effects lambda 换引用才重算，但每帧换会让节点每帧重建 RenderEffect，故量化成 8 档。
-    val blurStep = (f.coerceIn(0f, 1f) * 8f).roundToInt()
-    val blurDp = 8f + 16f * (blurStep / 8f)
     // 面板自然高度：由容器内的内容以全尺寸测量得到，作为高度插值终点
     var panelHeightPx by remember { mutableIntStateOf(0) }
     val targetHeight = if (panelHeightPx > 0) {
@@ -365,8 +387,16 @@ fun LiquidGlassDropdownMenu(
                     // materialVisible 而非 materialAlpha：展开后即使顶栏材质透明也要有阴影。
                     val spread = materialVisible
                     if (spread > 0.01f) {
-                        val shadowColor = if (isLightTheme) ShadowColorLight else ShadowColorDark
-                        val blurRadius = ShadowBlur * density * spread
+                        // 收起态对齐顶栏返回键（LiquidTopBarButton: 10dp 模糊 / #12 / #20），
+                        // 随展开插值回面板档位（12dp / #1A / #2E）。
+                        val fClamped = f.coerceIn(0f, 1f)
+                        val shadowColor = androidx.compose.ui.graphics.lerp(
+                            if (isLightTheme) CollapsedShadowColorLight else CollapsedShadowColorDark,
+                            if (isLightTheme) ShadowColorLight else ShadowColorDark,
+                            fClamped
+                        )
+                        val blurDp = CollapsedShadowBlur + (ShadowBlur - CollapsedShadowBlur) * fClamped
+                        val blurRadius = blurDp * density * spread
                         val shadowSpread = ShadowExtend * density * spread
                         val r = PanelCornerRadius.toPx()
                         // 环形：外圈 roundrect CW + 内圈 roundrect CCW（winding 差集）
@@ -401,42 +431,22 @@ fun LiquidGlassDropdownMenu(
                 }
                 .clip(panelShape)
         ) {
-            // 与顶栏液态玻璃按钮同一套采样效果；blur 随展开档位过渡（8dp → 24dp）。
-            // 自适应分支与 LiquidTopBarButton 逐项对齐（colorControls + adaptiveBlurPx）；
-            // 展开途中（f 增大）逐渐退回固定 vibrancy，面板作为实底阅读面不应该被背景亮度带跑。
-            // key 必须用已量化的 blurStep 而不是 f：每帧换引用会让节点每帧重建 RenderEffect。
+            // 与顶栏液态玻璃按钮 / 底栏胶囊同一套材质，**收起态与展开态完全一致**：
+            // 固定 vibrancy + blur 4dp + lens(8,24)，不随展开进度变化。
+            // 因为参数恒定，effects 引用不再随帧变化 → 节点不会逐帧重建 RenderEffect，
+            // 原先"量化成 8 档"的 blurStep 整条链随之删除。
             val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
-                remember(chromeLens, blurStep, luminance) {
+                remember(chromeLens) {
                     {
-                        val l = luminance?.l()
-                        if (l != null && blurStep < 4) {
-                            // blurStep/8 ≈ f，用它把自适应模糊线性推回展开态档位
-                            adaptiveGlassColorControls(l)
-                            val adaptivePx = adaptiveBlurPx(8f.dp.toPx(), l)
-                            val panelPx = blurDp.dp.toPx()
-                            val t = (blurStep / 4f).coerceIn(0f, 1f)
-                            blur((adaptivePx + (panelPx - adaptivePx) * t) * glassBlurScale)
-                        } else {
-                            vibrancy()
-                            blur(blurDp.dp.toPx() * glassBlurScale)
-                        }
+                        vibrancy()
+                        blur(PanelBlur.dp.toPx() * glassBlurScale)
                         if (chromeLens && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             lens(8.dp.toPx(), 24.dp.toPx())
                         }
                     }
                 }
-            // 边光：自适应分支按内容色给（同 LiquidTopBarButton 的 edgeLightColor 口径），
-            // 否则沿用主题两档。展开后（blurStep≥4 ≈ f≥0.5）一律用主题档，
-            // 面板是实底阅读面，保持与其它下拉菜单一致。
-            val edgeLightSpec = if (adaptiveContentColor != null && blurStep < 4) {
-                remember(adaptiveContentColor) {
-                    com.kyant.backdrop.edgelight.EdgeLight.Uniform(
-                        color = adaptiveContentColor.copy(alpha = 0.55f)
-                    )
-                }
-            } else {
-                themeEdgeLight
-            }
+            // 边光：一律沿用主题档（自适应路径已移除，收起态与返回键同材质的白环口径）。
+            val edgeLightSpec = themeEdgeLight
             // 玻璃单独一层：只有它跟材质 alpha（layerBlock 作用于整个节点，挂容器上会连图标一起透明）
             Box(
                 modifier = Modifier
@@ -450,18 +460,30 @@ fun LiquidGlassDropdownMenu(
                         // 深色：保持 highlight = null + 下方 edgeLight 白环。
                         highlight = rimHighlight,
                         shadow = null,
-                        onDrawBackdrop = if (luminance != null) luminance.onDrawBackdrop
-                        else DefaultOnDrawBackdrop,
+                        onDrawBackdrop = DefaultOnDrawBackdrop,
                         onDrawSurface = {
-                            // 收起态是那颗钮、展开态是阅读面板：面底随 f 从钮过渡到面板，
-                            // 否则收起态的深底钮会长成一块盖住菜单的实心色板。
+                            // 收起态与展开态同材质：面底恒为那颗钮的固定表面色，
+                            // 不再随 f 过渡到更实的面板色。
+                            // 关闭「工具栏液态玻璃」时收起态是纯图标（collapsedContainerColor
+                            // 为 Transparent），但展开后的面板仍需要实底保证菜单可读 ——
+                            // 用带 f 的下限兜住：f=0 全透明，f→1 回到玻璃表面色。
                             drawRect(
-                                androidx.compose.ui.graphics.lerp(
-                                    collapsedContainerColor,
-                                    panelContainerColor,
-                                    f.coerceIn(0f, 1f)
+                                if (glassOn) glassSurfaceColor
+                                else glassSurfaceColor.copy(
+                                    alpha = glassSurfaceColor.alpha * f.coerceIn(0f, 1f)
                                 )
                             )
+                            // 封面提取色 tint：与底栏 containerSurfaceDraw 同一层序
+                            // （表面色之上、描边高光之下），展开后依然保留 —— 面板与
+                            // 收起态要观感一致。
+                            if (accentTint != null && accentTint.alpha > 0.005f) {
+                                // 关玻璃时收起态是纯图标，tint 同样要随 f 淡入（同上面底色）
+                                val tintAlpha = if (glassOn) accentTint.alpha
+                                else accentTint.alpha * f.coerceIn(0f, 1f)
+                                if (tintAlpha > 0.005f) {
+                                    drawRect(accentTint.copy(alpha = tintAlpha))
+                                }
+                            }
                         }
                     )
                     // 描边：浅色换 ClassYaba 配方（黑环已在上面 highlight 槽，这里补白色上下
@@ -527,6 +549,18 @@ fun LiquidGlassDropdownMenu(
                             alpha = 1f - p
                             translationX = p * (ButtonDiameter.toPx() / 2f - width.toPx() / 2f)
                             translationY = p * (height.toPx() / 2f - ButtonDiameter.toPx() / 2f)
+                            // 圆底未出现（顶栏未滚动）时图标直接压在页面背景上：
+                            // 同 LiquidTopBarButton 的 idleIconTint，按 materialVisible 交叉淡化。
+                            // 绘制期直读，不引进新状态、不触发重组。
+                            val idleTint = idleIconTint
+                            if (idleTint != null) {
+                                val presence = materialVisible.coerceIn(0f, 1f)
+                                colorFilter = ColorFilter.tint(
+                                    androidx.compose.ui.graphics.lerp(
+                                        idleTint, triggerIconTint, presence
+                                    )
+                                )
+                            }
                         }
                        // interactiveHighlight 高光提供，不要默认涟漪。
                        // 点按与长按由同一个手势仲裁（长按 0.5s 展开后可不停手直接滑选）：

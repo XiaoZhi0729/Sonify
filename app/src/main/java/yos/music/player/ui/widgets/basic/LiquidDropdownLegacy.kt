@@ -594,7 +594,7 @@ private fun LiquidDropdownContent(
             animationScope = coroutineScope,
             radiusScale = { 1f - 0.6f * fractionProgress().coerceIn(0f, 1f) },
             radiusBaseDp = 150.dp,
-            lightPeakAlpha = 0.05f,
+            lightPeakAlpha = { 0.05f },
             isDarkMode = isDark,
         )
     }

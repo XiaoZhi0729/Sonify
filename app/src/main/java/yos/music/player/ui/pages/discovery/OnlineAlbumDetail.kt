@@ -92,6 +92,7 @@ import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.navigation.artworkContentColor
+import yos.music.player.ui.navigation.accentTintOf
 import yos.music.player.ui.navigation.rememberAlbumBackdropColors
 import yos.music.player.ui.navigation.rememberArtistBackdropColors
 import yos.music.player.data.repositories.KugouNewSong
@@ -104,7 +105,11 @@ import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
+import yos.music.player.ui.widgets.basic.coverScrollMotion
+import yos.music.player.ui.widgets.basic.coverTitleFade
+import yos.music.player.ui.widgets.basic.rememberCoverScrollMotion
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.enterCoverCorner
@@ -389,6 +394,9 @@ fun OnlineAlbumDetail(
     // 而退成深色模式的黑底。
     val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出）。进度由 state 的滚动量驱动，
+    // 与顶栏折叠共用同一个 LazyListState，两者严格同帧。
+    val coverMotion = rememberCoverScrollMotion(state)
     val overlayHost = remember { TitleOverlayHost() }
     // 右上角「更多」：占位菜单（分享按钮按要求不复刻）
     var menuOpen by remember { mutableStateOf(false) }
@@ -397,6 +405,9 @@ fun OnlineAlbumDetail(
         LocalContentColor provides contentColor,
         LocalTitlePageColor provides backdrop,
         LocalTitlePageBackdrop provides titleBackdrop,
+        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 封面提取色 tint，
+        // HSV 整形与浓度见 accentTintOf）。无提取色时为 null，钮回退到纯固定色。
+        LocalTitleBarAccentTint provides resolvedAccent?.let { accentTintOf(it, isDark) },
         LocalTitleOverlayHost provides overlayHost
     ) {
         Box(
@@ -501,6 +512,9 @@ fun OnlineAlbumDetail(
                     // 注意：aspectRatio 必须由 ShadowImage 自己按**缩进后的宽度**算，
                     // 不能写在 padding 外面——否则 Box 按整行宽度算成正方形，里面真正的
                     // 封面比 Box 矮一截，下方会多出约 (2×50dp) 的空白把文字推远。
+                    //
+                    // 滚动动效挂在**封面这一层**（coverScrollMotion）：它只该动封面，
+                    // 若挂到外层 Column 上，标题/按钮会一起被模糊。
                     val coverUrl = detail.value?.coverUrl?.takeIf { it.isNotEmpty() } ?: album.coverUrl
                     val coverModifier = Modifier
                         .fillMaxWidth()
@@ -515,6 +529,10 @@ fun OnlineAlbumDetail(
                                 }
                             } else Modifier
                         )
+                        // 封面尺寸是进度的分母：必须在**加 padding 之前**量到的整行宽度？
+                        // 否——量的是 sharedElement 之外的真实封面框，padding 已在其外，
+                        // 所以这里量到的是封面自身的边长，正是「滚过自身高度」要的口径。
+                        .coverScrollMotion(coverMotion)
                     Box(coverModifier) {
                         ShadowImage(
                             modifier = Modifier.fillMaxWidth(),
@@ -527,6 +545,18 @@ fun OnlineAlbumDetail(
                         )
                     }
 
+                    // 只有「标题区」（标题 / 歌手 / meta）参与淡出。
+                    // 播放控件与简介是常驻内容，不随封面退场——把它们也包进来会让人
+                    // 以为页面在消失，而不是封面在让位。
+                    // 封面必须排除在外：graphicsLayer 的 alpha 会乘到所有子孙上，
+                    // 封面若在范围内就会吃到两次（自身一次 + 这里一次），比文字先消失。
+                    // 居中必须显式写回：Column 默认 Start 对齐，漏掉会全部左对齐。
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .coverTitleFade(coverMotion),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                     // 封面与文字间距 10dp
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -581,6 +611,7 @@ fun OnlineAlbumDetail(
                             .alpha(0.6f)
                             .padding(top = 4.dp)
                     )
+                    } // 标题区淡出层结束：以下的操作行与简介常驻，不参与淡出
 
                     // 操作行：随机 · 播放胶囊 · 搜索（与歌单页同一套形变与挤压动画）。
                     // 三个控件由同一个形变进度驱动，播放胶囊取剩余空间的 2/3。
@@ -778,10 +809,11 @@ fun OnlineAlbumDetail(
                         onDismiss = { menuOpen = false },
                         triggerIcon = Icons.Rounded.MoreHoriz,
                         modifier = Modifier.padding(end = 10.dp),
-                        // 与左侧返回键同色：页面底色是封面提取色，与 App 深浅主题无关，
-                        // 必须按 backdrop 亮度自适应，否则深色封面上那颗钮会发脏。
-                        adaptiveLuminance = true,
+                        // 玻璃开启时材质与底栏胶囊同源（固定表面色 + 本页封面提取色 tint，
+                        // 由 LocalTitleBarAccentTint 下发）；contentColor 只在关闭玻璃时生效。
                         contentColor = contentColor,
+                        // 圆底未出现（未滚动）时图标压在封面底色上：用页面文字色自适应
+                        idleIconTint = contentColor,
                     ) {
                         // 样式对齐歌曲行「三个点」菜单：每项都有行首图标，项与项之间插分割线。
                         menuArtists.firstOrNull()?.let { artist ->

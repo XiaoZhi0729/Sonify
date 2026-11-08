@@ -194,9 +194,12 @@ dependencies {
 
     implementation "com.github.promeg:tinypinyin:2.0.2"
 
-    implementation("dev.chrisbanes.haze:haze:2.0.1")
-    implementation("dev.chrisbanes.haze:haze-blur:2.0.1")
-    implementation("dev.chrisbanes.haze:haze-blur-materials:2.0.1")
+    // 2.1.0：Blur 样式可在样式块内直接读动画值（无需重建样式/重组调用点），
+    // 并修复 content 自模糊的边缘漏透明像素（#1726）与 API 31 滚动时陈旧内容（#1509）。
+    // 版本选择只动这里；Compose 版本由 Haze 的传递依赖决定（见依赖报告），不在本文件锁死。
+    implementation("dev.chrisbanes.haze:haze:2.1.0")
+    implementation("dev.chrisbanes.haze:haze-blur:2.1.0")
+    implementation("dev.chrisbanes.haze:haze-blur-materials:2.1.0")
 
     // 人声分离实时推理（TFLite 解释器）
     // -api 件不可省：Interpreter/Tensor 的公开类型在 api artifact 里，缺了会报

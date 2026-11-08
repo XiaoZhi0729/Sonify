@@ -46,7 +46,14 @@ import kotlin.math.sin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.code.utils.others.BitmapResolver
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.SettingsLibrary.NowplayingBackgroundEffect
+import yos.music.player.data.waveform.PlaybackLevelBridge
+import yos.music.player.ui.widgets.effects.pearmesh.PearMeshBackground
+import yos.music.player.ui.widgets.effects.pearmesh.PearMeshMesh
+import yos.music.player.ui.widgets.effects.pearmesh.PearMeshState
+import yos.music.player.ui.widgets.effects.pearmesh.isPearMeshSupported
+import kotlin.random.Random
 import yos.music.player.ui.pages.NowPlayingPage
 import yos.music.player.ui.widgets.basic.YosWrapper
 
@@ -72,7 +79,8 @@ fun YosFloatingLight(
     album: () -> Uri?,
     isPlaying: () -> Boolean,
     nowPage: () -> String,
-    showMiniPlayer: Boolean
+    showMiniPlayer: Boolean,
+    enableMesh: Boolean = false
 ) {
     val drawable = remember {
         mutableStateOf<Drawable?>(null)
@@ -80,6 +88,23 @@ fun YosFloatingLight(
     val albumUri = album()
 
     val context = LocalContext.current
+    val meshSupported = remember { isPearMeshSupported(context) }
+    // 流体网格模式接管背景时，糊图这条管线整个不跑（网格自己在 GL 里调色 + 模糊）
+    val meshActive = enableMesh &&
+            NowplayingBackgroundEffect &&
+            SettingsLibrary.NowplayingBackgroundMode == SettingsLibrary.BACKGROUND_MODE_MESH &&
+            meshSupported
+
+    if (meshActive) {
+        PearMeshBackgroundLayer(
+            modifier = modifier,
+            album = album,
+            isPlaying = isPlaying,
+            showMiniPlayer = showMiniPlayer
+        )
+        return
+    }
+
     // 复用全局 ImageLoader（共享内存/磁盘缓存与线程池）；自建实例每首歌都冷缓存重拉原图
     val imageLoader = context.imageLoader
     YosWrapper {
@@ -158,6 +183,129 @@ fun YosFloatingLight(
             )
         }
     }
+}
+
+/**
+ * 流体网格背景（Pear Wall 移植）。
+ *
+ * 与糊图分支的关键差异：
+ * - 封面按 512px 解码后原样交给 GL —— Pear Wall 在 fragment shader 里自己完成饱和/压暗/
+ *   抖动，不能再叠 [imageResolve] 那套「饱和×3 + 压暗 + 高斯」，否则会双重处理。
+ * - 切歌淡化由渲染器的 `uTransitionMix`（0.5s）负责，外层不再套 AnimatedContent。
+ * - 生命周期驱动渲染线程启停，播放暂停时动画时钟冻结（画面停住不回弹）。
+ */
+@Composable
+private fun PearMeshBackgroundLayer(
+    modifier: Modifier,
+    album: () -> Uri?,
+    isPlaying: () -> Boolean,
+    showMiniPlayer: Boolean
+) {
+    val context = LocalContext.current
+    val imageLoader = context.imageLoader
+    val albumUri = album()
+
+    val state = remember { PearMeshState() }
+    val lifecycleState = LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val active = lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED) && !showMiniPlayer
+    val playing = remember(isPlaying) { derivedStateOf(isPlaying) }.value
+    LaunchedEffect(playing, active) {
+        state.setPlaybackPlaying(playing && active)
+    }
+
+    // 网格样式。开了「每次随机」就在进入时抽一套（排除当前值，保证真的换了），
+    // 这个决定只在 state 创建时做一次，之后由设置项直接驱动。
+    val randomPreset = SettingsLibrary.NowplayingBackgroundRandomPreset
+    val portraitPreset = SettingsLibrary.NowplayingBackgroundPortraitPreset
+    val landscapePreset = SettingsLibrary.NowplayingBackgroundLandscapePreset
+    val initialPresets = remember {
+        if (randomPreset) {
+            Random.nextInt(PearMeshMesh.PortraitPresetCount) to
+                    Random.nextInt(PearMeshMesh.LandscapePresetCount)
+        } else {
+            portraitPreset to landscapePreset
+        }
+    }
+    LaunchedEffect(portraitPreset, landscapePreset, randomPreset) {
+        if (randomPreset) {
+            state.setPortraitPreset(initialPresets.first)
+            state.setLandscapePreset(initialPresets.second)
+        } else {
+            state.setPortraitPreset(portraitPreset)
+            state.setLandscapePreset(landscapePreset)
+        }
+    }
+
+    val flowSpeed = SettingsLibrary.NowplayingBackgroundFlowSpeed
+    LaunchedEffect(flowSpeed) {
+        state.setFlowSpeed(flowSpeed)
+    }
+
+    // 模糊强度与渲染质量：两个都直接进渲染器快照，无需额外换算层
+    val blurStrength = SettingsLibrary.NowplayingBackgroundBlurStrength
+    LaunchedEffect(blurStrength) {
+        state.setBlurMultiplier(PearMeshState.blurMultiplierFor(blurStrength))
+    }
+    val renderQuality = SettingsLibrary.NowplayingBackgroundRenderQuality
+    LaunchedEffect(renderQuality) {
+        state.setRenderScale(PearMeshState.renderQualityScale(renderQuality))
+        state.setTargetFrameRate(PearMeshState.renderQualityFps(renderQuality))
+    }
+
+    // 律动强度：关掉时设为 0，渲染器因此退回 1.0 倍（与完全不分析等价，且不再有开销）
+    val pulseEnabled = SettingsLibrary.NowplayingBackgroundPulse
+    val pulseStrength = SettingsLibrary.NowplayingBackgroundPulseStrength
+    LaunchedEffect(pulseEnabled, pulseStrength) {
+        state.setPulseIntensity(
+            if (pulseEnabled) PearMeshState.pulseIntensityFor(pulseStrength) else 0f
+        )
+        if (!pulseEnabled) PlaybackLevelBridge.reset()
+    }
+
+    // 能量桥轮询：分析侧在播放线程每 hop（≈23ms）写一次，这里 30fps 取最新值。
+    // 用 withFrameNanos 而不是固定间隔 delay，是为了跟着显示时钟走、不额外制造唤醒。
+    LaunchedEffect(pulseEnabled, playing, active) {
+        if (!pulseEnabled) {
+            state.setAudioPower(0f)
+            return@LaunchedEffect
+        }
+        while (true) {
+            withFrameNanos {
+                state.setAudioPower(PlaybackLevelBridge.read())
+            }
+        }
+    }
+
+    LaunchedEffect(albumUri) {
+        if (albumUri == null) return@LaunchedEffect
+        val cacheKey = "mesh|$albumUri|$MESH_ARTWORK_PX"
+        val cached = FloatingLightBitmapCache.get(cacheKey)
+        val bitmap = cached ?: withContext(Dispatchers.IO) {
+            val request = ImageRequest.Builder(context)
+                .data(albumUri)
+                .size(MESH_ARTWORK_PX)
+                // Coil 在 API 26+ 默认交付 Bitmap.Config.HARDWARE，而 GLUtils.texImage2D
+                // 不接受硬件位图（抛 "invalid Bitmap format"）。必须关掉。
+                .allowHardware(false)
+                .build()
+            imageLoader.execute(request).drawable?.toBitmap()?.let { decoded ->
+                // GL 只读纹理，也要求 8888；RGB_565/HARDWARE 都传不上去
+                val uploadable = if (decoded.config == Bitmap.Config.ARGB_8888) {
+                    decoded
+                } else {
+                    decoded.copy(Bitmap.Config.ARGB_8888, false)
+                }
+                if (uploadable !== decoded) decoded.recycle()
+                uploadable.also { FloatingLightBitmapCache.put(cacheKey, it) }
+            }
+        }
+        // 切歌期间上一张还在渲染时就别换：渲染器自己会做 0.5s 交叉淡化
+        if (bitmap != null && album() == albumUri) {
+            state.setArtwork(bitmap)
+        }
+    }
+
+    PearMeshBackground(state = state, modifier = modifier.fillMaxSize())
 }
 
 @Composable
@@ -255,6 +403,12 @@ private const val DRIFT_PAN_AMP = 0.055f
 private const val DRIFT_PAN_X_FREQ = (2.0 * PI / 24.0).toFloat()
 private const val DRIFT_PAN_Y_FREQ = (2.0 * PI / 17.0).toFloat()
 private const val DRIFT_FRAME_MS = 1000f / 30f
+
+/**
+ * 流体网格分支的封面解码尺寸。原版 Pear Wall 解码上限是 2048px 后再按 `inSampleSize`
+ * 二分降采样；我们最终只用 1/4 分辨率渲染 + 重度模糊，512px 已经远超所需。
+ */
+private const val MESH_ARTWORK_PX = 512
 
 /**
  * 封面 → 背景糊图管线：ARGB_8888 复制 → 饱和度×3 → 压暗 →（可选）烘焙压暗层 → 真高斯模糊。

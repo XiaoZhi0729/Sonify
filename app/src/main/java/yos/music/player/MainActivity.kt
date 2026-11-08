@@ -2332,7 +2332,10 @@ class MainActivity : BaseActivity() {
                                                         album = { MediaViewModelObject.bitmap.value },
                                                         isPlaying = { isPlaying.value },
                                                         nowPage = { nowPageNowPlaying.value },
-                                                        showMiniPlayer = miniPlayerVisible.value
+                                                        showMiniPlayer = miniPlayerVisible.value,
+                                                        // 只有播放外壳允许切到流体网格；画廊页的两份
+                                                        // 背景实例保持经典漂移（跑两套 GL 线程不值当）
+                                                        enableMesh = true
                                                     )
                                                 }
                                             }

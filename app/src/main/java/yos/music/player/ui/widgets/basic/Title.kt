@@ -341,6 +341,19 @@ private fun BaseTitle(
 val LocalTitlePageColor = compositionLocalOf<Color?> { null }
 
 /**
+ * 顶栏液态玻璃圆钮（返回键 / 「更多」）的表面 tint：**封面提取色**，由页面下发。
+ *
+ * 与底栏胶囊完全同一套范式（见 `LiquidBottomTabs.containerTintProvider`）：表面色是
+ * 固定白 / `#1C1C1E` 半透明，tint 画在表面色之上、描边高光之下，浓度与 HSV 整形
+ * 都交给 [yos.music.player.ui.navigation.accentTintOf]（明度/饱和度被钳在安全区间，
+ * 所以无论封面是纯黑还是纯白，白色表面色都透得出来，固定的黑/白图标色不会糊）。
+ *
+ * 未提供时（无提取色的页面，如设置页、本地音乐）不叠 tint，等价于纯固定表面色，
+ * 与底栏在无染色页上的表现一致。
+ */
+val LocalTitleBarAccentTint = compositionLocalOf<Color?> { null }
+
+/**
  * 顶栏模糊的 tint 色：页面底色，或（封面取色渐变激活时）渐变的平均色。
  *
  * 必须走平均色而不是顶端色：顶栏下方覆盖的是渐变的顶部若干百分比，而模糊采样会
@@ -939,7 +952,7 @@ fun TitleBarIcon(
     icon: ImageVector? = null,
     onBack: (() -> Unit)? = null,
     // 扁平分支（未开「工具栏液态玻璃」）的图标着色；默认主题红。
-    // 玻璃分支无需此参数：LiquidTopBarButton 自带 adaptiveLuminance 采样。
+    // 玻璃分支无需此参数：LiquidTopBarButton 用固定表面色 + 页面提取色 tint。
     contentColor: Color? = null
 ) {
     if (icon == null) return
@@ -962,8 +975,9 @@ fun TitleBarIcon(
                 iconSize = 23.dp,
                 backdropAlpha = glass.backdropAlpha,
                 shadowAlpha = glass.shadowAlpha,
-                draggable = true,
-                adaptiveLuminance = true
+                // 同返回键：圆底未出现时图标压在页面背景上，用页面文字色自适应
+                idleIconTint = contentColor,
+                draggable = true
             )
         }
     } else {
@@ -1130,8 +1144,11 @@ fun TitleBar(
                                     iconOffset = DpOffset((-2).dp, 0.dp),
                                     backdropAlpha = { glassBackdropAlpha.value },
                                     shadowAlpha = { glassShadowAlpha.value },
-                                    draggable = true,
-                                    adaptiveLuminance = true
+                                    // 圆底未出现（未滚动）时图标直接压在页面背景上：
+                                    // 用页面文字色，否则固定黑/白会与封面底色融为一体。
+                                    // 与关闭玻璃分支的扁平图标同色（backIconTint）。
+                                    idleIconTint = backIconTint,
+                                    draggable = true
                                 )
                             } else {
                                 // 关闭"工具栏液态玻璃"后不再有玻璃圆底/边缘光，退回纯图标

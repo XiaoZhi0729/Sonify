@@ -46,8 +46,11 @@ class InteractiveHighlight(
     /**
      * 浅色模式的径向峰值。默认 0.15 = 既有调用点（顶栏玻璃圆钮等）的观感；
      * 下拉面板按 1.6.5 的全局规则传 0.05（近白底加白会被截断成白斑，必须压低）。
+     *
+     * 取 lambda 而非常量：绘制期直读，容器变换类控件可在展开途中从「钮」的 0.15
+     * 连续收到「面板」的 0.05，不必重组。
      */
-    private val lightPeakAlpha: Float = 0.15f,
+    private val lightPeakAlpha: () -> Float = { 0.15f },
     /** 深色模式峰值恒为 0.15；构造期传入（绘制期读不到 Composable 主题）。 */
     private val isDarkMode: Boolean = false,
 ) {
@@ -110,7 +113,7 @@ half4 main(float2 coord) {
         val progress = press.value
         if (progress > 0f) {
             val center = position(size, location.value)
-            val peak = (if (isDarkMode) 0.15f else lightPeakAlpha) * progress
+            val peak = (if (isDarkMode) 0.15f else lightPeakAlpha()) * progress
             // 半径/圆心两个分支共用同一份计算，避免 shader 与渐变各算一份漂移掉
             val radiusBase = radiusBaseDp
             val radius = (if (radiusBase != null) minOf(size.minDimension, radiusBase.toPx())

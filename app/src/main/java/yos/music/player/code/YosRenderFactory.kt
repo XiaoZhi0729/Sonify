@@ -13,9 +13,13 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import yos.music.player.BuildConfig
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.vocalsep.VocalSeparationController
 import yos.music.player.code.vocalsep.VocalSeparationProcessor
+import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.waveform.PlaybackLevelBridge
+import yos.music.player.data.waveform.PlaybackLevelMeter
 
 /**
  * 渲染器工厂：把自定义 AudioProcessor（人声分离）装进 AudioSink，
@@ -154,6 +158,31 @@ class YosRenderFactory(
         private var logged = false
         private var bufferLogged = false
 
+        // ---- 背景律动分析 ----
+        //
+        // 只有主播放器写桥：交叉淡化期间主副两台都会走 handleBuffer，两边都写会让
+        // 能量翻倍。扶正时(YosPlaybackService 把副player升为主)本实例的 playerKey
+        // 随之变成 PRIMARY，写入权跟着迁移。
+        private var levelConfigured = false
+        private var levelEncoding = C.ENCODING_INVALID
+        private var levelChannels = 0
+        private var levelSampleRate = 0
+
+        /**
+         * 上一次分析过的 buffer 的媒体时间戳。
+         *
+         * **必须去重**：`handleBuffer` 的返回值是「是否全部消费」，AudioTrack 写不完时
+         * media3 会用**同一个 buffer 再调一次**（AudioSink javadoc 明示）。不去重就会把
+         * 同一批样本算两遍，能量直接翻倍。
+         */
+        private var lastAnalysedPtsUs = Long.MIN_VALUE
+
+        /** 预分配的解码缓冲：在播放线程 new 数组会触发 GC。 */
+        private var decoded = FloatArray(0)
+
+        /** 诊断日志节流：最多每秒一条。 */
+        private var lastLevelLogAt = 0L
+
         override fun configure(
             inputFormat: Format,
             specifiedBufferSize: Int,
@@ -174,6 +203,13 @@ class YosRenderFactory(
                 "total_confd" to after
             )
             logged = true
+
+            levelEncoding = inputFormat.pcmEncoding
+            levelChannels = inputFormat.channelCount.coerceAtLeast(1)
+            levelSampleRate = inputFormat.sampleRate
+            levelMeter.configure(levelSampleRate, levelChannels, levelEncoding)
+            levelConfigured = levelMeter.supports(levelEncoding) && levelSampleRate > 0
+            lastAnalysedPtsUs = Long.MIN_VALUE
         }
 
         override fun handleBuffer(
@@ -190,7 +226,68 @@ class YosRenderFactory(
                     "confd" to processor.configureCount()
                 )
             }
+            analyseIfPrimary(buffer, presentationTimeUs, encodedAccessUnitCount)
             return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
+
+        /**
+         * 解码这一块 PCM 并喂给分析器。
+         *
+         * 只读 `duplicate()` 的视图，绝不触碰原 buffer 的 position —— 它的推进由
+         * `super.handleBuffer` 负责（`VocalSeparationProcessor.kt:548` 同款写法）。
+         * 注意 `duplicate()` 会把字节序重置成 BIG_ENDIAN，必须显式还原。
+         */
+        private fun analyseIfPrimary(
+            buffer: java.nio.ByteBuffer,
+            presentationTimeUs: Long,
+            encodedAccessUnitCount: Int
+        ) {
+            if (!levelConfigured) return
+            if (!VocalSeparationController.shouldDriveBackgroundPulse(playerKey)) return
+            // 用户没开律动就整段跳过：分析只服务背景视觉，与播放本身无关
+            if (!SettingsLibrary.NowplayingBackgroundPulse) return
+            // PCM 的 encodedAccessUnitCount 恒为 1；>1 是 offload 压缩帧，不能当 PCM 解
+            if (encodedAccessUnitCount != 1) return
+            if (presentationTimeUs == lastAnalysedPtsUs) return
+            lastAnalysedPtsUs = presentationTimeUs
+
+            val dup = buffer.duplicate().order(buffer.order())
+            val bytesPerSample = if (levelEncoding == C.ENCODING_PCM_FLOAT) 4 else 2
+            val bytesPerFrame = bytesPerSample * levelChannels
+            val availableBytes = dup.remaining()
+            if (availableBytes < bytesPerFrame) return
+            val frames = availableBytes / bytesPerFrame
+            val sampleCount = frames * levelChannels
+
+            if (decoded.size < sampleCount) decoded = FloatArray(sampleCount)
+            if (levelEncoding == C.ENCODING_PCM_FLOAT) {
+                dup.asFloatBuffer().get(decoded, 0, sampleCount)
+            } else {
+                val shorts = dup.asShortBuffer()
+                for (i in 0 until sampleCount) {
+                    decoded[i] = shorts.get(i) / 32768f
+                }
+            }
+
+            if (levelMeter.feed(decoded, sampleCount, System.nanoTime())) {
+                val level = levelMeter.value
+                PlaybackLevelBridge.write(level)
+                // 诊断：只在 debug 包、且每秒最多一条。"没律动"要能区分是没数据还是数据是 0。
+                if (BuildConfig.DEBUG) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastLevelLogAt >= 1_000L) {
+                        lastLevelLogAt = now
+                        YosDiagnostics.log(
+                            "WAVE_LEVEL",
+                            "pkey" to playerKey,
+                            "level" to "%.3f".format(level),
+                            "sr" to levelSampleRate,
+                            "ch" to levelChannels,
+                            "enc" to pcmName(levelEncoding)
+                        )
+                    }
+                }
+            }
         }
 
         /** 位深名字：日志里写数字没人愿意去查 C 常量表。 */
@@ -203,5 +300,8 @@ class YosRenderFactory(
             C.ENCODING_INVALID -> "invalid"
             else -> "?$encoding"
         }
+
+        /** 每台播放器一个分析器实例，状态互不污染。 */
+        private val levelMeter = PlaybackLevelMeter()
     }
 }

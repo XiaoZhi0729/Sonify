@@ -112,7 +112,7 @@ fun ShadowImage(
                 spotShadowColor = Color.Black.copy(alpha = 0.8f)*/
             }
             .drawWithCache {
-                                val outline = shape.createOutline(
+                val outline = shape.createOutline(
                     Size(size.width, size.height),
                     LayoutDirection.Ltr,
                     density
@@ -189,10 +189,10 @@ fun ShadowImageWithCache(
                 spotShadowColor = Color.Black.copy(alpha = 0.8f)*/
             }
             .drawWithCache {
-                                val outline = shape.createOutline(
+                val outline = shape.createOutline(
                     Size(size.width, size.height),
                     LayoutDirection.Ltr,
-                    density
+                    this
                 )
                 onDrawWithContent {
                     drawContent()

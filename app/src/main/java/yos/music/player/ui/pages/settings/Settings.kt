@@ -145,6 +145,10 @@ fun Settings(navController: NavController) =
                                 navController.toUI(UI.Settings.UserInterfaceSetting)
                             }
                             Divider()
+                            LabelItem(title = stringResource(id = R.string.settings_playback_title)) {
+                                navController.toUI(UI.Settings.PlaybackSetting)
+                            }
+                            Divider()
                             LabelItem(title = stringResource(id = R.string.settings_performance_notification_title)) {
                                 navController.toUI(UI.Settings.NotificationSetting)
                             }

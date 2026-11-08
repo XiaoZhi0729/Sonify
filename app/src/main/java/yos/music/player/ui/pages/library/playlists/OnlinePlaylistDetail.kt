@@ -117,6 +117,7 @@ import yos.music.player.ui.navigation.ArtistArtworkColors
 import yos.music.player.ui.navigation.ArtistPageAppearance
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.navigation.artworkContentColor
+import yos.music.player.ui.navigation.accentTintOf
 import yos.music.player.ui.navigation.rememberPlaylistBackdropColors
 import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
@@ -126,7 +127,12 @@ import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
+import yos.music.player.ui.widgets.basic.CoverScrollMotionState
+import yos.music.player.ui.widgets.basic.coverScrollMotion
+import yos.music.player.ui.widgets.basic.coverTitleFade
+import yos.music.player.ui.widgets.basic.rememberCoverScrollMotion
 import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.enterCoverCorner
@@ -672,6 +678,8 @@ fun OnlinePlaylistDetail(
     val state = rememberLazyListState()
     val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
+    val coverMotion = rememberCoverScrollMotion(state)
     // 简介底色明暗：用当前底色亮度判定（与专辑页一致）
     val lightBackdrop = backdrop.luminance() > 0.179f
     // 页面级弹层宿主：右上「更多」的 LiquidDropdown 注册进它就能**同窗口**渲染，
@@ -684,6 +692,9 @@ fun OnlinePlaylistDetail(
         LocalContentColor provides contentColor,
         LocalTitlePageColor provides backdrop,
         LocalTitlePageBackdrop provides titleBackdrop,
+        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 封面提取色 tint，
+        // HSV 整形与浓度见 accentTintOf）。无提取色时为 null，钮回退到纯固定色。
+        LocalTitleBarAccentTint provides resolvedAccent?.let { accentTintOf(it, isDark) },
         LocalTitleOverlayHost provides overlayHost
     ) {
         Box(
@@ -828,7 +839,8 @@ fun OnlinePlaylistDetail(
                                     keyboardController?.show()
                                 },
                                 searchMorphFraction = searchMorph,
-                                searchExpanded = searchExpanded.value
+                                searchExpanded = searchExpanded.value,
+                                coverMotion = coverMotion
                             )
                         }
                     }
@@ -1075,10 +1087,11 @@ fun OnlinePlaylistDetail(
                         onDismiss = { menuOpen.value = false },
                         triggerIcon = Icons.Rounded.MoreHoriz,
                         modifier = Modifier.padding(end = 10.dp),
-                        // 与左侧返回键同色：页面底色是封面提取色，与 App 深浅主题无关，
-                        // 必须按 backdrop 亮度自适应，否则深色封面上那颗钮会发脏。
-                        adaptiveLuminance = true,
+                        // 玻璃开启时材质与底栏胶囊同源（固定表面色 + 本页封面提取色 tint，
+                        // 由 LocalTitleBarAccentTint 下发）；contentColor 只在关闭玻璃时生效。
                         contentColor = contentColor,
+                        // 圆底未出现（未滚动）时图标压在封面底色上：用页面文字色自适应
+                        idleIconTint = contentColor,
                     ) {
                         // 菜单项视觉对齐歌曲行「三个点」菜单：行首 20dp 图标 + 项间分割线，
                         // 图标与分割线跟随菜单自身文字色（不跟页面封面色底）。
@@ -1280,7 +1293,9 @@ private fun PlaylistHeaderCompact(
     onSearchQueryChange: (TextFieldValue) -> Unit,
     onSearchClear: () -> Unit,
     searchMorphFraction: State<Float>,
-    searchExpanded: Boolean
+    searchExpanded: Boolean,
+    // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），由调用方按同一个 LazyListState 创建
+    coverMotion: CoverScrollMotionState
 ) {
     Column(
         Modifier
@@ -1315,6 +1330,8 @@ private fun PlaylistHeaderCompact(
                     }
                 } else Modifier
             )
+            // 滚动动效只挂封面这一层（挂到外层 Column 会把标题/按钮一起糊掉）
+            .coverScrollMotion(coverMotion)
         Box(coverModifier) {
             ShadowImage(
                 modifier = Modifier.fillMaxWidth(),
@@ -1327,6 +1344,15 @@ private fun PlaylistHeaderCompact(
             )
         }
 
+        // 只有「标题区」（歌单名 / meta）参与淡出。
+        // 播放控件与简介是常驻内容，不随封面退场。
+        // 封面必须排除在外（alpha 会乘到所有子孙上，封面会被叠两次）。
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .coverTitleFade(coverMotion),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         // 封面与文字间距 10dp
         Spacer(modifier = Modifier.height(10.dp))
 
@@ -1354,6 +1380,7 @@ private fun PlaylistHeaderCompact(
                 .alpha(0.6f)
                 .padding(top = 4.dp)
         )
+        } // 标题区淡出层结束：以下的操作行与简介常驻，不参与淡出
 
         // 操作行：随机圆钮（左）· 实心播放胶囊（中，剩余空间的 2/3）· 尾部槽位（右）。
         // 三个控件全部由页面文字色派生，浅色封面上翻成深色、深色封面上保持白色。

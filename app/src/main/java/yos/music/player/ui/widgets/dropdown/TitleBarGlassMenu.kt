@@ -61,10 +61,13 @@ fun TitleBarGlassMenu(
     fraction: Animatable<Float, *> = remember { Animatable(0f) },
     offsetPx: () -> Offset = { Offset.Zero },
     backdrop: Backdrop? = null,
-    // 收起态那颗钮与顶栏返回键同色（页面底色驱动的自适应亮度）。
-    // 页面底色 ≠ App 主题色的页面（在线专辑/歌单详情）必须传 true + 页面文字色。
-    adaptiveLuminance: Boolean = false,
+    // 收起态那张面在「工具栏液态玻璃」关闭时的图标色（页面底色 ≠ App 主题色的页面，
+    // 如在线专辑/歌单详情，传页面文字色）。玻璃开启时图标恒为黑/白 85%，
+    // 材质与底栏胶囊同源（固定表面色 + 页面提取色 tint），本参数不参与。
     contentColor: Color? = null,
+    // 圆底未出现时收起态图标的颜色（同返回键的 idleIconTint）：页面底色不是主题白/黑时
+    // 传页面文字色，否则固定黑/白会与封面底色融为一体。
+    idleIconTint: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // 槽位：收起态按钮应有的位置（root 坐标 px）。原版只上报 y，这里连右缘一起量，
@@ -127,8 +130,8 @@ fun TitleBarGlassMenu(
                 },
                 offsetPx = offsetPx,
                 materialAlpha = materialAlpha,
-                adaptiveLuminance = adaptiveLuminance,
                 contentColor = contentColor,
+                idleIconTint = idleIconTint,
                 content = content,
             )
         }

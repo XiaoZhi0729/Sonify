@@ -105,7 +105,24 @@ object VocalSeparationController {
         engineProviders.remove(PLAYER_PRIMARY)
         processors[PLAYER_PRIMARY] = secondary
         if (secondaryProvider != null) engineProviders[PLAYER_PRIMARY] = secondaryProvider
+        // 背景律动的写入权跟着搬迁：副 sink 从此成为唯一的能量来源
+        primaryPlayerKey = PLAYER_SECONDARY
     }
+
+    /**
+     * 该 sink 是否应该驱动「背景律动」。
+     *
+     * 交叉淡化期间主副两台播放器**同时**调 `handleBuffer`，两边都写会让低音能量翻倍。
+     * 判据不能用构造时的 playerKey 字符串——扶正后副 player 变主，但它的 sink 仍带着
+     * `"secondary"`。所以用 [primaryPlayerKey] 这张动态记录：扶正时由
+     * [promoteSecondaryToPrimary] 翻转为 `"secondary"`，下一次扶正再翻回来。
+     *
+     * 简化实现：每次扶正都在 primary/secondary 之间翻转（本项目只这两台）。
+     */
+    fun shouldDriveBackgroundPulse(playerKey: String): Boolean = playerKey == primaryPlayerKey
+
+    @Volatile
+    private var primaryPlayerKey: String = PLAYER_PRIMARY
 
     /** 该 [playerKey] 的引擎懒加载闭包（由 [yos.music.player.code.YosRenderFactory] 取用）。 */
     fun engineProviderFor(playerKey: String): () -> MssEngine? =

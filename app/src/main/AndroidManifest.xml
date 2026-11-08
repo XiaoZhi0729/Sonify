@@ -6,6 +6,13 @@
          该库只用于行点击水波纹的圆角裁剪，不涉及 API 24 专属能力，故放行。 -->
     <uses-sdk tools:overrideLibrary="com.mocharealm.gaze.capsule" />
 
+    <!-- 流体网格背景（Pear Wall 移植）需要 OpenGL ES 3.0。
+         必须是 required="false"：本应用 minSdk 23，若声明为必需会把 GLES 2.0 设备
+         从商店过滤掉。运行时由 isPearMeshSupported() 检测，不支持则退回慢速漂移。 -->
+    <uses-feature
+        android:glEsVersion="0x00030000"
+        android:required="false" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"

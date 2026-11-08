@@ -229,6 +229,8 @@ interface UI {
 
             const val LyricSetting = "LyricSetting"
             const val UserInterfaceSetting = "UserInterfaceSetting"
+            // 播放页专属设置的独立二级页（音量条/评论入口/高潮片段/全屏封面/背景）
+            const val PlaybackSetting = "PlaybackSetting"
             const val GlassEffectSetting = "GlassEffectSetting"
             const val NotificationSetting = "NotificationSetting"
             const val KugouLogin = "KugouLogin"

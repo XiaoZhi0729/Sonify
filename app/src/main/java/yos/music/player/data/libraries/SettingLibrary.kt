@@ -233,6 +233,126 @@ object SettingsLibrary {
     )
 
     /**
+     * 背景动态效果采用哪一种样式。仅在 [NowplayingBackgroundEffect] 为 true 时生效。
+     *
+     * - [BACKGROUND_MODE_DRIFT]：单张糊图慢速推拉（Ken Burns），默认。
+     * - [BACKGROUND_MODE_MESH]：Pear Wall 流体网格（三份封面副本反向慢旋 + 网格形变），
+     *   需要 OpenGL ES 3.0，不支持的设备自动退回漂移样式。
+     */
+    @Stable
+    var NowplayingBackgroundMode by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_mode",
+        initialValue = BACKGROUND_MODE_DRIFT
+    )
+
+    /**
+     * 流体网格背景的流动速度档位（0..4，默认 2）。
+     *
+     * 原版 Pear Wall 的三份封面副本转一圈要 120s/70s/90s，那个节奏是给「偶尔瞟一眼」的
+     * 桌面壁纸定的，放在会盯着看的播放页上几乎等于静止。档位换算见
+     * `PearMeshState.flowSpeedMultiplier`：0 = 流动 1×（原版）、1 = 标准 3×、2 = 强烈 5×。
+     */
+    @Stable
+    var NowplayingBackgroundFlowSpeed by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        // key 带 v2：档位从 5 档改成 3 档，旧键里存的 2/3/4 映射会错位。
+        key = "settings_performance_ui_nowplaying_background_flow_speed_v2",
+        initialValue = 1
+    )
+
+    /**
+     * 跟随音乐律动：随鼓点让封面组轻微放大（1.00 → 1.33 倍，经重模糊后表现为雾状色块呼吸）。
+     * 默认开启——这是 Pear Wall 那套观感的核心之一。
+     *
+     * 关掉后 `ProbingAudioSink` 里的分析整段短路，不产生任何每帧开销。
+     */
+    @Stable
+    var NowplayingBackgroundPulse by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_pulse",
+        initialValue = true
+    )
+
+    /**
+     * 律动强度：柔和 / 标准 / 强烈（0..2，默认 1 = 上游原值 0.33）。
+     * 换算见 `PearMeshState.pulseIntensityFor`：0.22 / **0.33** / 0.45。
+     */
+    @Stable
+    var NowplayingBackgroundPulseStrength by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        // key 带 v4：档位从 5 档收成 3 档，且默认基准变了，旧键值会错位。
+        key = "settings_performance_ui_nowplaying_background_pulse_strength_v4",
+        initialValue = 1
+    )
+
+    /**
+     * 模糊强度：轻柔 / 标准 / 浓郁（0..2，默认 1）。
+     *
+     * 直接乘进 Kawase 的 sigma：`sigma = LYRICS_BLUR_SIGMA × renderScale × blurMultiplier`。
+     * 换算见 `PearMeshState.blurMultiplierFor`：0.75 / **1.0** / 1.4（原版四档 0.75/1/1.4/2
+     * 里去掉了最高的 2.0，那一档在播放页上会把颜色糊成一片）。
+     */
+    @Stable
+    var NowplayingBackgroundBlurStrength by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_blur_strength",
+        initialValue = 1
+    )
+
+    /**
+     * 渲染质量：省电 / 平衡 / 流畅（0..2，默认 1）。
+     *
+     * 同时决定内部渲染分辨率与帧率上限，见 `PearMeshState.renderQualityScale/Fps`：
+     * 省电 0.15×/24fps、平衡 0.25×/30fps（原版默认）、流畅 0.35×/60fps。
+     *
+     * ★ 注意 renderScale 同时乘进模糊 sigma，所以「省电」档画面会明显更糊 —— 这是原版同款行为。
+     */
+    @Stable
+    var NowplayingBackgroundRenderQuality by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_render_quality",
+        initialValue = 1
+    )
+
+    /**
+     * 流体网格的竖屏网格样式（0..3，对应界面上的 1..4）。
+     *
+     * 默认 3：Pear Wall 的**设置层**默认就是 3（内部 index 0 起），
+     * 而 `PearMeshState` 自带的 DefaultPortraitPresetIndex 是 2 —— 两者不一致是上游遗留，
+     * 以设置层为准，因为运行时总是用设置值覆盖 State。
+     */
+    @Stable
+    var NowplayingBackgroundPortraitPreset by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_portrait_preset",
+        initialValue = 3
+    )
+
+    /**
+     * 流体网格的横屏网格样式（0..4，对应界面上的 1..5）。默认 3，同上游设置层。
+     */
+    @Stable
+    var NowplayingBackgroundLandscapePreset by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_landscape_preset",
+        initialValue = 3
+    )
+
+    /**
+     * 每次进入播放页时随机换一套网格样式。
+     *
+     * 原版默认开启，但那是**壁纸**语义（息屏再亮屏时换个样子）。播放页没有对应时机，
+     * 固定一套反而更稳，所以默认关。
+     */
+    @Stable
+    var NowplayingBackgroundRandomPreset by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_background_random_preset",
+        initialValue = false
+    )
+
+    /**
      * 封面取色背景：四个 Tab 首页的整页底色改为当前歌曲封面提取的柔和纵向渐变。
      *
      * 默认关闭——开启后整屏底色会随歌曲变化，属于明显的视觉风格改变，
@@ -588,6 +708,17 @@ object SettingsLibrary {
         SmartWordByWordLyric = false
         LyricTimingOffset = 0
         NowplayingBackgroundEffect = false
+        NowplayingBackgroundMode = BACKGROUND_MODE_DRIFT
+        NowplayingBackgroundFlowSpeed = 1
+        NowplayingBackgroundPulse = true
+        NowplayingBackgroundPulseStrength = 1
+        NowplayingBackgroundBlurStrength = 1
+        NowplayingBackgroundRenderQuality = 1
+        NowplayingBackgroundPortraitPreset = 3
+        NowplayingBackgroundLandscapePreset = 3
+        NowplayingBackgroundRandomPreset = false
+        NowPlayingShowClimaxMark = true
+        TrackBackdropGradient = false
         NowplayingStaticFullScreenAlbum = false
         BarBlurEffect = false
         GlassBlurScale = 1.0f
@@ -616,4 +747,7 @@ object SettingsLibrary {
         AudioCacheCapMb = 1024
         ImageCacheCapMb = 512
     }
+
+    const val BACKGROUND_MODE_DRIFT = 0
+    const val BACKGROUND_MODE_MESH = 1
 }

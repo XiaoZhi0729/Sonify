@@ -1,0 +1,42 @@
+Pear Wall (fluid mesh background)
+Author: Nevodev (https://github.com/nevodev)
+Source: https://github.com/Nevodev/Pear-Wall, version 1.5
+License: Apache License 2.0 (see cresto-Apache-2.0.txt in this directory; the upstream
+LICENSE file is byte-identical to the Apache-2.0 text kept there).
+
+Ported into Sonify as the "Fluid Mesh" playback background mode:
+  ui/widgets/effects/pearmesh/PearMeshPresets.kt
+  ui/widgets/effects/pearmesh/PearMeshMesh.kt
+  ui/widgets/effects/pearmesh/GlObjects.kt
+  ui/widgets/effects/pearmesh/EglRenderThread.kt
+  ui/widgets/effects/pearmesh/PearMeshGlRenderer.kt
+  ui/widgets/effects/pearmesh/PearMeshState.kt
+  assets/pearmesh/shaders/{rotation.vert,rotation.frag,fullscreen.vert,blur.frag,
+                            pinch.vert,material.frag}
+
+Modified for Sonify:
+- Render host replaced. Upstream draws into an AndroidEmbeddedExternalSurface, which is a
+  separate SurfaceFlinger layer and therefore invisible to Compose layer recording. Sonify's
+  liquid-glass panels sample the player backdrop through Modifier.layerBackdrop, so the host
+  is a TextureView instead (PearMeshTextureView.kt); the EGL renderer itself is unchanged.
+- Removed the moru ("long rain glass") post-processing pass and its five normal/light
+  lookup textures, which upstream defaults to off. material.frag keeps only the modes that
+  the ported pipeline actually binds.
+- Removed the frame-capture/export path and the on-screen render diagnostics.
+- Removed the four-lane audio visualisation. Its only visual effect upstream was a shared
+  scale factor applied to the rotating artwork group, so the port renders with a constant
+  scale of 1. Sonify drives the waveform elsewhere and this mode ships without it.
+- `behindLyricsProgress` is pinned to 1f. That is upstream's own default for the wallpaper
+  and selects the warped material, which is the flowing look this mode is meant to provide.
+- Bundled as a user-selectable second background mode rather than a live wallpaper service;
+  presets are chosen by screen orientation only, with no randomise-on-screen-on.
+
+Upstream attribution note: Pear Wall's README credits "Lyricify Backgrounds". The control
+point presets and the mesh look derive from that project
+(https://github.com/WXRIW/Lyricify-Backgrounds, Apache License 2.0). Pear Wall does not
+carry per-file provenance for those constants; they are redistributed here under the same
+Apache-2.0 terms with that attribution retained.
+
+The rest of Sonify remains licensed under GPL-3.0 (see LICENSE at the repository root).
+Apache-2.0 is compatible with GPL-3.0 in this direction, and these notices are retained as
+required by Apache-2.0 section 4.

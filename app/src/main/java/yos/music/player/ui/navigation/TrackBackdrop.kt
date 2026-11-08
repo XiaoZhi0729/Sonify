@@ -118,6 +118,7 @@ object TrackBackdrop {
      */
     @Composable
     fun rememberBlendedGradient(): TrackBackdropGradient? {
+        val enabled = SettingsLibrary.TrackBackdropGradient
         val target = rememberGradient()
         // 屏幕上当前实际显示的渐变（淡化中就是中间色）。每次产出都写回，作为下一次
         // 淡化的起点——否则淡化中途再切歌，起点会退回更早的旧色，画面先跳回去再
@@ -134,6 +135,26 @@ object TrackBackdrop {
             Animatable(if (from == null || target == null) 1f else 0f)
         }
 
+        // ★把逐帧进度吸收成「档位」，避免 700ms 内每帧通知一次组合。
+        //
+        // Animatable 每帧变，若直接在组合期读 `progress.value`，这 700ms 里组合
+        // 作用域每帧重跑一次。量化到 FADE_STEPS 档后，derivedStateOf 只在 step
+        // 真正跨档时才失效 —— 一次切歌从约 42 次重组降到 ≤8 次，而画面仍是
+        // 8 档推进（每档约 88ms、相邻档色差 <1%，肉眼无阶梯）。
+        //
+        // key 用 progress：它是 remember(target) 的产物，切歌时换实例，派生状态
+        // 必须跟着换 Animatable，否则会一直读上一首的进度。
+        //
+        // ★必须无条件创建（放在所有 early return 之前）。若挪到分支内，开关关闭
+        // 或取色空窗那次组合会跳过这个 remember，slot table 直接把它 dispose，
+        // 下次开启时档位状态丢失。读取则放在真正需要的分支里即可：
+        // 没读 .value 的组合不会订阅它，也就不会因档位变化而重组。
+        val stepState = remember(progress) {
+            derivedStateOf {
+                (progress.value * FADE_STEPS).roundToInt().coerceIn(0, FADE_STEPS)
+            }
+        }
+
         LaunchedEffect(target) {
             if (target == null) return@LaunchedEffect
             if (from != null && from != target) {
@@ -144,14 +165,30 @@ object TrackBackdrop {
             }
         }
 
-        // 新歌取色未完成：保留上一首的颜色，绝不回退主题色（见类注释第 1 条）
+        // ★功能关闭 = 硬复位，绝不能当成「新歌取色未完成」。
+        //
+        // rememberGradient() 在开关关闭时同样返回 null，与「取色空窗期」的 null 长得
+        // 一模一样。若只按下面的 `if (target == null) return current[0]` 处理，关掉开关
+        // 会把上一首的封面色永久冻在屏幕上：既回不到主题白/黑，切歌时 target 恒为
+        // null、current[0] 也永不更新，颜色再也不变——正是实测的两个现象。
+        //
+        // 必须显式清掉缓存并返回 null：整条链路（LocalTrackGradientSource →
+        // PageGradientRoot → 顶栏 3× 种子层 / 底栏遮罩注册）在 gradient 为 null 时
+        // 本就会完整回退到主题色，只要这里不再挡着旧色即可。
+        if (!enabled) {
+            current[0] = null
+            return null
+        }
+
+        // 新歌取色未完成（功能仍开启）：保留上一首的颜色，绝不回退主题色（见类注释第 1 条）
         if (target == null) return current[0]
         // 首次就绪，或与当前显示色相同：直接落位，不做无意义淡化
         val result = if (from == null || from == target) {
             target
         } else {
-            // 量化：档位不变时返回同一个对象，从而不触发重绘/重录
-            val step = (progress.value * FADE_STEPS).roundToInt().coerceIn(0, FADE_STEPS)
+            // 只在这里读档位（绘制/组合依赖的入口）。档位不变时 step 不变，
+            // remember 命中同一个 lerp 结果对象，从而不触发重绘/重录。
+            val step = stepState.value
             remember(from, target, step) {
                 TrackBackdropGradient.lerp(from, target, step.toFloat() / FADE_STEPS)
             }
@@ -198,25 +235,19 @@ val LocalTrackGradientSource = compositionLocalOf<TrackBackdropGradient?> { null
  * 而 CompositionLocal 的值只在重组时更新。包成持有者后，`Title` 的 `onDraw` 每次
  * 绘制都能重新取一次，渐变推进不需要重组整页——这正是"渐变不进 remember 键"
  * 那条约束的落地方式。
+ *
+ * ★[current] 是 `State` 而非普通字段：开关切换时只写这个值、不换 holder 引用，
+ * 于是 `LocalPageGradient` 的值恒定，整棵页面子树连重组都不会发生（见
+ * [PageGradientRoot] 的类注释）。绘制期读 `current()` 会登记快照依赖，颜色一变
+ * 只失效重绘那一层，不动组合。
  */
 class PageGradient internal constructor(
-    private val provider: () -> TrackBackdropGradient?
+    private val state: androidx.compose.runtime.State<TrackBackdropGradient?>
 ) {
-    fun current(): TrackBackdropGradient? = provider()
+    fun current(): TrackBackdropGradient? = state.value
 
     /** 顶栏 tint 用的近似单色：渐变平均色，保证顶栏与页面不脱节。 */
     fun averageColor(fallback: Color): Color = current()?.average ?: fallback
-}
-
-/**
- * 由外壳 provide 渐变源（见 [LocalTrackGradientSource]）。功能未开启时传 null。
- */
-@Composable
-fun ProvideTrackGradientSource(
-    gradient: TrackBackdropGradient?,
-    content: @Composable () -> Unit
-) {
-    CompositionLocalProvider(LocalTrackGradientSource provides gradient, content = content)
 }
 
 /**
@@ -231,8 +262,24 @@ fun ProvideTrackGradientSource(
  * 与页面的 spring 淡入淡出节奏完全对不上——实测观感是"页面在慢慢淡、底栏已经跳完了"。
  * 走注册表后，遮罩色由页面自己的 `scrimTransition()` 进度驱动，与艺人页同一套机制。
  *
- * 渐变源为空（功能关闭 / 无当前歌 / 取色失败）时不下发任何东西，也不注册，
- * 子树行为与今天逐像素一致。
+ * 渐变源为空（功能关闭 / 无当前歌 / 取色失败）时 holder 的值为 null，绘制期
+ * 读到 null 就画主题白/黑——**但 provider 本身恒常存在**。
+ *
+ * ★★为什么结构必须恒定（开关卡顿的根因）：早期实现在 gradient 为 null 时直接
+ * `content()` 早退，非 null 时改走 `CompositionLocalProvider { content() }`。
+ * `content()` 因此落在**两个不同的组合调用点**，Compose 的 slot table 会判定整组
+ * 换了身份 → 整棵页面子树 dispose 重建：Title、LazyListState、layerBackdrop 的
+ * GraphicsLayer、顶栏渐进模糊的 RuntimeShader 全部重新分配。四个 Tab 的 house
+ * 又是常驻组合的，开关一变三棵子树同时重建，实测就是「整个 APP 卡一下」。
+ * 另外 `LocalPageGradient.current` 若时而 null 时而 holder，会改变 Title 里
+ * `rememberTitleBackdrop` 的 remember 键，再叠一层 LayerBackdrop 重建。
+ *
+ * 现在 holder 引用恒定、`content()` 调用点恒定，LocalPageGradient 的值永远不变；
+ * 开关切换只写 holder 的 State，绘制期读 `current()` 登记的是绘制依赖，
+ * 于是只失效重绘那一层，不进组合、不重建任何节点。
+ *
+ * ★底栏遮罩注册用 [enabled] 作 DisposableEffect 的 key：关闭时注销（回到默认
+ * 主题色），切歌时 enabled 不变则不重注册，颜色由 derivedStateOf 读 holder 自动更新。
  */
 @Composable
 fun PageGradientRoot(
@@ -241,31 +288,30 @@ fun PageGradientRoot(
     content: @Composable () -> Unit
 ) {
     val gradient = LocalTrackGradientSource.current
-    if (gradient == null) {
-        content()
-        return
-    }
-    // 状态包一层：绘制期读 current() 拿最新值，避免每帧重组整页
-    val holder = remember { mutableStateOf(gradient) }
-    holder.value = gradient
-    val page = remember(holder) { PageGradient { holder.value } }
+    val enabled = SettingsLibrary.TrackBackdropGradient
+    val isDark = isFlamingoInDarkMode()
 
-    // 底栏遮罩色 = 本页底色（渐变底部色），按本页进出场进度参与混合。
-    // 与艺人页完全同构：颜色源是 State，进度来自 scrimTransition()。
-    if (entryId != null && scrimTransition != null) {
-        val scrimColor = remember(holder) {
-            derivedStateOf { holder.value.bottom }
+    // holder 只创建一次，引用恒定；写 value 不换 CompositionLocal 的值
+    val holder = remember { mutableStateOf<TrackBackdropGradient?>(gradient) }
+    holder.value = gradient
+    val page = remember { PageGradient(holder) }
+
+    DisposableEffect(enabled, isDark, entryId, scrimTransition) {
+        if (!enabled || entryId == null || scrimTransition == null) {
+            return@DisposableEffect onDispose { }
         }
-        DisposableEffect(entryId, scrimTransition) {
-            val registration = ArtistPageAppearance.register(
-                entryId,
-                scrimColor,
-                scrimTransition,
-                // 只参与遮罩色，不给底栏玻璃加 tint（用户裁决：只跟随采样 + 修遮罩色）
-                contributesTint = false
-            )
-            onDispose { ArtistPageAppearance.unregister(entryId, registration) }
-        }
+        // 取色未完成（holder 为 null）时兜底用主题色，与 blendedScrimColor 的
+        // default 一致，遮罩不会因为一帧空窗而闪透明。
+        val themeColor = if (isDark) Color.Black else Color.White
+        val scrimColor = derivedStateOf { holder.value?.bottom ?: themeColor }
+        val registration = ArtistPageAppearance.register(
+            entryId,
+            scrimColor,
+            scrimTransition,
+            // 只参与遮罩色，不给底栏玻璃加 tint（用户裁决：只跟随采样 + 修遮罩色）
+            contributesTint = false
+        )
+        onDispose { ArtistPageAppearance.unregister(entryId, registration) }
     }
 
     CompositionLocalProvider(LocalPageGradient provides page, content = content)
