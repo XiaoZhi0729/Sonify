@@ -199,15 +199,18 @@ private fun MeshSection() {
             title = stringResource(id = R.string.settings_playback_mesh_preset_portrait),
             items = portraitLabels,
             value = {
-                val order = PORTRAIT_ORDER
-                val saved = SettingsLibrary.NowplayingBackgroundPortraitPreset
-                    .coerceIn(0, order.lastIndex)
-                portraitLabels[saved]
+                // 存的是预设数组下标，labels 是界面顺序 —— 必须反查，不能直接当下标用。
+                val uiIndex = MeshPresetOrder.uiIndexForPreset(
+                    MeshPresetOrder.PORTRAIT,
+                    SettingsLibrary.NowplayingBackgroundPortraitPreset,
+                )
+                portraitLabels[uiIndex]
             },
             onValueChange = { selected ->
                 val uiIndex = portraitLabels.indexOf(selected)
                 if (uiIndex >= 0) {
-                    SettingsLibrary.NowplayingBackgroundPortraitPreset = PORTRAIT_ORDER[uiIndex]
+                    SettingsLibrary.NowplayingBackgroundPortraitPreset =
+                        MeshPresetOrder.presetForUiIndex(MeshPresetOrder.PORTRAIT, uiIndex)
                 }
             }
         )
@@ -216,16 +219,17 @@ private fun MeshSection() {
             title = stringResource(id = R.string.settings_playback_mesh_preset_landscape),
             items = landscapeLabels,
             value = {
-                val order = LANDSCAPE_ORDER
-                val saved = SettingsLibrary.NowplayingBackgroundLandscapePreset
-                    .coerceIn(0, order.lastIndex)
-                landscapeLabels[saved]
+                val uiIndex = MeshPresetOrder.uiIndexForPreset(
+                    MeshPresetOrder.LANDSCAPE,
+                    SettingsLibrary.NowplayingBackgroundLandscapePreset,
+                )
+                landscapeLabels[uiIndex]
             },
             onValueChange = { selected ->
                 val uiIndex = landscapeLabels.indexOf(selected)
                 if (uiIndex >= 0) {
                     SettingsLibrary.NowplayingBackgroundLandscapePreset =
-                        LANDSCAPE_ORDER[uiIndex]
+                        MeshPresetOrder.presetForUiIndex(MeshPresetOrder.LANDSCAPE, uiIndex)
                 }
             }
         )
@@ -363,14 +367,3 @@ private fun PulseStrengthItem() {
         }
     )
 }
-
-/**
- * 界面列表顺序 → 预设数组下标。
- *
- * 预设数组是上游导出的原始顺序，**不是**按形变强度排的：竖屏数组里最静的是 idx2、
- * 最动的是 idx3，所以直接用数组下标当列表项会让用户看到「1 比 2 动」这种反直觉顺序。
- * 这里按平均顶点位移从小到大排好（数值见 PearMeshPresets 的顶点数据），
- * 让列表从「平静」到「拉伸」单调递增。
- */
-private val PORTRAIT_ORDER = listOf(2, 0, 1, 3)
-private val LANDSCAPE_ORDER = listOf(2, 4, 0, 3, 1)
