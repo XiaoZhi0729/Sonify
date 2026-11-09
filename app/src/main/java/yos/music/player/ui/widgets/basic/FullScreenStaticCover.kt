@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,6 +48,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.ui.widgets.effects.CoverArtworkState
+import yos.music.player.ui.widgets.effects.TrackArtworkTransition
+import yos.music.player.ui.widgets.effects.artworkLayerAlpha
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
 import yos.music.player.ui.widgets.effects.gaussianBlur
@@ -95,29 +98,22 @@ internal fun FullScreenStaticCover(
     coverState: CoverArtworkState,
     coverEnabled: () -> Boolean,
     onCoverClick: () -> Unit,
+    /**
+     * 切歌过渡的唯一时间轴。非空时本层做**真正的新旧封面交叉淡化**（两张高清方图
+     * 在同一个 Offscreen 节点里按共享进度叠画），并且**不重建任何容器节点**——
+     * 布局、尺寸、坐标上报、手势挂载点全部原地不变。
+     *
+     * null = 退回"直接换图"（无过渡实例的调用方）。
+     */
+    artworkTransition: TrackArtworkTransition? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val url = albumUrl()
+    // 全屏封面是该页最大的一张图（1.12×层宽，≈1270 物理像素），必须走高清档；
+    // 先改写再算缓存键，才能与外壳 morph 层、大封面节点命中同一份位图。
+    val originalUrl = albumUrl()
+    val url = hiresCoverUrl(originalUrl)
     val blurred = rememberBlurredCover(url, enabled = FullScreenCoverShowBlurLayer)
-    val painter = rememberAsyncImagePainter(
-        model = remember(url) {
-            ImageRequest.Builder(context)
-                .data(url)
-                // 静态封面没有进度驱动，crossfade 只会让切歌时多一层淡入。
-                .crossfade(false)
-                .error(R.drawable.placeholder_music_default_artwork)
-                .fallback(R.drawable.placeholder_music_default_artwork)
-                .placeholder(R.drawable.placeholder_music_default_artwork)
-                // 与外壳 morph 层同缓存槽（cover|RAW）→ 命中同一份位图
-                .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
-                .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
-                .allowHardware(true)
-                .precision(coil.size.Precision.EXACT)
-                .size(coil.size.Size.ORIGINAL)
-                .build()
-        }
-    )
 
     BoxWithConstraints(
         modifier
@@ -156,7 +152,9 @@ internal fun FullScreenStaticCover(
                     onClick = onCoverClick
                 )
         ) {
-            Spacer(
+            // 必须是 Box（有子节点）：图层各是一个 Spacer 子节点，底边淡出由本节点
+            // 在 drawContent 之后一次性收尾。
+            Box(
                 Modifier
                     // 内层画布比方图高 10dp：方图按 ContentScale.Crop 铺满整块画布，
                     // 底边因此多出这一段，再由 drawFullScreenCoverBottomFade 淡掉。
@@ -179,15 +177,90 @@ internal fun FullScreenStaticCover(
                         rimHighlight = false
                     )
                     .drawWithContent {
-                        drawFullScreenCoverSharp(painter)
-                        // 底边延伸段（画在方图之下、同层）：封面最底部的像素向下多露 10dp
-                        drawFullScreenCoverBottomExtension(painter)
-                        // 底边淡出 → 下面的背景（第三段）向上渐变顶上来
+                        // 交叉淡化必须**先画完旧图、再画新图**，并且底边淡出只在最后画一次：
+                        // 若把 DstIn 也画两遍，渐变会被平方（末端 alpha 0.09 → 0.008），
+                        // 观感是"切歌时封面底边突然变硬"。
+                        //
+                        // 每层都是一个独立子节点（见下方 CoverLayerNodes），所以这里只负责
+                        // 一次性收尾，不参与图层循环——可变数量的 remember 不能写在本块里。
+                        drawContent()
                         drawFullScreenCoverBottomFade()
+                    }
+            ) {
+                // 图层子节点：末位淡入、前位淡出，alpha / 缩放只在图层块里读进度。
+                CoverLayerNodes(
+                    transition = artworkTransition,
+                    fallbackUrl = url,
+                    originalUrl = originalUrl
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 一或多张高清封面方图节点（交叉淡化期间两张，静止态一张）。
+ *
+ * 每层是独立的 `Spacer` 子节点，而不是在一次绘制里循环画多个 Painter：
+ * 图层数量会变（1 ↔ 2），而 `rememberAsyncImagePainter` 是 `@Composable`——
+ * 在**容量会变的循环里**调用 remember 会让 slot table 的位置错乱。
+ * 用 `key(图层数据)` 包住每层，图层消失时节点连带它的请求一起释放。
+ */
+@Composable
+private fun CoverLayerNodes(
+    transition: TrackArtworkTransition?,
+    fallbackUrl: Any?,
+    originalUrl: Any?
+) {
+    val layers = transition?.layers?.takeIf { it.isNotEmpty() } ?: listOf(fallbackUrl)
+    layers.forEachIndexed { index, layer ->
+        key(layer) {
+            val isLayerFromTransition = transition != null
+            val layerUrl = if (isLayerFromTransition) hiresCoverUrl(layer) else fallbackUrl
+            // 占位槽按**原 URL** 查：迷你条/列表行预热的是 400 档那份低清图。
+            val layerOrigin = if (isLayerFromTransition) layer else originalUrl
+            val painter = rememberFullScreenCoverPainter(layerUrl, layerOrigin)
+            Spacer(
+                Modifier
+                    .fillMaxSize()
+                    .drawBehind {
+                        val p = transition?.progress?.value ?: 1f
+                        val a = artworkLayerAlpha(index, layers.size, p)
+                        if (a <= 0.002f) return@drawBehind
+                        drawFullScreenCoverSharp(painter, alpha = a)
+                        // 底边延伸段（画在方图之下、同层）：封面最底部的像素向下多露 10dp
+                        drawFullScreenCoverBottomExtension(painter, alpha = a)
                     }
             )
         }
     }
+}
+
+/**
+ * 全屏封面专一份 painter：参数与外壳 `CoverMorphLayer` 逐项一致（`cover|RAW` + EXACT +
+ * ORIGINAL），命中同一份位图。`crossfade(false)` 是必须的——本层的淡入由共享进度驱动，
+ * Coil 自己的 crossfade 会叠出第二次淡入。
+ */
+@Composable
+private fun rememberFullScreenCoverPainter(url: Any?, originalUrl: Any?): Painter {
+    val context = LocalContext.current
+    return rememberAsyncImagePainter(
+        model = remember(url, originalUrl) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .crossfade(false)
+                .error(R.drawable.placeholder_music_default_artwork)
+                .fallback(R.drawable.placeholder_music_default_artwork)
+                .placeholder(R.drawable.placeholder_music_default_artwork)
+                // 与外壳 morph 层同缓存槽（cover|RAW）→ 命中同一份位图。
+                .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
+                .placeholderMemoryCacheKey(coverCacheKey(originalUrl, ImageQuality.LOW))
+                .allowHardware(true)
+                .precision(coil.size.Precision.EXACT)
+                .size(coil.size.Size.ORIGINAL)
+                .build()
+        }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -221,11 +294,13 @@ private fun DrawScope.drawFullScreenCoverBackdrop(blurred: ImageBitmap?, layerWi
  *
  * 方图本身的缩放/裁切与加延伸段之前**逐像素一致**：延伸段不复用它去撑高画布，
  * 而是另画一遍（见 [drawFullScreenCoverBottomExtension]）。
+ *
+ * [alpha] 只用于切歌交叉淡化：两张方图叠画，各自按共享进度取不透明度。
  */
-private fun DrawScope.drawFullScreenCoverSharp(painter: Painter) {
+private fun DrawScope.drawFullScreenCoverSharp(painter: Painter, alpha: Float = 1f) {
     val side = size.width
     if (side <= 0f) return
-    drawCroppedCover(painter, width = side, height = side, top = 0f)
+    drawCroppedCover(painter, width = side, height = side, top = 0f, alpha = alpha)
 }
 
 /**
@@ -239,7 +314,7 @@ private fun DrawScope.drawFullScreenCoverSharp(painter: Painter) {
  * 于是只有那一行会落进 [side, side+ext]（其余都被裁掉）。它和封面同层，落在底边渐变的
  * 末端上，随封面底边一起被淡掉。
  */
-private fun DrawScope.drawFullScreenCoverBottomExtension(painter: Painter) {
+private fun DrawScope.drawFullScreenCoverBottomExtension(painter: Painter, alpha: Float = 1f) {
     val side = size.width
     val ext = size.height - side
     val row = FullScreenCoverBottomExtensionSourcePx
@@ -249,7 +324,7 @@ private fun DrawScope.drawFullScreenCoverBottomExtension(painter: Painter) {
     val pivot = fullScreenCoverBottomExtensionPivot(side, ext, row)
     clipRect(0f, side, side, size.height) {
         scale(scaleX = 1f, scaleY = k, pivot = Offset(0f, pivot)) {
-            drawCroppedCover(painter, width = side, height = side, top = 0f)
+            drawCroppedCover(painter, width = side, height = side, top = 0f, alpha = alpha)
         }
     }
 }
@@ -258,18 +333,24 @@ private fun DrawScope.drawFullScreenCoverBottomExtension(painter: Painter) {
  * ContentScale.Crop：把 Painter 铺满 (0,top)-(width,top+height)，溢出显式裁掉
  * （图层是否裁到节点边界不是能依赖的语义，铺满后超出的部分会画到别处去）。
  */
-private fun DrawScope.drawCroppedCover(painter: Painter, width: Float, height: Float, top: Float) {
+private fun DrawScope.drawCroppedCover(
+    painter: Painter,
+    width: Float,
+    height: Float,
+    top: Float,
+    alpha: Float = 1f
+) {
     if (width <= 0f || height <= 0f) return
     val intrinsic = painter.intrinsicSize
     clipRect(0f, top, width, top + height) {
         if (!intrinsic.isSpecified || intrinsic.width <= 0f || intrinsic.height <= 0f) {
-            translate(0f, top) { with(painter) { draw(Size(width, height)) } }
+            translate(0f, top) { with(painter) { draw(Size(width, height), alpha = alpha) } }
         } else {
             val k = maxOf(width / intrinsic.width, height / intrinsic.height)
             val dw = intrinsic.width * k
             val dh = intrinsic.height * k
             translate((width - dw) / 2f, top + (height - dh) / 2f) {
-                with(painter) { draw(Size(dw, dh)) }
+                with(painter) { draw(Size(dw, dh), alpha = alpha) }
             }
         }
     }

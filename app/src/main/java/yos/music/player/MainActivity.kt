@@ -182,6 +182,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uk.akane.libphonograph.hasScopedStorageWithMediaTypes
@@ -263,6 +264,11 @@ import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
+import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
+import yos.music.player.ui.widgets.effects.rememberTrackArtworkTransition
+import yos.music.player.ui.widgets.effects.warmUpFloatingLightArtwork
+import yos.music.player.ui.widgets.effects.warmUpMeshArtwork
+import yos.music.player.ui.widgets.basic.warmUpPlaybackCover
 import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.basic.YosWrapper
 import java.io.File
@@ -1885,6 +1891,27 @@ class MainActivity : BaseActivity() {
                                         drawContent()
                                     }
                                     val playerOverlayHost = remember { TitleOverlayHost() }
+                                    // 切歌过渡的唯一时间轴：封面（大封面 / 全屏静态封面 / 顶栏
+                                    // 69dp / 横屏左列）与背景都从这一份 progress 取值，同起同止。
+                                    //
+                                    // 必须建在外壳这一层而不是 NowPlaying 内部：背景层是
+                                    // NowPlaying 的**兄弟**节点，两边唯一的共同祖先是这里。
+                                    //
+                                    // 就绪闸门并行预热新歌的高清封面与两种背景源图（都走 Coil 内存
+                                    // 缓存，常规切歌是命中），保证过渡第一帧就有图、不先闪占位图。
+                                    val trackArtworkTransition = rememberTrackArtworkTransition(
+                                        source = { MediaViewModelObject.bitmap.value },
+                                        prepare = { target ->
+                                            val uri = target as? android.net.Uri
+                                            if (uri != null) {
+                                                coroutineScope {
+                                                    launch { warmUpPlaybackCover(context, uri) }
+                                                    launch { warmUpFloatingLightArtwork(context, uri) }
+                                                    launch { warmUpMeshArtwork(context, uri) }
+                                                }
+                                            }
+                                        }
+                                    )
                                     GlassDiagnostics.state(
                                         "shell_gate",
                                         "barBlur=${SettingsLibrary.BarBlurEffect} shellGlass=${glassProbe.shellGlass} " +
@@ -1933,6 +1960,7 @@ class MainActivity : BaseActivity() {
                                     CompositionLocalProvider(
                                         LocalTitlePageBackdrop provides playerBackdrop,
                                         LocalTitleOverlayHost provides playerOverlayHost,
+                                        LocalTrackArtworkTransition provides trackArtworkTransition,
                                     ) {
                                     // 单一 PlayerShell：唯一 bounds、shape、Backdrop 和裁剪边界。
                                     // 顶边由 progress 驱动，底边按底部 inset 保持与导航栏的间隙。
@@ -2376,7 +2404,10 @@ class MainActivity : BaseActivity() {
                                                         showMiniPlayer = miniPlayerVisible.value,
                                                         // 只有播放外壳允许切到流体网格；画廊页的两份
                                                         // 背景实例保持经典漂移（跑两套 GL 线程不值当）
-                                                        enableMesh = true
+                                                        enableMesh = true,
+                                                        // 与封面共用同一条切歌时间轴：背景淡完，
+                                                        // 封面也正好淡完。
+                                                        crossfade = trackArtworkTransition
                                                     )
                                                 }
                                             }

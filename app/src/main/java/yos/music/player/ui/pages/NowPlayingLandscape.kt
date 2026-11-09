@@ -81,6 +81,8 @@ import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.kugouHash
 import yos.music.player.ui.widgets.effects.CoverArtworkState
+import yos.music.player.ui.widgets.effects.ArtworkCrossfadeLayers
+import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
@@ -656,9 +658,9 @@ private fun LandscapeAlbumCover(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    ShadowImageWithCache(
-                        dataLambda = { thisMusicPlayingLambda()?.thumb },
-                        contentDescription = null,
+                    // 交互动效层套在所有图层之外：交叉淡化期间有两张图，
+                    // 每张各画一份描边会叠出双倍亮度（同竖屏 Album 的做法）。
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
@@ -669,10 +671,25 @@ private fun LandscapeAlbumCover(
                             }
                             // 交互动效层（3D 倾斜/缩放 + 涟漪 + 描边高光）：变换不动上报给外壳
                             // morph 的那个外层 aspectRatio 节点，几何端点不受影响。
-                            .coverArtworkEffect(state = coverState),
-                        imageQuality = ImageQuality.RAW,
-                        shadowOverlay = true
-                    )
+                            .coverArtworkEffect(state = coverState)
+                    ) {
+                        // 新旧封面交叉淡化：与竖屏大封面、背景共用同一条时间轴。
+                        ArtworkCrossfadeLayers(
+                            transition = LocalTrackArtworkTransition.current,
+                            artwork = { thisMusicPlayingLambda()?.thumb },
+                            scaleOnTransition = true
+                        ) { layerArtwork, layerModifier ->
+                            ShadowImageWithCache(
+                                dataLambda = { layerArtwork },
+                                contentDescription = null,
+                                modifier = layerModifier.fillMaxSize(),
+                                imageQuality = ImageQuality.RAW,
+                                // 与竖屏大封面同档位：400 档在横屏同样被放大到发虚。
+                                hiresCover = true,
+                                shadowOverlay = true
+                            )
+                        }
+                    }
                 }
             }
         }

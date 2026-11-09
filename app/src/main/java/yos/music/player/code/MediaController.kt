@@ -89,6 +89,7 @@ import yos.music.player.code.utils.player.OnlineSkipState
 import yos.music.player.code.utils.player.ShuffleNavigationHistory
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.coverCacheKey
+import yos.music.player.ui.widgets.basic.hiresCoverUrl
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.MusicLibrary.toMediaItem
 import yos.music.player.data.libraries.MusicLibrary.toYosMediaItem
@@ -1046,10 +1047,12 @@ object MediaController {
             lastPreloadedCoverThumb = thumb
 
             val request = ImageRequest.Builder(context)
-                .data(thumb)
+                // 必须与显示侧同一份高清 URL：缓存键由 URL 派生，档位不同就等于没预热
+                // （显示侧解析 1080、这里预热 400，切歌时仍要重新下载+解码）。
+                .data(hiresCoverUrl(thumb))
                 .size(Size.ORIGINAL)
                 .precision(Precision.EXACT)
-                .memoryCacheKey(coverCacheKey(thumb, ImageQuality.RAW))
+                .memoryCacheKey(coverCacheKey(hiresCoverUrl(thumb), ImageQuality.RAW))
                 .allowHardware(true)
                 .build()
             context.imageLoader.enqueue(request)
@@ -1714,16 +1717,15 @@ object MediaController {
         val scope = CoroutineScope(Dispatchers.IO + refreshJob!!)
 
         musicPlaying.value = music
+        // 封面 Uri 必须在**同一个快照**里翻新：它曾经单独起一个协程写，于是切歌瞬间
+        // 有一个"标题已是新歌、封面还是旧图"的窗口，播放页的大封面与背景各自从这两个
+        // 状态取值，切歌过渡因此不同帧。现在两个状态同帧翻新，切歌过渡的唯一真相源
+        // （`MediaViewModelObject.bitmap`）也就是背景的真相源。
+        MediaViewModelObject.bitmap.value = music.thumb
         println("prepare 刷新UI状态 $music")
 
         scope.launch {
             println(musicPlaying.value)
-        }
-
-        scope.launch {
-            // val bitmap: MutableState<String?> = MediaViewModelObject.bitmap
-            // bitmap.value = music.thumb
-            MediaViewModelObject.bitmap.value = music.thumb
         }
 
         scope.launch {

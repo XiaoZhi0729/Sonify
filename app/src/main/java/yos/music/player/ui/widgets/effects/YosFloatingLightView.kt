@@ -25,9 +25,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -80,13 +83,16 @@ fun YosFloatingLight(
     isPlaying: () -> Boolean,
     nowPage: () -> String,
     showMiniPlayer: Boolean,
-    enableMesh: Boolean = false
+    enableMesh: Boolean = false,
+    /**
+     * 切歌过渡的唯一时间轴（外壳层建立）。非空时背景不再自己排 450ms 交叉淡化，
+     * 而是按 [TrackArtworkTransition.layers] / [TrackArtworkTransition.progress]
+     * 与封面同步换图——封面淡完背景正好也换完。
+     *
+     * null = 保留原 `AnimatedContent` 行为（画廊页那两份实例不走切歌过渡）。
+     */
+    crossfade: TrackArtworkTransition? = null
 ) {
-    val drawable = remember {
-        mutableStateOf<Drawable?>(null)
-    }
-    val albumUri = album()
-
     val context = LocalContext.current
     val meshSupported = remember { isPearMeshSupported(context) }
     // 流体网格模式接管背景时，糊图这条管线整个不跑（网格自己在 GL 里调色 + 模糊）
@@ -105,40 +111,54 @@ fun YosFloatingLight(
         return
     }
 
-    // 复用全局 ImageLoader（共享内存/磁盘缓存与线程池）；自建实例每首歌都冷缓存重拉原图
-    val imageLoader = context.imageLoader
+    if (crossfade != null) {
+        // 共享时间轴分支：每层各自持有一份 drawable，节点按图层 key 复用，
+        // 过渡结束裁回一张时旧节点离开组合、位图随之释放。
+        // 首帧（图层表还是空的）先按当前 album 画一张，不出黑闪。
+        val layers = crossfade.layers.ifEmpty { listOf(album()) }
+        YosWrapper {
+            layers.forEachIndexed { index, layer ->
+                key(layer) {
+                    FloatingLightLayer(
+                        uri = layer as? Uri,
+                        modifier = modifier,
+                        isPlaying = isPlaying,
+                        nowPage = nowPage,
+                        showMiniPlayer = showMiniPlayer,
+                        alpha = {
+                            // 背景用"只把新图淡上来"而不是互补交叉：两张图都是全屏不透明底图，
+                            // 最终合成与互补交叉逐像素等价，但新图没就绪时旧图保持 alpha=1，
+                            // 不会出现"旧图先淡掉、新图还没到"的透底变暗。
+                            backgroundLayerAlpha(index, layers.size, crossfade.progress.value)
+                        }
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    val drawable = remember {
+        mutableStateOf<Drawable?>(null)
+    }
+    val albumUri = album()
+
     YosWrapper {
         LaunchedEffect(albumUri) {
             if (albumUri == null) return@LaunchedEffect
             // 缓存命中：糊好的位图直接挂载，跳过整条管线（重进页背景即时出图）
-            val targetPx = if (NowplayingBackgroundEffect) 96 else 32
-            val cacheKey = FloatingLightBitmapCache.key(albumUri, targetPx)
-            FloatingLightBitmapCache.get(cacheKey)?.let { hit ->
+            val hit = FloatingLightBitmapCache.get(FloatingLightBitmapCache.key(albumUri, targetPx()))
+            if (hit != null) {
                 drawable.value = hit.toDrawable(context.resources)
                 return@LaunchedEffect
             }
             withContext(Dispatchers.IO) {
-                // 按最终目标尺寸直接解码（bitmapCompress 的目标 px），不再先解原图再压缩
-                val request = ImageRequest.Builder(context)
-                    .data(albumUri)
-                    .size(targetPx)
-                    .build()
-                val thisBitmap = imageLoader.execute(request).drawable?.toBitmap()?.run {
-                    BitmapResolver.bitmapCompress(this)
-                }
-                if (thisBitmap != null) {
-                    val blurred = imageResolve(context, thisBitmap, bakeDarkOverlay = true)
-                    // 糊好的结果进进程级缓存后归缓存所有，不可 recycle（thisBitmap 是
-                    // 模糊前的源图，仍归本次请求所有，照旧回收）
-                    FloatingLightBitmapCache.put(cacheKey, blurred)
-                    val nextDrawable = blurred.toDrawable(context.resources)
-                    // 仅在结果完整生成后替换，切歌期间保留上一张背景。
-                    withContext(Dispatchers.Main) {
-                        if (album() == albumUri) {
-                            drawable.value = nextDrawable
-                        }
+                val nextDrawable = loadFloatingLightDrawable(context, albumUri) ?: return@withContext
+                // 仅在结果完整生成后替换，切歌期间保留上一张背景。
+                withContext(Dispatchers.Main) {
+                    if (album() == albumUri) {
+                        drawable.value = nextDrawable
                     }
-                    thisBitmap.recycle()
                 }
             }
         }
@@ -186,6 +206,94 @@ fun YosFloatingLight(
 }
 
 /**
+ * 背景的图层 alpha：**只淡入新图**，旧图全程保持不透明。
+ *
+ * 两张图都是铺满全屏的不透明底图，`旧图 alpha=1 + 新图 alpha=p` 的合成结果
+ * 与互补交叉（`1-p` / `p`）逐像素相同；但新图还没解码出来时旧图仍是 alpha 1，
+ * 不会露出下面的纯黑底（互补交叉会先淡掉旧图，观感是"切歌时背景闪一下暗"）。
+ */
+internal fun backgroundLayerAlpha(index: Int, count: Int, progress: Float): Float = when {
+    count <= 1 -> 1f
+    index >= count - 1 -> progress
+    else -> 1f
+}
+
+/** 背景源图的目标解码档：动态效果要 96px 才够 Ken Burns 的 1.26 倍放大。 */
+private fun targetPx(): Int = if (NowplayingBackgroundEffect) 96 else 32
+
+/**
+ * 糊图管线的唯一入口（load）：命中进程级缓存直接返回，否则解码 → 烘焙 → 模糊 → 入缓存。
+ *
+ * 就绪闸门（`rememberTrackArtworkTransition` 的 prepare）与绘制层共用这一个函数，
+ * 所以"闸门等到的"就是"绘制层马上要画的"那一份，不存在重复解码。
+ */
+private suspend fun loadFloatingLightDrawable(context: Context, uri: Uri): Drawable? {
+    val targetPx = targetPx()
+    val cacheKey = FloatingLightBitmapCache.key(uri, targetPx)
+    FloatingLightBitmapCache.get(cacheKey)?.let { return it.toDrawable(context.resources) }
+    return withContext(Dispatchers.IO) {
+        // 按最终目标尺寸直接解码（bitmapCompress 的目标 px），不再先解原图再压缩
+        val request = ImageRequest.Builder(context)
+            .data(uri)
+            .size(targetPx)
+            .build()
+        val thisBitmap = context.imageLoader.execute(request).drawable?.toBitmap()?.run {
+            BitmapResolver.bitmapCompress(this)
+        } ?: return@withContext null
+        val blurred = imageResolve(context, thisBitmap, bakeDarkOverlay = true)
+        // 糊好的结果进进程级缓存后归缓存所有，不可 recycle（thisBitmap 是
+        // 模糊前的源图，仍归本次请求所有，照旧回收）
+        FloatingLightBitmapCache.put(cacheKey, blurred)
+        thisBitmap.recycle()
+        blurred.toDrawable(context.resources)
+    }
+}
+
+/**
+ * 背景源图预热（切歌过渡的就绪闸门调用）。
+ *
+ * 与 [loadFloatingLightDrawable] 同一条缓存键、同一条管线：等它返回，就意味着
+ * 新背景第一帧已经有图，不会出现"背景先白一下再淡上来"。
+ */
+internal suspend fun warmUpFloatingLightArtwork(context: Context, uri: Uri) {
+    loadFloatingLightDrawable(context, uri)
+}
+
+/**
+ * 共享时间轴下的单层背景。
+ *
+ * 每层自己按 uri 取图（闸门已把结果放进进程缓存，通常是一次命中），
+ * 于是"过渡结束裁掉旧图层"= 该节点离开组合 = 它持有的请求与位图引用一起释放。
+ */
+@Composable
+private fun FloatingLightLayer(
+    uri: Uri?,
+    modifier: Modifier,
+    isPlaying: () -> Boolean,
+    nowPage: () -> String,
+    showMiniPlayer: Boolean,
+    alpha: () -> Float
+) {
+    val context = LocalContext.current
+    var drawable by remember(uri) { mutableStateOf<Drawable?>(null) }
+    LaunchedEffect(uri) {
+        if (uri == null) return@LaunchedEffect
+        val loaded = loadFloatingLightDrawable(context, uri)
+        if (loaded != null) drawable = loaded
+    }
+    BackgroundLayer(
+        drawable = drawable,
+        useKenBurns = NowplayingBackgroundEffect,
+        isPlaying = isPlaying,
+        nowPage = nowPage,
+        showMiniPlayer = showMiniPlayer,
+        fallbackToBlack = uri == null,
+        layerAlpha = alpha
+    )
+}
+
+
+/**
  * 流体网格背景（Pear Wall 移植）。
  *
  * 与糊图分支的关键差异：
@@ -202,7 +310,6 @@ private fun PearMeshBackgroundLayer(
     showMiniPlayer: Boolean
 ) {
     val context = LocalContext.current
-    val imageLoader = context.imageLoader
     val albumUri = album()
 
     val state = remember { PearMeshState() }
@@ -278,28 +385,8 @@ private fun PearMeshBackgroundLayer(
 
     LaunchedEffect(albumUri) {
         if (albumUri == null) return@LaunchedEffect
-        val cacheKey = "mesh|$albumUri|$MESH_ARTWORK_PX"
-        val cached = FloatingLightBitmapCache.get(cacheKey)
-        val bitmap = cached ?: withContext(Dispatchers.IO) {
-            val request = ImageRequest.Builder(context)
-                .data(albumUri)
-                .size(MESH_ARTWORK_PX)
-                // Coil 在 API 26+ 默认交付 Bitmap.Config.HARDWARE，而 GLUtils.texImage2D
-                // 不接受硬件位图（抛 "invalid Bitmap format"）。必须关掉。
-                .allowHardware(false)
-                .build()
-            imageLoader.execute(request).drawable?.toBitmap()?.let { decoded ->
-                // GL 只读纹理，也要求 8888；RGB_565/HARDWARE 都传不上去
-                val uploadable = if (decoded.config == Bitmap.Config.ARGB_8888) {
-                    decoded
-                } else {
-                    decoded.copy(Bitmap.Config.ARGB_8888, false)
-                }
-                if (uploadable !== decoded) decoded.recycle()
-                uploadable.also { FloatingLightBitmapCache.put(cacheKey, it) }
-            }
-        }
-        // 切歌期间上一张还在渲染时就别换：渲染器自己会做 0.5s 交叉淡化
+        val bitmap = withContext(Dispatchers.IO) { decodeMeshArtwork(context, albumUri) }
+        // 切歌期间上一张还在渲染时就别换：渲染器自己会做 0.6s 交叉淡化
         if (bitmap != null && album() == albumUri) {
             state.setArtwork(bitmap)
         }
@@ -315,7 +402,15 @@ private fun BackgroundLayer(
     isPlaying: () -> Boolean,
     nowPage: () -> String,
     showMiniPlayer: Boolean,
-    fallbackToBlack: Boolean
+    fallbackToBlack: Boolean,
+    /**
+     * 本层不透明度。切歌过渡期间由共享进度驱动，在**图层阶段**读取（不重组）；
+     * 静止态恒为 1，与改造前完全一致。
+     *
+     * 参数名刻意不叫 `alpha`：`graphicsLayer` 的接收者也有 `alpha` 属性，
+     * 同名的闭包参数会把它遮蔽掉（`alpha = alpha()` 会编译失败）。
+     */
+    layerAlpha: () -> Float = { 1f }
 ) {
     val context = LocalContext.current
     val layerDrawable = remember(drawable) {
@@ -352,9 +447,12 @@ private fun BackgroundLayer(
         }
     }
 
+    val layerAlphaProvider = layerAlpha
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // 切歌过渡期间本层不透明度（图层阶段读取，不触发重组）；静止态恒 1。
+            .graphicsLayer { alpha = layerAlphaProvider() }
             .then(if (fallbackToBlack) Modifier.graphicsLayer { alpha = 1f } else Modifier)
     ) {
         if (fallbackToBlack) {
@@ -409,6 +507,42 @@ private const val DRIFT_FRAME_MS = 1000f / 30f
  * 二分降采样；我们最终只用 1/4 分辨率渲染 + 重度模糊，512px 已经远超所需。
  */
 private const val MESH_ARTWORK_PX = 512
+
+/** 网格背景的封面缓存键。就绪闸门与绘制层共用，避免两边各写一份字符串。 */
+private fun meshArtworkCacheKey(uri: Uri): String = "mesh|$uri|$MESH_ARTWORK_PX"
+
+/** 网格背景源图解码（含 ARGB_8888 归一化，GL 不接受硬件位图/RGB_565）。 */
+private suspend fun decodeMeshArtwork(context: Context, uri: Uri): Bitmap? {
+    val cacheKey = meshArtworkCacheKey(uri)
+    FloatingLightBitmapCache.get(cacheKey)?.let { return it }
+    val request = ImageRequest.Builder(context)
+        .data(uri)
+        .size(MESH_ARTWORK_PX)
+        // Coil 在 API 26+ 默认交付 Bitmap.Config.HARDWARE，而 GLUtils.texImage2D
+        // 不接受硬件位图（抛 "invalid Bitmap format"）。必须关掉。
+        .allowHardware(false)
+        .build()
+    return context.imageLoader.execute(request).drawable?.toBitmap()?.let { decoded ->
+        // GL 只读纹理，也要求 8888；RGB_565/HARDWARE 都传不上去
+        val uploadable = if (decoded.config == Bitmap.Config.ARGB_8888) {
+            decoded
+        } else {
+            decoded.copy(Bitmap.Config.ARGB_8888, false)
+        }
+        if (uploadable !== decoded) decoded.recycle()
+        uploadable.also { FloatingLightBitmapCache.put(cacheKey, it) }
+    }
+}
+
+/**
+ * 网格背景源图预热（切歌过渡的就绪闸门调用）。
+ *
+ * 网格的换图由 GL 线程按 0.6s 完成，但源图**必须**先解好：否则切歌瞬间纹理还没上传，
+ * 封面已经淡完、背景还停在上一首的模糊里。
+ */
+internal suspend fun warmUpMeshArtwork(context: Context, uri: Uri) {
+    withContext(Dispatchers.IO) { decodeMeshArtwork(context, uri) }
+}
 
 /**
  * 封面 → 背景糊图管线：ARGB_8888 复制 → 饱和度×3 → 压暗 →（可选）烘焙压暗层 → 真高斯模糊。

@@ -505,7 +505,16 @@ internal class PearMeshGlRenderer(
         const val PULSE_ATTACK_S = 0.045f
         const val PULSE_RELEASE_S = 0.26f
         const val LYRICS_BLUR_SIGMA = 42.5f
-        const val ARTWORK_TRANSITION_SECONDS = 0.5
+
+        /**
+         * 网格背景的封面交叉淡化时长（秒）。
+         *
+         * 与封面 / 糊图背景的 [yos.music.player.ui.widgets.effects.TrackArtworkCrossfadeMs]
+         * 对齐：三者从同一次切歌起步，时长不一致就会出现"封面已经换完、网格还在化"的割裂。
+         * 曲线仍是线性的——这一层是重度模糊 + 扭曲的抽象图，缓动差异肉眼不可辨，
+         * 而改 GL 时钟的风险远高于收益。
+         */
+        const val ARTWORK_TRANSITION_SECONDS = 0.6
         const val MATERIAL_LYRICS = 1
         const val MATERIAL_LANDSCAPE_BACKGROUND = 3
 

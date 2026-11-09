@@ -270,6 +270,8 @@ import yos.music.player.ui.widgets.liquid.YosSwitch
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.CoverArtworkState
+import yos.music.player.ui.widgets.effects.ArtworkCrossfadeLayers
+import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
 import yos.music.player.ui.widgets.basic.LocalBottomOverlayHeight
@@ -945,6 +947,9 @@ internal fun NowPlaying(
                                 // 封面因此铺到状态栏下；开关关闭时完全走原路径。
                                 val staticFullScreenCover =
                                     SettingsLibrary.NowplayingStaticFullScreenAlbum
+                                // 切歌过渡时间轴（外壳建立）。封面与背景同起同止的关键：
+                                // 本页所有封面渲染面都从这一份取图层与进度。
+                                val artworkTransition = LocalTrackArtworkTransition.current
                                 Box(Modifier.fillMaxSize()) {
                                     if (staticFullScreenCover) {
                                         FullScreenStaticCover(
@@ -953,7 +958,8 @@ internal fun NowPlaying(
                                             coordsOnChanged = albumCoverCoordsOnChanged,
                                             coverState = coverState,
                                             coverEnabled = { nowPageLambda() == Album },
-                                            onCoverClick = onLyricsAction
+                                            onCoverClick = onLyricsAction,
+                                            artworkTransition = artworkTransition
                                         )
                                     }
                                     Column(
@@ -1684,9 +1690,9 @@ private fun ColumnScope.Album(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        ShadowImageWithCache(
-                            dataLambda = albumUrl,
-                            contentDescription = null,
+                        // 交互动效层（倾斜/缩放/涟漪/描边高光）必须套在**所有图层之外**：
+                        // 交叉淡化期间有两张图，每张各画一份描边会叠出双倍亮度。
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -1694,19 +1700,30 @@ private fun ColumnScope.Album(
                                     // 在外壳单封面层接管期间隐藏本节点：读 State 发生在
                                     // layer 阶段，只失效图层、不触发重组，也不改布局占位。
                                     alpha = if (suppressed()) 0f else 1f
-                                    // scaleX = scale.value
-                                    // scaleY = scale.value
                                 }
-                                // shared-element 继续包住真实图片，但不参与 morph
-                                // 的坐标回调，避免其变换污染终点几何。
                                 .then(modifier)
-                                // 交互动效层必须落在 sharedElement **之内**：morph 的落点读的是
-                                // 节点的布局坐标，变换层若挂在外层，按压尚未回位就切页时会把
-                                // 倾斜/缩放渗进 morph 源矩形。
-                                .coverArtworkEffect(state = coverState),
-                            imageQuality = ImageQuality.RAW,
-                            shadowOverlay = true
-                        )
+                                .coverArtworkEffect(state = coverState)
+                        ) {
+                            // 新旧封面双图层交叉淡化：图层表与进度都来自外壳那份唯一时间轴，
+                            // 与背景同起同止。alpha/缩放只在 graphicsLayer 块里读，零重组。
+                            ArtworkCrossfadeLayers(
+                                transition = LocalTrackArtworkTransition.current,
+                                artwork = albumUrl,
+                                // 卡片模式允许极轻微的缩放辅助：旧 1.0→0.97、新 1.025→1.0。
+                                scaleOnTransition = true
+                            ) { layerArtwork, layerModifier ->
+                                ShadowImageWithCache(
+                                    dataLambda = { layerArtwork },
+                                    contentDescription = null,
+                                    modifier = layerModifier.fillMaxSize(),
+                                    imageQuality = ImageQuality.RAW,
+                                    // 大封面要 ≈1137 物理像素，数据层统一的 400 档被放大 2.8 倍会发虚；
+                                    // 只在这一处升到 1080（列表行仍用 400，流量不变）。
+                                    hiresCover = true,
+                                    shadowOverlay = true
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -3491,8 +3508,10 @@ private fun PlayingBar(
             .padding(top = 22.dp)
             .height(70.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        ShadowImageWithCache(
-            dataLambda = albumUrlLambda, contentDescription = null, modifier = modifier
+        // 69dp 顶栏封面：同样走新旧封面交叉淡化（歌词/播放列表页的 bar 端点）。
+        // 交互动效套在图层之外（见 Album 的同款注释）。
+        Box(
+            modifier = Modifier
                 .size(69.dp)
                 .onGloballyPositioned { coverCoordsOnChanged(it) }
                 .graphicsLayer {
@@ -3509,14 +3528,29 @@ private fun PlayingBar(
                     })
                 // 转场飞行画的是这一层：大封面按下的倾斜/涟漪/描边在这里接着画完。
                 // 圆角用本条自身的 5dp（映射后与飞行中的裁剪一致）。
-                .coverArtworkEffect(coverState, cornerRadius = 5.dp),
-            cornerRadius = 5.dp,
-            // 这一层本身就是飞行图层：LOW(128px) 被拉到全屏封面(≈928px) 是 7 倍放大，
-            // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
-            imageQuality = ImageQuality.HIGH,
-            shadowType = ShadowType.Small,
-            shadowOverlay = true
-        )
+                .coverArtworkEffect(coverState, cornerRadius = 5.dp)
+                // 调用方给的 modifier（sharedElement 等）只挂在**包裹层一次**：
+                // 铺到每个图层会变成两份共享元素、两份坐标上报。
+                .then(modifier)
+        ) {
+            ArtworkCrossfadeLayers(
+                transition = LocalTrackArtworkTransition.current,
+                artwork = albumUrlLambda,
+                // 69dp 小封面不做缩放：它本身就是"远处的小图"，微缩放会被压缩成抖动。
+                scaleOnTransition = false
+            ) { layerArtwork, layerModifier ->
+                ShadowImageWithCache(
+                    dataLambda = { layerArtwork }, contentDescription = null,
+                    modifier = layerModifier.fillMaxSize(),
+                    cornerRadius = 5.dp,
+                    // 这一层本身就是飞行图层：LOW(128px) 被拉到全屏封面(≈928px) 是 7 倍放大，
+                    // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
+                    imageQuality = ImageQuality.HIGH,
+                    shadowType = ShadowType.Small,
+                    shadowOverlay = true
+                )
+            }
+        }
         Column(
             titleModifier
                 .fillMaxWidth()
