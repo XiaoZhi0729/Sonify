@@ -331,23 +331,55 @@ class MainActivity : BaseActivity() {
     }
 
     /**
-     * 按应用自身主题设置，挑浅色/深色的开屏主题。
+     * 按应用自身主题设置，把状态栏/导航栏图标外观写一次。
+     *
+     * 只在闪屏退场时用：那一刻 core-splashscreen 刚按开屏主题覆盖过一次，
+     * 这里把值断言回用户真正选择的深浅。之后的运行期外观由 Compose 侧负责
+     * （Theme.kt 的 SideEffect 与播放壳里的系统栏效果），不在这里重复写。
+     */
+    private fun applySystemBarAppearanceForCurrentSetting() {
+        runCatching {
+            // 这里不能用 isFlamingoInDarkMode()：它是 @Composable（"Auto" 档要读
+            // isSystemInDarkTheme）。非组合上下文按同样的规则手算：
+            // 强制档看设置，"Auto" 看系统配置——那种情况下两者本来就相等。
+            val setting = yos.music.player.data.libraries.SettingsLibrary.CustomTheme
+            val dark = when (setting) {
+                "Dark" -> true
+                "Light" -> false
+                else -> (resources.configuration.uiMode and
+                        android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                        android.content.res.Configuration.UI_MODE_NIGHT_YES
+            }
+            val controller =
+                androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            controller.isAppearanceLightStatusBars = !dark
+            controller.isAppearanceLightNavigationBars = !dark
+        }
+    }
+
+    /**
+     * 按应用自身主题设置挑开屏主题。
      *
      * 闪屏底色就是"首页底色"：浅色主题下是白，深色是黑；Logo 两种主题下都是品牌红。
-     * 系统闪屏只会读 res 主题，因此必须在这里按用户设置显式覆盖，
-     * 否则"应用内强制深色 + 系统浅色"的组合会让开屏底色白↔黑跳一下。
+     * 系统闪屏只会读 res 主题，因此必须在这里按用户设置显式覆盖，否则"应用内强制深色 +
+     * 系统浅色"的组合会让开屏底色白↔黑跳一下。
+     *
+     * 强制深浅两档必须走 [R.style.SplashTheme_Light] / [R.style.SplashTheme_Dark] 这两个
+     * **显式副本**，不能用带 values-night 变体的 [R.style.SplashTheme]：
+     * 资源限定符只认系统 uiMode，不看应用内设置，用带变体的样式等于"强制"没生效。
+     *
+     * 这还牵出状态栏图标：core-splashscreen 在闪屏退场时会重读当前主题的
+     * `windowLightStatusBar` 并 setSystemBarsAppearance 写回窗口（时序在 Compose 首帧
+     * 之后）。所以开屏主题里这一位写错，冷启动后状态栏图标就会一直是反的，
+     * 直到某次 Compose 重组把它改回来——表现为"切一下主题设置就正常，重启又变回去"。
      */
     private fun applySplashThemeForCurrentSetting() {
-        val setting = yos.music.player.data.libraries.SettingsLibrary.CustomTheme
-        val dark = when (setting) {
-            "Dark" -> true
-            "Light" -> false
-            // Auto：跟随系统
-            else -> (resources.configuration.uiMode and
-                    android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-                    android.content.res.Configuration.UI_MODE_NIGHT_YES
+        when (yos.music.player.data.libraries.SettingsLibrary.CustomTheme) {
+            "Dark" -> setTheme(R.style.SplashTheme_Dark)
+            "Light" -> setTheme(R.style.SplashTheme_Light)
+            // Auto：跟随系统 → 用带 values-night 变体的默认样式，让系统配置自己选
+            else -> setTheme(R.style.SplashTheme)
         }
-        setTheme(if (dark) R.style.SplashTheme_Dark else R.style.SplashTheme)
     }
 
     @Suppress("DEPRECATION")
@@ -377,6 +409,15 @@ class MainActivity : BaseActivity() {
                 provider.remove()
             }.start()
             splashDismissed = true
+            // 必须在这之后补写一次状态栏/导航栏图标外观。
+            // core-splashscreen 在本监听器被调用**之前**刚执行过 applyAppSystemUiTheme()：
+            // 它按开屏主题的 windowLightStatusBar 调 setSystemBarsAppearance 写回窗口。
+            // 那一步的时序晚于 Compose 首帧的 SideEffect（Theme.kt），所以只要开屏主题里
+            // 那一位和用户设置不一致，就会把正确值盖掉、一直保持到下次重组——
+            // 正是"冷启动后状态栏不反色、切一下主题设置就恢复"的成因。
+            // 主题 XML 已按深浅写对（正常路径下库写的值就是对的），这里再断言一次，
+            // 覆盖"系统配置与应用内设置相反"这类资源限定符判断不了的组合。
+            applySystemBarAppearanceForCurrentSetting()
         }
         splash.setKeepOnScreenCondition {
             // 兜底 2s：万一首帧因为异常迟迟画不出来，也不能把用户永久卡在闪屏上。
