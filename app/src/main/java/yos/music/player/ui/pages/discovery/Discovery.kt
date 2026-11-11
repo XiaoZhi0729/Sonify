@@ -1011,7 +1011,8 @@ internal fun RankCardItem(
                 modifier = Modifier.fillMaxSize(),
                 shadowAlpha = 0f,
                 cornerRadius = 7.dp,
-                imageQuality = ImageQuality.HIGH
+                imageQuality = ImageQuality.HIGH,
+                matchDisplaySize = true
             )
         }
         Spacer(Modifier.height(5.dp))
@@ -1127,7 +1128,8 @@ internal fun NewAlbumCard(
                     .padding(bottom = 5.dp),
                 shadowAlpha = 0f,
                 cornerRadius = 7.dp,
-                imageQuality = ImageQuality.HIGH
+                imageQuality = ImageQuality.HIGH,
+                matchDisplaySize = true
             )
         }
         Text(
@@ -1224,7 +1226,8 @@ internal fun RecommendPlaylistCard(
                     .padding(bottom = 5.dp),
                 shadowAlpha = 0f,
                 cornerRadius = 7.dp,
-                imageQuality = ImageQuality.HIGH
+                imageQuality = ImageQuality.HIGH,
+                matchDisplaySize = true
             )
         }
         Text(

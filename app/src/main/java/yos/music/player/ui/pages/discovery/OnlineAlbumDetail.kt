@@ -541,6 +541,9 @@ fun OnlineAlbumDetail(
                             // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
                             cornerRadius = enterCoverCorner(animatedVisibilityScope, 7.dp),
                             imageQuality = ImageQuality.RAW,
+                            // RAW 只是"按源图尺寸解码"，源图档位仍是 400；这张封面宽 1163
+                            // 物理像素，不升高清档就是 2.9 倍放大。
+                            hiresCover = true,
                             shadowType = ShadowType.Medium
                         )
                     }

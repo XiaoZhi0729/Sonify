@@ -503,6 +503,7 @@ internal fun ArtistLatestAlbumCard(
                 contentDescription = album.name,
                 cornerRadius = 10.dp,
                 imageQuality = ImageQuality.HIGH,
+                matchDisplaySize = true,
                 shadowType = ShadowType.Medium
             )
         }

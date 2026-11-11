@@ -254,6 +254,8 @@ fun AlbumInfo(
                                 // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
                                 cornerRadius = enterCoverCorner(animatedContentScope, 7.dp),
                                 imageQuality = ImageQuality.RAW,
+                                // 专辑大封面 926 物理像素，400 源要放大 2.3 倍。
+                                hiresCover = true,
                                 shadowType = ShadowType.Medium
                             )
                         }

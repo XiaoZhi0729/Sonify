@@ -6,12 +6,19 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import coil.size.Precision
 
-/** Loads the exact RAW request used by ShadowImage before opening the detail page. */
+/**
+ * 详情页大封面预热。
+ *
+ * 请求参数必须与 [ShadowImage] 的 RAW 档**逐项一致**，并且 URL 也要过一遍
+ * [hiresCoverUrl]：详情页大封面（专辑 1163px / 歌单 838px）用高清档，
+ * 这里若还按原 URL 的 400 档预热，缓存键对不上 → 转场时仍要重新下载解码。
+ */
 suspend fun preloadRawCover(context: Context, url: String) {
     if (url.isBlank()) return
+    val loadUrl = hiresCoverUrl(url)
     val request = ImageRequest.Builder(context)
-        .data(url)
-        .memoryCacheKey(coverCacheKey(url, ImageQuality.RAW))
+        .data(loadUrl)
+        .memoryCacheKey(coverCacheKey(loadUrl, ImageQuality.RAW))
         .diskCacheKey(url)
         .precision(Precision.EXACT)
         .size(coil.size.Size.ORIGINAL)

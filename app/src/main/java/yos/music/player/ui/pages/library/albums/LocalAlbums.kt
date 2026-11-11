@@ -214,7 +214,9 @@ private fun LazyGridItemScope.AlbumItems(
                 modifier = Modifier.fillMaxSize(),
                 shadowAlpha = 0f,
                 cornerRadius = 7.dp,
-                imageQuality = ImageQuality.HIGH
+                imageQuality = ImageQuality.HIGH,
+                // 两列网格封面在手机竖屏 543 物理像素，固定 400px 档会放大 1.36 倍。
+                matchDisplaySize = true
             )
         }
         Spacer(Modifier.height(5.dp))

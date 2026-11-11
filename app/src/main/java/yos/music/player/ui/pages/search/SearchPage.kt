@@ -1084,7 +1084,8 @@ private fun TopResultCard(song: KugouSearchSong, onClick: () -> Unit) {
             shadowAlpha = 0f,
             // 72dp = 234 物理像素。LOW 只解码 128px（≈1.8× 放大，边界可见发虚），
             // HIGH 解码 400px 与源图分辨率相当，且不额外占流量（URL 档位本来就是 400）。
-            imageQuality = ImageQuality.HIGH
+            imageQuality = ImageQuality.HIGH,
+            matchDisplaySize = true
         )
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(
@@ -1172,7 +1173,8 @@ private fun AlbumGrid(
                                 // 等于把图硬放大 4.2 倍——这是"搜索里专辑封面特别糊"的根因。
                                 // HIGH 解码 400px 正好等于源图分辨率（URL 档位本就是 400），
                                 // 放大降到 1.36×，且不增加任何流量（只是不再被二次缩小）。
-                                imageQuality = ImageQuality.HIGH
+                                imageQuality = ImageQuality.HIGH,
+                                matchDisplaySize = true
                             )
                         }
                         Text(
@@ -1254,7 +1256,8 @@ private fun PlaylistGrid(
                                 shadowAlpha = 0f,
                                 // 与专辑网格同尺寸（542 物理像素），同样不能用 LOW：
                                 // LOW 只解码 128px = 硬放大 4.2 倍，是"歌单封面糊"的根因。
-                                imageQuality = ImageQuality.HIGH
+                                imageQuality = ImageQuality.HIGH,
+                                matchDisplaySize = true
                             )
                         }
                         Text(

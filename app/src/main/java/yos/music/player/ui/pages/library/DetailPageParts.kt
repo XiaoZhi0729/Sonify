@@ -145,6 +145,8 @@ fun DetailPageHeader(
                         // 转场中圆角从来源封面值渐变到 7dp，静止恒为 7dp
                         cornerRadius = enterCoverCorner(animatedVisibilityScope, 7.dp),
                         imageQuality = ImageQuality.RAW,
+                        // 这个大封面最宽 300dp（≈975 物理像素），400 源要放大 2.4 倍。
+                        hiresCover = true,
                         shadowType = ShadowType.Medium
                     )
                 }
