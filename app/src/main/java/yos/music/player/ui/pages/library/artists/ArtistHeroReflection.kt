@@ -24,8 +24,8 @@ import kotlin.math.sqrt
  * 艺人页 Hero 倒影配方（头像→提取色的纵向过渡）：
  *
  * 取照片**最底部 [ArtistReflectionSourceFraction]（1/4）**那一条，关于照片底边翻转后
- * 纵向拉伸 [ArtistReflectionStretch] 倍（2:1）铺满整条带。接缝两侧同为照片底边那一行
- * 像素，无缝；横向保持 1:1，只有纵向被拉长。
+ * 纵向拉伸 [ArtistReflectionStretch] 倍（0.7 / 0.25 = 2.8:1）铺满整条带。接缝两侧同为
+ * 照片底边那一行像素，无缝；横向保持 1:1，只有纵向被拉长。
  *
  * 为什么拉伸而不是 1:1 等比镜像：等比镜像等于在带内把照片下半部分原样再画一遍，
  * 人脸/logo 轮廓完整重复，模糊只把它糊成重影（观感「脏」）。纵向拉伸后轮廓被拖长成
@@ -44,9 +44,12 @@ import kotlin.math.sqrt
  * API < 33（无 AGSL）降级为金字塔降采样-回放分条模糊（[bakeHeroReflection] 内分支）。
  */
 /**
- * 倒影带高占照片高的比例（0.5 = 照片高的一半）。
+ * 倒影带高占照片高的比例（0.7 = 照片高的七成）。
+ *
+ * v15：0.5 → 0.7。带子是渐进模糊的**下半程**，加长它才让「越来越糊」的路径真的走得更远；
+ * 只抬起点不加长，等于把同一条曲线压进更短的行程，末端反而更容易看出截止。
  */
-const val ArtistReflectionFraction = 0.5f
+const val ArtistReflectionFraction = 0.7f
 
 /**
  * 倒影截取的源高度占照片高的比例：取照片**最底部 1/4**。
@@ -54,16 +57,37 @@ const val ArtistReflectionFraction = 0.5f
 const val ArtistReflectionSourceFraction = 0.25f
 
 /**
- * 倒影纵向拉伸倍率 = 带高 / 源高 = 0.5 / 0.25 = 2，即把底部 1/4 拉成 2:1（高度变两倍）。
+ * 倒影纵向拉伸倍率 = 带高 / 源高 = 0.7 / 0.25 = 2.8，即把底部 1/4 拉成 2.8:1。
  * 由 [ArtistReflectionFraction] 与 [ArtistReflectionSourceFraction] 相除得出，不单独配置。
+ *
+ * 拉伸越高，照片底缘的细节被拖得越薄（观感越「柔」而非「重影」）；这也是带子加长后
+ * 不需要另加额外柔化就仍然好看的原因。
  */
 val ArtistReflectionStretch: Float
     get() = ArtistReflectionFraction / ArtistReflectionSourceFraction
 
 /**
- * 模糊起点：在照片底边之上、占倒影带高的比例。**只影响模糊**，不参与渐隐。
+ * 模糊起点：相对**照片高度**的比例（不是带高）。**只影响模糊**，不参与渐隐。
+ *
+ * 0.70 = 照片下 30% 起雾，往上完全锐利。
+ *
+ * v15：0（起点恰在照片底边）→ 0.70，即「往上延伸」。刻意按照片高而非带高定义：
+ * 按带高定义时，带子一变长（见 [ArtistReflectionFraction]）起点就跟着往照片里钻
+ * （0.6 倍带高在 0.7 带高上 = 42% 照片高，会糊到五官），两个参数互相耦合。
+ * 锁在照片比例上，调带高不会移动这条边界。
  */
-const val ArtistReflectionPhotoOverlapFraction = 0f
+const val ArtistReflectionBlurStartPhotoFraction = 0.70f
+
+/**
+ * 模糊起点的像素坐标（layer 内 y 轴）。
+ *
+ * 起点**按照片高**定位而不是按带高：带子长度是另一个可调参数，若起点也写成带高的倍数，
+ * 每次调带高都会连带把模糊往照片里推/往外拉（v15 调带高时踩过：同一份 0.6 倍带高，
+ * 在 0.7 带上等于深入照片 42%，直接糊到五官）。所有着色器 uniform 都从这里取，别各写一份。
+ */
+internal fun artistReflectionBlurStartPx(photoHeightPx: Int): Float =
+    photoHeightPx * ArtistReflectionBlurStartPhotoFraction
+
 
 /**
  * 渐隐上边界（100% 不透明处）：在照片底边**之上**、占倒影带高的比例。
@@ -77,6 +101,11 @@ const val ArtistReflectionFadeStartFraction = 0.5f
  * 0.24 对应该页「三圆钮行」播放键的中心（行上内边距 14dp + 按钮半径 32dp = 底边下 46dp，
  * 带高约 192dp → 46/192 ≈ 0.24）。即渐变到播放键中心处已完全透明，再往下是纯底色，
  * 播放键以下的倒影不再透出任何照片内容。
+ *
+ * v15 带高 0.5→0.7 后这个比例不变、绝对位置随带等比拉长：曲线形状（照片底边处 alpha
+ * 仍 ≈ 0.54）与「起点在照片内 1/4 带高」都保持原样，只是整条渐隐也被拉长 1.4 倍——
+ * 这正是「路径更长」要的效果。带尾落在照片底边下 ≈64dp（播放键竖向范围 14..78dp 之内），
+ * 仍然在按钮里收净，不拖进「歌曲」区。
  */
 const val ArtistReflectionFadeEndFraction = 0.24f
 
@@ -91,18 +120,22 @@ const val ArtistReflectionFadePower = 2f
 /**
  * 倒影带底部（最糊处）的模糊半径，烘焙时换算成像素。
  *
- * 60 → 96：原值下带子中段只有约 15dp 半径（t² 增长前段太缓），观感「几乎没糊」。
- * 提高到 96dp 后带底半径接近半条带高，中段约 24dp，渐进模糊才成为主视觉。
+ * 60 → 96（v12）：原值下带子中段只有约 15dp 半径（t² 增长前段太缓），观感「几乎没糊」。
+ * 96 → 120（v15）：模糊路径从「照片底边→带底」（0.5 带高 = 192dp）拉长到
+ * 照片下 30% + 整条 0.7 带（典型手机 384dp，正好翻倍），同一位置算出的 t 变小、
+ * 半径随之变淡；上限提到 120dp 把这份稀释补回来，带底仍是「接近整条带高」的重糊。
  */
-const val ArtistReflectionMaxBlurDp = 96f
+const val ArtistReflectionMaxBlurDp = 120f
 
 /**
  * 模糊半径沿带的增长幂次：`radius = maxRadius · t^power`。
  *
  * 2.0（原值）前段增长极缓：t=0.5 时只有 25% 半径，整条带上半段几乎不糊。
- * 1.35 时 t=0.5 有 39%、t=0.25 有 16%，前段就能看出模糊，整条过渡更均匀。
+ * 1.35（v12）t=0.5 有 39%、t=0.25 有 16%，前段就能看出模糊。
+ * 1.1（v15）t=0.5 有 47%、t=0.25 有 22%：路径拉长后必须再放缓，否则中段仍是「微微发虚」，
+ * 面积变大但看不出「越来越糊」。
  */
-const val ArtistReflectionBlurPower = 1.35f
+const val ArtistReflectionBlurPower = 1.1f
 
 /**
  * 烘焙配方版本，必须拼进调用侧的缓存键（[yos.music.player.code.utils.artist.HeroBakeCache]）。
@@ -122,8 +155,10 @@ const val ArtistReflectionBlurPower = 1.35f
  * v13：倒影切片改「向内取整」，修掉接缝下方那条 1px 拉伸成的色差窄带（缝隙）。
  * v14：渐隐矩形画满到带底、靠 CLAMP 归零，删掉 CLEAR 补尾——原写法渐变（带 AA）
  *      与 CLEAR（无 AA）在 end 的小数边界上覆盖不一致，留下一条残留行（缝隙）。
+ * v15：渐进模糊整体加长加大——起点按照片高抬到 0.70（照片下 30% 起雾）、带高 0.5→0.7、
+ *      maxBlur 96→120dp、半径幂次 1.35→1.1（路径变长后补回中段浓度）。
  */
-const val ArtistHeroBakeRecipeVersion = 14
+const val ArtistHeroBakeRecipeVersion = 15
 
 /** 金字塔降级模糊的分条数（仅 API < 33 回退分支使用）。 */
 private const val FallbackStrips = 32
@@ -327,7 +362,7 @@ fun bakeHeroReflection(
  * 两端都能独立抬高/下压，故可整体上移整条渐变、也可单独收窄跨度——渐变不必被拉满
  * 整条倒影带，落差可以集中在有真实颜色差的一段上。
  *
- * 与模糊解耦：模糊起点由 [ArtistReflectionPhotoOverlapFraction] 单独控制，调渐隐不会
+ * 与模糊解耦：模糊起点由 [ArtistReflectionBlurStartPhotoFraction] 单独控制，调渐隐不会
  * 连带改动照片下缘的模糊程度。
  *
  * 用 DST_IN 直接打在位图 alpha 上（预乘语义下 SrcOver 到页面底色恰好是
@@ -389,7 +424,7 @@ fun newArtistHeroReflectionShader(
 ): RuntimeShader? {
     if (Build.VERSION.SDK_INT < 33) return null
     return runCatching {
-        val blurStart = photoHeightPx - bandHeightPx * ArtistReflectionPhotoOverlapFraction
+        val blurStart = artistReflectionBlurStartPx(photoHeightPx)
         RuntimeShader(ArtistHeroReflectionShader).apply {
             setFloatUniform("layerSize", widthPx.toFloat(), (photoHeightPx + bandHeightPx).toFloat())
             setFloatUniform("photoBottom", photoHeightPx.toFloat())
@@ -428,7 +463,7 @@ private fun bakeWithHardwareRenderer(
     val denoise = RuntimeShader(ArtistHeroDenoiseShader).apply {
         setFloatUniform("layerSize", widthPx.toFloat(), total.toFloat())
         setFloatUniform("photoBottom", photoHeightPx.toFloat())
-        setFloatUniform("blurStart", photoHeightPx - bandHeightPx * ArtistReflectionPhotoOverlapFraction)
+        setFloatUniform("blurStart", artistReflectionBlurStartPx(photoHeightPx))
         setFloatUniform("bandBottom", total.toFloat())
         setFloatUniform("maxRadius", maxBlurRadiusPx)
         setFloatUniform("blurPower", ArtistReflectionBlurPower)
@@ -487,7 +522,7 @@ private fun bakeWithPyramidBlur(
     val canvas = Canvas(out)
     drawPhotoAndStretchedReflection(canvas, src, widthPx, photoHeightPx, bandHeightPx)
 
-    val blurStart = photoHeightPx - bandHeightPx * ArtistReflectionPhotoOverlapFraction
+    val blurStart = artistReflectionBlurStartPx(photoHeightPx)
     val span = total - blurStart
     val base = out.copy(Bitmap.Config.ARGB_8888, false)
     val maxLevel = 6

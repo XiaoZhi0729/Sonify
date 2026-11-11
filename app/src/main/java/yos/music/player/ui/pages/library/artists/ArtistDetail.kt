@@ -190,7 +190,7 @@ import yos.music.player.ui.navigation.popBackStackSafely
 private const val HeroPhoneHeightFraction = 0.45f
 /** 平板竖屏 hero 高度上限占屏比例（典型平板竖屏不触发，保证「按宽度取方形」）。 */
 private const val HeroTabletMaxHeightFraction = 0.75f
-/** 平板倒影带绝对高度上限：方形 hero 会让 bandHeight=0.5*heroHeight 过大，需限幅。 */
+/** 平板倒影带绝对高度上限：方形 hero 会让 bandHeight=0.7*heroHeight 过大，需限幅。 */
 private const val HeroTabletReflectionBandMaxDp = 260f
 /** 平板竖屏把内容列表整体上抬的高度：方形 hero 让内容起始过低，直接落在 hero 高度上补偿。 */
 private const val HeroTabletContentRaiseDp = 40f
@@ -669,8 +669,9 @@ fun ArtistDetail(
         // 会把 item 内容裁切在 item 边界内，倒影因此画在列表之外，位置按 Hero item 的
         // 视口 offset 逐帧跟随；Hero item 在照片底边越过视口顶的瞬间即被回收，而倒影
         // 此后还应可见 bandHeight——门禁按照片底边余量线性渐隐，不跳变不提前消失。
-        // 平板方形 hero 会让 0.68*heroHeight 的倒影带胀到约 2/5 屏高（首屏被压没），故限幅；
-        // 手机带高约 0.68*45% ≈ 30% 屏高，260dp 上限在常规手机上仍不误伤。
+        // 平板方形 hero 会让 0.7*heroHeight 的倒影带胀到约 2/5 屏高（首屏被压没），故限幅；
+        // 手机不带限幅（hero≈0.45 屏高 → 带高≈0.315 屏高，如 853dp 高的机器上约 269dp），
+        // 260dp 上限只作用于平板。
         val bandHeight = if (portraitTablet)
             minOf(heroHeight * ArtistReflectionFraction, HeroTabletReflectionBandMaxDp.dp)
         else heroHeight * ArtistReflectionFraction
