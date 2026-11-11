@@ -20,7 +20,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import yos.music.player.data.libraries.SettingsLibrary
 import java.util.function.Consumer
-import kotlin.math.min
 
 /**
  * 歌词页的真 HDR 高光：把窗口切到 HDR 模式，正在唱的那一句用超过 SDR 白的亮度画。
@@ -48,16 +47,43 @@ object LyricHdr {
     const val MaxBoost = 3f
 
     /**
+     * 已向系统申请到的余量（API 35+ 的 `setDesiredHdrHeadroom` 生效时才有值）。
+     * 0 表示还没申请 / 该版本没有这个 API。
+     */
+    private var requestedHeadroom: Float by mutableFloatStateOf(0f)
+
+    /**
      * HDR 光效的峰值亮度（SDR 白 = 1，线性光）；未生效时恰好是 1。
      * [strength] 是 0..1 的强度（设置项）：用掉屏幕可用余量的多少。
      * 所有 HDR 画法都保证每个通道都不超过它，不会因为某个通道顶到屏幕上限被截断而发白。
      */
-    fun boost(strength: Float): Float =
-        if (windowActive && supported) {
-            1f + (min(headroom, MaxBoost) - 1f).coerceAtLeast(0f) * strength.coerceIn(0f, 1f)
-        } else {
-            1f
+    fun boost(strength: Float): Float {
+        if (!windowActive || !supported) return 1f
+        // 乘数必须来自「向系统申请到的余量」，不能来自 headroom 读数。
+        //
+        // headroom 是显示器**正在呈现**的 HDR/SDR 比，只有画面上真的画出超过 SDR 白的像素
+        // 之后才会涨上去。拿它当乘数就是先有鸡还是先有蛋：第一帧恒为 1 → boost=1 →
+        // 不画 HDR → 余量永不涨（真机实测：窗口已是 COLOR_MODE_HDR + desiredHdrHeadroom=3.0，
+        // dumpsys display 仍恒为 hdrSdrRatio 1.0、mIsHdrLayerPresent=false）。
+        //
+        // 反过来「测到 >1 就跟随它」也不行：实测只升到 1.0458，跟随之后高光立刻变暗，
+        // 余量又掉回 1.0——向下自激，观感是闪一下就没了。
+        //
+        // 目标取申请值；只有在没申请过（API 34 没有该 API）时才退回实测余量。
+        val target = when {
+            requestedHeadroom > 1f -> requestedHeadroom.coerceAtMost(MaxBoost)
+            headroom > 1.001f -> headroom.coerceAtMost(MaxBoost)
+            // API 34 上无法申请、也测不到余量：保持 SDR，至少不做超出屏幕的过驱动。
+            else -> 1f
         }
+        if (target <= 1f) return 1f
+        return 1f + (target - 1f) * strength.coerceIn(0f, 1f)
+    }
+
+    /** 只给 [LyricHdrWindowEffect] 写 */
+    internal fun markRequestedHeadroom(value: Float) {
+        requestedHeadroom = value
+    }
 
     /** 只给 [LyricHdrWindowEffect] 写 */
     internal fun updateDisplay(ratio: Float) {
@@ -113,7 +139,11 @@ fun LyricHdrWindowEffect(active: Boolean) {
         val window = view.context.findActivity()?.window
         if (on && window != null) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
-            if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(LyricHdr.MaxBoost)
+            // 只有 35+ 能主动申请余量；34 上只能等系统按内容自己升。
+            if (Build.VERSION.SDK_INT >= 35) {
+                window.setDesiredHdrHeadroom(LyricHdr.MaxBoost)
+                LyricHdr.markRequestedHeadroom(LyricHdr.MaxBoost)
+            }
             LyricHdr.markWindowActive(true)
         } else {
             LyricHdr.markWindowActive(false)
@@ -123,6 +153,7 @@ fun LyricHdrWindowEffect(active: Boolean) {
                 if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(0f)
                 window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
             }
+            LyricHdr.markRequestedHeadroom(0f)
             LyricHdr.markWindowActive(false)
         }
     }

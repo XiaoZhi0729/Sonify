@@ -74,7 +74,7 @@ fun OnlineQualitySettings(navController: NavController) =
                         // 改完偏好后的就地说明：只存"当时生效的是哪个网络"，文案在组合期解析
                         var noticeForSource by remember { mutableStateOf<IntentSource?>(null) }
 
-                        ListHeader(stringResource(id = R.string.settings_audio_online_quality))
+                        // 分组标题已删：它和页面大标题是同一个词（在线音质），等于念两遍。
                         RoundColumn {
                             /**
                              * 偏好写入唯一路径：全局改动视为最强意图，

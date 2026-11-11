@@ -14,6 +14,15 @@ import yos.music.player.code.utils.others.YosDiagnostics
  */
 enum class HomeSectionId(val key: String) {
     RecentlyPlayed("recently_played"),
+
+    /**
+     * 私人电台（提取色玻璃卡）。
+     *
+     * 放在第 2 位而不是末尾：它是"边听边浏览"的入口，紧接「最近播放」在信息层级上
+     * 最自然（都是"现在/接下来听什么"）。老用户的已存布局由 [HomeLayoutLogic.normalize]
+     * 的补缺失步骤自动追加，不需要迁移代码。
+     */
+    PersonalFm("personal_fm"),
     EverydayRecommend("everyday_recommend"),
     RecommendPlaylists("recommend_playlists"),
     NewSongs("new_songs"),

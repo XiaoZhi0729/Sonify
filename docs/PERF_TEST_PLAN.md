@@ -291,7 +291,11 @@ adb shell input motionevent UP 540 800
 ### P1-3　Tab 切换（量化"4 个 house 常驻"）
 
 从固定起始 Tab，Home→Favorites→Library→Search 循环 10 轮，再反向 10 轮。用
-`settings put global flamingo_probe nohiddendraw` / `housemodalpha` 做消融对照（该 probe 进程启动时读一次，改动后必须 `force-stop` 再启动）。
+`settings put global flamingo_probe hiddendraw` / `housemodalpha` 做消融对照（该 probe 进程启动时读一次，改动后必须 `force-stop` 再启动）。
+
+★`hiddendraw` 的语义在 2026-11-09 反转：隐藏 house 不绘制现在是**默认行为**，
+该开关用来**恢复旧行为**（每帧全画）做对照。旧脚本里的 `nohiddendraw` 与它等价
+（两个名字都保留，避免历史命令静默变成空操作）。
 
 ### P2　歌词 / 评论 / 搜索 / 设置
 

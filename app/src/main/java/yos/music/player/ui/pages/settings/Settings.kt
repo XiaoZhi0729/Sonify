@@ -55,8 +55,9 @@ fun Settings(navController: NavController) =
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
-                        // 酷狗账号（在线音乐登录入口，状态读取全局 KugouAccountState）
-                        ListHeader(stringResource(id = R.string.settings_online_title))
+                        // 酷狗账号（在线音乐登录入口，状态读取全局 KugouAccountState）。
+                        // 单独一行、不配分组标题：它既是账号行也是登录入口，加个「在线音乐」
+                        // 标题只会让首屏多一行字而不增加任何信息。
                         RoundColumn {
                             LabelItem(
                                 title = stringResource(id = R.string.settings_online_kugou_account),
@@ -71,7 +72,6 @@ fun Settings(navController: NavController) =
                         }
 
                         GroupSpacer()
-                        // GroupSpacerMedium()
                         ListHeader(stringResource(id = R.string.settings_library_title))
                         RoundColumn {
                             SwitchItem(
@@ -97,10 +97,10 @@ fun Settings(navController: NavController) =
                             LabelItem(title = stringResource(id = R.string.settings_library_overview)) {
                                 navController.toUI(UI.Settings.LibraryOverview)
                             }
-                        }
 
-                        GroupSpacerMedium()
-                        RoundColumn {
+                            // 「刷新本地媒体库」是一组动作里的一项，和上面三个设置项同属本地资料库，
+                            // 不再另起一张只有一行的卡（两张卡相贴会凹出两道弧线）。
+                            Divider()
                             val scope = rememberCoroutineScope()
                             LabelItem(
                                 title = stringResource(id = R.string.settings_library_refresh_now),
@@ -152,10 +152,13 @@ fun Settings(navController: NavController) =
                             LabelItem(title = stringResource(id = R.string.settings_performance_notification_title)) {
                                 navController.toUI(UI.Settings.NotificationSetting)
                             }
+                            // 状态栏歌词原先单独占一个「扩展」分组；它改变的就是「歌词显示在哪」，
+                            // 与上面四项同属外观，并进来后主页面少一个只服务单行的标题。
                             Divider()
-                            BatteryOptimizationItem()
+                            LabelItem(title = stringResource(id = R.string.settings_extend_statusbarlyric)) {
+                                navController.toUI(UI.Settings.LyricGetter)
+                            }
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_battery_miui_hint))
 
                         GroupSpacer()
                         ListHeader(stringResource(id = R.string.settings_audio))
@@ -221,34 +224,34 @@ fun Settings(navController: NavController) =
                                         ?.let { SettingsLibrary.CrossfadeDuration = it.toString() }
                                 }
                             )
+
+                            // 电池优化豁免原本挂在外观组：它管的是「熄屏后能不能继续放」，
+                            // 属于播放行为，和听歌历史、平滑过渡同组才说得通。
+                            Divider()
+                            BatteryOptimizationItem()
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_play_history_desc))
+                        ListHeader(content = stringResource(id = R.string.settings_performance_battery_miui_hint))
 
                         GroupSpacer()
-                        ListHeader(stringResource(id = R.string.settings_extend))
+                        ListHeader(stringResource(id = R.string.settings_general))
                         RoundColumn {
-                            LabelItem(
-                                title = stringResource(id = R.string.settings_extend_statusbarlyric),
-                                // desc = stringResource(id = R.string.settings_extend_statusbarlyric_desc)
-                            ) {
-                                navController.toUI(UI.Settings.LyricGetter)
+                            LabelItem(title = stringResource(id = R.string.settings_storage_data_storage)) {
+                                navController.toUI(UI.Settings.DataStorage)
                             }
-                        }
-
-                        GroupSpacer()
-                        ListHeader(stringResource(id = R.string.settings_others))
-                        RoundColumn {
+                            Divider()
                             LabelItem(
                                 title = stringResource(id = R.string.settings_others_about),
                                 // desc = stringResource(id = R.string.settings_others_about_desc)
                             ) {
                                 navController.toUI(UI.Settings.About)
                             }
-                            Divider()
-                            LabelItem(title = stringResource(id = R.string.settings_storage_data_storage)) {
-                                navController.toUI(UI.Settings.DataStorage)
-                            }
-                            Divider()
+                        }
+
+                        GroupSpacer()
+                        // 诊断组：只读的解码器清单 + 落盘开关 + 导出报告，三件事都是"出了问题才来翻"，
+                        // 不该和「关于/储存」这种日常入口混在同一张卡里。
+                        ListHeader(stringResource(id = R.string.settings_diagnostics))
+                        RoundColumn {
                             // 设备编解码器清单：纯只读诊断（列的是系统全部 audio/video codec），
                             // 放在「音频解码器」页会被误以为能改，所以归到诊断这一组。
                             LabelItem(title = stringResource(id = R.string.settings_audio_exoplayer_support_mediacodec)) {
@@ -259,7 +262,6 @@ fun Settings(navController: NavController) =
                             Divider()
                             DiagExportItem()
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_others_diag_hint))
 
                         // 一键重置所有设置为默认值（登录凭证在独立 MMKV，不受影响）
                         GroupSpacerMedium()

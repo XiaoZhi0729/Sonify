@@ -17,7 +17,6 @@ import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.pages.settings.DefaultItem
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
-import yos.music.player.ui.pages.settings.GroupSpacerMedium
 import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SwitchItem
@@ -48,8 +47,6 @@ fun LyricGetter(navController: NavController) =
                 content = {
                     item("settings") {
                         Column(Modifier.fillMaxSize()) {
-                            // ListHeader(stringResource(id = R.string.settings_others_statusbarlyric_basic))
-
                             RoundColumn {
                                 SwitchItem(
                                     title = stringResource(id = R.string.settings_others_statusbarlyric_basic_switch),
@@ -72,30 +69,29 @@ fun LyricGetter(navController: NavController) =
 
                             GroupSpacer()
 
+                            // 两个动作合成一张卡：它们都是"手动往状态栏推一次/清一次"，
+                            // 属于同一个调试动作组，动作本身自解释，不需要脚注。
                             ListHeader(stringResource(id = R.string.settings_others_statusbarlyric_debug))
 
                             RoundColumn {
                                 LabelItem(
                                     title = stringResource(id = R.string.settings_others_statusbarlyric_debug_send_lyric),
-                                    // desc = stringResource(id = R.string.settings_others_statusbarlyric_debug_send_lyric_desc),
                                     superLink = true
                                 ) {
                                     lyricAPI.sendLyric("[${(99999..9999999).random()}] Sonify Lyric Debug")
                                 }
-                            }
-                            ListHeader(content = stringResource(id = R.string.settings_others_statusbarlyric_debug_send_lyric_desc))
 
-                            GroupSpacerMedium()
-                            RoundColumn {
+                                Divider()
+
                                 LabelItem(
                                     title = stringResource(id = R.string.settings_others_statusbarlyric_debug_clear_lyric),
-                                    // desc = stringResource(id = R.string.settings_others_statusbarlyric_debug_clear_lyric_desc),
                                     superLink = true
                                 ) {
                                     lyricAPI.clearLyric()
                                 }
                             }
-                            ListHeader(content = stringResource(id = R.string.settings_others_statusbarlyric_debug_clear_lyric_desc))
+
+                            GroupSpacer()
                         }
 
                     }

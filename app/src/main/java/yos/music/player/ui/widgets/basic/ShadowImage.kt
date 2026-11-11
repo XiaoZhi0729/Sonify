@@ -155,6 +155,16 @@ fun ShadowImage(
     shadowOverlay: Boolean = false,
     cornerRadius: Dp = 10.dp,
     imageQuality: ImageQuality,
+    /**
+     * 是否由本组件自己画投影。
+     *
+     * 关掉之后调用方必须在外层容器上用 [dropShadow] 补一份**同样参数**的阴影。
+     * 切歌交叉淡化就是这种场景：那时屏幕上同时有两张封面，各自带一份半透明阴影会
+     * 互相叠色、并随图层 alpha 一起被抹淡（[dropShadow] 是原生 Canvas +
+     * `BlurMaskFilter` 的绘制，依赖所在图层 alpha 为 1），表现为"切歌时阴影消失、
+     * 淡完才回来"。阴影属于**卡片**而不是图片，_应当_由容器画一次且全程恒定。
+     */
+    drawShadow: Boolean = true,
     onImageLoaded: (() -> Unit)? = null
 ) = YosWrapper {
     val shape = YosRoundedCornerShape(cornerRadius)
@@ -193,7 +203,11 @@ fun ShadowImage(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .dropShadow(shape, shadowAlpha, shadowType, shadowOverlay)
+            .then(
+                if (drawShadow) {
+                    Modifier.dropShadow(shape, shadowAlpha, shadowType, shadowOverlay)
+                } else Modifier
+            )
             .graphicsLayer {
                 compositingStrategy = CompositingStrategy.Offscreen
                 clip = true
@@ -245,7 +259,12 @@ fun ShadowImageWithCache(
      * 不能改成"调用方把 dataLambda 换成 hiresCoverUrl 的结果"——那样占位键也跟着变，
      * 低清预览就永远命不中。
      */
-    hiresCover: Boolean = false
+    hiresCover: Boolean = false,
+    /**
+     * 是否由本组件自己画投影。见 [ShadowImage] 的同名参数说明：
+     * 切歌交叉淡化期间必须关掉，改由外层容器用 [dropShadow] 画一份恒定阴影。
+     */
+    drawShadow: Boolean = true
 ) = YosWrapper {
     val shape = YosRoundedCornerShape(cornerRadius)
     val url = dataLambda()
@@ -280,7 +299,11 @@ fun ShadowImageWithCache(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .dropShadow(shape, shadowAlpha, shadowType, shadowOverlay)
+            .then(
+                if (drawShadow) {
+                    Modifier.dropShadow(shape, shadowAlpha, shadowType, shadowOverlay)
+                } else Modifier
+            )
             .graphicsLayer {
                 compositingStrategy = CompositingStrategy.Offscreen
                 clip = true

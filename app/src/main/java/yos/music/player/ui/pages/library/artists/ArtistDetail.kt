@@ -110,6 +110,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
+import yos.music.player.ui.widgets.basic.hiresCoverUrl
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -195,8 +196,9 @@ private const val HeroTabletReflectionBandMaxDp = 260f
 /** 平板竖屏把内容列表整体上抬的高度：方形 hero 让内容起始过低，直接落在 hero 高度上补偿。 */
 private const val HeroTabletContentRaiseDp = 40f
 /**
- * 倒影烘焙的最大宽度（像素）。源图仅按 1024px 取回（见下方 ImageRequest.size(1024)），
- * 因此按全宽烘焙纯属把 1024 源图放大存进大位图：平板方形 hero 全宽可达 ~2000px，
+ * 倒影烘焙的最大宽度（像素）。解码侧按 1024px 取图（见下方 ImageRequest.size(1024)），
+ * 源图本身是高清档（[hiresCoverUrl] 升到 1080，见 avatarUrl 的注释）。
+ * 因此按全宽烘焙纯属把已足够的源图放大存进大位图：平板方形 hero 全宽可达 ~2000px，
  * 位图约 2000×2650 ≈ 21MB（手机仅 ~1100px/7MB），既无任何画质收益，又极易 OOM 或
  * 超出取图死线 → 烘焙概率性失败 → 倒影缺失硬衔接。封顶到源图分辨率，绘制时再放大回整盒。
  */
@@ -273,7 +275,14 @@ fun ArtistDetail(
         isLandscape -> 1f  // 横屏（手机+平板）统一方形
         else -> screenWidthDp / (screenHeightDp * HeroPhoneHeightFraction).coerceAtLeast(200f)
     }
-    val avatarUrl = detail.value?.avatarUrl?.takeIf { it.isNotBlank() }
+    // 歌手头像与歌曲封面一样，数据层统一把 `{size}` 解析成 400（艺人列表 48dp 头像够用），
+    // 但本页 hero 是**满屏宽**（1280 物理像素），400 源要放大 3.2 倍，明显发糊。
+    // 在**源头**一次性升到高清档：paletteKey / bakeCacheKey / 三个 memoryCacheKey 全部
+    // 由这个 URL 派生，只改解码处会让"缓存键记着 400、实际加载 1080"对不上，
+    // 回访时命中旧的 400 烘焙图，看着依旧糊且无从察觉。
+    val avatarUrl = detail.value?.avatarUrl
+        ?.takeIf { it.isNotBlank() }
+        ?.let { hiresCoverUrl(it) as? String }
     // 无照片歌手（酷狗未上传头像 → avatarUrl 恒为 null）不能沿用「从照片取色」的链路：
     // 该链路下整页背景退化为主题兜底 0xFFF2F2F4/0xFF1B1B1D，恰好等于页面底色，hero 与
     // 内容区毫无分界，观感即「白板 + 没有背景色」。改由艺人标识派生身份色顶上。
@@ -886,17 +895,18 @@ fun ArtistDetail(
         }
         @Composable fun HeroPhoto(modifier: Modifier) {
             AsyncImage(
-                model = remember(detail.value?.avatarUrl) {
+                // 用已升级到高清档的 avatarUrl（而非 detail.value?.avatarUrl 的 400 档）
+                model = remember(avatarUrl) {
                     ImageRequest.Builder(context)
-                        .data(detail.value?.avatarUrl)
+                        .data(avatarUrl)
                         // 不设占位/兜底图：解码期间保持透明，透出页面底色（缓存命中即取色），
                         // 避免白色人形图标在解码窗口里闪一下。加载失败（onError）另行回落到
                         // 身份派生色 + monogram，仍不落白色人形。
                         .allowHardware(false)
                         .size(1024)
                         // 与上方单次解码同键，命中内存缓存即刻显示（零额外解码）
-                        .memoryCacheKey("artist-hero:${detail.value?.avatarUrl}")
-                        .diskCacheKey(detail.value?.avatarUrl)
+                        .memoryCacheKey("artist-hero:$avatarUrl")
+                        .diskCacheKey(avatarUrl)
                         .build()
                 },
                 contentDescription = null,
@@ -988,7 +998,9 @@ fun ArtistDetail(
                         // 横屏（平板+手机）：左方形头像 + 右名字/操作/数量/简介
                         ArtistTabletLandscapeHeader(
                             name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                            avatarUrl = detail.value?.avatarUrl,
+                            // 传已升级的高清 URL（不是 detail.value?.avatarUrl 的 400 档）：
+                            // 横屏这枚头像最大 300dp（≈975 物理像素），400 源要放大 2.4 倍。
+                            avatarUrl = avatarUrl,
                             avatarRevealed = heroRevealed.value,
                             hasIntro = !detail.value?.intro.isNullOrBlank(),
                             introOpen = introOpen.value,

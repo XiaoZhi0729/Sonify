@@ -83,6 +83,9 @@ import yos.music.player.ui.widgets.basic.kugouHash
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.ArtworkCrossfadeLayers
 import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
+import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.effects.dropShadow
+import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.coverArtworkGesture
@@ -673,6 +676,24 @@ private fun LandscapeAlbumCover(
                             // morph 的那个外层 aspectRatio 节点，几何端点不受影响。
                             .coverArtworkEffect(state = coverState)
                     ) {
+                        // 阴影层：独立于封面图层，只按封面尺寸画一次。
+                        // 必须挂在图层之外——dropShadow 是原生 Canvas + BlurMaskFilter
+                        // 的绘制，依赖所在图层 alpha 为 1；交叉淡化时每张封面自己的图层
+                        // alpha 在 0..1 之间，阴影会被一并抹掉（"切歌时阴影消失"）。
+                        // 参数与 ShadowImageWithCache 的默认投影逐项一致
+                        // （0.23f / Large / overlay），交接瞬间不跳。
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .dropShadow(
+                                    shape = remember("LandscapeAlbum_shadowShape") {
+                                        YosRoundedCornerShape(8.dp)
+                                    },
+                                    shadowAlpha = 0.23f,
+                                    shadowType = ShadowType.Large,
+                                    overlay = true
+                                )
+                        )
                         // 新旧封面交叉淡化：与竖屏大封面、背景共用同一条时间轴。
                         ArtworkCrossfadeLayers(
                             transition = LocalTrackArtworkTransition.current,
@@ -686,7 +707,9 @@ private fun LandscapeAlbumCover(
                                 imageQuality = ImageQuality.RAW,
                                 // 与竖屏大封面同档位：400 档在横屏同样被放大到发虚。
                                 hiresCover = true,
-                                shadowOverlay = true
+                                shadowOverlay = true,
+                                // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
+                                drawShadow = false
                             )
                         }
                     }

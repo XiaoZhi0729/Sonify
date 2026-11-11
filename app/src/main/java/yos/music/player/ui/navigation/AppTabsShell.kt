@@ -157,11 +157,17 @@ private fun HouseLayer(
                 if (modulateAlpha) compositingStrategy = CompositingStrategy.ModulateAlpha
             }
             // Compose 不会因为图层全透就跳过子树绘制：alpha==0 的隐藏页仍然逐帧把整屏内容
-            // 画一遍。三页同时存在时，每帧有两屏是完全看不见的白工。
+            // 画一遍。四个 house 同时只有一个 alpha==1，于是每帧有三整屏是纯白工。
             //
-            // 默认（drawWhenHidden=true）必须一个节点都不挂，而不是挂一个无条件透传的
-            // drawWithContent：多一个 DrawModifierNode 会改变图层合并与脏区传播的拓扑，
-            // 即使画面逐像素相同也不该在默认路径上拿它赌观感。
+            // **默认走 drawWithContent 拦截**（drawWhenHidden=false）：alpha==0 时一行
+            // drawContent() 都不调用，子树完全不产出绘制指令。
+            // 这条拦截是恒等变换——alpha 为 0 的图层本来就不贡献任何可见像素。
+            // `alpha` 是普通 Float 参数，闭包每次重组换新实例 → node update → invalidateDraw，
+            // 所以淡入淡出过程（alpha 在 0..1 之间）照常逐帧绘制，只有真正落定到 0 才省。
+            //
+            // ★不要改成「按隐藏状态挂/卸 Modifier 节点」：那会改 Modifier 链结构，
+            // 正是 perf-demand-gating-ablation-20261024 里 63fps→18fps 的死法。
+            // 常量拦截器挂不挂由 `drawWhenHidden` 决定，运行期不变。
             .then(
                 if (drawWhenHidden) Modifier
                 else Modifier.drawWithContent {

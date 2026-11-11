@@ -33,7 +33,11 @@ object PersonalFmObject {
     /** 单次补货累计上限，防御上游无去重地无限返回（须 ≥ BUFFER_TARGET 才能从 0 补满）。 */
     const val TOPUP_CAP = 60
 
-    /** 冷启动首段发布目标：凑到这么多首立即发布并关 loading（用户裁决先出 10 首）。 */
+    /**
+     * 冷启动首段发布目标（**已废弃，保留仅为兼容既有引用**）。
+     * v3 改成「首批到货立即发布」，[load] 不再读这个常量。
+     */
+    @Deprecated("首拉改为首批即发布，不要再依赖凑满 N 首")
     const val FIRST_PUBLISH_TARGET = 10
 
     val songs = mutableStateOf<List<KugouNewSong>>(emptyList())
@@ -41,38 +45,60 @@ object PersonalFmObject {
     // 防重入守卫与 UI 态分离：loading 初始为 true（首屏转圈），若直接以 loading 判重会拦掉首拉
     val inFlight = mutableStateOf(false)
     val appending = mutableStateOf(false)
+    /** 首拉/后台补货协程是否仍在跑。与 [inFlight] 分离：后者第一批到货就放行 UI。 */
+    private val topUpRunning = mutableStateOf(false)
     val endReached = mutableStateOf(false)
     val loadError = mutableStateOf<String?>(null)
     private val cursorHash = mutableStateOf("")
+
+    /**
+     * 主页「私人电台」板块当前聚焦的台下标。
+     *
+     * 为什么存在这里而不是板块自己的 `remember`：主页是 `LazyColumn`，板块滚出屏幕
+     * 会被回收重建，`remember` 随之清零 → 滚回来跳回第一台。这个对象是进程级单例，
+     * 存它才能"滚回来还在原处"。不做跨进程持久化：下标是会话性的浏览位置，
+     * 重启后从第一批的第一台开始更符合预期。
+     */
+    var homeFocusIndex: Int = 0
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** 进入页面时调用：已有内容则跳过，否则重置队列并首拉补到 [BUFFER_TARGET]。 */
     fun ensureLoaded() {
-        if (songs.value.isNotEmpty() || inFlight.value) return
+        // ★topUpRunning 必须一起判：inFlight 在第一批到货时就置 false 了，
+        // 但后台还在继续补货。只看 inFlight 会让第二次 ensureLoaded() 触发
+        // 又一次 load()，把 songs 清空重拉（实测会连闪两下）。
+        if (songs.value.isNotEmpty() || inFlight.value || topUpRunning.value) return
         load()
     }
 
     fun load() {
-        if (inFlight.value) return
+        if (inFlight.value || topUpRunning.value) return
         inFlight.value = true
+        topUpRunning.value = true
         loading.value = true
         loadError.value = null
         endReached.value = false
-        songs.value = emptyList()
+        // 刻意不清空旧内容：新累积结果到货时整体替换（见下方 songs.value = ...）。
+        // 先清空会让主页 Pager 经历 size=N → 0 → M 的中间态，是越界与闪动的诱因。
         cursorHash.value = ""
         scope.launch {
             var firstError: String? = null
             var attempts = 0
             var cursor = ""
-            // **分两段发布**（用户裁决：冷启动凑满 50 首太慢，先出 10 首立即可用）：
-            //   第一段：凑到 [FIRST_PUBLISH_TARGET]（约 2 批）整段发布并关掉 loading
-            // ——首屏转圈只等 2 个网络往返，不再"加载很长一段时间"。
-            //   第二段：后台继续补到 [BUFFER_TARGET]，每批到货即增量发布（追加只发生
-            // 在队尾，聚焦卡下标映射不变；计数器分母 10→15→…→50 跳变属可接受代价，
-            // 与 appendMore 的快滑补货同一策略）。
+
+            /**
+             * **首批到货立即发布**（v3 加载优化）。
+             *
+             * 上版要凑满 `FIRST_PUBLISH_TARGET=10`（2 个串行 RTT）才 publish 一次，
+             * 主页骨架因此多挂一整个网络往返。现在改成：第一批拿到就发布并关 loading，
+             * 之后每批增量发布。追加只发生在队尾，已显示的下标不会变；
+             * 队列长度 5→10→15… 的跳变由 UI 的 Pager `key = hash` 吸收，不闪。
+             *
+             * 上游每批 ~5 首，一批已经够铺满首页那几张圆封面。
+             */
             val accumulated = ArrayList<KugouNewSong>(BUFFER_TARGET)
-            while (!endReached.value && accumulated.size < FIRST_PUBLISH_TARGET && attempts < TOPUP_CAP) {
+            while (!endReached.value && songs.value.size < BUFFER_TARGET && attempts < TOPUP_CAP) {
                 attempts++
                 val result = KugouRepository.getPersonalFmSongs(hash = cursor)
                 val fresh = result.getOrDefault(emptyList())
@@ -80,6 +106,9 @@ object PersonalFmObject {
                 val batch = fresh.filter { it.hash.isNotEmpty() && it.hash !in known }
                 if (batch.isEmpty()) {
                     if (accumulated.isEmpty()) {
+                        // 首拉就失败：记下错误并立刻收尾。
+                        // ★不要像上版那样再进第二段循环重试一次——每层还有 3 次
+                        // retryResult 退避，服务端挂掉时白等好几秒。
                         firstError = result.exceptionOrNull()?.message
                     } else {
                         endReached.value = true
@@ -88,30 +117,27 @@ object PersonalFmObject {
                 }
                 accumulated += batch
                 cursor = batch.last().hash
-            }
-            cursorHash.value = cursor
-            songs.value = accumulated
-            loadError.value = firstError
-            inFlight.value = false
-            loading.value = false
-            // 第二段：后台补满到 BUFFER_TARGET（loading 已关，UI 立即可交互）
-            while (!endReached.value && songs.value.size < BUFFER_TARGET && attempts < TOPUP_CAP) {
-                attempts++
-                val result = KugouRepository.getPersonalFmSongs(hash = cursor)
-                val fresh = result.getOrDefault(emptyList())
-                val known = songs.value.map { it.hash }.toSet()
-                val batch = fresh.filter { it.hash.isNotEmpty() && it.hash !in known }
-                if (batch.isEmpty()) {
-                    endReached.value = true
-                    break
-                }
-                songs.value = songs.value + batch
-                cursor = batch.last().hash
                 cursorHash.value = cursor
+                songs.value = accumulated.toList()
+
+                // 第一批到货这一刻就关 loading / 放行 UI，不等后面的批次
+                if (loading.value) {
+                    loadError.value = null
+                    inFlight.value = false
+                    loading.value = false
+                }
                 if (MediaController.isFmQueue.value) {
                     MediaController.appendToQueue(batch.map { KugouRepository.toQueueMediaItem(it) })
                 }
             }
+
+            // 收尾：一次都没成功时也要关 loading，否则骨架会永远挂着
+            if (inFlight.value) {
+                loadError.value = firstError
+                inFlight.value = false
+                loading.value = false
+            }
+            topUpRunning.value = false
         }
     }
 

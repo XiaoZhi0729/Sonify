@@ -268,6 +268,7 @@ import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.liquid.YosSwitch
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.effects.dropShadow
 import yos.music.player.ui.widgets.effects.overlayEffect
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.ArtworkCrossfadeLayers
@@ -1692,6 +1693,12 @@ private fun ColumnScope.Album(
                     ) {
                         // 交互动效层（倾斜/缩放/涟漪/描边高光）必须套在**所有图层之外**：
                         // 交叉淡化期间有两张图，每张各画一份描边会叠出双倍亮度。
+                        //
+                        // 投影同理，也必须挂在**这一层**而不是每张图上：dropShadow 是原生
+                        // Canvas + BlurMaskFilter 的绘制，依赖所在图层 alpha 为 1；而交叉淡化
+                        // 期间每张封面自己的图层 alpha 在 0..1 之间、还要强制离屏合成，
+                        // 阴影会被一并抹掉——表现就是"切歌时阴影消失、淡完才回来"。
+                        // 阴影属于卡片，全程恒定，与封面的淡入淡出无关。
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1704,6 +1711,21 @@ private fun ColumnScope.Album(
                                 .then(modifier)
                                 .coverArtworkEffect(state = coverState)
                         ) {
+                            // 阴影层：独立于封面图层，只按封面尺寸画一次。
+                            // 参数必须与 ShadowImageWithCache 的默认投影逐项一致
+                            // （0.23f / Large / overlay），否则交接瞬间阴影会跳。
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .dropShadow(
+                                        shape = remember("Album_shadowShape") {
+                                            YosRoundedCornerShape(8.dp)
+                                        },
+                                        shadowAlpha = 0.23f,
+                                        shadowType = ShadowType.Large,
+                                        overlay = true
+                                    )
+                            )
                             // 新旧封面双图层交叉淡化：图层表与进度都来自外壳那份唯一时间轴，
                             // 与背景同起同止。alpha/缩放只在 graphicsLayer 块里读，零重组。
                             ArtworkCrossfadeLayers(
@@ -1720,7 +1742,10 @@ private fun ColumnScope.Album(
                                     // 大封面要 ≈1137 物理像素，数据层统一的 400 档被放大 2.8 倍会发虚；
                                     // 只在这一处升到 1080（列表行仍用 400，流量不变）。
                                     hiresCover = true,
-                                    shadowOverlay = true
+                                    shadowOverlay = true,
+                                    // 投影已由外层容器画过（见上方注释），逐图层再画会被
+                                    // 图层 alpha 抹淡，还会叠成两份。
+                                    drawShadow = false
                                 )
                             }
                         }
@@ -3533,6 +3558,23 @@ private fun PlayingBar(
                 // 铺到每个图层会变成两份共享元素、两份坐标上报。
                 .then(modifier)
         ) {
+            // 阴影层：独立于封面图层，只按封面尺寸画一次。
+            // 必须挂在图层之外——dropShadow 是原生 Canvas + BlurMaskFilter 的绘制，
+            // 依赖所在图层 alpha 为 1；交叉淡化时每张封面自己的图层 alpha 在 0..1
+            // 之间，阴影会被一并抹掉（"切歌时阴影消失、淡完才回来"）。
+            // 参数与本条原来的投影逐项一致（0.23f / Small / overlay / 5dp）。
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .dropShadow(
+                        shape = remember("PlayingBar_shadowShape") {
+                            YosRoundedCornerShape(5.dp)
+                        },
+                        shadowAlpha = 0.23f,
+                        shadowType = ShadowType.Small,
+                        overlay = true
+                    )
+            )
             ArtworkCrossfadeLayers(
                 transition = LocalTrackArtworkTransition.current,
                 artwork = albumUrlLambda,
@@ -3547,7 +3589,9 @@ private fun PlayingBar(
                     // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
                     imageQuality = ImageQuality.HIGH,
                     shadowType = ShadowType.Small,
-                    shadowOverlay = true
+                    shadowOverlay = true,
+                    // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
+                    drawShadow = false
                 )
             }
         }
@@ -4368,13 +4412,15 @@ internal fun PlayerControl(
                 YosWrapper {
                     //println("重组：控制区域内部 - 进度条")
                     Slider(
-                        value = sliderPosition.floatValue,
+                        // 与音量条同一条防线：NaN 进 ProgressBarRangeInfo 就是进程级崩溃。
+                        // 这里的 value 来自播放器位置，正常不会 NaN，但 seek 前后偶有脏值。
+                        value = sliderPosition.floatValue.let { if (it.isFinite()) it else 0f },
                         onValueChange = { newValue ->
                             // 按下期间数值由本控件独占，忽略 M3 内建绝对拖拽的写入
                             if (!sliderPressActive.value) {
                                 isSliding.value = true
 
-                                sliderPosition.floatValue = newValue
+                                sliderPosition.floatValue = if (newValue.isFinite()) newValue else 0f
                                 beginScrub(newValue)
                                 val newTotalSeconds = newValue.toLong() / 1000
                                 playedTime.value = formatTime(newTotalSeconds)
@@ -4490,7 +4536,14 @@ internal fun PlayerControl(
                         track = {
                             Track(
                                 sliderPositions = SliderPositions(
-                                    initialActiveRange = 0f..(sliderPosition.floatValue / playingDuration.longValue)
+                                    // duration 为 0（未就绪/流媒体时长未知）时 0f/0L 得 NaN、x/0L 得 Infinity，
+                                    // 一旦流到进度轨道就是整段画不出来；这里兜成 0（还没开始播放）
+                                    initialActiveRange = 0f..(
+                                        if (playingDuration.longValue > 0L) {
+                                            (sliderPosition.floatValue / playingDuration.longValue)
+                                                .coerceIn(0f, 1f)
+                                        } else 0f
+                                        )
                                 ), height = sliderTrackHeight,
                                 // 高潮起点标记：数据由切歌时 SongClimaxState 异步取到，
                                 // 状态变化会重组重绘；时长未知/本地曲/开关关闭时为 null。
@@ -4794,10 +4847,22 @@ private fun VolumeSlider(
     onControlGesture: (Boolean) -> Unit = {}
 ) {
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+    // 车机可能返回 0（音频 HAL 未就绪，或音量交由总线/功放管理）。
+    // 以 0 作除数会得到 NaN，而 NaN 能穿过 Kotlin 的 coerceIn（NaN<min 与 NaN>max 同为 false），
+    // 一路流到 ProgressBarRangeInfo 的 require(!current.isNaN()) 直接崩进程——
+    // 崩溃发生在语义树合并后的测量期，所以栈顶是 onMeasure 而不是本文件。
+    // 钳到 1 让除法恒有定义；maxVolumeKnown 记住原始值是否可信，不可信时宁可显示 0。
+    val rawMaxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+    val maxVolumeKnown = rawMaxVolume > 0
+    val maxVolume = rawMaxVolume.coerceAtLeast(1)
     val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
     val sliderPosition =
-        remember("VolumeSlider_sliderPosition") { mutableFloatStateOf(currentVolume / maxVolume.toFloat()) }
+        remember("VolumeSlider_sliderPosition") {
+            // 上钳 1f：个别 ROM 的 STREAM_MUSIC 索引会超出 max，归一化后必须落在 0..1
+            mutableFloatStateOf(
+                if (maxVolumeKnown) (currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
+            )
+        }
     val sliding = remember("VolumeSlider_sliding") {
         mutableStateOf(false)
     }
@@ -4831,7 +4896,9 @@ private fun VolumeSlider(
 
     val volumeChangeReceiver = remember("VolumeSlider_volumeChangeReceiver") {
         VolumeChangeReceiver { newVolume ->
-            sliderPosition.floatValue = newVolume / maxVolume.toFloat()
+            // 系统广播给的是绝对索引，同样按「已知 max」归一化，避免脏值进 Slider
+            sliderPosition.floatValue =
+                if (maxVolumeKnown) (newVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
         }
     }
     val intentFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
@@ -4845,14 +4912,19 @@ private fun VolumeSlider(
     val volumePressX = remember("VolumeSlider_pressX") { mutableFloatStateOf(0f) }
     // 换算用的宽度在按下瞬间冻结：按下时图标/轨道有"变粗"动画，宽度会逐帧变化
     val volumeDragWidthPx = remember("VolumeSlider_dragWidthPx") { mutableFloatStateOf(0f) }
-    val volumeSetter = remember("VolumeSlider_setter") {
+    // maxVolume 取自系统，音频服务晚就绪时会变（车机尤其常见），
+    // 所以必须进 remember 的键，否则这套会话会一直沿用首次读到的旧值。
+    val volumeSetter = remember("VolumeSlider_setter", maxVolume, maxVolumeKnown) {
         { value: Float ->
-            sliderPosition.floatValue = value
-            audioManager.setStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                (value * maxVolume).toInt().coerceIn(0, maxVolume),
-                0
-            )
+            val safe = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+            sliderPosition.floatValue = safe
+            if (maxVolumeKnown) {
+                audioManager.setStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    (safe * maxVolume).toInt().coerceIn(0, maxVolume),
+                    0
+                )
+            }
         }
     }
 
@@ -4902,22 +4974,29 @@ private fun VolumeSlider(
             }
 
             Slider(
-                value = (animatedProgress.value * maxVolume),
+                // 最后一道防线：任何路径漏进来的 NaN/Infinity 都在这里清成 0。
+                // ProgressBarRangeInfo 对 current 做 require(!isNaN)，一旦放进去就是进程级崩溃。
+                value = (animatedProgress.value * maxVolume).let { if (it.isFinite()) it else 0f },
                 onValueChange = { newValue ->
                     // 按下期间数值由本控件独占（相对拖动/点按自算），
                     // 忽略 M3 内建绝对拖拽的写入，否则会闪到手指坐标并污染基准。
                     if (!volumePressActive.value) {
                         sliding.value = true
-                        sliderPosition.floatValue = newValue / maxVolume
-                        audioManager.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            newValue.toInt().coerceIn(0, maxVolume),
-                            0
-                        )
+                        sliderPosition.floatValue = (newValue / maxVolume).coerceIn(0f, 1f)
+                        if (maxVolumeKnown) {
+                            audioManager.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                newValue.toInt().coerceIn(0, maxVolume),
+                                0
+                            )
+                        }
                         onSlider()
                     }
                 },
                 valueRange = 0f..maxVolume.toFloat(),
+                // 拿不到 max（车机返回 0）时不让人拖：拖动只会算出假的绝对位置，
+                // 却完全无法改变真实音量，比禁用更误导。
+                enabled = maxVolumeKnown,
                 colors = SliderDefaults.colors(
                     activeTrackColor = Color.White,
                     inactiveTrackColor = Color(0x0DFFFFFF)
@@ -4953,11 +5032,15 @@ private fun VolumeSlider(
                                         onDragDelta = { totalDx ->
                                             sliding.value = true
                                             volumeRelDragged.value = true
-                                            volumeSetter(
-                                                (volumeRelativeBase.floatValue +
-                                                        totalDx / volumeDragWidthPx.floatValue)
-                                                    .coerceIn(0f, 1f)
-                                            )
+                                            // 宽度在首帧/折叠/未测量时是 0，0f 作除数得到 Infinity 或 NaN
+                                            val dragWidth = volumeDragWidthPx.floatValue
+                                            if (dragWidth > 0f) {
+                                                volumeSetter(
+                                                    (volumeRelativeBase.floatValue +
+                                                            totalDx / dragWidth)
+                                                        .coerceIn(0f, 1f)
+                                                )
+                                            }
                                             onSlider()
                                         },
                                         onEnd = { wasRelativeDrag ->

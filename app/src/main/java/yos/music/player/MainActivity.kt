@@ -1371,10 +1371,16 @@ class MainActivity : BaseActivity() {
                             }
                         }
                         val navBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
-                            GlassDiagnostics.tick(
-                                "nav_backdrop_producer",
-                                "size=${size.width.toInt()}x${size.height.toInt()}"
-                            )
+                            // ★这里曾经有一个 GlassDiagnostics.tick(...)：
+                            // onDraw 是**每帧**执行的（navBackdrop 没有 recordKey），而 tick
+                            // 内部是 @Synchronized + SystemClock.uptimeMillis() + 字符串插值，
+                            // 三项都**不受日志节流约束**——节流只在真正打印那一下生效。
+                            // 也就是说它每帧都在热路径上白付一次取时间、一次抢锁、一次建串，
+                            // 这正是 cold-start-scroll-perf-audit-20261101 里清掉
+                            // 播放页逐帧诊断的同一类问题，不该在这里复活。
+                            // 需要确认 producer 是否还在跑，用下方 GlassDiagnostics.state
+                            // （只在值变化时打印）就够，不要往 onDraw 里塞任何逐帧代码。
+                            //
                             // Producer 的全屏底层保持黑色；页面视觉层仍单独使用主题背景。
                             drawRect(Color.Black)
                             drawContent()
@@ -2265,9 +2271,10 @@ class MainActivity : BaseActivity() {
                                                         ) {
                                                             // 运动期/展开期不画
                                                         } else {
-                                                            val glowColor = Color.White.copy(
-                                                                alpha = if (shellIsNight) 0.1f else 0.2f
-                                                            )
+                                                            // 浅色 0.2 → 0.1（与底栏 LiquidBottomTabs 同步，
+                                                            // 用户要求只削弱上下两条渐变带）：白纱本体已是半透明白，
+                                                            // 6dp 带再 0.2 偏亮。上方 1dp 描边高光的 color 不动。
+                                                            val glowColor = Color.White.copy(alpha = 0.1f)
                                                             val glowH = 6.dp.toPx()
                                                             // 顶边高光向下渐隐
                                                             drawRect(
@@ -4216,8 +4223,10 @@ private fun DrawScope.drawShellCheapRim(
     )
 
     // ---- ② 白色提亮边（近似 HighlightStyle.Default angle=90：亮在上下直边）----
-    val whiteAlpha = if (isNight) 0.1f else 0.2f
-    val edgeColor = Color.White.copy(alpha = whiteAlpha * glowAlpha)
+    // 描边与 ③ 的渐变带原本共用一个 whiteAlpha；现在只压渐变带（浅色 0.2 → 0.1，
+    // 与底栏及静止态 onDrawSurface 同步），描边保持原值，故拆成两个系数。
+    val edgeAlpha = if (isNight) 0.1f else 0.2f
+    val edgeColor = Color.White.copy(alpha = edgeAlpha * glowAlpha)
     drawOutline(
         outline = outline,
         brush = Brush.verticalGradient(
@@ -4230,8 +4239,9 @@ private fun DrawScope.drawShellCheapRim(
         blendMode = BlendMode.Plus,
     )
 
-    // ---- ③ 上下两条白渐变带（原配方逐值照搬，含 6dp 高度与 Plus 叠加）----
-    val glowColor = Color.White.copy(alpha = whiteAlpha * glowAlpha)
+    // ---- ③ 上下两条白渐变带（几何逐值照搬原配方：6dp 高度与 Plus 叠加；只降浅色 alpha）----
+    val glowBandAlpha = 0.1f
+    val glowColor = Color.White.copy(alpha = glowBandAlpha * glowAlpha)
     val glowH = 6.dp.toPx()
     if (size.height <= glowH * 2f || size.width <= 0f) return
     drawRect(

@@ -139,6 +139,7 @@ internal class HomeEditDragHolder {
 internal fun homeSectionTitle(id: HomeSectionId): String = stringResource(
     when (id) {
         HomeSectionId.RecentlyPlayed -> R.string.home_continue_listening
+        HomeSectionId.PersonalFm -> R.string.home_personal_fm_title
         HomeSectionId.EverydayRecommend -> R.string.home_everyday_recommend_title
         HomeSectionId.RecommendPlaylists -> R.string.discovery_recommend_playlists_title
         HomeSectionId.NewSongs -> R.string.discovery_new_songs_title

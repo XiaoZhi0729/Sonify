@@ -91,7 +91,9 @@ import yos.music.player.data.libraries.defaultArtistsName
 import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.objects.KugouSyncCoordinator
+import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.OnlineAlbumObject
+import yos.music.player.data.objects.PersonalFmObject
 import yos.music.player.data.objects.RankObject
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouNewSong
@@ -159,6 +161,16 @@ fun Discovery(
     val everyStatus = DiscoveryObject.everydayRecommendSongsStatus
     val scope = rememberCoroutineScope()
 
+    // 私人电台：与「音乐画廊」页共享同一条 FM 队列（PersonalFmObject 是进程级单例）。
+    // 这里只读数组与加载态，拉取由板块自己 ensureLoaded() 触发。
+    val fmSongs = PersonalFmObject.songs.value
+    val fmStatus = when {
+        PersonalFmObject.loadError.value != null -> "error:" + PersonalFmObject.loadError.value
+        fmSongs.isNotEmpty() -> "ok"
+        PersonalFmObject.loading.value -> "loading"
+        else -> "empty"
+    }
+
     // 最近播放：收听历史（最近优先，后台切歌实时更新），首页最多展示 10 首
     val recentlyPlayed = MusicLibrary.recentlyPlayed.take(10)
 
@@ -196,6 +208,11 @@ fun Discovery(
             // 首次组合：Application 可能还没发请求（或已发完在防抖窗口内），
             // ensureFresh 自己会判断，重复调用不会重复打接口。
             DiscoveryObject.ensureFresh()
+            // 私人电台的首拉也必须在这里触发。
+            // 不能写在 PersonalFmHomeSection 里：那个 Composable 只在
+            // hasData = songs.isNotEmpty() 时才被组合，空列表时永远不会执行，
+            // 于是"没数据 → 不组合 → 永不拉取"形成死锁（真机实测停在 loading）。
+            PersonalFmObject.ensureLoaded()
         } else {
             lastRevision.value = discoveryRevision
             refreshing.value = true
@@ -220,12 +237,17 @@ fun Discovery(
     LaunchedEffect(
         recommendPlaylists.value,
         newAlbums.value,
-        rankList.value
+        rankList.value,
+        fmSongs.size
     ) {
         val urls = buildList {
             addAll(recommendPlaylists.value.take(4).map { it.artworkUrl })
             addAll(newAlbums.value.take(4).map { it.coverUrl })
             addAll(rankList.value.take(4).map { it.coverUrl })
+            // 私人电台：预热前 3 张圆封面（可见窗口）。
+            // prefetchCover 用 "$url|HIGH" 键，CircleCover 的 ImageRequest 必须
+            // 用同一套 coverCacheKey 才能真正命中，否则只是白发一次请求。
+            addAll(fmSongs.take(3).map { it.artworkUrl })
         }
         urls.forEach { prefetchCover(prewarmContext, it) }
     }
@@ -241,6 +263,7 @@ fun Discovery(
     val listStateBrowse = rememberLazyListState()
     val listStateEdit = rememberLazyListState()
     val visibleSections = layout.filter { it.visible }
+
     // 编辑草稿：编辑态内所有改动只改草稿；「完成并保存」/「保存」才落盘，否则丢弃
     val draft = remember { mutableStateOf<List<HomeSectionConfig>>(emptyList()) }
     val editLayout = draft.value
@@ -294,7 +317,9 @@ fun Discovery(
             sectionShowsSkeleton(newSongs.value, newSongsStatus.value) ||
             sectionShowsSkeleton(newAlbums.value, newAlbumsStatus.value) ||
             sectionShowsSkeleton(rankList.value, status.value) ||
-            sectionShowsSkeleton(everySongs.value, everyStatus.value)
+            sectionShowsSkeleton(everySongs.value, everyStatus.value) ||
+            // 私人电台：正在首拉且一首都没到 → 显示骨架（与下方 slot 的判据同源）
+            sectionShowsSkeleton(fmSongs, fmStatus)
     // 关闭要宽限一个完整退场时长：pending 变 false 时骨架还在跑 fadeOut
     // （80ms 延迟 + 280ms 淡出），动画若立刻销毁，退场途中扫光会突然定格。
     // 与之前删掉的「骨架延迟卸载」不同：这里只控制动画是否创建、不影响骨架显隐，
@@ -368,7 +393,34 @@ fun Discovery(
             }
         }
 
-        // ② 每日推荐（样式与「新歌精选」一致：横向分页多列歌曲行；无数据则整段隐藏）
+        // ② 私人电台：无卡片边界的提取色板块（玻璃卡 + 圆形封面横排）
+        //
+        // 与其它板块不同的是它自己画标题行（DiscoverySectionHeader），因为色域必须
+        // 从标题下方就开始，而统一的 discover 槽位会在内容和标题之间插 24dp 间距，
+        // 那会让色域与标题之间出现一条明显的断层——正是这次要消除的"卡片感"。
+                            HomeSectionId.PersonalFm -> item("PersonalFmSection") {
+            DiscoverySectionSlot(
+                hasData = fmSongs.isNotEmpty(),
+                status = fmStatus,
+                shimmer = shimmer,
+                revealIndex = revealIndex,
+                // 未登录时给引导文案（抄 PersonalFmDetail 的同款分支）；
+                // 真错误交给 slot 自己的 error 分支，这里返回 null 不重复画一行。
+                emptyText = fmEmptyText(
+                    loggedIn = KugouAccountState.isLoggedIn,
+                    error = PersonalFmObject.loadError.value,
+                    empty = stringResource(id = R.string.personal_fm_empty),
+                    hint = stringResource(id = R.string.personal_fm_login_hint)
+                ),
+                skeleton = { HomeSkeletonPersonalFm(shimmer) }
+            ) {
+                PersonalFmHomeSection(
+                    onOpenDetail = { navController.toUI(UI.PersonalFmDetail) }
+                )
+            }
+        }
+
+        // ③ 每日推荐（样式与「新歌精选」一致：横向分页多列歌曲行；无数据则整段隐藏）
                             HomeSectionId.EverydayRecommend -> item("EverydayRecommendSection") {
             DiscoverySectionSlot(
                 hasData = everySongs.value.isNotEmpty(),
@@ -991,7 +1043,7 @@ internal fun RankCardItem(
  * 与「最近播放」Header 的整行点击行为一致。
  */
 @Composable
-private fun DiscoverySectionHeader(title: String, onClick: (() -> Unit)? = null) {
+internal fun DiscoverySectionHeader(title: String, onClick: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier

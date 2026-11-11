@@ -186,9 +186,11 @@ fun LiquidBottomTabs(
             // 一条白色内渐变带，颜色与白高光一致、同用 Plus 叠加。画在本层 surface
             // 记录内，节点已按 Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
             if (GlassProbe.current.navContainerHighlight) {
-                val glowColor = Color.White.copy(
-                    alpha = if (isLightTheme) 0.2f else 0.1f
-                )
+                // 浅色 0.2 → 0.1（2026-11-09 用户要求只削弱这两条渐变带）：6dp 白渐变带
+                // 直接压在 0.5 白纱上偏亮。只动这里——1dp 描边高光（上面 HighlightStyle.Default
+                // 的 color，仍为浅色 0.2）与黑边环绕高光保持原值，胶囊轮廓不受影响。
+                // 深色原本就是 0.1，改后两态同值。
+                val glowColor = Color.White.copy(alpha = 0.1f)
                 val glowH = 6f.dp.toPx()
                 // 顶边高光向下渐隐
                 drawRect(

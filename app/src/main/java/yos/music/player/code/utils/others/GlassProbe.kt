@@ -88,12 +88,24 @@ data class GlassProbe(
     /**
      * 非激活的 HouseLayer（alpha==0）是否仍然绘制。
      *
-     * 默认 true = 现状：三个全屏页（主页/资料库/搜索）每帧全部绘制，其中两屏完全不可见。
-     * 这同时是 alpha caused saveLayer 与大量 FillRectOp/TextureOp 的直接来源，
-     * 而且**与液态玻璃无关**——正好解释了为什么整个壳玻璃消融阶梯是空结果。
-     * 开关：nohiddendraw（置为 false = 不可见就不画，即候选修复）
+     * **默认 false = 不可见就不画。** 四个 house 都是全屏子树，同时只有一个 `alpha==1`，
+     * 另外三个停在 `alpha==0`；Compose 不会因为图层全透就跳过子树绘制，所以改动前
+     * 每帧有三整屏是在画完全看不见的东西。这既是 alpha caused saveLayer 的直接来源，
+     * 又是 FillRectOp/TextureOp 的大头，而且**与液态玻璃无关**——正好解释了为什么
+     * 整个壳玻璃消融阶梯是空结果。
+     *
+     * 为什么现在敢默认开：正确性上它是恒等变换（alpha==0 的图层不产出任何可见像素），
+     * 实现上 `drawWithContent { if (alpha > 0f) drawContent() }` 在隐藏态**一行绘制指令
+     * 都不产生**，且 `alpha` 是普通 Float 参数（不是 State），稳态下不引入逐帧重组。
+     * 曾经顾虑的「多挂一个 DrawModifierNode 会改脏区传播拓扑」是未量化的猜测，
+     * 相对于「每帧白画三整屏」这个确定的成本，这个取舍已经反过来。
+     *
+     * ★不要为了「只在隐藏时才挂节点」去按状态改 Modifier 链结构：那正是
+     * `perf-demand-gating-ablation-20261024` 里 63fps→18fps 的死法。
+     *
+     * 开关：hiddendraw（置为 true = 恢复旧行为，每帧全画，仅供同包 A/B）
      */
-    val houseLayersDrawWhenHidden: Boolean = true,
+    val houseLayersDrawWhenHidden: Boolean = false,
     /**
      * HouseLayer 的 group alpha 用哪种合成策略。
      *
@@ -169,7 +181,7 @@ data class GlassProbe(
         /** MainActivity 启动时调用一次。 */
         fun install(context: Context): GlassProbe = read(context).also { current = it }
 
-        /** 开关名 -> 关掉该项的写法。默认全 true，所以这里只列“怎么把它关掉”。 */
+        /** 开关名 -> 把该项从默认值翻到另一侧。默认值不全是 true，所以两边都要列。 */
         private val OFF: Map<String, GlassProbe.() -> GlassProbe> = mapOf(
             "noglass" to { copy(shellGlass = false) },
             "nohigh" to { copy(shellHighlight = false) },
@@ -182,7 +194,11 @@ data class GlassProbe(
             "nobgeff" to { copy(shellBackgroundEffect = false) },
             "dropdecor" to { copy(motionExpensiveDecorations = true) },
             "nocheaprim" to { copy(motionCheapRim = false) },
-            "nohiddendraw" to { copy(houseLayersDrawWhenHidden = false) },
+            // ★这一位现在是"恢复旧行为"而不是"关掉优化"：默认已经是 false（隐藏不画），
+            // 想量它的价值就得把旧行为打开。历史脚本里的 `nohiddendraw` 语义已废，
+            // 因此两个名字都留着，避免旧命令静默变成空操作。
+            "hiddendraw" to { copy(houseLayersDrawWhenHidden = true) },
+            "nohiddendraw" to { copy(houseLayersDrawWhenHidden = true) },
             "housemodalpha" to { copy(houseModulateAlpha = true) },
             "navplain" to { copy(navContainerGlass = false, navHiddenProducer = false, navTabGlass = false) },
             "navcontainer" to { copy(navContainerGlass = false) },

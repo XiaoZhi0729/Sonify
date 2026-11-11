@@ -82,8 +82,21 @@ internal const val ContentStaggerMs = 52
 /** 单块浮现时长。 */
 internal const val ContentDurationMs = 580
 
-/** 整段总时长（毫秒）：544 + 6×52 + 580 = 1436。 */
-internal const val LaunchTotalMs = 1436
+/**
+ * 主页内容板块的数量（不含大标题与底栏）。
+ *
+ * ★加/删主页板块时必须同步这里，[LaunchRevealClock.revealAt] 的上限由它推导。
+ * 当前 = HomeSectionId 的枚举条目数。
+ */
+internal const val CONTENT_SECTION_COUNT = 7
+
+/**
+ * 整段总时长（毫秒）：544 + 7×52 + 580 = 1488。
+ *
+ * 公式是 `ContentStartMs + N×ContentStaggerMs + ContentDurationMs`，
+ * N = [CONTENT_SECTION_COUNT]（最后一块的起始延迟）。
+ */
+internal const val LaunchTotalMs = 1488
 
 /**
  * 等系统闪屏撤场的最长时长（毫秒）。
@@ -190,11 +203,14 @@ class LaunchCurtainState {
     /** 第 [index] 块的浮现进度（缓动后的 0..1），绘制期调用。 */
     fun revealAt(index: Int): Float {
         val ms = clock.floatValue * LaunchTotalMs
-        // 索引语义来自调用方：0=大标题，1..6=六个内容板块，7=底栏。
+        // 索引语义来自调用方：0=大标题，1..7=七个内容板块，8=底栏。
         // 标题与底栏属于"页面框架"，和 Logo 一起先就位（rank 0）；
-        // 六个板块随后逐块跟上（rank 1..6）。框架先立、内容再填，
+        // 七个板块随后逐块跟上（rank 1..7）。框架先立、内容再填，
         // 读起来是"页面浮现"而不是"一堆卡片排队进场"。
-        val rank = if (index <= 0 || index >= 7) 0 else index
+        //
+        // ★上限必须与「板块数 + 1」同步：超过板块数的 index 都退化成 rank 0
+        // （瞬现、不参与错峰）。加板块时忘了改这里，最新那块会当场"凭空出现"。
+        val rank = if (index <= 0 || index > CONTENT_SECTION_COUNT) 0 else index
         val start = ContentStartMs + rank * ContentStaggerMs
         return easeOutCubic(((ms - start) / ContentDurationMs).coerceIn(0f, 1f))
     }

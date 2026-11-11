@@ -4,11 +4,15 @@
 # so numbers stay comparable with the ab*.txt files.
 #
 #   # one config, 3 reps:
-#   powershell -File tools\ref_player_frames.ps1 -Serial 192.168.1.7:43641 -Probe nohiddendraw -Tag nd
+#   powershell -File tools\ref_player_frames.ps1 -Serial 192.168.1.7:43641 -Probe hiddendraw -Tag hd
 #
 #   # interleaved matrix, 3 cycles each (THIS IS THE MODE TO USE FOR COMPARISONS):
 #   powershell -File tools\ref_player_frames.ps1 -Serial 192.168.1.7:43641 -Cycles 3 -SettleMs 700 `
-#     -Configs @("base=", "nohiddendraw=nohiddendraw", "navplain=navplain")
+#     -Configs @("base=", "hiddendraw=hiddendraw", "navplain=navplain")
+#
+# NOTE (2026-11-09): hidden houses are no longer drawn by default, so `hiddendraw` now means
+# "restore the OLD behaviour (draw all 4 full-screen houses every frame)" and is the A/B knob
+# for that change. `nohiddendraw` is kept as an alias so older command lines still work.
 #
 # Why interleaved: the device thermally throttles under continuous benchmarking - measured today,
 # the *same* default configuration drifted 23.3ms -> 27ms over an hour. Running A x3 then B x3 buries

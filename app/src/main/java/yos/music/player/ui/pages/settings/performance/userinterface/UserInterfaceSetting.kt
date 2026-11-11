@@ -16,7 +16,6 @@ import yos.music.player.ui.UI
 import yos.music.player.ui.toUI
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
-import yos.music.player.ui.pages.settings.GroupSpacerMedium
 import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
@@ -37,10 +36,11 @@ fun UserInterfaceSetting(navController: NavController) =
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
-                        // ListHeader(content = stringResource(id = R.string.settings_performance_ui_basic))
-
                         val systemInDarkTheme = isSystemInDarkTheme()
 
+                        // ---------------- 主题 ----------------
+                        // 深浅色预览与「自动跟随系统」是同一个开关的两种表达：勾自动等价于
+                        // 由系统决定明暗，所以它们必须同卡相邻，中间不能插别的东西。
                         RoundColumn {
                             ColorModeOptions(
                                 currentModeProvider = { SettingsLibrary.CustomTheme },
@@ -65,12 +65,16 @@ fun UserInterfaceSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.CustomTheme == "Auto" }
                             )
+                        }
 
-                            Divider()
+                        GroupSpacer()
 
+                        // ---------------- 玻璃 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_glass_title))
+
+                        RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_blur_effect_title),
-                                // desc = stringResource(id = R.string.settings_performance_ui_blur_effect_desc),
                                 onClick = {
                                     SettingsLibrary.BarBlurEffect = !SettingsLibrary.BarBlurEffect
                                 },
@@ -79,21 +83,22 @@ fun UserInterfaceSetting(navController: NavController) =
 
                             Divider()
 
-                            // 玻璃模糊强度倍率调节页（横幅预览 + 滑块）
+                            // 玻璃模糊强度倍率调节页（横幅预览 + 滑块）。
+                            // 关着液态玻璃时这一项没有任何可调观感，整行置灰。
                             LabelItem(
-                                title = stringResource(id = R.string.settings_performance_ui_glass_effect_title)
+                                title = stringResource(id = R.string.settings_performance_ui_glass_effect_title),
+                                enabled = SettingsLibrary.BarBlurEffect
                             ) {
                                 navController.toUI(UI.Settings.GlassEffectSetting)
                             }
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_blur_effect_desc))
 
                         // Android 12 以下没有系统圆角接口；12+ 上系统也可能报 0（ColorOS 平板），
                         // 这时同样需要手动校准入口。
                         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S ||
                             SystemScreenCornerSample.reportsSquare
                         ) {
-                            GroupSpacerMedium()
+                            GroupSpacer()
 
                             val showCornerSetDialog = remember("UserInterfaceSetting_showCornerSetDialog") {
                                 mutableStateOf(false)
@@ -102,12 +107,12 @@ fun UserInterfaceSetting(navController: NavController) =
                             RoundColumn {
                                 LabelItem(
                                     title = stringResource(id = R.string.settings_performance_ui_screen_corner_title),
+                                    desc = stringResource(id = R.string.settings_performance_ui_screen_corner_desc),
                                     superLink = true
                                 ) {
                                     showCornerSetDialog.value = true
                                 }
                             }
-                            ListHeader(content = stringResource(id = R.string.settings_performance_ui_screen_corner_desc))
 
                             if (showCornerSetDialog.value) {
                                 ScreenCornerSetDialog {
@@ -116,11 +121,15 @@ fun UserInterfaceSetting(navController: NavController) =
                             }
                         }
 
-                        GroupSpacerMedium()
+                        GroupSpacer()
+
+                        // ---------------- 背景 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_background_title))
 
                         RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_track_backdrop_gradient),
+                                desc = stringResource(id = R.string.settings_performance_ui_track_backdrop_gradient_desc),
                                 onClick = {
                                     SettingsLibrary.TrackBackdropGradient =
                                         !SettingsLibrary.TrackBackdropGradient
@@ -128,8 +137,6 @@ fun UserInterfaceSetting(navController: NavController) =
                                 checkedLambda = { SettingsLibrary.TrackBackdropGradient }
                             )
                         }
-
-                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_track_backdrop_gradient_desc))
 
                         GroupSpacer()
                     }

@@ -48,9 +48,8 @@ fun PlaybackSetting(navController: NavController) =
             content = {
                 item("playback") {
                     Column(Modifier.fillMaxSize()) {
-                        // ---------------- 显示 ----------------
-                        ListHeader(content = stringResource(id = R.string.settings_playback_section_basic))
-
+                        // 显示 + 背景合成一张卡：这五项都是"播放页上出现什么"，
+                        // 拆成两张卡再各配一个标题，等于用两条标题解释同一件事。
                         RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_nowplaying_show_volume_bar),
@@ -85,14 +84,7 @@ fun PlaybackSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.NowPlayingShowClimaxMark }
                             )
-                        }
-
-                        GroupSpacerMedium()
-
-                        // ---------------- 背景 ----------------
-                        ListHeader(content = stringResource(id = R.string.settings_playback_section_background))
-
-                        RoundColumn {
+                            Divider()
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_ui_nowplaying_static_fullscreen_album),
                                 onClick = {
@@ -105,18 +97,15 @@ fun PlaybackSetting(navController: NavController) =
                             BackgroundModeItem()
                         }
 
-                        ListHeader(content = stringResource(id = R.string.settings_playback_background_desc))
-                        GroupSpacerMedium()
+                        GroupSpacer()
 
-                        // ---------------- 流体网格 ----------------
+                        // ---------------- 流体网格（保持内联） ----------------
                         if (SettingsLibrary.NowplayingBackgroundEffect &&
                             SettingsLibrary.NowplayingBackgroundMode ==
                             SettingsLibrary.BACKGROUND_MODE_MESH
                         ) {
                             MeshSection()
                         }
-
-                        GroupSpacer()
                     }
                 }
             }
@@ -138,6 +127,9 @@ private fun BackgroundModeItem() {
     }
     SelectItem(
         title = stringResource(id = R.string.settings_performance_ui_nowplaying_background_effect),
+        // 三档里"流体网格"对多数用户是陌生概念，只有这种时候才写一句；
+        // 原来那句"由原版 Pear Wall 壁纸移植而来"讲的是出身不是效果，已删。
+        desc = stringResource(id = R.string.settings_performance_ui_nowplaying_background_mode_mesh_desc),
         items = options,
         value = {
             if (!SettingsLibrary.NowplayingBackgroundEffect) offLabel
@@ -172,6 +164,12 @@ private fun BackgroundModeItem() {
  *
  * 分三组：外观（网格样式）、动效（流动/律动）、画质（模糊/渲染）。
  * 每组一个 RoundColumn，组内用 Divider 分隔 —— 这样 11 个项只产生 3 个视觉块。
+ *
+ * 说明只留两条，且都是"不写就会误判"的：
+ * - 律动：关掉后不再做音频分析（行为变化）
+ * - 画质：省电档连模糊都跟着变糊（反直觉副作用）
+ * "流体网格来自 Pear Wall 移植"这种来源说明已删 —— 用户要的是选哪个好看，
+ * 不是这东西的出身。
  */
 @Composable
 private fun MeshSection() {

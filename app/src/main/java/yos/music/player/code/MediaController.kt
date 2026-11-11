@@ -2033,6 +2033,14 @@ class YosPlaybackService : MediaSessionService() {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     super.onPlaybackStateChanged(playbackState)
                     val p = currentPlayer
+                    // 自然播完：state 走 ENDED 且随后才有 media item transition。在这里
+                    // 结账，段的结束原因才能如实标成「完整播放」而不是被切歌路径一律
+                    // 记成「切换下一首」（旧实现只有切歌结账，end 的 state 永远错）。
+                    if (playbackState == Player.STATE_ENDED) {
+                        ListenReportService.onSongEnded(
+                            yos.music.player.code.utils.player.PlaybackEndReason.COMPLETED
+                        )
+                    }
                     YosDiagnostics.log(
                         "STATE",
                         "s" to YosDiagnostics.stateLabel(playbackState),
@@ -2147,8 +2155,20 @@ class YosPlaybackService : MediaSessionService() {
                     )
                     MediaViewModelObject.isPlaying.value = isPlaying
                     pushListeningOnline(isPlaying, currentPlayer?.currentMediaItem?.mediaId)
-                    // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）
-                    yos.music.player.data.repositories.ListenReportService.onPlayingChanged(isPlaying)
+                    // CSCC 计时器：暂停停表、恢复续跑（实际播放毫秒）。
+                    // 带上当前条目的身份，供「ENDED 后重播」补建计时段——那种路径没有
+                    // media item transition，不带就整段不被计时。
+                    val csccMediaId = currentPlayer?.currentMediaItem?.mediaId
+                    yos.music.player.data.repositories.ListenReportService.onPlayingChanged(
+                        playing = isPlaying,
+                        songId = csccMediaId,
+                        mixsongid = csccMediaId
+                            ?.takeIf { it.startsWith("kugou-online-") }
+                            ?.removePrefix("kugou-online-")
+                            ?.let { KugouRepository.songIdentityFor(it)?.mixsongId }
+                            ?.takeIf { it > 0L }
+                            ?.toString()
+                    )
                     YosDiagnostics.log(
                         "ISPLAYING",
                         "v" to isPlaying,
@@ -2200,10 +2220,12 @@ class YosPlaybackService : MediaSessionService() {
         playbackListener = listener
         forwardingPlayer!!.addListener(listener)
 
-        // ---------- 听歌时长心跳上报（对照 md3Music） ----------
+        // ---------- 听歌时长心跳上报（对照 md3Music，计时口径已修正） ----------
         // 每 30s 喂一次 ListeningGradeTracker。是否在线播放由播放器回调经
         // ListeningGradeTracker.setListeningOnline 推送（对齐 md3Music PlayerProvider），
         // 心跳只读该镜像，不在 IO 线程直读 Compose 快照态（musicPlaying/isPlaying）。
+        // 计时在 setListeningOnline 的边沿打墙钟点、由心跳结算：播放 25s 就暂停只记 25s，
+        // 不再按整拍 30s 硬记（旧实现单次收听误差可达 ±30s）。
         // 循环挂服务生命周期：服务销毁必须停，否则系统回收重建后会叠加第二个
         // 循环，同一秒被计两次、时长翻倍多报。
         gradeHeartbeatJob?.cancel()

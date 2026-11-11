@@ -37,7 +37,6 @@ import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
-import yos.music.player.ui.pages.settings.GroupSpacerMedium
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SelectItem
 import yos.music.player.ui.pages.settings.SettingBackground
@@ -60,35 +59,29 @@ fun LyricSetting(navController: NavController) =
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
-                        // GroupSpacerMedium()
+                        // ---------------- 样式 ----------------
                         ListHeader(content = stringResource(id = R.string.settings_performance_lyric_style))
 
                         RoundColumn {
+                            // 显示名必须先在这里一次性解析成普通字符串：stringResource 不能在
+                            // 下面 onValueChange 那种非 @Composable 的 lambda 里调用。
+                            val weightLabels = FONT_WEIGHT_KEYS.map { fontWeightLabel(it) }
                             SelectItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_style_font_weight),
-                                items = listOf(
-                                    "Thin",
-                                    "ExtraLight",
-                                    "Light",
-                                    "Regular",
-                                    "Medium",
-                                    "SemiBold",
-                                    "Bold",
-                                    "ExtraBold",
-                                    "Black"
-                                ),
-                                value = { SettingsLibrary.LyricFontWeight },
-                                onValueChange = {
-                                    SettingsLibrary.LyricFontWeight = it
+                                items = weightLabels,
+                                value = { fontWeightLabel(SettingsLibrary.LyricFontWeight) },
+                                onValueChange = { label ->
+                                    // 按显示名反查存储值：这样换语言也不会把设置写坏
+                                    weightLabels.indexOf(label).takeIf { it >= 0 }?.let {
+                                        SettingsLibrary.LyricFontWeight = FONT_WEIGHT_KEYS[it]
+                                    }
                                     LyricRenderWarmup.onRenderStyleChanged(context)
                                 }
                             )
-                        }
 
-                        GroupSpacerMedium()
+                            Divider()
 
-                        // 歌词字号缩放（对齐 Flamingo 新版 LyricFontScale，钳制 0.8~1.2）
-                        RoundColumn {
+                            // 歌词字号缩放（对齐 Flamingo 新版 LyricFontScale，钳制 0.8~1.2）
                             SelectItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_style_font_size),
                                 items = listOf("80%", "90%", "100%", "110%", "120%"),
@@ -112,14 +105,15 @@ fun LyricSetting(navController: NavController) =
                                     LyricRenderWarmup.onRenderStyleChanged(context)
                                 }
                             )
-                        }
 
-                        GroupSpacerMedium()
+                            Divider()
 
-                        RoundColumn {
+                            // 平衡行会重排每行字数，对某些语言有副作用 —— 这属于"反直觉"，
+                            // 但它是这一行的属性，所以写成行内小字，不写卡后脚注
+                            // （卡后脚注只能描述整张卡，挂在 3 行后面会被当成对三行的共同说明）。
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_line_balance),
-                                // desc = stringResource(id = R.string.settings_performance_lyric_line_balance_desc),
+                                desc = stringResource(id = R.string.settings_performance_lyric_line_balance_desc),
                                 onClick = {
                                     SettingsLibrary.LyricLineBalance =
                                         !SettingsLibrary.LyricLineBalance
@@ -127,13 +121,35 @@ fun LyricSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.LyricLineBalance }
                             )
+
+                            Divider()
+
+                            // 歌词时间偏移：正值 = 歌词提前，负值 = 歌词延后
+                            SelectItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_timing_offset),
+                                desc = stringResource(id = R.string.settings_performance_lyric_timing_offset_desc),
+                                items = OFFSET_STEPS_MS.map { offsetLabel(it) },
+                                value = {
+                                    offsetLabel(
+                                        OFFSET_STEPS_MS.minByOrNull {
+                                            kotlin.math.abs(it - SettingsLibrary.LyricTimingOffset)
+                                        } ?: 0
+                                    )
+                                },
+                                onValueChange = { label ->
+                                    SettingsLibrary.LyricTimingOffset =
+                                        OFFSET_STEPS_MS.firstOrNull { offsetLabel(it) == label } ?: 0
+                                }
+                            )
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_line_balance_desc))
 
-                        GroupSpacerMedium()
+                        GroupSpacer()
 
-                        // 智能逐字歌词（对齐 Flamingo smart word-by-word）
+                        // ---------------- 动效 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_motion))
+
                         RoundColumn {
+                            // 智能逐字歌词（对齐 Flamingo smart word-by-word）
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric),
                                 onClick = {
@@ -142,73 +158,25 @@ fun LyricSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.SmartWordByWordLyric }
                             )
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric_desc))
 
-                        GroupSpacerMedium()
+                            Divider()
 
-                        // 歌词时间偏移：正值 = 歌词提前，负值 = 歌词延后
-                        RoundColumn {
-                            val offsetSteps = listOf(-500, -300, -200, -100, 0, 100, 200, 300, 500)
-                            fun offsetLabel(ms: Int) = when {
-                                ms > 0 -> "+$ms ms"
-                                else -> "$ms ms"
-                            }
-                            SelectItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_timing_offset),
-                                items = offsetSteps.map { offsetLabel(it) },
-                                value = {
-                                    offsetLabel(
-                                        offsetSteps.minByOrNull {
-                                            kotlin.math.abs(it - SettingsLibrary.LyricTimingOffset)
-                                        } ?: 0
-                                    )
-                                },
-                                onValueChange = { label ->
-                                    SettingsLibrary.LyricTimingOffset =
-                                        offsetSteps.firstOrNull { offsetLabel(it) == label } ?: 0
-                                }
-                            )
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_timing_offset_desc))
-
-                        GroupSpacer()
-
-                        // 设备歌词：把当前行写进会话标题，通知栏/锁屏/车机一起显示
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
-
-                        RoundColumn {
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_notification),
-                                onClick = {
-                                    SettingsLibrary.NotificationLyricEnabled =
-                                        !SettingsLibrary.NotificationLyricEnabled
-                                    // 关闭时立刻把通知栏/车机标题还给歌名，不等下一行歌词
-                                    if (!SettingsLibrary.NotificationLyricEnabled) {
-                                        MediaController.clearSessionLyric()
-                                    }
-                                },
-                                checkedLambda = { SettingsLibrary.NotificationLyricEnabled }
-                            )
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_notification_desc))
-
-                        GroupSpacer()
-
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_others))
-
-                        RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_blur_effect),
-                                // desc = stringResource(id = R.string.settings_performance_lyric_blur_effect_desc),
                                 onClick = {
                                     SettingsLibrary.LyricBlurEffect =
                                         !SettingsLibrary.LyricBlurEffect
                                 },
                                 checkedLambda = { SettingsLibrary.LyricBlurEffect }
                             )
+
+                            Divider()
+
+                            // HDR 的硬件前提与耗电提示属于这一行本身，写行内；
+                            // 挂在 3 行卡后会变成"整组动效都要求 Android 14"的误读。
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_performance_lyric_hdr_effect),
+                                desc = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc),
                                 onClick = {
                                     SettingsLibrary.LyricHdrEffect =
                                         !SettingsLibrary.LyricHdrEffect
@@ -222,17 +190,72 @@ fun LyricSetting(navController: NavController) =
                             }
                         }
 
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_blur_effect_desc))
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc))
-                        if (SettingsLibrary.LyricHdrEffect) {
-                            ListHeader(content = stringResource(id = R.string.settings_performance_lyric_hdr_strength_desc))
+                        GroupSpacer()
+
+                        // ---------------- 设备 ----------------
+                        // 设备歌词：把当前行写进会话标题，通知栏/锁屏/车机一起显示
+                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
+
+                        RoundColumn {
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_lyric_notification),
+                                desc = stringResource(id = R.string.settings_performance_lyric_notification_desc),
+                                onClick = {
+                                    SettingsLibrary.NotificationLyricEnabled =
+                                        !SettingsLibrary.NotificationLyricEnabled
+                                    // 关闭时立刻把通知栏/车机标题还给歌名，不等下一行歌词
+                                    if (!SettingsLibrary.NotificationLyricEnabled) {
+                                        MediaController.clearSessionLyric()
+                                    }
+                                },
+                                checkedLambda = { SettingsLibrary.NotificationLyricEnabled }
+                            )
                         }
+
                         GroupSpacer()
                     }
                 }
             }
         )
     }
+
+/**
+ * 字重的**存储值**（写进 [SettingsLibrary.LyricFontWeight]，渲染侧按这些名字解析）。
+ * 界面显示走 [fontWeightLabel]：直接把 "SemiBold" 摊给用户看等于让他读类型名。
+ */
+private val FONT_WEIGHT_KEYS = listOf(
+    "Thin",
+    "ExtraLight",
+    "Light",
+    "Regular",
+    "Medium",
+    "SemiBold",
+    "Bold",
+    "ExtraBold",
+    "Black"
+)
+
+/** 存储值 → 本地化显示名。未知值原样返回，避免旧数据被显示成空白。 */
+@Composable
+private fun fontWeightLabel(key: String): String = stringResource(
+    id = when (key) {
+        "Thin" -> R.string.settings_performance_lyric_weight_thin
+        "ExtraLight" -> R.string.settings_performance_lyric_weight_extra_light
+        "Light" -> R.string.settings_performance_lyric_weight_light
+        "Regular" -> R.string.settings_performance_lyric_weight_regular
+        "Medium" -> R.string.settings_performance_lyric_weight_medium
+        "SemiBold" -> R.string.settings_performance_lyric_weight_semi_bold
+        "Bold" -> R.string.settings_performance_lyric_weight_bold
+        "ExtraBold" -> R.string.settings_performance_lyric_weight_extra_bold
+        "Black" -> R.string.settings_performance_lyric_weight_black
+        else -> R.string.settings_performance_lyric_weight_regular
+    }
+)
+
+/** 时间偏移档位（毫秒）。正值让歌词提前显示。 */
+private val OFFSET_STEPS_MS = listOf(-500, -300, -200, -100, 0, 100, 200, 300, 500)
+
+private fun offsetLabel(ms: Int): String = if (ms > 0) "+$ms ms" else "$ms ms"
 
 /**
  * HDR 高光强度：用掉屏幕可用亮度余量的多少（0–100%）。

@@ -150,6 +150,15 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             runCatching { yos.music.player.data.objects.DiscoveryObject.ensureFresh() }
         }
 
+        // 主页「私人电台」板块的启动预热。
+        // 之前 FM 只在主页首次组合时才发请求（Discovery.kt 的 LaunchedEffect），
+        // 而其余五个板块都在这里预热。FM 的请求是串行游标链（每批 ~5 首），
+        // 等到 setContent 之后再起步，主页浮现到该板块时必然还在挂骨架。
+        // 与 DiscoveryObject 并列启动，把这段串行 IO 挪到首帧之前。
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { yos.music.player.data.objects.PersonalFmObject.ensureLoaded() }
+        }
+
         // 音频字节缓存上限：主线程读设置一次存进 OnlineAudioCache 的普通字段，缓存层后续
         // 构造时不再读 DataSaver（否则播放线程首次读设置会把状态建到非全局快照里）。
         runCatching {

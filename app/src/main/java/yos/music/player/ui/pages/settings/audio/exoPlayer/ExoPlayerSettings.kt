@@ -9,9 +9,8 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
-import yos.music.player.ui.pages.settings.GroupSpacerMedium
-import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SelectItem
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
@@ -31,27 +30,24 @@ fun ExoPlayerSettings(navController: NavController) =
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
-
-                        ListHeader(stringResource(id = R.string.settings_audio_exoplayer_behaviors))
+                        // 三项都是"音频输出怎么走"，一张卡三行。
+                        // 页头副标题已经写了「部分设置需彻底重启应用生效」，卡后不再重复。
                         RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_audio_exoplayer_behaviors_audio_attributes),
-                                // desc = stringResource(id = R.string.settings_audio_exoplayer_behaviors_audio_attributes_desc),
+                                desc = stringResource(id = R.string.settings_audio_exoplayer_behaviors_audio_attributes_desc),
                                 onClick = {
                                     SettingsLibrary.AudioAttributes =
                                         !SettingsLibrary.AudioAttributes
                                 },
                                 checkedLambda = { SettingsLibrary.AudioAttributes }
                             )
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_audio_exoplayer_behaviors_audio_attributes_desc))
 
-                        GroupSpacer()
+                            Divider()
 
-                        ListHeader(stringResource(id = R.string.settings_audio_exoplayer_decode))
-                        RoundColumn {
                             SelectItem(
                                 title = stringResource(id = R.string.settings_audio_exoplayer_decode_codec),
+                                desc = stringResource(id = R.string.settings_audio_exoplayer_decode_codec_desc),
                                 items = listOf(
                                     "Auto",
                                     "FFmpeg",
@@ -62,12 +58,9 @@ fun ExoPlayerSettings(navController: NavController) =
                                     SettingsLibrary.Codec = it
                                 }
                             )
-                        }
-                        ListHeader(content = stringResource(id = R.string.settings_audio_exoplayer_decode_codec_desc))
 
-                        GroupSpacerMedium()
+                            Divider()
 
-                        RoundColumn {
                             SwitchItem(
                                 title = stringResource(id = R.string.settings_audio_exoplayer_decode_hardware_audio_track_playback_params),
                                 onClick = {

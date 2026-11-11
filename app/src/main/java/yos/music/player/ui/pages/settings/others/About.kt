@@ -201,17 +201,17 @@ fun About(navController: NavController) {
 
                         GroupSpacer()
 
+                        // 「致谢」与「联系开发者」同为对外信息出口，合成一张两行卡：
+                        // 它们原先各占一张单行卡，中间还夹一个 GroupSpacer，视觉上像两件无关的事。
                         RoundColumn {
                             LabelItem(
                                 title = stringResource(id = R.string.settings_others_about_acknowledgements)
                             ) {
                                 navController.navigate(UI.Settings.Acknowledgements)
                             }
-                        }
 
-                        GroupSpacer()
+                            Divider()
 
-                        RoundColumn {
                             LabelItem(
                                 title = stringResource(id = R.string.settings_others_about_contact_developer),
                                 desc = stringResource(id = R.string.settings_others_about_developer_coolapk),
