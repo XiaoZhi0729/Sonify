@@ -1082,7 +1082,9 @@ private fun TopResultCard(song: KugouSearchSong, onClick: () -> Unit) {
             modifier = Modifier.size(72.dp),
             cornerRadius = 8.dp,
             shadowAlpha = 0f,
-            imageQuality = ImageQuality.LOW
+            // 72dp = 234 物理像素。LOW 只解码 128px（≈1.8× 放大，边界可见发虚），
+            // HIGH 解码 400px 与源图分辨率相当，且不额外占流量（URL 档位本来就是 400）。
+            imageQuality = ImageQuality.HIGH
         )
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(
@@ -1166,7 +1168,11 @@ private fun AlbumGrid(
                                 modifier = Modifier.fillMaxSize(),
                                 cornerRadius = 8.dp,
                                 shadowAlpha = 0f,
-                                imageQuality = yos.music.player.ui.widgets.basic.ImageQuality.LOW
+                                // 两列网格的封面在手机竖屏是 542 物理像素。LOW 只解码 128px，
+                                // 等于把图硬放大 4.2 倍——这是"搜索里专辑封面特别糊"的根因。
+                                // HIGH 解码 400px 正好等于源图分辨率（URL 档位本就是 400），
+                                // 放大降到 1.36×，且不增加任何流量（只是不再被二次缩小）。
+                                imageQuality = ImageQuality.HIGH
                             )
                         }
                         Text(
@@ -1246,7 +1252,9 @@ private fun PlaylistGrid(
                                 modifier = Modifier.fillMaxSize(),
                                 cornerRadius = 8.dp,
                                 shadowAlpha = 0f,
-                                imageQuality = yos.music.player.ui.widgets.basic.ImageQuality.LOW
+                                // 与专辑网格同尺寸（542 物理像素），同样不能用 LOW：
+                                // LOW 只解码 128px = 硬放大 4.2 倍，是"歌单封面糊"的根因。
+                                imageQuality = ImageQuality.HIGH
                             )
                         }
                         Text(
@@ -1288,7 +1296,10 @@ private fun LyricResultRow(item: KugouLyricSearchResult, onClick: () -> Unit) {
             modifier = Modifier.size(48.dp),
             cornerRadius = 4.dp,
             shadowAlpha = 0f,
-            imageQuality = yos.music.player.ui.widgets.basic.ImageQuality.LOW
+            // 48dp = 156 物理像素，LOW 的 128px 只放 1.22 倍，肉眼无差别；
+            // 这里刻意保持 LOW（列表行数量多，提到 400px 只是白占内存）。
+            // 网格卡片那种 4 倍放大才必须改。
+            imageQuality = ImageQuality.LOW
         )
         Spacer(Modifier.width(14.dp))
         Column {

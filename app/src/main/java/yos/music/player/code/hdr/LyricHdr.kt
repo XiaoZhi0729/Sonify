@@ -43,8 +43,36 @@ object LyricHdr {
     var windowActive: Boolean by mutableStateOf(false)
         private set
 
+    /**
+     * Activity 建窗时是否已把 colorMode 设成 HDR（见 MainActivity.onCreate）。
+     * 缓冲格式在那一刻就定了，所以这是「HDR 到底可不可能生效」的真实判据；
+     * [windowActive] 只反映歌词页此刻有没有把余量申请打开。
+     */
+    var windowColorModeHdr: Boolean by mutableStateOf(false)
+        private set
+
+    /** 只给建窗路径写（MainActivity.onCreate） */
+    fun markWindowColorModeHdr(value: Boolean) {
+        windowColorModeHdr = value
+    }
+
     /** 峰值最多 3 倍 SDR 白：再亮只会刺眼、更耗电，彩色光也更容易顶到屏幕上限 */
     const val MaxBoost = 3f
+
+    /**
+     * 是否让「正在唱的那一句」用超过 SDR 白的扩展亮度绘制。
+     *
+     * **当前为 false**，原因是库侧的取舍：HDR 行必须绕开 8 位离屏图层才能保住扩展亮度，
+     * 而离屏图层同时承载着逐字扫色遮罩。绕开的结果是焦点行整行常亮——
+     * 逐字歌词退化成逐行，这是每句都看得见的损失。
+     *
+     * 反过来的代价小得多：扩展亮度经过离屏层被钳回 SDR 白（等于这条链路不起作用），
+     * 但逐字扫色、加色泛光、上下渐隐全部正常。
+     *
+     * 所以在「扩展亮度在这台设备上肉眼只差约 10%」的前提下，选后者。
+     * 打开这个开关之前，先解决「扩展亮度 + 逐字扫色」共存的问题。
+     */
+    private const val EnableExtendedBoost = false
 
     /**
      * 已向系统申请到的余量（API 35+ 的 `setDesiredHdrHeadroom` 生效时才有值）。
@@ -58,6 +86,9 @@ object LyricHdr {
      * 所有 HDR 画法都保证每个通道都不超过它，不会因为某个通道顶到屏幕上限被截断而发白。
      */
     fun boost(strength: Float): Float {
+        // **扩展亮度直绘目前关闭**（见下方 EnableExtendedBoost 的说明）。
+        // 这个设置项现在只控制加色泛光（BlendMode.Plus），不再改变文字本身的亮度。
+        if (!EnableExtendedBoost) return 1f
         if (!windowActive || !supported) return 1f
         // 乘数必须来自「向系统申请到的余量」，不能来自 headroom 读数。
         //

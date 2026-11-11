@@ -400,6 +400,15 @@ class MainActivity : BaseActivity() {
         // 必须在 super.onCreate 之前换主题：窗口/闪屏在 super.onCreate 里就已按主题建好了。
         // MMKV 在 Application.onCreate 已初始化，这里读设置是安全的。
         applySplashThemeForCurrentSetting()
+        // HDR 窗口颜色模式必须在**窗口建立之前**定下来：HWUI 在 super.onCreate 里创建渲染
+        // 上下文时就按当时的 colorMode 决定要不要给扩展范围（FP16）的绘制缓冲；之后再改
+        // colorMode 只改窗口请求，已经分配的 8 位缓冲不会重建。
+        //
+        // 门槛取设置项：关着的时候不该让整个应用常驻 HDR 缓冲（显存翻倍、背光更高）。
+        if (SettingsLibrary.LyricHdrEffect && Build.VERSION.SDK_INT >= 34) {
+            window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_HDR
+            yos.music.player.code.hdr.LyricHdr.markWindowColorModeHdr(true)
+        }
         super.onCreate(savedInstanceState)
         playLaunchCurtain = savedInstanceState == null
         val splashStartUptime = android.os.SystemClock.uptimeMillis()
