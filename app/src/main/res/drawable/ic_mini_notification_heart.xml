@@ -1,0 +1,28 @@
+<!--
+  媒体通知栏「收藏」按钮——已收藏（小号档）。
+
+  与 ic_mini_shuffle 完全同构：intrinsic 放大到 128dp、字形再缩到 0.7 居中，
+  靠留白在 HyperOS 一类按钮撑得过大的系统上收窄视觉尺寸。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="128dp"
+    android:height="128dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?attr/colorControlNormal">
+    <group
+        android:scaleX="0.7"
+        android:scaleY="0.7"
+        android:pivotX="480"
+        android:pivotY="480">
+        <group
+            android:scaleX="40"
+            android:scaleY="40"
+            android:pivotX="0"
+            android:pivotY="0">
+            <path
+                android:fillColor="@android:color/white"
+                android:pathData="M12,21.35 L10.55,20.03 C5.4,15.36 2,12.28 2,8.5 C2,5.42 4.42,3 7.5,3 C9.24,3 10.91,3.81 12,5.09 C13.09,3.81 14.76,3 16.5,3 C19.58,3 22,5.42 22,8.5 C22,12.28 18.6,15.36 13.45,20.04 L12,21.35 Z" />
+        </group>
+    </group>
+</vector>

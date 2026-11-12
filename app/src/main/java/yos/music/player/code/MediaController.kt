@@ -22,6 +22,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -59,7 +60,10 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.MainActivity
@@ -101,6 +105,7 @@ import yos.music.player.data.libraries.uri
 import yos.music.player.data.objects.MainViewModelObject
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.data.objects.PersonalFmObject
+import yos.music.player.data.repositories.FavoriteRepository
 import yos.music.player.data.repositories.IntentSource
 import yos.music.player.data.repositories.KugouAuthInvalidException
 import yos.music.player.data.repositories.KugouVerificationRequiredException
@@ -1816,8 +1821,22 @@ class YosPlaybackService : MediaSessionService() {
     /** 人声分离模型可用性的收集协程（服务重建时先取消旧的，防叠加）。 */
     private var vocalSepAvailabilityJob: Job? = null
 
-    private val shuffleMode = "shuffle_mode"
-    private val repeatMode = "repeat_mode"
+    /** 通知栏「收藏」按钮的自定义命令（与模式命令同为裸串标识，不参与本地化）。 */
+    private val favoriteToggle = "favorite_toggle"
+
+    /** 通知栏「播放模式」按钮的自定义命令；四态共用一颗键，见 [NotificationPlaybackMode]。 */
+    private val playbackMode = "playback_mode"
+
+    /**
+     * 通知栏收藏动作的协程作用域：onCreate 建、onDestroy 取消，与其它服务级 Job 同写法。
+     * 主线程，与三处既有 UI 收藏调用点同口径（仓库内部自己把取歌单那步切到 IO）。
+     * 可空是为了让 UI 侧那些临时 `YosPlaybackService()` 实例（只为调 setCustomButtons）
+     * 不白造作用域。
+     */
+    private var notificationFavoriteScope: CoroutineScope? = null
+
+    /** 通知栏按钮的刷新观察（收藏态/随机/循环任一变化即重建自定义按钮）。 */
+    private var notificationButtonsJob: Job? = null
 
     companion object {
         private const val FLAG_ALWAYS_SHOW_TICKER = 0x1000000
@@ -1826,70 +1845,173 @@ class YosPlaybackService : MediaSessionService() {
 
     @OptIn(UnstableApi::class)
     private fun setCustomButtons(player: ForwardingPlayer) {
-        if (SettingsLibrary.NotificationEnableIcon) {
-            val useSmallerIcon = SettingsLibrary.NotificationSmallerIcon
-
-            val shuffleButtonIcon =
-                if (player.shuffleModeEnabled) {
-                    if (useSmallerIcon) R.drawable.ic_mini_shuffle else R.drawable.ic_shuffle
-                } else {
-                    if (useSmallerIcon) R.drawable.ic_mini_shuffle_off else R.drawable.ic_shuffle_off
-                }
-            val shuffleButton = CommandButton.Builder()
-                .setIconResId(shuffleButtonIcon)
-                .setDisplayName(shuffleMode)
-                .setSessionCommand(SessionCommand(shuffleMode, Bundle()))
-                .build()
-
-            val repeatButtonIcon =
-                when (player.repeatMode) {
-                    REPEAT_MODE_ONE -> if (useSmallerIcon) R.drawable.ic_mini_repeat_one else R.drawable.ic_repeat_one
-                    REPEAT_MODE_ALL -> if (useSmallerIcon) R.drawable.ic_mini_repeat else R.drawable.ic_repeat
-                    else -> if (useSmallerIcon) R.drawable.ic_mini_repeat_off else R.drawable.ic_repeat_off
-                }
-            val repeatButton = CommandButton.Builder()
-                .setIconResId(repeatButtonIcon)
-                .setDisplayName(repeatMode)
-                .setSessionCommand(SessionCommand(repeatMode, Bundle()))
-                .build()
-
-            mediaSession?.setCustomLayout(ImmutableList.of(shuffleButton, repeatButton))
-        } else {
-            mediaSession?.setCustomLayout(emptyList())
-        }
+        applyCustomButtons(
+            shuffleModeEnabled = player.shuffleModeEnabled,
+            repeatMode = player.repeatMode
+        )
     }
 
     fun setCustomButtons(player: MediaController) {
-        if (SettingsLibrary.NotificationEnableIcon) {
-            val useSmallerIcon = SettingsLibrary.NotificationSmallerIcon
+        applyCustomButtons(
+            shuffleModeEnabled = player.shuffleModeEnabled,
+            repeatMode = player.repeatMode
+        )
+    }
 
-            val shuffleButtonIcon =
-                if (player.shuffleModeEnabled) {
-                    if (useSmallerIcon) R.drawable.ic_mini_shuffle else R.drawable.ic_shuffle
-                } else {
-                    if (useSmallerIcon) R.drawable.ic_mini_shuffle_off else R.drawable.ic_shuffle_off
-                }
-            val shuffleButton = CommandButton.Builder()
-                .setIconResId(shuffleButtonIcon)
-                .setDisplayName(shuffleMode)
-                .setSessionCommand(SessionCommand(shuffleMode, Bundle()))
-                .build()
-
-            val repeatButtonIcon =
-                when (player.repeatMode) {
-                    REPEAT_MODE_ONE -> if (useSmallerIcon) R.drawable.ic_mini_repeat_one else R.drawable.ic_repeat_one
-                    REPEAT_MODE_ALL -> if (useSmallerIcon) R.drawable.ic_mini_repeat else R.drawable.ic_repeat
-                    else -> if (useSmallerIcon) R.drawable.ic_mini_repeat_off else R.drawable.ic_repeat_off
-                }
-            val repeatButton = CommandButton.Builder()
-                .setIconResId(repeatButtonIcon)
-                .setDisplayName(repeatMode)
-                .setSessionCommand(SessionCommand(repeatMode, Bundle()))
-                .build()
-
-            mediaSession?.setCustomLayout(ImmutableList.of(shuffleButton, repeatButton))
-        } else {
+    /**
+     * 通知栏两个自定义按钮的唯一实现（两个重载只负责把各自播放器外壳的两路状态取出来）。
+     *
+     * 按钮从三颗变两颗的原因：媒体通知在 ⏮▶⏭ 之后只剩两个动作位，原先随机、循环各占一颗
+     * 就满了，收藏没有位置。现在把随机与循环合并成一颗四态模式键（[NotificationPlaybackMode]），
+     * 腾出的那一位给收藏。顺序是「收藏在前、模式在后」——收藏顶替原来随机所在的左侧位置。
+     *
+     * 收藏图标的状态取自 [FavoriteRepository.isFavorite]（同步读内存集合，不发网络），
+     * 当前曲取 [MediaController.musicPlaying]——服务侧没有别的当前曲来源。
+     *
+     * **本函数会被未 attach 的临时实例调用**（UI 侧写的是 `YosPlaybackService().setCustomButtons(...)`），
+     * 那种实例没有 Context，所以这里绝不能出现 `getString()` 或任何依赖 `this` 的调用：
+     * displayName 只是命令标识，沿用裸串即可。
+     */
+    @OptIn(UnstableApi::class)
+    private fun applyCustomButtons(shuffleModeEnabled: Boolean, repeatMode: Int) {
+        if (!SettingsLibrary.NotificationEnableIcon) {
             mediaSession?.setCustomLayout(emptyList())
+            return
+        }
+        val useSmallerIcon = SettingsLibrary.NotificationSmallerIcon
+
+        val favorited = musicPlaying.value
+            ?.let { FavoriteRepository.isFavorite(it) }
+            ?: false
+        val favoriteIcon =
+            when {
+                favorited && useSmallerIcon -> R.drawable.ic_mini_notification_heart
+                favorited -> R.drawable.ic_notification_heart
+                useSmallerIcon -> R.drawable.ic_mini_notification_heart_off
+                else -> R.drawable.ic_notification_heart_off
+            }
+        val favoriteButton = CommandButton.Builder()
+            .setIconResId(favoriteIcon)
+            .setDisplayName(favoriteToggle)
+            .setSessionCommand(SessionCommand(favoriteToggle, Bundle()))
+            .build()
+
+        val mode = notificationModeOf(shuffleModeEnabled, repeatMode)
+        val modeIcon =
+            when (mode) {
+                NotificationPlaybackMode.SHUFFLE ->
+                    if (useSmallerIcon) R.drawable.ic_mini_shuffle else R.drawable.ic_shuffle
+
+                NotificationPlaybackMode.REPEAT_ONE ->
+                    if (useSmallerIcon) R.drawable.ic_mini_repeat_one else R.drawable.ic_repeat_one
+
+                NotificationPlaybackMode.REPEAT_ALL ->
+                    if (useSmallerIcon) R.drawable.ic_mini_repeat else R.drawable.ic_repeat
+
+                NotificationPlaybackMode.ORDER ->
+                    if (useSmallerIcon) R.drawable.ic_mini_repeat_off else R.drawable.ic_repeat_off
+            }
+        val modeButton = CommandButton.Builder()
+            .setIconResId(modeIcon)
+            .setDisplayName(playbackMode)
+            .setSessionCommand(SessionCommand(playbackMode, Bundle()))
+            .build()
+
+        mediaSession?.setCustomLayout(ImmutableList.of(favoriteButton, modeButton))
+    }
+
+    /**
+     * 把 [nextNotificationMode] 算出的目标态落到播放器上。
+     *
+     * 四态里除 SHUFFLE 外都要把 shuffle 关掉：合并键的前提是「同一时刻只有一种模式生效」，
+     * 否则会出现「随机 + 单曲循环」这种通知栏无法用一个图标表达的组合。
+     */
+    private fun applyNotificationMode(target: NotificationPlaybackMode, p: Player) {
+        when (target) {
+            NotificationPlaybackMode.ORDER -> {
+                p.shuffleModeEnabled = false
+                p.repeatMode = REPEAT_MODE_OFF
+            }
+
+            NotificationPlaybackMode.REPEAT_ALL -> {
+                p.shuffleModeEnabled = false
+                p.repeatMode = REPEAT_MODE_ALL
+            }
+
+            NotificationPlaybackMode.REPEAT_ONE -> {
+                p.shuffleModeEnabled = false
+                p.repeatMode = REPEAT_MODE_ONE
+            }
+
+            NotificationPlaybackMode.SHUFFLE -> {
+                p.shuffleModeEnabled = true
+                p.repeatMode = REPEAT_MODE_OFF
+            }
+        }
+    }
+
+    /**
+     * 通知栏收藏键的动作：同步判当前态 → 走 [FavoriteRepository] 的加/减。
+     *
+     * 协程跑在主线程：与三处既有 UI 调用点（NowPlaying / 画廊 / 歌单菜单）口径一致，
+     * [FavoriteRepository] 内部只把真正取歌单的那步切到 IO，其余都是快照读写。
+     * 失败要 Toast 出原因（未登录、上游拒绝），并靠仓库自身的乐观回滚把图标退回去。
+     */
+    private fun toggleNotificationFavorite() {
+        val song = musicPlaying.value ?: return
+        val scope = notificationFavoriteScope ?: return
+        val removing = FavoriteRepository.isFavorite(song)
+        scope.launch {
+            val result =
+                if (removing) {
+                    FavoriteRepository.removeFavorite(song)
+                } else {
+                    FavoriteRepository.addFavorite(song)
+                }
+            result.onFailure { e ->
+                Toast.makeText(
+                    this@YosPlaybackService,
+                    e.message ?: "收藏失败",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            // 仓库状态在成功/回滚后都可能变化，手动补一次，不依赖观察协程的时序
+            forwardingPlayer?.let { setCustomButtons(it) }
+        }
+    }
+
+    /**
+     * 订阅「通知栏两颗自定义按钮该长什么样」的三个输入，变了就重建。
+     *
+     * 这是旧实现的一个真实缺陷的补丁：以前只在建服务、点随机/循环、改设置时刷按钮，
+     * 于是**切歌不会刷新**（上一首的收藏态一直挂在那一首上），在播放页/画廊/歌单菜单里
+     * 收藏也不会刷新（通知栏那颗心还是旧的）。
+     *
+     * 三个输入都是 Compose 快照态，所以用 `snapshotFlow` 而不是轮询：
+     *   - `musicPlaying`：当前曲（收藏态按曲查）
+     *   - 收藏集合本身：`FavoriteRepository.isFavorite` 内部读的
+     *     `KugouRepository.favoriteHashes` / `FavPlayListLibrary.favPlayList` 都在快照里，
+     *     在别处收藏也会让这里发射
+     *   - `MediaViewModelObject` 的随机/循环：由 Player.Listener 从真实播放器回流，
+     *     不走 `currentPlayer`（那不是快照态，读它不会被追踪）
+     *
+     * `distinctUntilChanged` 是必须的：`isFavorite` 每次求值都会新建集合比较结果，
+     * 没有它会在每次快照变更（比如进度、歌词）时都重建一遍通知栏按钮。
+     */
+    private fun startNotificationButtonsObserver() {
+        notificationButtonsJob?.cancel()
+        notificationButtonsJob = CoroutineScope(Dispatchers.Main.immediate).launch {
+            snapshotFlow {
+                Triple(
+                    musicPlaying.value?.let { FavoriteRepository.isFavorite(it) } ?: false,
+                    MediaViewModelObject.shuffleModeEnabled.value,
+                    MediaViewModelObject.repeatMode.intValue
+                )
+            }
+                .distinctUntilChanged()
+                .collect {
+                    forwardingPlayer?.let { fp -> setCustomButtons(fp) }
+                }
         }
     }
 
@@ -2324,8 +2446,8 @@ class YosPlaybackService : MediaSessionService() {
                 YosDiagnostics.log("SVC_CMD", "cmd" to "connect", "from" to controller.packageName)
                     val sessionCommands =
                         MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                        .add(SessionCommand(shuffleMode, Bundle.EMPTY))
-                        .add(SessionCommand(repeatMode, Bundle.EMPTY))
+                        .add(SessionCommand(playbackMode, Bundle.EMPTY))
+                        .add(SessionCommand(favoriteToggle, Bundle.EMPTY))
                         .build()
 
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
@@ -2370,24 +2492,24 @@ class YosPlaybackService : MediaSessionService() {
                 args: Bundle
             ): ListenableFuture<SessionResult> {
                 val p = currentPlayer
-                if (customCommand.customAction == shuffleMode) {
-                    if (p != null) p.shuffleModeEnabled = !p.shuffleModeEnabled
-                    forwardingPlayer?.let { setCustomButtons(it) }
-                } else if (customCommand.customAction == repeatMode && p != null) {
-                    when (p.repeatMode) {
-                        REPEAT_MODE_OFF -> {
-                            p.repeatMode = REPEAT_MODE_ALL
-                        }
-
-                        REPEAT_MODE_ALL -> {
-                            p.repeatMode = REPEAT_MODE_ONE
-                        }
-
-                        else -> {
-                            p.repeatMode = REPEAT_MODE_OFF
+                when (customCommand.customAction) {
+                    // 合并后的模式键：四态推进。目标态由纯函数算，写入统一走
+                    // applyNotificationMode，保证「显示什么」与「写什么」永远成对。
+                    playbackMode -> {
+                        if (p != null) {
+                            applyNotificationMode(
+                                nextNotificationMode(p.shuffleModeEnabled, p.repeatMode),
+                                p
+                            )
+                            forwardingPlayer?.let { setCustomButtons(it) }
                         }
                     }
-                    forwardingPlayer?.let { setCustomButtons(it) }
+
+                    // 收藏键：异步（在线曲要走云端），图标刷新由 toggleNotificationFavorite
+                    // 内部在完成/回滚后再补一次。
+                    favoriteToggle -> toggleNotificationFavorite()
+
+                    else -> return super.onCustomCommand(session, controller, customCommand, args)
                 }
                 return Futures.immediateFuture(
                     SessionResult(SessionResult.RESULT_SUCCESS)
@@ -2485,6 +2607,9 @@ class YosPlaybackService : MediaSessionService() {
         this.setMediaNotificationProvider(notificationProvider)
 
         setCustomButtons(forwardingPlayer!!)
+        notificationFavoriteScope?.cancel()
+        notificationFavoriteScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        startNotificationButtonsObserver()
 
         YosDiagnostics.log("SVC_CREATE", "player" to player.javaClass.simpleName)
         // 心跳读原始 player（真相），不读 ForwardingPlayer：后者的 isPlaying() 被重写成
@@ -3051,6 +3176,12 @@ class YosPlaybackService : MediaSessionService() {
         gradeHeartbeatJob = null
         vocalSepAvailabilityJob?.cancel()
         vocalSepAvailabilityJob = null
+        // 通知栏按钮的观察与收藏协程同样随服务结束：不取消的话服务重建后会叠加第二个
+        // 观察者，同一份状态变化触发两轮 setCustomLayout（通知栏闪烁）
+        notificationButtonsJob?.cancel()
+        notificationButtonsJob = null
+        notificationFavoriteScope?.cancel()
+        notificationFavoriteScope = null
         // 人声分离：处理器与引擎随 player 一起释放，这里只清注册表
         runCatching { VocalSeparationController.release() }
         runCatching { yos.music.player.data.objects.VocalSeparationState.updateAvailability(false) }

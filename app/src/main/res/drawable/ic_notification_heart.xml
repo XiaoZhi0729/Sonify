@@ -1,0 +1,25 @@
+<!--
+  媒体通知栏「收藏」按钮——已收藏（实心爱心）。
+
+  为什么不用 ic_nowplaying_favorited：那是 28 视口的星星（播放页收藏用的是星形），
+  而通知栏这里按需求要的是爱心；也不复用 ic_home_personal_fm_heart，因为它没有
+  「未收藏」配对且没有 mini 档。四个文件（含 off / mini 变体）字形同源，
+  路径取自 Material 心形（24 网格）后整体 40 倍放大到 960 视口，与其它通知图标
+  （ic_shuffle / ic_repeat 系列均为 960 视口）保持同一网格。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?attr/colorControlNormal">
+    <group
+        android:scaleX="40"
+        android:scaleY="40"
+        android:pivotX="0"
+        android:pivotY="0">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M12,21.35 L10.55,20.03 C5.4,15.36 2,12.28 2,8.5 C2,5.42 4.42,3 7.5,3 C9.24,3 10.91,3.81 12,5.09 C13.09,3.81 14.76,3 16.5,3 C19.58,3 22,5.42 22,8.5 C22,12.28 18.6,15.36 13.45,20.04 L12,21.35 Z" />
+    </group>
+</vector>

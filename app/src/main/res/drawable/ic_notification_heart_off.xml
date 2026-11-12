@@ -1,0 +1,24 @@
+<!--
+  媒体通知栏「收藏」按钮——未收藏。
+
+  与 ic_shuffle_off / ic_repeat_off 同一套「未启用」语言：字形不变，整体 alpha 0.4。
+  刻意不用空心轮廓——通知动作键在系统栏里尺寸很小，1.5 描边缩下去会糊成灰线
+  （这个坑在本项目 ic_home_personal_fm_heart 的注释里已经记过一次）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:alpha="0.4"
+    android:tint="?attr/colorControlNormal">
+    <group
+        android:scaleX="40"
+        android:scaleY="40"
+        android:pivotX="0"
+        android:pivotY="0">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M12,21.35 L10.55,20.03 C5.4,15.36 2,12.28 2,8.5 C2,5.42 4.42,3 7.5,3 C9.24,3 10.91,3.81 12,5.09 C13.09,3.81 14.76,3 16.5,3 C19.58,3 22,5.42 22,8.5 C22,12.28 18.6,15.36 13.45,20.04 L12,21.35 Z" />
+    </group>
+</vector>
