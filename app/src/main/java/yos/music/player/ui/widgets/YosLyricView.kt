@@ -149,6 +149,7 @@ import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsFade
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLineText
 import yos.music.player.code.hdr.LyricHdr
 import yos.music.player.code.hdr.hdrSolidBrush
+import yos.music.player.code.utils.others.YosDiagnostics
 
 // ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
 // 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由歌词页按当前封面更新。
@@ -440,7 +441,23 @@ fun YosLyricViewLib(
                     listState = listState,
                     lyrics = lyrics,
                     currentPosition = { positionState.intValue },
-                    onLineClicked = { line -> mediaEvent.onSeek(line.start) },
+                    onLineClicked = { line ->
+                        // 误触防护：歌词是 LazyColumn，滚动时手指会按下/抬起在某个条目上，
+                        // 库里那层 clickable 就会把它当成点击并回调 onLineClicked。
+                        // 表现是"明明只是在滚歌词，播放位置却跳回某一句的开头"——真机实测
+                        // 《不用说抱歉》Hi-Res 档就是这样反复回跳、每跳一次都要重新 open
+                        // 数据源，听感是"唱到一半没声"（11-12 取证：SEEK_SRC fn=lyric_line
+                        // to=126421 精确等于该行 startTime）。
+                        // 滚动进行中一律不响应；真点击时 isScrollInProgress 为 false。
+                        if (listState.isScrollInProgress) {
+                            YosDiagnostics.log(
+                                "LYRIC_CLICK_IGNORED",
+                                "to" to line.start, "why" to "scrolling"
+                            )
+                            return@KaraokeLyricsView
+                        }
+                        mediaEvent.onSeek(line.start)
+                    },
                     onLinePressed = {},
                     modifier = Modifier.fillMaxSize(),
                     normalLineTextStyle = style,

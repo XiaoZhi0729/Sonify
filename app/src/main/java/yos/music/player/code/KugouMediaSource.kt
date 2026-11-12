@@ -413,22 +413,38 @@ class KugouResolvingDataSource(
     // 流中途断（读到一半代理挂了）：立刻标记代理故障，让紧随其后的下一次 open 直接走直连，
     // 不必再白等一轮连接超时。异常照旧上抛，由 ExoPlayer 的退避重试重新 open。
     // 纯缓存通道读失败与代理无关（它根本不联网），不能把这份故障记忆记到代理头上。
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = try {
-        active.read(buffer, offset, length).also { if (it > 0) activeBytesRead += it }
-    } catch (e: IOException) {
-        if (!activeIsDirect && !activeIsCacheOnly) OnlineProxyHealth.markProxyFailed()
-        // 读失败此前完全无痕：open 成功只代表"通道接受了一次 open"，不代表字节真能读出来。
-        // 缓存空洞/文件损坏走的就是这条路——它会让 ExoPlayer 无限退避重试，而日志一片空白。
-        YosDiagnostics.log(
-            "READ_FAIL", "via" to activeChannel, "hash" to activeHash,
-            "read" to activeBytesRead, "why" to (e.message ?: e.javaClass.simpleName)
-        )
-        // 纯缓存通道读到一半就失败 = 索引与真实字节不一致。记进负缓存，让下一次 open
-        // 别再走这条死路，直接联网解析。
-        if (activeIsCacheOnly) {
-            activeHash?.let { markCacheOnlyFailed(it, SystemClock.elapsedRealtime()) }
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val startedAt = SystemClock.elapsedRealtime()
+        val read = try {
+            active.read(buffer, offset, length)
+        } catch (e: IOException) {
+            if (!activeIsDirect && !activeIsCacheOnly) OnlineProxyHealth.markProxyFailed()
+            // 读失败此前完全无痕：open 成功只代表"通道接受了一次 open"，不代表字节真能读出来。
+            // 缓存空洞/文件损坏走的就是这条路——它会让 ExoPlayer 无限退避重试，而日志一片空白。
+            YosDiagnostics.log(
+                "READ_FAIL", "via" to activeChannel, "hash" to activeHash,
+                "read" to activeBytesRead, "why" to (e.message ?: e.javaClass.simpleName)
+            )
+            // 纯缓存通道读到一半就失败 = 索引与真实字节不一致。记进负缓存，让下一次 open
+            // 别再走这条死路，直接联网解析。
+            if (activeIsCacheOnly) {
+                activeHash?.let { markCacheOnlyFailed(it, SystemClock.elapsedRealtime()) }
+            }
+            throw e
         }
-        throw e
+        if (read > 0) activeBytesRead += read
+        // 单次 read 慢到用户能感知：缓存层"有字节但解不出帧"时**不抛异常、只是不返回**，
+        // 上层只能看到位置不动 + BUFFERING/READY 抖动，没有任何一行日志能指向读路径。
+        // 不计这一条，下次同样的死锁仍然只能靠"buf 恒定 + OPEN_START 缺席"间接反推。
+        val cost = SystemClock.elapsedRealtime() - startedAt
+        if (cost > READ_SLOW_MS) {
+            YosDiagnostics.log(
+                "READ_SLOW", "via" to activeChannel, "hash" to activeHash,
+                "cost" to cost, "want" to length, "got" to read,
+                "read" to activeBytesRead
+            )
+        }
+        return read
     }
 
     override fun close() {
@@ -451,6 +467,15 @@ class KugouResolvingDataSource(
 
         /** open 总耗时超过此阈值就记一条：后台限流下解析/连 CDN 常呈 10s+ 长尾。 */
         private const val OPEN_SLOW_MS = 3_000L
+
+        /**
+         * 单次 read 耗时超过此阈值就记一条。
+         *
+         * 与 [OPEN_SLOW_MS] 分工不同：open 慢是"连不上"，read 慢是"连上了但取不出字节"。
+         * 缓存层在"有字节但解不出帧"时不抛异常、只停滞，上层没有任何痕迹——
+         * 真机《不用说抱歉》Hi-Res 档就是这么卡死 13 秒的（buf 恒定、OPEN_START 零次）。
+         */
+        private const val READ_SLOW_MS = 1_500L
 
         /**
          * 纯缓存通道用的假 URI。CacheDataSource 只把它当"要打开哪个 key"的载体，
@@ -563,7 +588,11 @@ class KugouResolvingDataSourceFactory(
                 // key 已由 open() 写进 DataSpec.key（"hash:实际档位"）；这里只是兜底
                 // 直链 scheme 走默认语义（key 缺省用 uri）
                 .setCacheKeyFactory { spec -> spec.key ?: spec.uri.toString() }
-                // 读缓存出错时回源兜底，别让缓存层故障放大成播放失败
+                // 读缓存出错时回源兜底，别让缓存层故障放大成播放失败。
+                //
+                // 11-12 曾移除 FLAG_BLOCK_ON_CACHE 试图修"Hi-Res 某曲卡死"，**已证伪并回滚**：
+                // 那次日志里 READ_SLOW 0 条、OPEN_START 多次出现，读路径与回源都没被堵住。
+                // 该 flag 是 10-06 为"拖进度条优先命中缓存"加的，与本问题无关，恢复原样。
                 .setFlags(
                     CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
                         CacheDataSource.FLAG_BLOCK_ON_CACHE

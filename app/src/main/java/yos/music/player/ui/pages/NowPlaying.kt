@@ -217,6 +217,7 @@ import yos.music.player.code.utils.lrc.YosMediaEvent
 import yos.music.player.code.utils.lrc.YosUIConfig
 import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.others.Vibrator
+import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
 import android.widget.Toast
@@ -639,6 +640,7 @@ internal fun NowPlaying(
             lastClickTime.longValue = TimeUtils.getNowMills()
         }
         val onSeekAction: (Float) -> Unit = { position ->
+            YosDiagnostics.log("SEEK_SRC", "fn" to "progress_bar", "to" to position.toLong())
             mediaControl?.seekTo(position.toLong())
         }
         val onLyricsAction: () -> Unit = {
@@ -2667,6 +2669,7 @@ internal fun Lyric(
                 },
                 mediaEvent = object : YosMediaEvent {
                     override fun onSeek(position: Int) {
+                        YosDiagnostics.log("SEEK_SRC", "fn" to "lyric_line", "to" to position)
                         mediaControl?.seekTo(position.toLong())
                     }
                 },

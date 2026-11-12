@@ -7,6 +7,7 @@ import androidx.compose.runtime.Stable
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
+import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.objects.MediaViewModelObject.isPlaying
 
 @Stable
@@ -89,6 +90,7 @@ object FadeExo {
     fun MediaController.fadePause() {
         setPlaying(0)
         val currentVolume = this.volume
+        YosDiagnostics.log("FADE", "op" to "pause", "from" to "%.3f".format(currentVolume))
         fadeVolume(this, currentVolume, 0f, fadeAnimationDuration, 0) {
             this.pause()
         }
@@ -97,6 +99,7 @@ object FadeExo {
     fun MediaController.fadePlay() {
         setPlaying(1)
         val currentVolume = this.volume
+        YosDiagnostics.log("FADE", "op" to "play", "from" to "%.3f".format(currentVolume))
         this.play()
         fadeVolume(this, currentVolume, 1f, fadeAnimationDuration, 1)
     }
@@ -104,6 +107,7 @@ object FadeExo {
     fun ExoPlayer.fadePause() {
         setPlaying(0)
         val currentVolume = this.volume
+        YosDiagnostics.log("FADE", "op" to "pause", "from" to "%.3f".format(currentVolume))
         fadeVolume(this, currentVolume, 0f, fadeAnimationDuration, 0) {
             this.pause()
         }
@@ -112,6 +116,7 @@ object FadeExo {
     fun ExoPlayer.fadePlay() {
         setPlaying(1)
         val currentVolume = this.volume
+        YosDiagnostics.log("FADE", "op" to "play", "from" to "%.3f".format(currentVolume))
         this.play()
         fadeVolume(this, currentVolume, 1f, fadeAnimationDuration, 1)
     }

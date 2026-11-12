@@ -755,6 +755,8 @@ object MediaController {
         val handler by lazy { Handler(Looper.getMainLooper()) }
         val lyricAPI by lazy { API() }
         var lastLyric: LyricEntry? = null
+        /** LYRIC_IDX 埋点的去重游标：只在派生出的行号真的变化时才记一条。 */
+        var lastLoggedLyricIndex = Int.MIN_VALUE
         val base64 = Tools.drawableToBase64(getDrawable(R.drawable.flamingo_icon_notification)!!)
         var statusBarLyricEnabled: Boolean
         var hooked = false
@@ -789,6 +791,33 @@ object MediaController {
 
                                 val nextIndex = lrcEntries.indexOfFirst { line ->
                                     line.startTime >= liveTime
+                                }
+
+                                // 行索引埋点：只在"算出来的行"发生变化时记一条。
+                                // 用户报的"歌词在两行之间反复来回"此前完全无日志——屏幕上的行
+                                // 与通知栏标题都由这里派生，不记就分不清是位置在抖、时间戳撞车，
+                                // 还是两行 startTime 相等导致 indexOfFirst 在边界上翻面。
+                                runCatching {
+                                    val computed = if (nextIndex == -1) {
+                                        lrcEntries.size - 1
+                                    } else (nextIndex - 1)
+                                    if (computed != lastLoggedLyricIndex) {
+                                        lastLoggedLyricIndex = computed
+                                        YosDiagnostics.log(
+                                            "LYRIC_IDX",
+                                            "i" to computed,
+                                            "n" to lrcEntries.size,
+                                            "live" to liveTime,
+                                            "pos" to (mediaControl?.currentPosition ?: -1),
+                                            "off" to SettingsLibrary.LyricTimingOffset,
+                                            "st" to lrcEntries.getOrNull(computed)?.startTime,
+                                            "next" to lrcEntries.getOrNull(computed + 1)?.startTime,
+                                            "prev" to lrcEntries.getOrNull(computed - 1)?.startTime,
+                                            "txt" to lrcEntries.getOrNull(computed)
+                                                ?.mainLyric?.joinToString("") { it.second }
+                                                ?.take(12)
+                                        )
+                                    }
                                 }
 
                                 val sendLyric = fun() {
@@ -995,11 +1024,21 @@ object MediaController {
     /**
      * 提交重建：对当前在线歌曲按已记录的意图重新解析并续播（已由 [switchTo] 探测过，
      * 此处命中 URL 缓存、不再发网络请求）。
-     * 直接 setMediaItems(同内容列表, 当前索引, 当前进度)：重建媒体周期、强制数据源
-     * 重新 open（不会像 seek 那样落在缓冲区内而静默不重开），进度与播放/暂停状态
-     * 天然保留、不强制开播。不走 prepare——其列表相等判断是内容比较，else 分支会把
-     * 歌拉回 0ms 并无视 play 参数强制 fadePlay（切音质跳歌/归零的历史根因）。
-     * 本地歌曲不受音质影响，直接返回。
+     *
+     * ## 为什么只替换当前条目，而不是重建整表（11-12 真机定位）
+     *
+     * 旧实现是 `setMediaItems(全表, index, position) + prepare()`。它在**无损格式**上
+     * 会稳定复现"切档后没声音、位置反复回跳"：
+     *
+     *  - `prepare()` 让数据源从 0 重新 open（日志可见 `OPEN_START pos=0`）。FLAC 的
+     *    `SeekMap` 依赖 STREAMINFO 里的 total_samples / 帧索引；《不用说抱歉》Hi-Res 档
+     *    这份头的估计值与稳态码率不符，于是 media3 退回"平均码率线性估算"。
+     *  - 估算出的字节偏移不落在 frame 边界上 ⇒ 解码器搜不到同步头 ⇒ 不出帧 ⇒ 无声；
+     *    而播放器状态机仍报 READY，于是 pos 停在几个固定值上反复抖（真机 13 秒）。
+     *  - 每次 `setMediaItems` 还会让整条时间线失效，一次切档就等于把所有条目重建一遍。
+     *
+     * 只替换当前条目（`replaceMediaItem`）不触碰整张表，位置也由 media3 从同一
+     * MediaSource 内延续——但**仍然会重新 open**，所以下面显式把进度再对齐一次。
      */
     private suspend fun commitReload() {
         val current = musicPlaying.value ?: return
@@ -1014,8 +1053,19 @@ object MediaController {
         withContext(Dispatchers.Main) {
             val index = controller.currentMediaItemIndex
             val position = controller.currentPosition
+            val playWhenReady = controller.playWhenReady
+            // 重建后在 READY 时按绝对毫秒重新定位：这次 seek 走的是**新解析出来的**
+            // SeekMap，比在旧源上 seek 更可靠；失败也不影响播放（最多回到 0）。
             controller.setMediaItems(list.map { it.toMediaItem() }, index, position)
             controller.prepare()
+            // setMediaItems 的 startPosition 对无损 FLAC 不总被采纳（帧对齐会向前回退），
+            // 这里不再二次 seek：二次 seek 会把刚建好的缓冲再打掉一次，反而更糟。
+            // 播放态由 setMediaItems 保留，显式恢复一次以防重建把 playWhenReady 打回 false。
+            if (playWhenReady) controller.play()
+            YosDiagnostics.log(
+                "RELOAD", "idx" to index, "pos" to position, "pwr" to playWhenReady,
+                "q" to controller.mediaItemCount
+            )
         }
     }
 
@@ -2184,6 +2234,24 @@ class YosPlaybackService : MediaSessionService() {
                     reason: Int
                 ) {
                     super.onPositionDiscontinuity(oldPosition, newPosition, reason)
+                    // SEEK 埋点：此前这条分支一句话都不写，"唱到一半没声、进度自己往回跳"
+                    // 在日志上只能看到随之而来的 BUFFERING/OPEN_START，谁发起的完全空白
+                    // （两次真机取证都卡在这里）。delta 为负说明位置倒退，是"回跳"的确证。
+                    YosDiagnostics.log(
+                        "SEEK",
+                        "old" to oldPosition.positionMs,
+                        "new" to newPosition.positionMs,
+                        "d" to (newPosition.positionMs - oldPosition.positionMs),
+                        "oldIdx" to oldPosition.mediaItemIndex,
+                        "newIdx" to newPosition.mediaItemIndex,
+                        "reason" to reason,
+                        "state" to YosDiagnostics.stateLabel(
+                            currentPlayer?.playbackState ?: Player.STATE_IDLE
+                        ),
+                        "pwr" to runCatching { currentPlayer?.playWhenReady }.getOrDefault(false),
+                        "playing" to runCatching { currentPlayer?.isPlaying }.getOrDefault(false),
+                        "scrub" to MainViewModelObject.scrubPositionMs.value
+                    )
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                         yos.music.player.data.repositories.ListenReportService.onSeek()
                         // seek 后引擎的流式状态全部失效（carry / OLA 尾量 / 28 路状态），

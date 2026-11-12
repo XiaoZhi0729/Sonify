@@ -66,7 +66,12 @@ object YosDiagnostics {
         "SLEEP_START", "SLEEP_STOP", "SLEEP_FIRED", "PREPARE", "TRANSITION", "CRASH", "HEADSET", "EXPORT",
         "SVC_CMD", "TLMUT", "SRC", "LYRIC_", "VSEP_",
         // 在线音频通道的黑洞：读失败与通道选择此前完全无日志，"卡住"与"没开始"无法区分
-        "READ_FAIL", "OPEN_START", "CACHE_ONLY_MISS"
+        "READ_FAIL", "OPEN_START", "CACHE_ONLY_MISS", "READ_SLOW",
+        // 位置跳变（含倒退）：唱到一半没声只有它能把"谁 seek 的"钉死，见 MediaController
+        "SEEK", "SEEK_SRC", "LYRIC_IDX",
+        // 音量淡变：fadePlay/fadePause 是唯一能把 volume 写成 0 的路径，
+        // "引擎在播却没声"没有这两行就查不出是淡变没走完还是别的原因
+        "FADE"
     )
 
     /** 行格式固定是 `… pid=<数字> <事件名> k=v …`，事件名就取 pid 后第一个 token。 */
@@ -368,6 +373,14 @@ object YosDiagnostics {
             "pwr" to runCatching { p.playWhenReady }.getOrDefault(false),
             "q" to runCatching { p.mediaItemCount }.getOrDefault(-1),
             "idx" to runCatching { p.currentMediaItemIndex }.getOrDefault(-1),
+            // 播放器音量：FadeExo / CrossfadeExo 都会改写它，"在播但没声"的头号嫌疑。
+            // 没有这一列时，WAVE_LEVEL 非零会被误当成"确实出声了"——它量的是解码后 PCM，
+            // 位置在音量衰减之前，证明不了扬声器有声音（11-12 两次误判由此而来）。
+            "vol" to "%.3f".format(runCatching { p.volume }.getOrDefault(-1f)),
+            "aud" to runCatching {
+                val attrs = p.audioAttributes
+                "${attrs.usage}/${attrs.contentType}"
+            }.getOrDefault("-"),
             "main_d" to mainDelay
         )
 
@@ -503,6 +516,14 @@ object YosDiagnostics {
                 w.write("\n== 字段图例 ==\n")
                 w.write("up=/el= 两个单调钟（up 不含深睡）；相邻两行的 up_d/el_d 分别指向‘进程被冻’与‘设备深睡’\n")
                 w.write("HB/GAP/STALL/STATE_LIE：引擎真态与 ForwardingPlayer 上报态不一致时出 STATE_LIE；main_d 为回主线程往返延迟\n")
+                w.write("SEEK: 位置跳变。d<0 = 位置倒退（\"唱到一半没声、进度自己往回跳\"的确证）；\n")
+                w.write("  from = 调用栈里第一个非 MediaController 的 yos.music 帧（external = 外源命令，? = 取栈失败）；\n")
+                w.write("  scrub = 跳变瞬间的进度条拖动值（非空说明与拖动残留有关）\n")
+                w.write("LYRIC_IDX: 派生出的当前歌词行变化时记一条（只在行号变化时记，不是每 70ms）。\n")
+                w.write("  live=播放位置+偏移, st/next/prev=该行与相邻行的 startTime。\n")
+                w.write("  判读：live 稳定但 i 在 A/B 之间来回 = 两行 startTime 撞车；live 自己在抖 = 位置源有问题\n")
+                w.write("HB.vol: 播放器音量（0=静音）。**WAVE_LEVEL 非零不等于出声**——它量的是解码后 PCM，\n")
+                w.write("  位置在音量衰减之前；判\"有没有声\"必须看 HB.vol。FADE 记录每次淡变的音量起点\n")
                 w.write("STATE.s: 1=IDLE 2=BUFFERING 3=READY 4=ENDED（本版本直译）；TRANSITION.reason 为 media3 原值\n")
                 w.write("SRC fn=ui_next/ui_prev: 手动切歌入口（按下即记，带 idx/q/state，用于分辨“没发出/被吞/被打回”）\n")
                 w.write("SKIP_HOLD/SKIP_REARM: 连续失败达阈值后不再逐首跳，挂退避重试\n")
