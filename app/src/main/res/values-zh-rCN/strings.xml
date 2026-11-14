@@ -670,4 +670,26 @@
     <string name="vocal_separation_failed">音轨分离已停止，已恢复原始音讯。</string>
     <string name="vocal_separation_unavailable">目前音讯暂不支援音轨分离。</string>
     <string name="vocal_separation_ratio">人声 %1$d%%</string>
+
+    <!-- 桌面小组件 -->
+    <string name="widget_4x2_name">Sonify 播放器 (4×2)</string>
+    <string name="widget_4x1_name">Sonify 胶囊条 (4×1)</string>
+    <string name="widget_2x2_name">Sonify 方卡 (2×2)</string>
+    <string name="widget_4x2_desc">液态玻璃音乐播放器，支持四态播放模式与最近队列翻页。</string>
+    <string name="widget_4x1_desc">紧凑液态玻璃控制条，随时播放或切歌。</string>
+    <string name="widget_2x2_desc">方形液态玻璃卡片，呈现封面与快捷控制。</string>
+    <string name="widget_now_playing">正在播放</string>
+    <string name="widget_recently_played">最近播放</string>
+    <string name="widget_recent_heading">最近播放</string>
+    <string name="widget_play">播放</string>
+    <string name="widget_pause">暂停</string>
+    <string name="widget_badge_last">上次</string>
+    <string name="widget_cd_play_pause">播放或暂停</string>
+    <string name="widget_cd_next">下一首</string>
+    <string name="widget_cd_mode">切换播放模式</string>
+    <string name="widget_cd_prev_page">上一页</string>
+    <string name="widget_cd_next_page">下一页</string>
+    <string name="widget_cd_album_art">专辑封面</string>
+    <string name="widget_no_track_title">Sonify</string>
+    <string name="widget_no_track_artist">轻触打开 Sonify</string>
 </resources>

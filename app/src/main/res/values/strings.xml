@@ -671,4 +671,26 @@
     <string name="vocal_separation_failed">Vocal separation stopped. Original audio restored.</string>
     <string name="vocal_separation_unavailable">Vocal separation is unavailable for the current audio.</string>
     <string name="vocal_separation_ratio">Vocal %1$d%%</string>
+
+    <!-- Desktop App Widgets -->
+    <string name="widget_4x2_name">Sonify Player (4×2)</string>
+    <string name="widget_4x1_name">Sonify Compact Bar (4×1)</string>
+    <string name="widget_2x2_name">Sonify Card (2×2)</string>
+    <string name="widget_4x2_desc">Liquid glass music player with playback mode and recent queue shelf.</string>
+    <string name="widget_4x1_desc">Compact liquid glass bar with playback controls.</string>
+    <string name="widget_2x2_desc">Square liquid glass card with cover art and playback controls.</string>
+    <string name="widget_now_playing">NOW PLAYING</string>
+    <string name="widget_recently_played">Recently Played</string>
+    <string name="widget_recent_heading">Recently Played</string>
+    <string name="widget_play">Play</string>
+    <string name="widget_pause">Pause</string>
+    <string name="widget_badge_last">Last</string>
+    <string name="widget_cd_play_pause">Play or pause</string>
+    <string name="widget_cd_next">Next track</string>
+    <string name="widget_cd_mode">Cycle playback mode</string>
+    <string name="widget_cd_prev_page">Previous page</string>
+    <string name="widget_cd_next_page">Next page</string>
+    <string name="widget_cd_album_art">Album artwork</string>
+    <string name="widget_no_track_title">Sonify</string>
+    <string name="widget_no_track_artist">Tap to open Sonify</string>
 </resources>

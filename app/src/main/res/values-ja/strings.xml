@@ -569,4 +569,26 @@
     <string name="vocal_separation_failed">ボーカル分離を停止しました。元の音声に戻りました。</string>
     <string name="vocal_separation_unavailable">この音声ではボーカル分離を利用できません。</string>
     <string name="vocal_separation_ratio">ボーカル %1$d%%</string>
+
+    <!-- デスクトップウィジェット -->
+    <string name="widget_4x2_name">Sonify プレーヤー (4×2)</string>
+    <string name="widget_4x1_name">Sonify コンパクトバー (4×1)</string>
+    <string name="widget_2x2_name">Sonify カード (2×2)</string>
+    <string name="widget_4x2_desc">リキッドグラスの音楽プレーヤー。再生モード切替と履歴キュー対応。</string>
+    <string name="widget_4x1_desc">再生コントロール付きのコンパクトなリキッドグラスバー。</string>
+    <string name="widget_2x2_desc">ジャケットと操作ボタンを備えたスクエア型ウィジェット。</string>
+    <string name="widget_now_playing">NOW PLAYING</string>
+    <string name="widget_recently_played">Recently Played</string>
+    <string name="widget_recent_heading">最近の再生</string>
+    <string name="widget_play">Play</string>
+    <string name="widget_pause">Pause</string>
+    <string name="widget_badge_last">前回</string>
+    <string name="widget_cd_play_pause">再生または一時停止</string>
+    <string name="widget_cd_next">次の曲</string>
+    <string name="widget_cd_mode">再生モードを切り替え</string>
+    <string name="widget_cd_prev_page">前のページ</string>
+    <string name="widget_cd_next_page">次のページ</string>
+    <string name="widget_cd_album_art">アルバムアートワーク</string>
+    <string name="widget_no_track_title">Sonify</string>
+    <string name="widget_no_track_artist">タップして Sonify を開く</string>
 </resources>

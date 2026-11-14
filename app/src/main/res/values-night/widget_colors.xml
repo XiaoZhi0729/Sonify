@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark directional-sheen glass palette matching reference -->
+    <color name="widget_glass_body">#FF1C1E24</color>
+    <color name="widget_glass_rim">#38FFFFFF</color>
+    <color name="widget_glass_top_sheen_start">#33FFFFFF</color>
+    <color name="widget_glass_top_sheen_center">#0FFFFFFF</color>
+    <color name="widget_glass_top_sheen_end">#00FFFFFF</color>
+
+    <color name="widget_pill_body">#2EFFFFFF</color>
+    <color name="widget_pill_rim">#38FFFFFF</color>
+
+    <color name="widget_fg">#F5FFFFFF</color>
+    <color name="widget_sub_fg">#ADFFFFFF</color>
+    <color name="widget_micro_fg">#94FFFFFF</color>
+</resources>

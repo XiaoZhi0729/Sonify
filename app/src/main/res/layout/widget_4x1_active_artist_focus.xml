@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_glass_bg_4x1"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/widget_padding_bar_h"
+    android:paddingTop="@dimen/widget_padding_bar_v"
+    android:paddingEnd="@dimen/widget_padding_bar_h"
+    android:paddingBottom="@dimen/widget_padding_bar_v">
+
+    <ImageView
+        android:id="@+id/widget_art"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:contentDescription="@string/widget_cd_album_art"
+        android:scaleType="centerCrop"
+        android:src="@drawable/widget_art_placeholder" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_title_marquee"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:scrollHorizontally="true"
+            android:singleLine="true"
+            android:textColor="@color/widget_fg"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_title_static"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_no_track_title"
+            android:textColor="@color/widget_fg"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_artist_marquee"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="marquee"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:scrollHorizontally="true"
+            android:singleLine="true"
+            android:textColor="@color/widget_sub_fg"
+            android:textSize="12sp"
+            android:visibility="gone">
+            <requestFocus />
+        </TextView>
+
+        <TextView
+            android:id="@+id/widget_artist_static"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_no_track_artist"
+            android:textColor="@color/widget_sub_fg"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/widget_btn_play_pause"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:background="@drawable/widget_glass_pill"
+        android:contentDescription="@string/widget_cd_play_pause"
+        android:padding="7dp"
+        android:src="@drawable/ic_widget_pause" />
+
+    <ImageView
+        android:id="@+id/widget_btn_next"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/widget_glass_pill"
+        android:contentDescription="@string/widget_cd_next"
+        android:padding="7dp"
+        android:src="@drawable/ic_widget_next" />
+</LinearLayout>

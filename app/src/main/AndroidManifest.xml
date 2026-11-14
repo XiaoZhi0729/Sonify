@@ -109,6 +109,55 @@
                 android:resource="@xml/diag_file_paths" />
         </provider>
 
+        <receiver
+            android:name=".widget.SonifyWidget4x2Provider"
+            android:exported="true"
+            android:label="@string/widget_4x2_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sonify_widget_4x2_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SonifyWidget4x1Provider"
+            android:exported="true"
+            android:label="@string/widget_4x1_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sonify_widget_4x1_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SonifyWidget2x2Provider"
+            android:exported="true"
+            android:label="@string/widget_2x2_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sonify_widget_2x2_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SonifyWidgetActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".widget.SonifyQueueShelfService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
     </application>
 
 </manifest>

@@ -55,6 +55,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -1838,6 +1839,9 @@ class YosPlaybackService : MediaSessionService() {
     /** 通知栏按钮的刷新观察（收藏态/随机/循环任一变化即重建自定义按钮）。 */
     private var notificationButtonsJob: Job? = null
 
+    /** 桌面小组件的播放状态与队列观察。 */
+    private var widgetObserverJob: Job? = null
+
     companion object {
         private const val FLAG_ALWAYS_SHOW_TICKER = 0x1000000
         private const val FLAG_ONLY_UPDATE_TICKER = 0x2000000
@@ -2011,6 +2015,41 @@ class YosPlaybackService : MediaSessionService() {
                 .distinctUntilChanged()
                 .collect {
                     forwardingPlayer?.let { fp -> setCustomButtons(fp) }
+                }
+        }
+    }
+
+    private fun startWidgetObserver() {
+        widgetObserverJob?.cancel()
+        widgetObserverJob = CoroutineScope(Dispatchers.Main.immediate).launch {
+            snapshotFlow {
+                val track = musicPlaying.value
+                val queue = yos.music.player.code.MediaController.playingMusicList.value
+                listOf(
+                    track?.mediaId,
+                    track?.uri?.toString(),
+                    track?.title,
+                    track?.artists,
+                    track?.thumb?.toString(),
+                    MediaViewModelObject.isPlaying.value,
+                    MediaViewModelObject.shuffleModeEnabled.value,
+                    MediaViewModelObject.repeatMode.intValue,
+                    yos.music.player.widget.SonifyWidgetState.hasPlayedInSession,
+                    queue?.size ?: 0,
+                    queue?.firstOrNull()?.mediaId,
+                )
+            }
+                .distinctUntilChanged()
+                .collectLatest {
+                    delay(50L)
+                    withContext(Dispatchers.IO) {
+                        yos.music.player.widget.SonifyWidgetState.persistFromLive(
+                            applicationContext,
+                            musicPlaying.value,
+                            yos.music.player.code.MediaController.playingMusicList.value,
+                        )
+                        yos.music.player.widget.SonifyWidgetUpdater.updateAllWidgets(applicationContext)
+                    }
                 }
         }
     }
@@ -2311,6 +2350,7 @@ class YosPlaybackService : MediaSessionService() {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     super.onIsPlayingChanged(isPlaying)
                     if (isPlaying) {
+                        yos.music.player.widget.SonifyWidgetState.hasPlayedInSession = true
                         OnlineSkipState.reset("playing")
                         // 真的出声了 = 拦截已解除（也可能只是换了一首能播的）：收掉提示
                         yos.music.player.data.objects.PlaybackBlockState.clear()
@@ -2610,6 +2650,7 @@ class YosPlaybackService : MediaSessionService() {
         notificationFavoriteScope?.cancel()
         notificationFavoriteScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         startNotificationButtonsObserver()
+        startWidgetObserver()
 
         YosDiagnostics.log("SVC_CREATE", "player" to player.javaClass.simpleName)
         // 心跳读原始 player（真相），不读 ForwardingPlayer：后者的 isPlaying() 被重写成
@@ -3180,6 +3221,13 @@ class YosPlaybackService : MediaSessionService() {
         // 观察者，同一份状态变化触发两轮 setCustomLayout（通知栏闪烁）
         notificationButtonsJob?.cancel()
         notificationButtonsJob = null
+        widgetObserverJob?.cancel()
+        widgetObserverJob = null
+        yos.music.player.widget.SonifyWidgetState.hasPlayedInSession = false
+        yos.music.player.widget.SonifyWidgetUpdater.updateAllWidgetsAsync(
+            applicationContext,
+            forceEmpty = true,
+        )
         notificationFavoriteScope?.cancel()
         notificationFavoriteScope = null
         // 人声分离：处理器与引擎随 player 一起释放，这里只清注册表

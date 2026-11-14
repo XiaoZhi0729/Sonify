@@ -1,9 +1,10 @@
 package yos.music.player
 
 import android.app.Application
-import android.util.Log
 import android.content.ComponentName
+import android.content.res.Configuration
 import android.net.Uri
+import android.util.Log
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.ImageLoader
@@ -34,9 +35,12 @@ import yos.music.player.data.libraries.YosStringWrapper
 import yos.music.player.data.repositories.KugouRepository.withPlayableUri
 import yos.music.player.data.objects.CacheSongIndex
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.widget.SonifyWidgetUpdater
 import kotlin.system.exitProcess
 
 class YosBasicApplication : Application(), ImageLoaderFactory {
+
+    private var lastUiNightMode: Int = Configuration.UI_MODE_NIGHT_UNDEFINED
 
     /**
      * 全局 Coil ImageLoader：默认单例的内存缓存只占堆 25%，
@@ -338,6 +342,16 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         )
 
         super.onCreate()
+        lastUiNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val currentNightMode = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        if (currentNightMode != lastUiNightMode) {
+            lastUiNightMode = currentNightMode
+            SonifyWidgetUpdater.updateAllWidgetsAsync(this)
+        }
     }
 }
 

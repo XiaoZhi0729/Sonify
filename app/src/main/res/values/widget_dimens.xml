@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="widget_radius_card">26dp</dimen>
+    <dimen name="widget_radius_pill_bar">26dp</dimen>
+    <dimen name="widget_padding_card">14dp</dimen>
+    <dimen name="widget_padding_bar_h">14dp</dimen>
+    <dimen name="widget_padding_bar_v">14dp</dimen>
+</resources>
