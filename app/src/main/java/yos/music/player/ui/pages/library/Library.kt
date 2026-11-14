@@ -11,7 +11,6 @@ import androidx.navigation.NavController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Radio
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
 import io.github.alexzhirkevich.cupertino.icons.outlined.PersonCropCircle
@@ -140,10 +139,12 @@ fun Library(
 
                     LibraryDivider()
 
+                    // 图标着色走 SmallLabelItem 的默认值（MaterialTheme.colorScheme.primary），
+                    // 与同分区其他条目一致。曾硬编码 Color(0xFFF54047)：浅色主题下恰好等于 primary
+                    // 看不出问题，深色主题（primary = primaryDark = 0xFFE64366）就只有这一行色相偏红。
                     SmallLabelItem(
                         icon = painterResource(id = R.drawable.ic_library_link_icon_heart),
-                        label = stringResource(id = R.string.home_everyday_recommend_title),
-                        iconTint = Color(0xFFF54047)
+                        label = stringResource(id = R.string.home_everyday_recommend_title)
                     ) {
                         navController.toUI(UI.EverydayRecommendDetail)
                     }

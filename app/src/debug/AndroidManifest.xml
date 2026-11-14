@@ -10,19 +10,5 @@
         <activity
             android:name=".debug.DiagnosticActivity"
             android:exported="true" />
-        <!-- 玻璃字预览：只验证观感，不参与生产路径。
-             ★ 必须带 MAIN/LAUNCHER，否则只注册 Activity 不会在桌面出现图标，
-               用户根本找不到入口（只能靠 adb am start）。
-             只存在于 debug 包，release 不包含此入口。 -->
-        <activity
-            android:name="yos.music.player.ui.launch.GlassHelloPreviewActivity"
-            android:exported="true"
-            android:label="玻璃字预览"
-            android:theme="@android:style/Theme.Material.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
     </application>
 </manifest>

@@ -342,7 +342,8 @@ fun LiquidBottomTabs(
                                     backdrop = backdrop,
                                     shape = { Capsule() },
                                     // 采样层已降为 1/2，模糊由库经 drawImage 作用其上。半径取 12dp。
-                                    effects = { blur(12.dp.toPx()) },
+                                    // 磨砂分支使用独立的 frostedBlurScale（与液态玻璃的 glassBlurScale 互不干扰）。
+                                    effects = { blur(12.dp.toPx() * frostedBlurScale) },
                                     // 黑边环绕高光：与玻璃分支/迷你条玻璃面同配方
                                     // （ClassYaba LiquidButton blackSideHighlight）。
                                     highlight = {

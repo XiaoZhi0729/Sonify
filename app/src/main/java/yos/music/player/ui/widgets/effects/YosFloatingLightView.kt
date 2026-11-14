@@ -18,6 +18,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -91,37 +92,59 @@ fun YosFloatingLight(
      *
      * null = 保留原 `AnimatedContent` 行为（画廊页那两份实例不走切歌过渡）。
      */
-    crossfade: TrackArtworkTransition? = null
+    crossfade: TrackArtworkTransition? = null,
+    /**
+     * 忽略 [showMiniPlayer] 的"暂停"语义，只要界面可见就把动效跑起来。
+     *
+     * ★这个参数是为引导页预览加的，修的是一个"开关看起来完全没用"的 bug：
+     *   `showMiniPlayer = true` 的语义是"只画静态糊图、不跑 Ken Burns",
+     *   而内部实现是把它并进了 `active = RESUMED && !showMiniPlayer` 这一个门。
+     *   引导页的预览舞台传了 `showMiniPlayer = true`（因为它要隐藏真实迷你条），
+     *   于是**动效时间轴永远不启动** —— 用户切「背景动态效果」开/关看到的画面
+     *   逐像素相同。判据：一个参数承担两件事（布局 + 动效门）必然出这种 bug，
+     *   必须拆开。
+     */
+    animateAlways: Boolean = false,
+    /**
+     * 强制走流体网格分支，**不看用户的 [SettingsLibrary.NowplayingBackgroundMode]**。
+     *
+     * 只给引导页预览用：那一屏要展示的是这个 App 最有辨识度的背景，
+     * 不该因为用户此刻的设置恰好是"慢速漂移"就展示一个平铺糊图。
+     * 它不改用户设置（纯展示），且仍需设备支持 GLES3。
+     */
+    forceMesh: Boolean = false
 ) {
     val context = LocalContext.current
     val meshSupported = remember { isPearMeshSupported(context) }
     // 流体网格模式接管背景时，糊图这条管线整个不跑（网格自己在 GL 里调色 + 模糊）
     val meshActive = enableMesh &&
             NowplayingBackgroundEffect &&
-            SettingsLibrary.NowplayingBackgroundMode == SettingsLibrary.BACKGROUND_MODE_MESH &&
+            (forceMesh || SettingsLibrary.NowplayingBackgroundMode == SettingsLibrary.BACKGROUND_MODE_MESH) &&
             meshSupported
 
-    if (meshActive) {
-        PearMeshBackgroundLayer(
-            modifier = modifier,
-            album = album,
-            isPlaying = isPlaying,
-            showMiniPlayer = showMiniPlayer
-        )
-        return
+    var meshReady by remember { mutableStateOf(false) }
+    LaunchedEffect(meshActive) {
+        if (!meshActive) meshReady = false
     }
+    val meshAlpha by animateFloatAsState(
+        targetValue = if (meshActive && meshReady) 1f else 0f,
+        animationSpec = tween(durationMillis = 220),
+        label = "meshAlpha"
+    )
 
-    if (crossfade != null) {
-        // 共享时间轴分支：每层各自持有一份 drawable，节点按图层 key 复用，
-        // 过渡结束裁回一张时旧节点离开组合、位图随之释放。
-        // 首帧（图层表还是空的）先按当前 album 画一张，不出黑闪。
-        val layers = crossfade.layers.ifEmpty { listOf(album()) }
-        YosWrapper {
-            layers.forEachIndexed { index, layer ->
-                key(layer) {
-                    FloatingLightLayer(
-                        uri = layer as? Uri,
-                        modifier = modifier,
+    Box(modifier = modifier) {
+        run {
+            if (crossfade != null) {
+                // 共享时间轴分支：每层各自持有一份 drawable，节点按图层 key 复用，
+                // 过渡结束裁回一张时旧节点离开组合、位图随之释放。
+                // 首帧（图层表还是空的）先按当前 album 画一张，不出黑闪。
+                val layers = crossfade.layers.ifEmpty { listOf(album()) }
+                YosWrapper {
+                    layers.forEachIndexed { index, layer ->
+                        key(layer) {
+                            FloatingLightLayer(
+                                uri = layer as? Uri,
+                                modifier = Modifier.fillMaxSize(),
                         isPlaying = isPlaying,
                         nowPage = nowPage,
                         showMiniPlayer = showMiniPlayer,
@@ -130,13 +153,13 @@ fun YosFloatingLight(
                             // 最终合成与互补交叉逐像素等价，但新图没就绪时旧图保持 alpha=1，
                             // 不会出现"旧图先淡掉、新图还没到"的透底变暗。
                             backgroundLayerAlpha(index, layers.size, crossfade.progress.value)
-                        }
+                        },
+                        animateAlways = animateAlways
                     )
                 }
             }
         }
-        return
-    }
+            } else {
 
     val drawable = remember {
         mutableStateOf<Drawable?>(null)
@@ -188,7 +211,7 @@ fun YosFloatingLight(
                         )
                 }
             },
-            modifier = modifier,
+            modifier = Modifier.fillMaxSize(),
             contentKey = { it }
         ) { currentDrawable ->
             // 用户裁定：压暗效果在所有子页面（含歌词页）恒显示，不再随 nowPage 撤掉。
@@ -199,7 +222,24 @@ fun YosFloatingLight(
                 isPlaying = isPlaying,
                 nowPage = nowPage,
                 showMiniPlayer = showMiniPlayer,
-                fallbackToBlack = useBackground.value
+                fallbackToBlack = useBackground.value,
+                animateAlways = animateAlways
+            )
+        }
+    }
+            }
+        }
+
+        if (meshActive) {
+            PearMeshBackgroundLayer(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = meshAlpha },
+                album = album,
+                isPlaying = isPlaying,
+                showMiniPlayer = showMiniPlayer,
+                animateAlways = animateAlways,
+                onFirstFrameRendered = { meshReady = true }
             )
         }
     }
@@ -272,7 +312,8 @@ private fun FloatingLightLayer(
     isPlaying: () -> Boolean,
     nowPage: () -> String,
     showMiniPlayer: Boolean,
-    alpha: () -> Float
+    alpha: () -> Float,
+    animateAlways: Boolean = false
 ) {
     val context = LocalContext.current
     var drawable by remember(uri) { mutableStateOf<Drawable?>(null) }
@@ -288,7 +329,8 @@ private fun FloatingLightLayer(
         nowPage = nowPage,
         showMiniPlayer = showMiniPlayer,
         fallbackToBlack = uri == null,
-        layerAlpha = alpha
+        layerAlpha = alpha,
+        animateAlways = animateAlways
     )
 }
 
@@ -307,14 +349,18 @@ private fun PearMeshBackgroundLayer(
     modifier: Modifier,
     album: () -> Uri?,
     isPlaying: () -> Boolean,
-    showMiniPlayer: Boolean
+    showMiniPlayer: Boolean,
+    animateAlways: Boolean = false,
+    onFirstFrameRendered: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val albumUri = album()
 
     val state = remember { PearMeshState() }
     val lifecycleState = LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
-    val active = lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED) && !showMiniPlayer
+    // 与 BackgroundLayer 同一个口径：showMiniPlayer 只在 animateAlways=false 时当动效门。
+    val foreground = lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED)
+    val active = foreground && (animateAlways || !showMiniPlayer)
     val playing = remember(isPlaying) { derivedStateOf(isPlaying) }.value
     LaunchedEffect(playing, active) {
         state.setPlaybackPlaying(playing && active)
@@ -392,7 +438,11 @@ private fun PearMeshBackgroundLayer(
         }
     }
 
-    PearMeshBackground(state = state, modifier = modifier.fillMaxSize())
+    PearMeshBackground(
+        state = state,
+        modifier = modifier.fillMaxSize(),
+        onFirstFrameRendered = onFirstFrameRendered,
+    )
 }
 
 @Composable
@@ -410,7 +460,15 @@ private fun BackgroundLayer(
      * 参数名刻意不叫 `alpha`：`graphicsLayer` 的接收者也有 `alpha` 属性，
      * 同名的闭包参数会把它遮蔽掉（`alpha = alpha()` 会编译失败）。
      */
-    layerAlpha: () -> Float = { 1f }
+    layerAlpha: () -> Float = { 1f },
+    /**
+     * true = 只要界面可见就跑动效，忽略 [showMiniPlayer]。
+     *
+     * ★`showMiniPlayer` 本来就只该管"迷你条要不要占位"，它被并进动效门之后
+     *   变成一个隐藏的"暂停动效"开关 —— 引导页预览传了 true，于是
+     *   「背景动态效果」这个开关在那一屏完全看不出任何变化。见 [YosFloatingLight]。
+     */
+    animateAlways: Boolean = false
 ) {
     val context = LocalContext.current
     val layerDrawable = remember(drawable) {
@@ -418,7 +476,9 @@ private fun BackgroundLayer(
     }
     val lifecycleState =
         LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
-    val active = lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED) && !showMiniPlayer
+    // 动效门拆成两件事：界面是否可见（lifecycle），以及布局上要不要"装作没有播放"。
+    val foreground = lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED)
+    val active = foreground && (animateAlways || !showMiniPlayer)
     val playing = remember(isPlaying) { derivedStateOf(isPlaying) }.value
     val running = playing && active
     // 漂移相位：暂停/后台时 LaunchedEffect 取消，相位保持 → 画面冻结在当前帧；

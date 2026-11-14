@@ -44,9 +44,11 @@ internal fun isPearMeshSupported(context: Context): Boolean {
 internal fun PearMeshBackground(
     state: PearMeshState,
     modifier: Modifier = Modifier,
+    onFirstFrameRendered: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val latestState = rememberUpdatedState(state)
+    val latestFirstFrame = rememberUpdatedState(onFirstFrameRendered)
     val lifecycleOwner = LocalLifecycleOwner.current
     val renderThread = remember { AtomicReference<EglRenderThread?>(null) }
 
@@ -70,13 +72,15 @@ internal fun PearMeshBackground(
         modifier = modifier,
         factory = { viewContext ->
             TextureView(viewContext).apply {
-                isOpaque = true
+                isOpaque = false
+                var firstFrameNotified = false
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(
                         surfaceTexture: SurfaceTexture,
                         width: Int,
                         height: Int,
                     ) {
+                        firstFrameNotified = false
                         val surface = Surface(surfaceTexture)
                         val thread = EglRenderThread(
                             context = viewContext.applicationContext,
@@ -111,7 +115,12 @@ internal fun PearMeshBackground(
                         return true
                     }
 
-                    override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
+                    override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
+                        if (!firstFrameNotified) {
+                            firstFrameNotified = true
+                            latestFirstFrame.value?.invoke()
+                        }
+                    }
                 }
             }
         },

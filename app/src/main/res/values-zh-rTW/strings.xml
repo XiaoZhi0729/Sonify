@@ -569,6 +569,100 @@
     <string name="vocal_separation_failed">音軌分離已停止，已恢復原始音訊。</string>
     <string name="vocal_separation_unavailable">目前音訊暫不支援音軌分離。</string>
     <string name="vocal_separation_ratio">人聲 %1$d%%</string>
+    <!-- 首次啟動引導 -->
+    <string name="onboarding_hello_greeting">歡迎使用</string>
+    <string name="onboarding_hello_brand" translatable="false">Sonify</string>
+    <string name="onboarding_hello_body">本地音樂與酷狗曲庫，放進同一個播放器裡無縫接著聽。</string>
+    <string name="onboarding_hello_start">開始</string>
+    <string name="onboarding_next">下一步</string>
+
+    <!-- 屏 1 · 手機號 -->
+    <string name="onboarding_login_title">連接酷狗曲庫</string>
+    <string name="onboarding_login_desc">輸入手機號取得驗證碼，即可同步你的收藏與歌單。</string>
+    <string name="onboarding_login_skip">先不登入，跳過這一步</string>
+    <string name="onboarding_login_next">先不登入，下一步</string>
+    <string name="onboarding_login_card_title">雲端歌單即時互通</string>
+    <string name="onboarding_login_card_desc">手機號僅用於向酷狗伺服器驗證身分，不會明文保存在本機。</string>
+    <string name="onboarding_login_use_qr">改用酷狗 App 掃碼登入</string>
+    <string name="onboarding_login_phone_hint">輸入 11 位手機號</string>
+    <string name="onboarding_login_send_code">傳送驗證碼</string>
+
+    <!-- 屏 2 · 驗證碼 -->
+    <string name="onboarding_otp_title">輸入驗證碼</string>
+    <string name="onboarding_otp_desc">已傳送 6 位驗證碼至 %1$s</string>
+    <string name="onboarding_otp_hint">點擊方格調起系統鍵盤輸入</string>
+    <string name="onboarding_otp_verifying">正在驗證並同步曲庫…</string>
+    <string name="onboarding_otp_resend">重新傳送</string>
+    <string name="onboarding_otp_resend_countdown">重新傳送 (%1$ds)</string>
+    <string name="onboarding_otp_wrong">驗證碼不正確</string>
+
+    <!-- 屏 1 · 掃碼彈層 -->
+    <string name="onboarding_qr_sheet_title">酷狗 App 掃碼登入</string>
+    <string name="onboarding_qr_sheet_desc">儲存 QR Code 後，在酷狗掃一掃相簿即可。</string>
+    <string name="onboarding_qr_save">儲存 QR Code 到相簿</string>
+    <string name="onboarding_qr_saved">已儲存到相簿</string>
+
+    <!-- 屏 3 · 外觀選擇 -->
+    <string name="onboarding_theme_title">選擇外觀</string>
+    <string name="onboarding_theme_desc">挑選淺色、深色或跟隨系統，介面明暗會即時切換。</string>
+    <string name="onboarding_theme_auto_footnote">目前跟隨系統：%1$s</string>
+
+    <!-- 屏 4 · 歌詞與動態背景 -->
+    <string name="onboarding_settings_title">歌詞與動態背景</string>
+    <string name="onboarding_settings_desc">預覽歌詞排版與動態背景，開關可即時對比。</string>
+    <string name="onboarding_settings_theme">外觀</string>
+    <string name="onboarding_settings_motion_desc">關閉後上方背景將保持靜止</string>
+    <string name="onboarding_settings_theme_auto">自動</string>
+    <string name="onboarding_settings_font_small">小</string>
+    <string name="onboarding_settings_font_medium">中</string>
+    <string name="onboarding_settings_font_large">大</string>
+    <string name="onboarding_settings_confirm">就按這個來</string>
+    <string name="onboarding_lyric_prev">夜色落在寂靜的窗台</string>
+    <string name="onboarding_lyric_current">風吹過我閉上的眼睛</string>
+    <string name="onboarding_lyric_next">聽見心跳在旋律裡呼吸</string>
+
+    <!-- 屏 4 · 模糊與材質 -->
+    <string name="onboarding_glass_title">模糊與材質調節</string>
+    <string name="onboarding_glass_desc">選擇控制項材質並調節共用模糊強度，上方可即時預覽。</string>
+    <string name="onboarding_glass_material">材質</string>
+    <string name="onboarding_glass_liquid">液態玻璃</string>
+    <string name="onboarding_glass_frosted">混色模糊</string>
+    <string name="onboarding_glass_footnote">兩種材質共用同一模糊強度，只影響工具列按鈕、底部標籤列、迷你播放器與對話框。</string>
+    <string name="onboarding_glass_stage_title">首頁</string>
+    <string name="onboarding_glass_stage_subtitle">私人電台 · 每日推薦</string>
+    <string name="onboarding_glass_song" translatable="false">数センチメンタル</string>
+    <string name="onboarding_glass_artist" translatable="false">こはならむ</string>
+    <string name="onboarding_glass_tab_home">首頁</string>
+    <string name="onboarding_glass_tab_fav">喜愛</string>
+    <string name="onboarding_glass_tab_library">資料庫</string>
+    <string name="onboarding_glass_tab_search">搜尋</string>
+
+    <!-- 屏 5 · 準備好了 -->
+    <string name="onboarding_done_title">你好</string>
+    <string name="onboarding_done_desc">在開始聽歌前，順手把本地音樂庫也接進來。</string>
+    <string name="onboarding_done_cap_1">雙音源統一曲庫</string>
+    <string name="onboarding_done_cap_1_desc">酷狗收藏與本機音訊檔混合排序，不再來回切 App。</string>
+    <string name="onboarding_done_cap_2">逐字動態歌詞</string>
+    <string name="onboarding_done_cap_2_desc">唱到哪一拍亮到哪一個字，支援無損音質與動態背景。</string>
+    <string name="onboarding_done_start">開始聽歌</string>
+
+    <!-- 屏 5 · 本機掃描 -->
+    <string name="onboarding_scan_title">掃描本機音訊資料夾</string>
+    <string name="onboarding_scan_sub">授權讀取 Music / Download</string>
+    <string name="onboarding_scan_action">立即掃描</string>
+    <string name="onboarding_scan_running">掃描中…</string>
+    <string name="onboarding_scan_running_sub">正在讀取本機曲庫</string>
+    <string name="onboarding_scan_done_title">已匯入 %1$d 首本機音訊</string>
+    <string name="onboarding_scan_done_sub">含 %1$d 首 FLAC 無損音軌</string>
+    <string name="onboarding_scan_denied">未取得授權 —— 之後可以在設定裡再開啟</string>
+
+    <string name="settings_others_about_onboarding">重新查看引導</string>
+    <string name="settings_others_about_onboarding_desc">再看一遍歡迎引導與偏好設定。</string>
+    <string name="settings_performance_ui_glass_material">材質</string>
+    <string name="settings_performance_ui_glass_material_desc">液態玻璃會折射背後的內容；混色模糊只做模糊與著色。</string>
+    <string name="settings_performance_ui_glass_material_liquid">液態玻璃</string>
+    <string name="onboarding_phone_format_error">手機號碼格式不正確，請檢查後重試</string>
+    <string name="settings_performance_ui_glass_material_frosted">混色模糊</string>
 
     <!-- 桌面小工具 -->
     <string name="widget_4x2_name">Sonify 播放器 (4×2)</string>

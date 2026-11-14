@@ -335,6 +335,8 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
                         }
                     } catch (e:Exception) {
                         e.printStackTrace()
+                    } finally {
+                        yos.music.player.code.PlaybackRestoreGate.markReady()
                     }
                 }
             },

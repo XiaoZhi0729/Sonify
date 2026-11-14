@@ -245,7 +245,6 @@ fun SwitchItem(
                 }
                 onClick?.invoke()
             },
-            modifier = Modifier.height(25.dp),
             switchHeight = 25.dp,
             checkedState = checkedLambda
         )

@@ -1,16 +1,10 @@
 package yos.music.player.ui.pages.settings.performance
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,16 +14,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import io.github.alexzhirkevich.cupertino.CupertinoSlider
-import io.github.alexzhirkevich.cupertino.theme.CupertinoTheme
 import kotlin.math.roundToInt
 import yos.music.player.R
 import yos.music.player.code.MediaController
@@ -43,6 +33,7 @@ import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.liquid.YosSlider
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
@@ -268,9 +259,6 @@ private fun LyricHdrStrengthItem() {
     var value by remember("LyricHdrStrengthItem") {
         mutableFloatStateOf(SettingsLibrary.LyricHdrStrength.coerceIn(0f, 1f))
     }
-    val interactionSource = remember("LyricHdrStrengthItem_interaction") {
-        MutableInteractionSource()
-    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -292,33 +280,16 @@ private fun LyricHdrStrengthItem() {
                 color = MaterialTheme.colorScheme.primary
             )
         }
-        CupertinoTheme {
-            CupertinoSlider(
-                value = value,
-                onValueChange = {
-                    value = it
-                    SettingsLibrary.LyricHdrStrength = it
-                },
-                valueRange = 0f..1f,
-                thumb = {
-                    Spacer(
-                        Modifier
-                            .size(23.dp)
-                            .hoverable(interactionSource = interactionSource)
-                            .shadow(
-                                8.dp,
-                                CircleShape,
-                                clip = false,
-                                spotColor = Color.Black.copy(alpha = 0.55f)
-                            )
-                            .background(Color.White, CircleShape)
-                    )
-                },
-                interactionSource = interactionSource,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-            )
-        }
+        YosSlider(
+            value = { value },
+            onValueChange = {
+                value = it
+                SettingsLibrary.LyricHdrStrength = it
+            },
+            valueRange = 0f..1f,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+        )
     }
 }

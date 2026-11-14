@@ -83,11 +83,9 @@ fun UserInterfaceSetting(navController: NavController) =
 
                             Divider()
 
-                            // 玻璃模糊强度倍率调节页（横幅预览 + 滑块）。
-                            // 关着液态玻璃时这一项没有任何可调观感，整行置灰。
+                            // 玻璃模糊强度倍率调节页（支持在液态玻璃与混色模糊之间切换并各自调强度）。
                             LabelItem(
                                 title = stringResource(id = R.string.settings_performance_ui_glass_effect_title),
-                                enabled = SettingsLibrary.BarBlurEffect
                             ) {
                                 navController.toUI(UI.Settings.GlassEffectSetting)
                             }

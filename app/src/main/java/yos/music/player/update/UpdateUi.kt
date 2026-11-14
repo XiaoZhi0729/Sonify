@@ -70,8 +70,14 @@ fun UpdateSettingsItems(developerModeEnabled: Boolean = false) {
     }
 }
 
+/**
+ * @param suppressed 暂时完全压住自动检查与自动提示（不是"关掉功能"，只是这一段时间别弹）。
+ *   目前唯一的用途是首次启动引导期间：引导是全屏接管层，而自动检查会在**进入后 2 秒**
+ *   发一次请求，网络不通时当场弹出「更新错误 · 检查更新失败」—— 一个刚被欢迎过的人
+ *   第一眼看到的是报错，比晚一天检查更新严重得多。引导结束后恢复正常节奏。
+ */
 @Composable
-fun UpdateHost(model: UpdateViewModel, startupReady: Boolean) {
+fun UpdateHost(model: UpdateViewModel, startupReady: Boolean, suppressed: Boolean = false) {
     val context = LocalContext.current
     val installer = remember(context) { UpdateInstaller(context) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -85,14 +91,14 @@ fun UpdateHost(model: UpdateViewModel, startupReady: Boolean) {
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(startupReady, resumed, modalOpen, model.autoCheck) {
-        if (startupReady && resumed && !modalOpen && !model.visible) {
+    LaunchedEffect(startupReady, resumed, modalOpen, model.autoCheck, suppressed) {
+        if (startupReady && resumed && !modalOpen && !model.visible && !suppressed) {
             delay(2_000)
             model.check(manual = false)
         }
     }
-    LaunchedEffect(startupReady, resumed, modalOpen, model.pendingAutomaticPrompt) {
-        if (startupReady && resumed && !modalOpen && model.pendingAutomaticPrompt) {
+    LaunchedEffect(startupReady, resumed, modalOpen, model.pendingAutomaticPrompt, suppressed) {
+        if (startupReady && resumed && !modalOpen && model.pendingAutomaticPrompt && !suppressed) {
             model.showPendingAutomaticPrompt()
         }
     }
@@ -120,7 +126,9 @@ fun UpdateHost(model: UpdateViewModel, startupReady: Boolean) {
             }
         }
     }
-    if (!model.visible || !resumed) return
+    // suppressed 也要挡住**已经在显示**的弹窗：引导是重看入口进来的，此刻可能正好
+    // 有一个自动检查的失败弹窗挂着；引导一出现就该把它压住，退出后按原状态恢复。
+    if (!model.visible || !resumed || suppressed) return
     val update = model.manifest
     val stage = model.stage
     val size = update?.let { Formatter.formatFileSize(context, it.apkSize) }.orEmpty()

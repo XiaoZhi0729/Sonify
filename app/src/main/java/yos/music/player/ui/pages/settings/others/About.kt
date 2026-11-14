@@ -204,6 +204,21 @@ fun About(navController: NavController) {
                         // 「致谢」与「联系开发者」同为对外信息出口，合成一张两行卡：
                         // 它们原先各占一张单行卡，中间还夹一个 GroupSpacer，视觉上像两件无关的事。
                         RoundColumn {
+                            // 重看引导：与「致谢」同属"关于这个应用"的信息出口，放在这组里。
+                            // 引导是全屏接管层（不是一条导航路由），所以只能发令牌让根组合打开它——
+                            // 路由会落在某个 house 的栈里、被底栏和 chrome 包着，就不是"接管整个应用"了。
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_others_about_onboarding),
+                                desc = stringResource(id = R.string.settings_others_about_onboarding_desc)
+                            ) {
+                                yos.music.player.ui.onboarding.OnboardingLauncher.open(
+                                    context,
+                                    forceLogin = true
+                                )
+                            }
+
+                            Divider()
+
                             LabelItem(
                                 title = stringResource(id = R.string.settings_others_about_acknowledgements)
                             ) {

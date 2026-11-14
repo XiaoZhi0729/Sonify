@@ -44,11 +44,11 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
-import io.github.alexzhirkevich.cupertino.CupertinoSwitch
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.settingContainerBack
 import yos.music.player.ui.theme.settingContainerBackDark
+import yos.music.player.ui.widgets.mochi.MochiSwitch
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 
@@ -105,6 +105,7 @@ fun LiquidSwitch(
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
 
     val interactive = onCheckedChange != null
+    val currentChecked by rememberUpdatedState(checked)
     val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     val currentCheckedState by rememberUpdatedState(checkedState)
     val animationScope = rememberCoroutineScope()
@@ -112,8 +113,9 @@ fun LiquidSwitch(
     // 不能用 dragAmount.x != 0f —— 纵向滑动时手指的亚像素横向抖动也会让 x 非零。
     val touchSlop = LocalViewConfiguration.current.touchSlop
     var dragX by remember { mutableFloatStateOf(0f) }
-    var didMove by remember { mutableStateOf(false) }
+    var dragY by remember { mutableFloatStateOf(0f) }
     var fraction by remember { mutableFloatStateOf(if (checked) 1f else 0f) }
+    fun readActualChecked(): Boolean = currentCheckedState?.invoke() ?: currentChecked
     val dampedDragAnimation = remember(animationScope) {
         DampedDragAnimation(
             animationScope = animationScope,
@@ -125,34 +127,35 @@ fun LiquidSwitch(
             onDragStarted = {},
             onDragStopped = {
                 val horizontal = abs(dragX) >= touchSlop
+                val verticalSwipe = abs(dragY) >= touchSlop * 2f && abs(dragY) > abs(dragX) * 1.5f
                 when {
                     // 横向拖动：按落点方向提交翻转
                     horizontal -> {
                         fraction = if (targetValue >= 0.5f) 1f else 0f
                         currentOnCheckedChange?.invoke(fraction == 1f)
                     }
-                    // 只在纵向滑动过：视为误触，回弹到真实状态，绝不翻转、也不滚页面
-                    didMove -> {
-                        fraction = if (currentCheckedState?.invoke() == true) 1f else 0f
+                    // 明显纵向滑动：视为误触，回弹到真实状态
+                    verticalSwipe -> {
+                        fraction = if (readActualChecked()) 1f else 0f
                     }
-                    // 完全没动：点按翻转
+                    // 点按或微小斜向抖动：可靠翻转状态
                     else -> {
-                        fraction = if (currentCheckedState?.invoke() == true) 0f else 1f
+                        fraction = if (readActualChecked()) 0f else 1f
                         currentOnCheckedChange?.invoke(fraction == 1f)
                     }
                 }
                 dragX = 0f
-                didMove = false
+                dragY = 0f
             },
             // 手势被外部抢占（例如父级滚动先消费）：回弹到真实状态，绝不提交翻转。
             onDragCancelled = {
                 dragX = 0f
-                didMove = false
-                fraction = if (currentCheckedState?.invoke() == true) 1f else 0f
+                dragY = 0f
+                fraction = if (readActualChecked()) 1f else 0f
             },
             onDrag = { _, dragAmount ->
                 dragX += dragAmount.x
-                didMove = true
+                dragY += dragAmount.y
                 val delta = dragAmount.x / with(density) { dragWidth.dp.toPx() }
                 fraction = if (isLtr) {
                     (fraction + delta).fastCoerceIn(0f, 1f)
@@ -169,7 +172,7 @@ fun LiquidSwitch(
             .collectLatest { dampedDragAnimation.updateValue(it) }
     }
     LaunchedEffect(checkedState) {
-        snapshotFlow { currentCheckedState?.invoke() ?: checked }
+        snapshotFlow { currentCheckedState?.invoke() ?: currentChecked }
             .collectLatest { isChecked ->
                 val target = if (isChecked) 1f else 0f
                 if (target != fraction) {
@@ -198,7 +201,9 @@ fun LiquidSwitch(
     }
 
     Box(
-        modifier,
+        modifier
+            .semantics { role = Role.Switch }
+            .then(if (interactive) dampedDragAnimation.modifier else Modifier),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(
@@ -219,8 +224,6 @@ fun LiquidSwitch(
                         if (isLtr) lerp(edgePadding, edgePadding + dragWidth, fraction).dp.toPx()
                         else lerp(-edgePadding, -(edgePadding + dragWidth), fraction).dp.toPx()
                 }
-                .semantics { role = Role.Switch }
-                .then(if (interactive) dampedDragAnimation.modifier else Modifier)
                 .drawBackdrop(
                     backdrop = thumbBackdrop,
                     shape = { Capsule },
@@ -297,11 +300,12 @@ fun YosSwitch(
             contentBackdrop = contentBackdrop
         )
     } else {
-        // cupertino 0.1.0-alpha04 的 onCheckedChange 为非空参数，仅展示时用空实现兜底
-        CupertinoSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange ?: {},
-            modifier = modifier
+        val currentChecked = checkedState?.invoke() ?: checked
+        MochiSwitch(
+            checked = currentChecked,
+            onCheckedChange = onCheckedChange,
+            modifier = modifier,
+            switchHeight = switchHeight,
         )
     }
 }

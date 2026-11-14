@@ -477,6 +477,24 @@ class MainActivity : BaseActivity() {
                     var launchCurtainAlive by remember("MainActivity_launchCurtainAlive") {
                         mutableStateOf(playLaunchCurtain)
                     }
+                    // 首次启动引导：已拆为独立页面 OnboardingActivity，等开屏幕布退干净再跳转。
+                    val shouldLaunchOnboarding = remember("MainActivity_shouldLaunchOnboarding") {
+                        playLaunchCurtain &&
+                            !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
+                            !yos.music.player.ui.onboarding.OnboardingPrefs.completed
+                    }
+                    LaunchedEffect(shouldLaunchOnboarding, launchCurtainAlive) {
+                        if (shouldLaunchOnboarding && !launchCurtainAlive &&
+                            !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
+                            !yos.music.player.ui.onboarding.OnboardingPrefs.completed
+                        ) {
+                            yos.music.player.ui.onboarding.OnboardingPrefs.markStarted()
+                            yos.music.player.ui.onboarding.OnboardingLauncher.open(
+                                this@MainActivity,
+                                forceLogin = false
+                            )
+                        }
+                    }
                     LaunchedEffect(Unit) {
                         // 幕布已经参与组合并即将绘制首帧：放行系统闪屏。
                         withFrameNanos { }
@@ -508,7 +526,11 @@ class MainActivity : BaseActivity() {
                             launchCurtainState.revealAt(index)
                         }
                     }
-                    yos.music.player.update.UpdateHost(updateViewModel, updateStartupReady)
+                    yos.music.player.update.UpdateHost(
+                        updateViewModel,
+                        updateStartupReady,
+                        suppressed = false
+                    )
                     // 20028 二次验证弹窗：挂在根组合，播放链路触发时也能弹（Dialog 自带独立窗口，
                     // 不参与下面这棵树的布局与测量）。显示与否只看 pendingCaptcha。
                     yos.music.player.data.objects.KugouVipState.pendingCaptcha?.let { pending ->
@@ -2129,7 +2151,11 @@ class MainActivity : BaseActivity() {
                                                     Modifier.drawBackdrop(
                                                         backdrop = navBackdrop,
                                                         shape = { shellShape },
-                                                        effects = { blur(12.dp.toPx()) },
+                                                        // 磨砂分支使用独立的 frostedBlurScale（与液态玻璃的 glassBlurScale 互不干扰），
+                                                        // 在 effects 内读由库 observeReads 观察。
+                                                        effects = {
+                                                            blur(12.dp.toPx() * yos.music.player.ui.widgets.liquid.frostedBlurScale)
+                                                        },
                                                         // 黑边环绕高光：与上方玻璃分支同配方
                                                         // （ClassYaba blackSideHighlight），关玻璃态也保留
                                                         // 描边（用户要求与底栏磨砂胶囊一致）。门禁同玻璃
@@ -2705,6 +2731,8 @@ class MainActivity : BaseActivity() {
                                     .zIndex(100f)
                             )
                         }
+
+                        // 首次启动引导已移至独立页面 OnboardingActivity。
                     }
                 }
             }

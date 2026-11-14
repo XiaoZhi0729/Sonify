@@ -379,7 +379,6 @@ object SettingsLibrary {
     /**
      * 界面工具栏模糊效果
      */
-    @Stable
     var BarBlurEffect by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_blur_effect",
@@ -396,6 +395,16 @@ object SettingsLibrary {
     var GlassBlurScale by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_glass_blur_scale",
+        initialValue = 1.0f
+    )
+
+    /**
+     * 混色模糊（磨砂）强度倍率（0f..2f，1f = 原样），与 [GlassBlurScale] 相互独立。
+     */
+    @Stable
+    var FrostedBlurScale by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_frosted_blur_scale",
         initialValue = 1.0f
     )
 
@@ -722,6 +731,7 @@ object SettingsLibrary {
         NowplayingStaticFullScreenAlbum = false
         BarBlurEffect = false
         GlassBlurScale = 1.0f
+        FrostedBlurScale = 1.0f
         NotificationEnableIcon = true
         NotificationSmallerIcon = false
         ListenHistory = true

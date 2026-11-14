@@ -569,6 +569,100 @@
     <string name="vocal_separation_failed">ボーカル分離を停止しました。元の音声に戻りました。</string>
     <string name="vocal_separation_unavailable">この音声ではボーカル分離を利用できません。</string>
     <string name="vocal_separation_ratio">ボーカル %1$d%%</string>
+    <!-- 初回起動ガイド -->
+    <string name="onboarding_hello_greeting">ようこそ</string>
+    <string name="onboarding_hello_brand" translatable="false">Sonify</string>
+    <string name="onboarding_hello_body">ローカル音楽と Kugou をひとつのプレイヤーに。切り替えずにそのまま聴けます。</string>
+    <string name="onboarding_hello_start">はじめる</string>
+    <string name="onboarding_next">次へ</string>
+
+    <!-- 画面 1 · 電話番号 -->
+    <string name="onboarding_login_title">Kugou ライブラリに接続</string>
+    <string name="onboarding_login_desc">電話番号を入力して認証コードを受け取ると、お気に入りとプレイリストが同期されます。</string>
+    <string name="onboarding_login_skip">あとで</string>
+    <string name="onboarding_login_next">ログインせずに次へ</string>
+    <string name="onboarding_login_card_title">クラウドのライブラリをそのまま</string>
+    <string name="onboarding_login_card_desc">番号は Kugou の本人確認にのみ使われ、端末には保存されません。</string>
+    <string name="onboarding_login_use_qr">Kugou アプリでスキャンしてログイン</string>
+    <string name="onboarding_login_phone_hint">11 桁の電話番号</string>
+    <string name="onboarding_login_send_code">コードを送信</string>
+
+    <!-- 画面 2 · 認証コード -->
+    <string name="onboarding_otp_title">コードを入力</string>
+    <string name="onboarding_otp_desc">6 桁のコードを %1$s に送信しました</string>
+    <string name="onboarding_otp_hint">枠をタップするとキーボードが出ます</string>
+    <string name="onboarding_otp_verifying">確認してライブラリを同期中…</string>
+    <string name="onboarding_otp_resend">コードを再送信</string>
+    <string name="onboarding_otp_resend_countdown">再送信 (%1$d 秒)</string>
+    <string name="onboarding_otp_wrong">確認コードが正しくありません</string>
+
+    <!-- 画面 1 · スキャンシート -->
+    <string name="onboarding_qr_sheet_title">Kugou アプリでスキャン</string>
+    <string name="onboarding_qr_sheet_desc">コードを保存して、Kugou のアルバムから読み取ってください。</string>
+    <string name="onboarding_qr_save">コードをアルバムに保存</string>
+    <string name="onboarding_qr_saved">アルバムに保存しました</string>
+
+    <!-- 画面 3 · 外観の選択 -->
+    <string name="onboarding_theme_title">外観を選択</string>
+    <string name="onboarding_theme_desc">ライト、ダーク、またはシステム連動から選べます。画面全体に即座に反映されます。</string>
+    <string name="onboarding_theme_auto_footnote">システムに従う：現在は%1$s</string>
+
+    <!-- 画面 4 · 歌詞と動く背景 -->
+    <string name="onboarding_settings_title">歌詞と動く背景</string>
+    <string name="onboarding_settings_desc">歌詞のレイアウトと動く背景をプレビューできます。オン・オフで見比べてください。</string>
+    <string name="onboarding_settings_theme">外観</string>
+    <string name="onboarding_settings_motion_desc">オフにすると上の背景が静止します</string>
+    <string name="onboarding_settings_theme_auto">自動</string>
+    <string name="onboarding_settings_font_small">小</string>
+    <string name="onboarding_settings_font_medium">中</string>
+    <string name="onboarding_settings_font_large">大</string>
+    <string name="onboarding_settings_confirm">この設定で始める</string>
+    <string name="onboarding_lyric_prev">静かな窓辺に夜が降りる</string>
+    <string name="onboarding_lyric_current">風が閉じた目を撫でていく</string>
+    <string name="onboarding_lyric_next">メロディの中で鼓動が息をする</string>
+
+    <!-- 画面 4 · ぼかしと素材 -->
+    <string name="onboarding_glass_title">ぼかしと素材の調整</string>
+    <string name="onboarding_glass_desc">素材を選び、共通のぼかし強度を調整します。上のプレビューが即座に反映されます。</string>
+    <string name="onboarding_glass_material">素材</string>
+    <string name="onboarding_glass_liquid">リキッドグラス</string>
+    <string name="onboarding_glass_frosted">色付きぼかし</string>
+    <string name="onboarding_glass_footnote">2 つの素材は同じ強度を共有します。影響するのはツールバーのボタン、タブバー、ミニプレイヤー、ダイアログのみです。</string>
+    <string name="onboarding_glass_stage_title">ホーム</string>
+    <string name="onboarding_glass_stage_subtitle">パーソナルラジオ · デイリーミックス</string>
+    <string name="onboarding_glass_song" translatable="false">数センチメンタル</string>
+    <string name="onboarding_glass_artist" translatable="false">こはならむ</string>
+    <string name="onboarding_glass_tab_home">ホーム</string>
+    <string name="onboarding_glass_tab_fav">お気に入り</string>
+    <string name="onboarding_glass_tab_library">ライブラリ</string>
+    <string name="onboarding_glass_tab_search">検索</string>
+
+    <!-- 画面 5 · 準備完了 -->
+    <string name="onboarding_done_title">こんにちは</string>
+    <string name="onboarding_done_desc">再生する前に、ローカルの音楽ライブラリも取り込んでおきましょう。</string>
+    <string name="onboarding_done_cap_1">2 つの音源を 1 つのライブラリに</string>
+    <string name="onboarding_done_cap_1_desc">Kugou のお気に入りとローカル音源をまとめて並べます。アプリを切り替える必要はありません。</string>
+    <string name="onboarding_done_cap_2">一文字ずつの歌詞</string>
+    <string name="onboarding_done_cap_2_desc">歌に合わせて一文字ずつ光ります。ロスレス音質と動く背景にも対応。</string>
+    <string name="onboarding_done_start">聴きはじめる</string>
+
+    <!-- 画面 5 · ローカルスキャン -->
+    <string name="onboarding_scan_title">ローカル音源フォルダをスキャン</string>
+    <string name="onboarding_scan_sub">Music / Download への読み取りを許可</string>
+    <string name="onboarding_scan_action">今すぐスキャン</string>
+    <string name="onboarding_scan_running">スキャン中…</string>
+    <string name="onboarding_scan_running_sub">端末のライブラリを読み取り中</string>
+    <string name="onboarding_scan_done_title">ローカル音源を %1$d 曲取り込みました</string>
+    <string name="onboarding_scan_done_sub">うち FLAC ロスレス %1$d 曲</string>
+    <string name="onboarding_scan_denied">許可されませんでした — あとから設定で有効にできます</string>
+
+    <string name="settings_others_about_onboarding">ガイドをもう一度見る</string>
+    <string name="settings_others_about_onboarding_desc">ようこそガイドと設定をもう一度確認します。</string>
+    <string name="settings_performance_ui_glass_material">素材</string>
+    <string name="settings_performance_ui_glass_material_desc">リキッドグラスは背後の内容を屈折させ、色付きぼかしはぼかしと着色のみを行います。</string>
+    <string name="settings_performance_ui_glass_material_liquid">リキッドグラス</string>
+    <string name="onboarding_phone_format_error">電話番号の形式が正しくありません。確認してやり直してください</string>
+    <string name="settings_performance_ui_glass_material_frosted">色付きぼかし</string>
 
     <!-- デスクトップウィジェット -->
     <string name="widget_4x2_name">Sonify プレーヤー (4×2)</string>

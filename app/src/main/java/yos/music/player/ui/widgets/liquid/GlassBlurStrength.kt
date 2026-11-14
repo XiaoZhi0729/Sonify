@@ -25,3 +25,21 @@ import yos.music.player.data.libraries.SettingsLibrary
  */
 val glassBlurScale: Float
     get() = SettingsLibrary.GlassBlurScale
+
+/**
+ * 混色模糊（磨砂）强度倍率（0f..2f，1f = 原样），与 [glassBlurScale] 相互独立，互不覆盖。
+ */
+val frostedBlurScale: Float
+    get() = SettingsLibrary.FrostedBlurScale
+
+fun activeBlurScale(liquid: Boolean = SettingsLibrary.BarBlurEffect): Float =
+    (if (liquid) glassBlurScale else frostedBlurScale).coerceIn(0f, 2f)
+
+fun setActiveBlurScale(liquid: Boolean, value: Float) {
+    val clamped = value.coerceIn(0f, 2f)
+    if (liquid) {
+        SettingsLibrary.GlassBlurScale = clamped
+    } else {
+        SettingsLibrary.FrostedBlurScale = clamped
+    }
+}

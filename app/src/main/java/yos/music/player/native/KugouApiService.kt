@@ -3,6 +3,8 @@ package yos.music.player.native
 import android.util.Log
 import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import yos.music.player.code.utils.player.OnlineSkipState
 import okhttp3.*
@@ -223,29 +225,63 @@ class KugouApiService private constructor() {
             .build()
     }
 
-    /** 保证 Rust server 在运行（幂等）。返回是否可用；启动瞬时失败最多重试 3 次。 */
-    private suspend fun ensureServer(): Boolean = retryResult {
-        try {
-            // 设备身份持久化目录：优先用 Application 注入的真实 filesDir（可写）；
-            // 回退值是当前包名，绝不能再用旧包名 yos.music.player.oss（见 appFilesDir 注释）。
-            val dataDir = appFilesDir ?: "/data/data/com.sonify.music/files"
-            if (!KugouNativeBridge.isServerRunning()) {
-                val p = KugouNativeBridge.startServer(dataDir = dataDir)
-                if (p <= 0) return@retryResult Result.failure<Boolean>(IOException("Failed to start server"))
-            } else if (KugouNativeBridge.getServerPort() <= 0) {
-                KugouNativeBridge.startServer(dataDir = dataDir)
+    /**
+     * QR 登录专用 client：**快速失败**。
+     *
+     * QR 打的是本机 loopback（`127.0.0.1`）上的 Rust server，正常响应是毫秒级。
+     * 走 [client] 的 10s connect + 15s read 时，一旦本地服务没起来或被上游风控，
+     * 用户要在扫码弹层里干等约 100 秒（4 次重试 × 25 秒）才看到"网络请求失败" ——
+     * 这是"又他妈网络请求失败"的体感来源之一。
+     *
+     * loopback 不该有 8 秒还连不上的情况；`callTimeout` 卡死整次调用（含重试等待）。
+     * `Proxy.NO_PROXY`：系统代理/VPN 会拦 loopback（见 `KugouMediaSource` 的同款救火路径）。
+     */
+    private val qrClient by lazy {
+        client.newBuilder()
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .proxy(java.net.Proxy.NO_PROXY)
+            .build()
+    }
+
+    /**
+     * 保证 Rust server 在运行（幂等）。
+     *
+     * ★★必须加锁。上一版是裸 `retryResult { ... }`：`registerDevice()` 的冷启动协程
+     *   和引导页扫码弹层的 `refresh()` 会在同一秒各调一次，两次都看到
+     *   `!isServerRunning()` → 各自 `startServer()` → 端口被覆盖、其中一次拿到 0 →
+     *   那次调用直接失败成"网络请求失败"。这是冷启动第一次扫码特别容易失败的原因。
+     *
+     * `Mutex` 而不是 `synchronized`：函数体内有 `return@retryResult` 与挂起点，
+     * 且可能被 CancellationException 打断，用协程感知的锁才不会留下死锁。
+     */
+    private val ensureServerMutex = Mutex()
+
+    private suspend fun ensureServer(): Boolean = ensureServerMutex.withLock {
+        retryResult {
+            try {
+                // 设备身份持久化目录：优先用 Application 注入的真实 filesDir（可写）；
+                // 回退值是当前包名，绝不能再用旧包名 yos.music.player.oss（见 appFilesDir 注释）。
+                val dataDir = appFilesDir ?: "/data/data/com.sonify.music/files"
+                if (!KugouNativeBridge.isServerRunning()) {
+                    val p = KugouNativeBridge.startServer(dataDir = dataDir)
+                    if (p <= 0) return@retryResult Result.failure<Boolean>(IOException("Failed to start server"))
+                } else if (KugouNativeBridge.getServerPort() <= 0) {
+                    KugouNativeBridge.startServer(dataDir = dataDir)
+                }
+                if (KugouNativeBridge.getServerPort() > 0) {
+                    Result.success(true)
+                } else {
+                    Result.failure(IOException("Server not running"))
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Result.failure(error)
             }
-            if (KugouNativeBridge.getServerPort() > 0) {
-                Result.success(true)
-            } else {
-                Result.failure(IOException("Server not running"))
-            }
-        } catch (error: kotlinx.coroutines.CancellationException) {
-            throw error
-        } catch (error: Throwable) {
-            Result.failure(error)
-        }
-    }.getOrDefault(false)
+        }.getOrDefault(false)
+    }
 
     /**
      * 通用 GET 封装：带登录态 Authorization，返回 (HTTP code, body)。
@@ -282,7 +318,9 @@ class KugouApiService private constructor() {
         // true 时日志只记路径、不记 query：评论正文等用户内容不得进日志
         redactLog: Boolean = false,
         auth: AuthSnapshot = authSnapshot(),
-        singleAttempt: Boolean = false
+        singleAttempt: Boolean = false,
+        // QR 登录要走独立的快速失败 client（见 [qrClient]）
+        useQrClient: Boolean = false
     ): Pair<Int, String> {
         val baseUrl = KugouNativeBridge.getBaseUrl()
         val builder = baseUrl.toHttpUrl().newBuilder()
@@ -299,8 +337,42 @@ class KugouApiService private constructor() {
         extraHeaders.forEach { (k, v) -> rb.header(k, v) }
         val req = rb.build()
         Log.d(TAG, "GET $path authenticated=${auth.isLoggedIn}")
-        return (if (singleAttempt) mutationClient else client).newCall(req).awaitResponseBody()
+        val http = when {
+            useQrClient -> qrClient
+            singleAttempt -> mutationClient
+            else -> client
+        }
+        return http.newCall(req).awaitResponseBody()
     }
+
+    /**
+     * QR 登录专用 GET：走 [qrClient]（快速失败），且**只重试一次**。
+     *
+     * 与 [httpGetWithRetry] 的区别只有两点，都是为"用户盯着弹层等结果"这件事服务的：
+     * · 超时短（3s connect / 5s read / 8s call），失败在 8 秒内就报出来；
+     * · 重试 1 次而不是 3 次 —— 本地 loopback 重试三次没有收益，只有等待。
+     *
+     * 非 2xx 与空响应仍按失败处理（与通用封装一致），但错误文案已经能说清是哪个环节。
+     */
+    private suspend fun qrGet(
+        path: String,
+        params: Map<String, String>,
+    ): Pair<Int, String> = retryResult(1) {
+        try {
+            val response = httpGetOnce(path, params, useQrClient = true)
+            when {
+                response.first !in 200..299 -> Result.failure(
+                    IOException("HTTP ${response.first}")
+                )
+                response.second.isEmpty() -> Result.failure(IOException("响应为空"))
+                else -> Result.success(response)
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure(error)
+        }
+    }.getOrElse { throw it }
 
     /**
      * 同 [httpGetWithRetry]，但**非 2xx 也把 (code, body) 原样返回**（不抛异常）。
@@ -545,14 +617,14 @@ class KugouApiService private constructor() {
 
     suspend fun loginQrKey(): Result<String> = withContext(Dispatchers.IO) {
         try {
-            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
-            val (code, body) = httpGetWithRetry("/login/qr/key", mapOf("timestamp" to System.currentTimeMillis().toString()))
+            if (!ensureServer()) return@withContext Result.failure(Exception("本地服务未启动"))
+            val (code, body) = qrGet("/login/qr/key", mapOf("timestamp" to System.currentTimeMillis().toString()))
             Log.d(TAG, "/login/qr/key -> HTTP $code")
-            if (code !in 200..299) return@withContext Result.failure(IOException("HTTP $code"))
+            if (code !in 200..299) return@withContext Result.failure(IOException("取二维码 key 失败（HTTP $code）"))
             val json = JSONObject(body)
             val data = json.optJSONObject("data") ?: json
             val qrcode = data.optString("qrcode", "")
-            if (qrcode.isEmpty()) return@withContext Result.failure(IOException("No qrcode in response"))
+            if (qrcode.isEmpty()) return@withContext Result.failure(IOException("响应里没有 qrcode 字段"))
             Result.success(qrcode)
         } catch (e: Exception) {
             Log.e(TAG, "loginQrKey exception", e)
@@ -563,17 +635,20 @@ class KugouApiService private constructor() {
     /** 返回 base64 PNG data URL（Rust 本地生成，login.rs:484-504）。 */
     suspend fun loginQrCreate(key: String): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val (code, body) = httpGetWithRetry("/login/qr/create", mapOf(
+            // ★必须自己兜一次：上一版只有 loginQrKey 调 ensureServer，
+            //   冷启动时 key 那步侥幸通过、create 这步端口还没缓存 → 直接失败。
+            if (!ensureServer()) return@withContext Result.failure(Exception("本地服务未启动"))
+            val (code, body) = qrGet("/login/qr/create", mapOf(
                 "key" to key,
                 "qrimg" to "true",
                 "timestamp" to System.currentTimeMillis().toString()
             ))
             Log.d(TAG, "/login/qr/create -> HTTP $code, body length=${body.length}")
-            if (code !in 200..299) return@withContext Result.failure(IOException("HTTP $code"))
+            if (code !in 200..299) return@withContext Result.failure(IOException("生成二维码失败（HTTP $code）"))
             val json = JSONObject(body)
             val data = json.optJSONObject("data") ?: json
             val base64 = data.optString("base64", "")
-            if (base64.isEmpty()) return@withContext Result.failure(IOException("No base64 image in response"))
+            if (base64.isEmpty()) return@withContext Result.failure(IOException("响应里没有二维码图片"))
             Result.success(base64)
         } catch (e: Exception) {
             Log.e(TAG, "loginQrCreate exception", e)
@@ -585,11 +660,11 @@ class KugouApiService private constructor() {
     suspend fun loginQrCheck(key: String): Result<Int> = withContext(Dispatchers.IO) {
         val loginExpected = authSnapshot()
         try {
-            val (code, body) = httpGetWithRetry("/login/qr/check", mapOf(
+            val (code, body) = qrGet("/login/qr/check", mapOf(
                 "key" to key,
                 "timestamp" to System.currentTimeMillis().toString()
             ))
-            if (code !in 200..299) return@withContext Result.failure(IOException("HTTP $code"))
+            if (code !in 200..299) return@withContext Result.failure(IOException("轮询失败（HTTP $code）"))
             val json = JSONObject(body)
             val data = json.optJSONObject("data") ?: json
             val status = data.optInt("status", -1)

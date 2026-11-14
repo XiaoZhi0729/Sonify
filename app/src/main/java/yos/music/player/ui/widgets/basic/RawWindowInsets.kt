@@ -82,10 +82,52 @@ private val NavigationBarsBaseline = 20.dp
 private fun navigationBarsBottomClampedPx(): Int =
     maxOf(currentRawInsets().bottom, with(LocalDensity.current) { NavigationBarsBaseline.roundToPx() })
 
+/**
+ * 输入法（软键盘）遮挡高度：px，0 表示键盘没弹。
+ *
+ * ★为什么不直接用 foundation 的 `WindowInsets.ime`：本工程在 HyperOS 上
+ *   Compose 侧的 WindowInsets 恒派发 0（见文件头），`imePadding()` 因此完全失效。
+ *   引导页的手机号输入行必须知道"键盘有没有弹"，只能走同一个
+ *   `ViewCompat.getRootWindowInsets()` 数据源。
+ *
+ * 用 [WindowInsetsCompat.Type.ime] 而不是 `ime()`：前者是"键盘占的高度"，
+ * 键盘收起时归 0；后者在收起时等于导航条高度（不能当"是否弹出"的判据）。
+ */
+@Composable
+fun rawImeBottomPx(): Int {
+    val view = LocalView.current
+    val state = remember("RawWindowInsets_ime") { mutableStateOf(0) }
+    DisposableEffect(view) {
+        val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            val next = runCatching {
+                ViewCompat.getRootWindowInsets(view)
+                    ?.getInsets(WindowInsetsCompat.Type.ime())
+                    ?.bottom ?: 0
+            }.getOrDefault(0)
+            if (next != state.value) state.value = next
+        }
+        view.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        onDispose { view.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
+    }
+    return state.value
+}
+
+/** 键盘是否弹起（按"IME 高度 > 0"判定）。 */
+@Composable
+fun rawImeVisible(): Boolean = rawImeBottomPx() > 0
+
+/** 输入法 padding（raw 版 `imePadding()`，非消费语义）。 */
+@Composable
+fun Modifier.rawImePadding(): Modifier {
+    val px = rawImeBottomPx()
+    if (px <= 0) return this
+    val bottom = with(LocalDensity.current) { px.toDp() }
+    return this.padding(bottom = bottom)
+}
+
 /** 状态栏顶 inset（px）。 */
 @Composable
 fun rawStatusBarsTopPx(): Int = currentRawInsets().top
-
 /** 状态栏顶 inset（dp）。 */
 @Composable
 fun rawStatusBarsTopDp(): Dp = with(LocalDensity.current) { currentRawInsets().top.toDp() }
