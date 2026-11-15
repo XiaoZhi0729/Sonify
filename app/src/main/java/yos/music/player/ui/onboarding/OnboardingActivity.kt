@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import yos.music.player.R
 import yos.music.player.ui.theme.YosMusicTheme
 import yos.music.player.ui.widgets.basic.ProvideRawWindowInsets
 
@@ -21,6 +22,13 @@ class OnboardingActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(
+                Activity.OVERRIDE_TRANSITION_CLOSE,
+                R.anim.onboarding_fade_in,
+                R.anim.onboarding_fade_out
+            )
+        }
         val forceLogin = intent.getBooleanExtra(EXTRA_FORCE_LOGIN, false)
         setContent {
             YosMusicTheme {
@@ -29,6 +37,9 @@ class OnboardingActivity : ComponentActivity() {
                         forceLogin = forceLogin,
                         onFinish = {
                             OnboardingPrefs.completed = true
+                            if (!forceLogin) {
+                                OnboardingPrefs.pendingHomeReveal = true
+                            }
                             finishWithFade()
                         }
                     )
@@ -39,15 +50,9 @@ class OnboardingActivity : ComponentActivity() {
 
     private fun finishWithFade() {
         finish()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            overrideActivityTransition(
-                Activity.OVERRIDE_TRANSITION_CLOSE,
-                android.R.anim.fade_in,
-                android.R.anim.fade_out
-            )
-        } else {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             @Suppress("DEPRECATION")
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            overridePendingTransition(R.anim.onboarding_fade_in, R.anim.onboarding_fade_out)
         }
     }
 

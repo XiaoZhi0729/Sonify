@@ -1,8 +1,10 @@
 package yos.music.player.ui.onboarding
 
 import android.app.Activity
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import yos.music.player.R
 
 /**
  * 引导页入口。
@@ -13,11 +15,20 @@ import android.content.Intent
  */
 object OnboardingLauncher {
 
-    fun open(context: Context, forceLogin: Boolean = true) {
+    fun open(context: Context, forceLogin: Boolean = true, fadeEnter: Boolean = false) {
         val intent = Intent(context, OnboardingActivity::class.java).apply {
             putExtra(OnboardingActivity.EXTRA_FORCE_LOGIN, forceLogin)
             if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
+        if (fadeEnter && context is Activity) {
+            val options = ActivityOptions.makeCustomAnimation(
+                context,
+                R.anim.onboarding_fade_in,
+                0
+            ).toBundle()
+            context.startActivity(intent, options)
+        } else {
+            context.startActivity(intent)
+        }
     }
 }

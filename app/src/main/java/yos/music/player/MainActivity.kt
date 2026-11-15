@@ -301,6 +301,15 @@ class MainActivity : BaseActivity() {
      */
     private var playLaunchCurtain = false
 
+    /** 首次启动已拉起引导页，等待用户走完引导返回时再播放主页板块浮现动画。 */
+    private var waitingOnboardingReveal by mutableStateOf(false)
+
+    /** 已从引导页返回并开始播放纯主页板块浮现动画（跳过红 Logo 幕布）。 */
+    private var onboardingRevealStarted by mutableStateOf(false)
+
+    /** 标记是否确实已离开前台进入引导页，避免 onCreate 后的首轮 onResume 误清等待态。 */
+    private var hasLeftForOnboarding = false
+
     /**
      * 系统闪屏是否已经彻底撤场。
      *
@@ -410,7 +419,19 @@ class MainActivity : BaseActivity() {
             yos.music.player.code.hdr.LyricHdr.markWindowColorModeHdr(true)
         }
         super.onCreate(savedInstanceState)
-        playLaunchCurtain = savedInstanceState == null
+        val needOnboarding = savedInstanceState == null &&
+            !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
+            !yos.music.player.ui.onboarding.OnboardingPrefs.completed
+        playLaunchCurtain = savedInstanceState == null && !needOnboarding
+        if (needOnboarding) {
+            waitingOnboardingReveal = true
+            yos.music.player.ui.onboarding.OnboardingPrefs.markStarted()
+            yos.music.player.ui.onboarding.OnboardingLauncher.open(
+                this,
+                forceLogin = false,
+                fadeEnter = true
+            )
+        }
         val splashStartUptime = android.os.SystemClock.uptimeMillis()
         val splash = installSplashScreen()
         splash.setOnExitAnimationListener { provider ->
@@ -470,30 +491,14 @@ class MainActivity : BaseActivity() {
                     val launchCurtainState = yos.music.player.ui.launch.rememberLaunchCurtainState(
                         // 等系统闪屏彻底撤场再起跑：两者是同一张底 + 同一个 Logo，
                         // 闪屏的淡出会在其上叠出一层半透明，让 Logo 淡入的起始不干净。
-                        play = playLaunchCurtain,
+                        play = playLaunchCurtain || waitingOnboardingReveal || onboardingRevealStarted,
                         ready = splashDismissed,
+                        startAtContent = onboardingRevealStarted,
+                        holdBeforeStart = waitingOnboardingReveal,
                         onFinish = { }
                     )
                     var launchCurtainAlive by remember("MainActivity_launchCurtainAlive") {
-                        mutableStateOf(playLaunchCurtain)
-                    }
-                    // 首次启动引导：已拆为独立页面 OnboardingActivity，等开屏幕布退干净再跳转。
-                    val shouldLaunchOnboarding = remember("MainActivity_shouldLaunchOnboarding") {
-                        playLaunchCurtain &&
-                            !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
-                            !yos.music.player.ui.onboarding.OnboardingPrefs.completed
-                    }
-                    LaunchedEffect(shouldLaunchOnboarding, launchCurtainAlive) {
-                        if (shouldLaunchOnboarding && !launchCurtainAlive &&
-                            !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
-                            !yos.music.player.ui.onboarding.OnboardingPrefs.completed
-                        ) {
-                            yos.music.player.ui.onboarding.OnboardingPrefs.markStarted()
-                            yos.music.player.ui.onboarding.OnboardingLauncher.open(
-                                this@MainActivity,
-                                forceLogin = false
-                            )
-                        }
+                        mutableStateOf(playLaunchCurtain || waitingOnboardingReveal || onboardingRevealStarted)
                     }
                     LaunchedEffect(Unit) {
                         // 幕布已经参与组合并即将绘制首帧：放行系统闪屏。
@@ -504,7 +509,8 @@ class MainActivity : BaseActivity() {
                         // 状态落定后移出组合，运行期零成本。
                         if (launchCurtainState.finished) launchCurtainAlive = false
                     }
-                    LaunchedEffect(Unit) {
+                    LaunchedEffect(waitingOnboardingReveal) {
+                        if (waitingOnboardingReveal) return@LaunchedEffect
                         // 看门狗：幕布是不透明遮挡层，任何原因没退场都会表现为"整屏白"。
                         // 这里给一个远大于总时长的硬截止，超时强制撤场——宁可少一段动画，
                         // 也绝不能让用户对着一屏底色。
@@ -2720,7 +2726,8 @@ class MainActivity : BaseActivity() {
                         // 启动幕布：整屏页面底色 + 正中品牌红 Logo，压在所有内容之上
                         // （含底栏、迷你条、全屏播放页）。
                         // 整段结束后 launchCurtainAlive 变 false，本层离开组合，运行期零成本。
-                        if (launchCurtainAlive) {
+                        // 从首次引导返回时跳过红 Logo 幕布，只播主页板块浮现动画。
+                        if (playLaunchCurtain && launchCurtainAlive) {
                             yos.music.player.ui.launch.LaunchCurtain(
                                 state = launchCurtainState,
                                 // 沿用系统闪屏 Logo 的实测几何：两段画的是同一张 path，
@@ -2737,6 +2744,27 @@ class MainActivity : BaseActivity() {
                 }
             }
         }
+
+    override fun onPause() {
+        super.onPause()
+        if (waitingOnboardingReveal) {
+            hasLeftForOnboarding = true
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (yos.music.player.ui.onboarding.OnboardingPrefs.pendingHomeReveal) {
+            yos.music.player.ui.onboarding.OnboardingPrefs.pendingHomeReveal = false
+            hasLeftForOnboarding = false
+            waitingOnboardingReveal = false
+            onboardingRevealStarted = true
+        } else if (hasLeftForOnboarding && waitingOnboardingReveal) {
+            // 异常路径回到主页时解除阻塞，避免主页板块停留在 alpha = 0f。
+            hasLeftForOnboarding = false
+            waitingOnboardingReveal = false
+        }
+    }
 
     @Composable
     private fun NavPageVisual(

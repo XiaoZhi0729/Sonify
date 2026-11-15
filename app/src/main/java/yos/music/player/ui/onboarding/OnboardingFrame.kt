@@ -274,20 +274,16 @@ fun OnboardingOverlay(onFinish: () -> Unit, forceLogin: Boolean = false) {
         //
         //   正解：背景只受最外层窗口约束（恒满屏），`imePadding()` 只加在
         //   **内容 Column** 上，让顶栏/内容/底栏整体让位。
-        // ★引导内容 + 背景的 alpha：收尾过渡期间整页淡出。
+        // ★引导内容 + 背景的 alpha：进入收尾过渡层时整体淡出。
         //
-        // ══ 为什么连背景一起淡（这里最容易写错）═══════════════════════════
-        // 引导页是 MainActivity 里 zIndex 110 的覆盖层，主页在它**下面**。
-        // 过渡层又是引导页内部最上面的一层。所以过渡层淡出时，露出来的
-        // 是"引导页自己"（不透明背景渐变 + 第 5 屏），**不是主页** ——
-        // 只淡内容不淡背景的话，用户会看到"闪一下『准备好了』再闪到主页"。
-        //
-        // 正解：splashActive 把**整个覆盖层**（背景 + 顶栏 + 内容 + 底栏）
-        // 一起淡到 0；过渡层是同一次淡出的一部分。淡完之后底下就是主页
-        // = 真交叉淡入，不需要第二个动画。
-        //
-        // 时序：内容与背景 450ms 淡出（过渡层 380ms 淡入盖住它）→
-        // 停 1.5s → 过渡层 450ms 淡出 → 底下已是主页 → onFinish()。
+        // ══ 为什么连背景一起淡，且 splashActive 不能置回 false ════════════════
+        // 引导页现在是独立的 OnboardingActivity，下层的 MainActivity（主页或关于页）
+        // 在另一个窗口里。过渡层淡入并停留 1.5s 后，由 OnboardingActivity.finishWithFade()
+        // 执行 Activity 级交叉淡出（露出下面的 MainActivity）。
+        // 因此：
+        //   ① contentAlpha 在过渡期淡到 0，把舞台让给全屏不透明的过渡层；
+        //   ② onDone 回调里绝对不能把 splashActive 设回 false，否则 contentAlpha 会
+        //      重新回到 1，导致上一屏（「准备好了」）在 Activity 关闭动画期间闪现回来。
         val contentAlpha by animateFloatAsState(
             targetValue = if (splashActive) 0f else 1f,
             animationSpec = tween(450, easing = FastOutSlowInEasing),
@@ -436,7 +432,8 @@ fun OnboardingOverlay(onFinish: () -> Unit, forceLogin: Boolean = false) {
             OnboardingTransitionSplash(
                 colors = colors,
                 onDone = {
-                    splashActive = false
+                    // 保持 splashActive = true 直至 OnboardingActivity 销毁，
+                    // 避免 contentAlpha 回弹导致上一页引导页在淡出前闪现。
                     onFinish()
                 },
             )

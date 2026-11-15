@@ -1,7 +1,6 @@
 package yos.music.player.ui.onboarding
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -49,14 +48,15 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
  * 用户记住的是最后一帧，而最后一帧是"闪"。
  *
  * 这一版把它做成一个**真正的收束**：再打一次品牌签名（图标 + 两行手写），
- * 停 1.5 秒让人读完，然后整层淡出。因为主页已经在它下面了，
- * 淡出本身就是交叉淡入 —— 不需要再做第二个动画。
+ * 停 1.5 秒让人读完，然后保持不透明状态回调 onDone()，由
+ * `OnboardingActivity.finishWithFade()` 执行整个窗口的交叉淡出（直接淡入底下的
+ * 主页或关于页，避免在不透明 Activity 内部提前淡出露出窗口底色）。
  *
  * ── 时间轴（四段，不许合并）──────────────────────────────────────
  *   ① 0ms      层铺上（不透明 bgTop，挡住引导页）
  *   ② 0~700ms  图标 + 两行手写错峰上浮（同一条时钟，[Ob.EnterMs] 口径）
  *   ③ 700ms+   停 [Ob.SplashHoldMs]（1500ms）
- *   ④ 之后     整层 alpha 1→0（450ms）→ 回调 onDone()
+ *   ④ 之后     回调 onDone() → OnboardingActivity 整窗 450ms 淡出，MainActivity 淡入
  *
  * ★返回键由调用点用 `BackHandler(enabled = splashActive) {}` 吞掉 ——
  *   这一层不该有"取消"的语义，用户已经点了开始，就该走完。
@@ -83,12 +83,6 @@ internal fun OnboardingTransitionSplash(
     // 入场时钟：与首屏同一套 enter()，所以是"又见到一次同样的落笔"。
     // ★用 Animatable 而不是手写 `withFrameNanos` 循环（那个会卡在 0，见 HelloScreen 注释）。
     val clock = remember { Animatable(0f, Float.VectorConverter) }
-    var leaving by remember { mutableStateOf(false) }
-    val exitAlpha by animateFloatAsState(
-        targetValue = if (leaving) 0f else 1f,
-        animationSpec = tween(450, easing = FastOutSlowInEasing),
-        label = "splashExit"
-    )
 
     LaunchedEffect(Unit) {
         clock.animateTo(
@@ -104,18 +98,17 @@ internal fun OnboardingTransitionSplash(
     // ② 停留计时**从本层出现那一刻起算**，不与入场串联。
     //    ★串起来（等入场跑完再 delay）总时长会变成 620 + 1500 + 470 ≈ 2.6s，
     //      比规范里的"停留约 1.5 秒"长了近一倍 —— 用户会觉得卡在那里。
-    //      正确口径：出现后 1.5 秒开始淡出，入场动画在这段时间里自己跑完。
+    //      正确口径：出现后 1.5 秒直接通知外层关闭 Activity，由 Activity 转场动画
+    //      完成整窗淡出与下层页面淡入。
     LaunchedEffect(Unit) {
         delay(Ob.SplashHoldMs)
-        leaving = true
-        delay(470)
         onDone()
     }
 
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = layerAlpha * exitAlpha }
+            .graphicsLayer { alpha = layerAlpha }
             // 吃掉所有落空点击：这一层在的时候底下的引导页不该再收到触摸。
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

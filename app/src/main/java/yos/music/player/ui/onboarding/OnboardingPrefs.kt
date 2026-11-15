@@ -40,10 +40,14 @@ object OnboardingPrefs {
         initialValue = false
     )
 
+    /** 首次启动走完引导点击「开始听歌」后，通知 MainActivity 同步播放主页板块浮现动画。 */
+    var pendingHomeReveal: Boolean = false
+
     /** 仅供调试/验收：把标记清掉，下次冷启动会重新进入引导。 */
     fun reset() {
         completed = false
         startedThisProcess = false
+        pendingHomeReveal = false
     }
 }
 

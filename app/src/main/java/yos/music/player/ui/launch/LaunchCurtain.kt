@@ -302,6 +302,7 @@ fun LaunchCurtain(
     val surface = background withNight backgroundDark
     // Logo 恒为品牌红：浅色白底、深色黑底上都是同一个 Logo，不做任何反色。
     val logoColor = primary
+    val logoPath = remember { Path() }
 
     Box(
         modifier = modifier
@@ -336,7 +337,7 @@ fun LaunchCurtain(
                         size.height / 2f + liftDp * density
                     )
                     drawPath(
-                        path = buildLogoPath(center, unitPx),
+                        path = buildLogoPath(logoPath, center, unitPx),
                         color = logoColor.copy(alpha = alpha)
                     )
                 }
@@ -345,8 +346,9 @@ fun LaunchCurtain(
 }
 
 /** 按 viewport 单位换算出的 [unitPx] 构造 Logo 轮廓 Path。 */
-private fun buildLogoPath(center: Offset, unitPx: Float): Path {
-    return Path().apply {
+private fun buildLogoPath(path: Path, center: Offset, unitPx: Float): Path {
+    return path.apply {
+        rewind()
         for (i in LogoPoints.indices step 2) {
             val x = center.x + (LogoPoints[i] - LogoCenterX) * unitPx
             val y = center.y + (LogoPoints[i + 1] - LogoCenterY) * unitPx
@@ -361,12 +363,16 @@ private fun buildLogoPath(center: Offset, unitPx: Float): Path {
  *
  * @param play 是否播放（热启动/旋转恢复时为 false，直接跳过）
  * @param ready 系统闪屏是否已撤场；为 false 时不启动，等到 true 才起跑
+ * @param startAtContent 是否跳过红 Logo 幕布，直接从 [ContentStartMs] 起跑主页板块浮现
+ * @param holdBeforeStart 是否先保持在起跑前（`clock = 0f`），等待外部状态就绪再放行
  * @param onFinish 整段结束回调（宿主据此把幕布移出组合）
  */
 @Composable
 fun rememberLaunchCurtainState(
     play: Boolean,
     ready: Boolean,
+    startAtContent: Boolean = false,
+    holdBeforeStart: Boolean = false,
     onFinish: () -> Unit
 ): LaunchCurtainState {
     val context = LocalContext.current
@@ -384,26 +390,31 @@ fun rememberLaunchCurtainState(
 
     val state = remember { LaunchCurtainState() }
 
-    LaunchedEffect(play, ready, systemAnimated) {
+    LaunchedEffect(play, ready, startAtContent, holdBeforeStart, systemAnimated) {
         if (!play || !systemAnimated) {
             state.forceFinish()
             onFinish()
             return@LaunchedEffect
         }
+        if (holdBeforeStart) {
+            state.clock.floatValue = 0f
+            return@LaunchedEffect
+        }
         // 等系统闪屏撤场能让首帧更干净，但**绝不能无限等**：
         // 幕布是不透明遮挡层，时钟停在 0 = 整屏永远是底色（浅色下就是白屏）。
         // 所以最多等一小会儿，超时立刻起跑。
-        if (!ready) {
+        if (!ready && !startAtContent) {
             kotlinx.coroutines.delay(SplashWaitFallbackMs)
         }
 
         // 用"帧推进"而不是 Animatable：Animatable 在某些机型上会因动画时长/取消
         // 语义停在半路，而这层是不透明的，停住就等于白屏。
         // 这里以真实时间直接推进时钟，并保证一定会走到终点。
+        val initialMs = if (startAtContent) ContentStartMs.toFloat() else 0f
         val startedAt = withFrameNanos { it }
         while (true) {
             val now = withFrameNanos { it }
-            val elapsedMs = ((now - startedAt) / 1_000_000f)
+            val elapsedMs = initialMs + ((now - startedAt) / 1_000_000f)
             state.clock.floatValue = (elapsedMs / LaunchTotalMs).coerceIn(0f, 1f)
             if (state.clock.floatValue >= 1f) break
         }
