@@ -27,6 +27,9 @@ private class Backdrop(
 
     override val isCoordinatesDependent: Boolean = backdrop.isCoordinatesDependent
 
+    override val contentVersion: Int
+        get() = backdrop.contentVersion
+
     override fun DrawScope.drawBackdrop(
         density: Density,
         coordinates: LayoutCoordinates?,

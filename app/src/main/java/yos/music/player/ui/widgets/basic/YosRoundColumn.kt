@@ -16,15 +16,15 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
-import yos.music.player.ui.theme.YosRoundedCornerShape
+import com.kyant.capsule.ContinuousRoundedRectangle
 
-private val defaultCorner = 9.dp
-private val defaultPadding = 16.5.dp
+private val defaultCorner = 18.5.dp
+private val defaultPadding = 16.dp
 
 @Composable
 fun RoundColumn(
     @SuppressLint("ModifierParameter") modifier: Modifier = Modifier.padding(horizontal = defaultPadding),
-    shape: Shape = YosRoundedCornerShape(defaultCorner),
+    shape: Shape = ContinuousRoundedRectangle(defaultCorner),
     backgroundColor: Color = MaterialTheme.colorScheme.onSecondary,
     content: @Composable () -> Unit
 ) = /*Card(
@@ -59,7 +59,7 @@ class RoundColumnLazyListScope(private val lazyListScope: LazyListScope) : LazyL
         content: @Composable (LazyItemScope.() -> Unit)
     ) {
         lazyListScope.stickyHeader(key, contentType) {
-            RoundColumn(modifier = Modifier.fillMaxWidth()) {
+            RoundColumn(modifier = Modifier.fillMaxWidth().padding(horizontal = defaultPadding)) {
                 content()
             }
         }
@@ -71,7 +71,7 @@ class RoundColumnLazyListScope(private val lazyListScope: LazyListScope) : LazyL
         content: @Composable (LazyItemScope.() -> Unit)
     ) {
         lazyListScope.item(key, contentType) {
-            RoundColumn(modifier = Modifier.fillMaxWidth()) {
+            RoundColumn(modifier = Modifier.fillMaxWidth().padding(horizontal = defaultPadding)) {
                 content()
             }
         }
@@ -87,14 +87,14 @@ class RoundColumnLazyListScope(private val lazyListScope: LazyListScope) : LazyL
             when {
 
                 count == 1 -> {
-                    RoundColumn(modifier = Modifier.fillMaxWidth()) {
+                    RoundColumn(modifier = Modifier.fillMaxWidth().padding(horizontal = defaultPadding)) {
                         itemContent(this, it)
                     }
                 }
 
                 it == 0 -> {
                     RoundColumn(
-                        shape = YosRoundedCornerShape(
+                        shape = ContinuousRoundedRectangle(
                             topStart = defaultCorner,
                             topEnd = defaultCorner
                         ),
@@ -108,7 +108,7 @@ class RoundColumnLazyListScope(private val lazyListScope: LazyListScope) : LazyL
 
                 it == (count - 1) -> {
                     RoundColumn(
-                        shape = YosRoundedCornerShape(
+                        shape = ContinuousRoundedRectangle(
                             bottomStart = defaultCorner,
                             bottomEnd = defaultCorner
                         ),

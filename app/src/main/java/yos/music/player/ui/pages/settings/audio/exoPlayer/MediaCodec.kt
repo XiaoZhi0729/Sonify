@@ -26,13 +26,13 @@ fun MediaCodec(navController: NavController) =
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 yosRoundColumn {
                     itemsIndexed(
                         codecInfos.value,
-                        key = { _, codec -> codec.name }/*,
-                        contentType = { it.name }*/
+                        key = { _, codec -> codec.name },
+                        contentType = { _, _ -> "codec_item" }
                     ) { index, it ->
                         DefaultItem(
                             title = it.supportedTypes.joinToString(", "),

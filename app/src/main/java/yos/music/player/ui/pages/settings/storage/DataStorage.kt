@@ -32,7 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -149,7 +149,7 @@ fun DataStorage(navController: NavController) =
         Title(
             title = stringResource(id = R.string.settings_storage_data_storage),
             onBack = { navController.popBackStackSafely() },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             onRefresh = { refresh() },
             refreshing = refreshing,
             content = {
@@ -312,7 +312,7 @@ private fun StorageUsageCard(usage: AppStorage.Usage?, calculating: String) {
     val dataColor = Color(0xFFFFB900)
     val cacheColor = Color(0xFF00D492)
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.5.dp, vertical = 11.dp)) {
         Spacer(Modifier.height(8.dp))
         if (usage != null && usage.totalBytes > 0) {
             StorageBar(
@@ -382,7 +382,7 @@ private fun StorageBar(
             .fillMaxWidth()
             .height(16.dp)
             .clip(RoundedCornerShape(50))
-            .onGloballyPositioned { barWidthPx = it.size.width }
+            .onSizeChanged { barWidthPx = it.width }
     ) {
         if (appBytes > 0) {
             Box(Modifier.weight(appBytes / total).fillMaxHeight().background(appColor))

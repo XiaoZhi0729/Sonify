@@ -87,7 +87,7 @@ fun KugouVipSignIn(navController: NavController) =
         Title(
             title = stringResource(id = R.string.kugou_vip_sign_in_title),
             onBack = { navController.popBackStackSafely() },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 if (!KugouAccountState.isLoggedIn) {
                     item("not_logged_in") {

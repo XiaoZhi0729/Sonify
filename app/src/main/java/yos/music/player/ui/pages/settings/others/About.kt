@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.blankj.utilcode.util.AppUtils
+import com.kyant.capsule.ContinuousRoundedRectangle
 import io.github.vinceglb.confettikit.compose.ConfettiKit
 import io.github.vinceglb.confettikit.core.Angle
 import io.github.vinceglb.confettikit.core.Party
@@ -63,7 +64,7 @@ import yos.music.player.update.DeveloperSettings
 import yos.music.player.update.UpdateSettingsItems
 import yos.music.player.ui.navigation.popBackStackSafely
 
-private val bannerCorner = YosRoundedCornerShape(9.dp)
+private val bannerCorner = ContinuousRoundedRectangle(18.5.dp)
 
 // 连点横幅触发彩带的次数（与 Cresto 关于页一致）
 private const val BannerConfettiTapCount = 10
@@ -82,7 +83,7 @@ fun About(navController: NavController) {
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {
@@ -101,7 +102,7 @@ fun About(navController: NavController) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.5.dp)
+                                .padding(horizontal = 16.dp)
                                 .aspectRatio(1376f / 768f)
                                 .coverArtworkGesture(
                                     state = bannerFx,
@@ -116,7 +117,7 @@ fun About(navController: NavController) {
                                 )
                                 .coverArtworkEffect(
                                     state = bannerFx,
-                                    cornerRadius = 9.dp,
+                                    cornerRadius = 18.5.dp,
                                     squareFace = false
                                 )
                                 .graphicsLayer {

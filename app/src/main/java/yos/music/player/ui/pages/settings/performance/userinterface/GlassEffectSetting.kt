@@ -39,7 +39,7 @@ fun GlassEffectSetting(navController: NavController) {
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("glass_effect") {
                     GlassEffectSettingContent()

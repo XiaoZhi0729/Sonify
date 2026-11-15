@@ -65,7 +65,7 @@ fun Acknowledgements(navController: NavController) =
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("projects") {
                     Column(Modifier.fillMaxSize()) {

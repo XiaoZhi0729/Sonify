@@ -51,7 +51,7 @@ fun Settings(navController: NavController) =
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("settings") {
                     Column(Modifier.fillMaxSize()) {

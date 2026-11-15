@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -265,9 +266,11 @@ fun DefaultItem(
     onClick: (() -> Unit)?,
     backIcon: (@Composable () -> Unit)? = null
 ) {
+    val startPadding = if (leading != null) 16.dp else 18.5.dp
     Row(
         Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
             .then(
                 when {
                     onClick == null && onLongClick == null -> Modifier
@@ -277,7 +280,7 @@ fun DefaultItem(
                     }
                 }
             )
-            .padding(horizontal = 15.dp, vertical = 11.dp)
+            .padding(start = startPadding, end = 18.5.dp, top = 10.dp, bottom = 10.dp)
             .graphicsLayer {
                 if (!enabled) {
                     // compositingStrategy = CompositingStrategy.Offscreen
@@ -287,7 +290,7 @@ fun DefaultItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (leading != null) {
-            Box(Modifier.padding(end = 12.dp)) {
+            Box(Modifier.padding(end = 13.dp)) {
                 leading()
             }
         }
@@ -325,7 +328,7 @@ fun DefaultItem(
             }
         }
         Column(
-            Modifier.padding(start = 15.dp),
+            Modifier.padding(start = 12.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.End
         ) {

@@ -228,6 +228,7 @@ fun LiquidSwitch(
                     backdrop = thumbBackdrop,
                     shape = { Capsule },
                     effects = {
+                        downsampleScale = 1f
                         val progress = dampedDragAnimation.pressProgress
                         blur((8f * s).dp.toPx() * (1f - progress) * glassBlurScale)
                         lens(

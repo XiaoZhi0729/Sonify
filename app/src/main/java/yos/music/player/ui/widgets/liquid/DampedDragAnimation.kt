@@ -152,8 +152,6 @@ class DampedDragAnimation(
 
     fun release() {
         isHeld = false
-        pressJob?.cancel()
-        pressJob = null
         velocityIdleResetJob?.cancel()
         velocityIdleResetJob = null
         velocityTracker.resetTracking()

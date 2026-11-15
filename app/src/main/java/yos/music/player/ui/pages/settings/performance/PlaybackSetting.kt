@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.objects.DynamicCoverState
 import yos.music.player.data.objects.SongClimaxState
 import yos.music.player.ui.navigation.popBackStackSafely
 import yos.music.player.ui.pages.settings.Divider
@@ -44,7 +45,7 @@ fun PlaybackSetting(navController: NavController) =
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("playback") {
                     Column(Modifier.fillMaxSize()) {
@@ -93,6 +94,28 @@ fun PlaybackSetting(navController: NavController) =
                                 },
                                 checkedLambda = { SettingsLibrary.NowplayingStaticFullScreenAlbum }
                             )
+                            Divider()
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_nowplaying_dynamic_cover),
+                                onClick = {
+                                    SettingsLibrary.NowPlayingDynamicCover =
+                                        !SettingsLibrary.NowPlayingDynamicCover
+                                    DynamicCoverState.onSettingChanged()
+                                },
+                                checkedLambda = { SettingsLibrary.NowPlayingDynamicCover }
+                            )
+                            if (SettingsLibrary.NowPlayingDynamicCover) {
+                                Divider()
+                                SwitchItem(
+                                    title = stringResource(id = R.string.settings_performance_ui_nowplaying_dynamic_cover_mobile),
+                                    onClick = {
+                                        SettingsLibrary.NowPlayingDynamicCoverMobile =
+                                            !SettingsLibrary.NowPlayingDynamicCoverMobile
+                                        DynamicCoverState.onSettingChanged()
+                                    },
+                                    checkedLambda = { SettingsLibrary.NowPlayingDynamicCoverMobile }
+                                )
+                            }
                             Divider()
                             BackgroundModeItem()
                         }

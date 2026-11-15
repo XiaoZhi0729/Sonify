@@ -70,12 +70,13 @@ fun LibraryOverview(
         onBack = {
             navController.popBackStackSafely()
         },
-        titleHorizontalPadding = 32.dp,
+        titleHorizontalPadding = 34.5.dp,
         content = {
             yosRoundColumn {
                 itemsIndexed(
                     folders,
-                    key = { _, folder -> folder.path }
+                    key = { _, folder -> folder.path },
+                    contentType = { _, _ -> "library_folder_item" }
                 ) { index, folder ->
                     FolderItem(folder = folder) {
                         val targetTitle = folder.name

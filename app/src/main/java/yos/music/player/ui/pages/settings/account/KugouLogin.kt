@@ -108,7 +108,7 @@ fun KugouLogin(navController: NavController) =
             onBack = {
                 navController.popBackStackSafely()
             },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             content = {
                 item("kugou_login") {
                     Column(Modifier.fillMaxSize()) {
@@ -299,7 +299,7 @@ private fun formatListeningSeconds(sec: Long): String {
 
 /**
  * 登录方式分段切换（扫码 | 手机号）。
- * 几何对齐 RoundColumn 卡片：16.5dp 页边距、9dp 圆角；容器底色同设置卡片
+ * 几何对齐 RoundColumn 卡片：16dp 页边距、大圆角；容器底色同设置卡片
  * （onSecondary），选中胶囊用 primary。
  */
 @Composable
@@ -311,13 +311,13 @@ private fun LoginMethodSegment(selected: Int, onSelect: (Int) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.5.dp)
+            .padding(horizontal = 16.dp)
             .background(
                 MaterialTheme.colorScheme.onSecondary,
-                RoundedCornerShape(9.dp)
+                RoundedCornerShape(18.5.dp)
             )
-            .padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         labels.forEachIndexed { index, label ->
             val active = selected == index
@@ -328,7 +328,7 @@ private fun LoginMethodSegment(selected: Int, onSelect: (Int) -> Unit) {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(7.dp))
+                    .clip(RoundedCornerShape(15.5.dp))
                     .background(background)
                     .clickable { onSelect(index) }
                     .padding(vertical = 10.dp),
@@ -617,7 +617,7 @@ private fun PhoneLoginSection() {
             lineHeight = 16.2.sp,
             color = if (messageIsError) MaterialTheme.colorScheme.error
             else headline withNight headlineDark,
-            modifier = Modifier.padding(horizontal = 32.dp, vertical = 5.dp)
+            modifier = Modifier.padding(horizontal = 34.5.dp, vertical = 5.dp)
         )
     }
 
@@ -761,7 +761,7 @@ private fun LoginCapsuleButton(enabled: Boolean, loggingIn: Boolean, onClick: ()
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.5.dp)
+            .padding(horizontal = 16.dp)
             .height(50.dp)
             .clip(RoundedCornerShape(25.dp))
             .background(background)

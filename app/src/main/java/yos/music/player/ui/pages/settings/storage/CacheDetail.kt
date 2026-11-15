@@ -107,7 +107,7 @@ fun CacheDetail(navController: NavController, category: String) {
             title = stringResource(id = titleRes),
             subTitle = stringResource(id = R.string.settings_storage_selected_count, selected.size),
             onBack = { navController.popBackStackSafely() },
-            titleHorizontalPadding = 32.dp,
+            titleHorizontalPadding = 34.5.dp,
             rightBarIcon = {
                 Text(
                     text = stringResource(
@@ -156,7 +156,8 @@ fun CacheDetail(navController: NavController, category: String) {
 
                 itemsIndexed(
                     items = songs,
-                    key = { _, song -> song.hash }
+                    key = { _, song -> song.hash },
+                    contentType = { _, _ -> "cache_song_item" }
                 ) { index, song ->
                     CacheSongRow(
                         title = song.title ?: "$unknown · ${song.hash.take(8)}",

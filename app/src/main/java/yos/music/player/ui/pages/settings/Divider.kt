@@ -21,8 +21,8 @@ fun Divider(modifier: Modifier = Modifier) =
     Spacer(
         modifier
             .fillMaxWidth()
-            .padding(start = 15.dp, end = 16.dp)
-            .height(0.3.dp)
+            .padding(horizontal = 18.5.dp)
+            .height(0.5.dp)
             .alpha(0.2f)
             .background(color = headline withNight headlineDark)
     )
@@ -34,7 +34,7 @@ fun Divider(modifier: Modifier = Modifier) =
 fun GroupSpacer(modifier: Modifier = Modifier) =
     Spacer(
         modifier
-            .height(18.dp)
+            .height(23.dp)
     )
 
 /**
@@ -44,5 +44,5 @@ fun GroupSpacer(modifier: Modifier = Modifier) =
 fun GroupSpacerMedium(modifier: Modifier = Modifier) =
     Spacer(
         modifier
-            .height(14.dp)
+            .height(17.dp)
     )
