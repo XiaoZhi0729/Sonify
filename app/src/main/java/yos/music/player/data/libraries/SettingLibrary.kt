@@ -73,7 +73,6 @@ object SettingsLibrary {
     /**
      * 歌曲排序
      */
-    @Stable
     var SongSort by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "yos_player_song_sort",
@@ -88,10 +87,120 @@ object SettingsLibrary {
     /**
      * 启用降序
      */
-    @Stable
     var EnableDescending by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "yos_player_enable_descending",
+        initialValue = false
+    )
+
+    @Stable
+    enum class LibraryListSortEnum {
+        DEFAULT, NAME, SONG_COUNT
+    }
+
+    var LocalAlbumsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_albums_sort",
+        initialValue = LibraryListSortEnum.NAME.ordinal
+    )
+
+    var LocalAlbumsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_albums_descending",
+        initialValue = false
+    )
+
+    var CollectedAlbumsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_collected_albums_sort",
+        initialValue = LibraryListSortEnum.DEFAULT.ordinal
+    )
+
+    var CollectedAlbumsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_collected_albums_descending",
+        initialValue = false
+    )
+
+    var LocalPlaylistsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_playlists_sort",
+        initialValue = LibraryListSortEnum.NAME.ordinal
+    )
+
+    var LocalPlaylistsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_playlists_descending",
+        initialValue = false
+    )
+
+    var OnlinePlaylistsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_playlists_sort",
+        initialValue = LibraryListSortEnum.DEFAULT.ordinal
+    )
+
+    var OnlinePlaylistsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_playlists_descending",
+        initialValue = false
+    )
+
+    var LocalArtistsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_artists_sort",
+        initialValue = LibraryListSortEnum.NAME.ordinal
+    )
+
+    var LocalArtistsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_local_artists_descending",
+        initialValue = false
+    )
+
+    var OnlineArtistsSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_artists_sort",
+        initialValue = LibraryListSortEnum.DEFAULT.ordinal
+    )
+
+    var OnlineArtistsDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_artists_descending",
+        initialValue = false
+    )
+
+    @Stable
+    enum class PlaylistDetailSortEnum {
+        DEFAULT, NAME, ARTIST
+    }
+
+    var OnlinePlaylistDetailSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_playlist_detail_sort",
+        initialValue = PlaylistDetailSortEnum.DEFAULT.ordinal
+    )
+
+    var OnlinePlaylistDetailDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_online_playlist_detail_descending",
+        initialValue = false
+    )
+
+    @Stable
+    enum class AlbumDetailSortEnum {
+        DEFAULT, NAME
+    }
+
+    var AlbumDetailSort by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_album_detail_sort",
+        initialValue = AlbumDetailSortEnum.DEFAULT.ordinal
+    )
+
+    var AlbumDetailDescending by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "yos_library_album_detail_descending",
         initialValue = false
     )
 
@@ -126,13 +235,13 @@ object SettingsLibrary {
     )
 
     /**
-     * 歌词字体字重
+     * 歌词字体字重（支持 100..900 无极调节，默认 "800"；向后兼容旧版 "Thin".."Black" 枚举名）
      */
     @Stable
     var LyricFontWeight by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_font_weight",
-        initialValue = "ExtraBold"
+        initialValue = "800"
     )
 
     /**
@@ -200,6 +309,46 @@ object SettingsLibrary {
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_font_scale",
         initialValue = 1.0f
+    )
+
+    /**
+     * 是否独立配置横屏歌词字体大小
+     */
+    @Stable
+    var LyricLandscapeFontScaleIndependent by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_landscape_font_scale_independent",
+        initialValue = false
+    )
+
+    /**
+     * 横屏歌词字号缩放（0.8f..1.2f，仅在 [LyricLandscapeFontScaleIndependent] 为 true 时独立生效）
+     */
+    @Stable
+    var LyricLandscapeFontScale by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_landscape_font_scale",
+        initialValue = 1.0f
+    )
+
+    /**
+     * 自定义歌词字体在应用私有目录下的本地文件路径（空字符串表示系统默认）
+     */
+    @Stable
+    var LyricCustomFontPath by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_custom_font_path",
+        initialValue = ""
+    )
+
+    /**
+     * 自定义歌词字体的显示文件名（空字符串表示系统默认）
+     */
+    @Stable
+    var LyricCustomFontName by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_custom_font_name",
+        initialValue = ""
     )
 
     /**
@@ -373,6 +522,26 @@ object SettingsLibrary {
     var NowplayingStaticFullScreenAlbum by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_static_fullscreen_album",
+        initialValue = false
+    )
+
+    /**
+     * 专辑动态封面：在线歌曲存在官方 MP4 动态封面时，在播放页大封面上静音循环播放。
+     */
+    @Stable
+    var NowPlayingDynamicCover by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_dynamic_cover",
+        initialValue = true
+    )
+
+    /**
+     * 允许在移动网络下加载动态封面；关闭时仅 Wi-Fi 发起请求（已缓存视频仍可播放）。
+     */
+    @Stable
+    var NowPlayingDynamicCoverMobile by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_dynamic_cover_mobile",
         initialValue = false
     )
 
@@ -704,16 +873,32 @@ object SettingsLibrary {
         ScreenCorner = "30"
         SongSort = SongSortEnum.MUSIC_TITLE.ordinal
         EnableDescending = false
+        LocalAlbumsSort = LibraryListSortEnum.NAME.ordinal
+        LocalAlbumsDescending = false
+        CollectedAlbumsSort = LibraryListSortEnum.DEFAULT.ordinal
+        CollectedAlbumsDescending = false
+        LocalPlaylistsSort = LibraryListSortEnum.NAME.ordinal
+        LocalPlaylistsDescending = false
+        OnlinePlaylistsSort = LibraryListSortEnum.DEFAULT.ordinal
+        OnlinePlaylistsDescending = false
+        LocalArtistsSort = LibraryListSortEnum.NAME.ordinal
+        LocalArtistsDescending = false
+        OnlineArtistsSort = LibraryListSortEnum.DEFAULT.ordinal
+        OnlineArtistsDescending = false
         NowPlayingTranslation = true
         ShowLocalLibrary = true
         RefreshEveryTime = false
-        LyricFontWeight = "ExtraBold"
+        LyricFontWeight = "800"
         LyricLineBalance = false
         LyricBlurEffect = false
         LyricHdrEffect = false
         LyricHdrStrength = 0.6f
         NotificationLyricEnabled = true
         LyricFontScale = 1.0f
+        LyricLandscapeFontScaleIndependent = false
+        LyricLandscapeFontScale = 1.0f
+        LyricCustomFontPath = ""
+        LyricCustomFontName = ""
         SmartWordByWordLyric = false
         LyricTimingOffset = 0
         NowplayingBackgroundEffect = false
@@ -729,6 +914,8 @@ object SettingsLibrary {
         NowPlayingShowClimaxMark = true
         TrackBackdropGradient = false
         NowplayingStaticFullScreenAlbum = false
+        NowPlayingDynamicCover = true
+        NowPlayingDynamicCoverMobile = false
         BarBlurEffect = false
         GlassBlurScale = 1.0f
         FrostedBlurScale = 1.0f

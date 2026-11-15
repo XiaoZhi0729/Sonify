@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Text
@@ -35,7 +36,6 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.github.promeg.pinyinhelper.Pinyin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,8 +57,11 @@ import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.widgets.mochi.IndexedListResult
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
@@ -102,46 +105,68 @@ fun NormalMusic(navController: NavController) {
             }
         } else {
             val useSearch = remember { derivedStateOf { searchText.value.isNotEmpty() } }
-            val list: MutableState<List<YosMediaItem>> = remember { mutableStateOf(musicList.sortX()) }
+            val indexedState: MutableState<IndexedListResult<YosMediaItem>> = remember(musicList) {
+                mutableStateOf(
+                    sortAndIndexSongs(
+                        items = musicList,
+                        sortOrdinal = SongSort,
+                        descending = EnableDescending,
+                        isSearching = false,
+                    )
+                )
+            }
 
             YosWrapper {
-                LaunchedEffect(searchText.value, SongSort, EnableDescending) {
-                    withContext(Dispatchers.IO) {
-                        // if (list.value.isEmpty()) delay(320)
-                        val filteredList = withContext(Dispatchers.IO) {
-                            if (useSearch.value) {
-                                // 只在当前目标列表内过滤（歌曲入口的列表即全库，行为不变）；
-                                // 之前过滤全局 songs 会让歌单/艺人视图的搜索跳出范围
-                                musicList.asSequence().filter { song ->
-                                    (song.title ?: defaultTitle).contains(
-                                        searchText.value,
-                                        ignoreCase = true
-                                    ) ||
-                                            (song.artistsList ?: defaultArtists).any { artist ->
-                                                artist.contains(
-                                                    searchText.value,
-                                                    ignoreCase = true
-                                                )
-                                            }
-                                }.toList()
-                            } else {
-                                musicList
-                            }
+                LaunchedEffect(musicList, searchText.value, SongSort, EnableDescending) {
+                    val query = searchText.value
+                    val sortOrdinal = SongSort
+                    val descending = EnableDescending
+                    val searching = query.isNotEmpty()
+                    val result = withContext(Dispatchers.IO) {
+                        val filteredList = if (searching) {
+                            // 只在当前目标列表内过滤（歌曲入口的列表即全库，行为不变）；
+                            // 之前过滤全局 songs 会让歌单/艺人视图的搜索跳出范围
+                            musicList.asSequence().filter { song ->
+                                (song.title ?: defaultTitle).contains(
+                                    query,
+                                    ignoreCase = true
+                                ) ||
+                                    (song.artistsList ?: defaultArtists).any { artist ->
+                                        artist.contains(
+                                            query,
+                                            ignoreCase = true
+                                        )
+                                    }
+                            }.toList()
+                        } else {
+                            musicList
                         }
-                        list.value = filteredList.sortX()
+                        sortAndIndexSongs(
+                            items = filteredList,
+                            sortOrdinal = sortOrdinal,
+                            descending = descending,
+                            isSearching = searching,
+                        )
                     }
+                    indexedState.value = result
                 }
             }
 
+            val indexedResult = indexedState.value
+            val currentItems = indexedResult.sortedItems
             val scope = rememberCoroutineScope()
+            val listState = rememberLazyListState()
+            val topBarHeightPx = rememberIndexScrollOffsetPx()
 
             val expanded = remember { mutableStateOf(false) }
 
             Box(Modifier.fillMaxSize()) {
                 Title(
-                    title = pageInfo.first, onBack = {
+                    title = pageInfo.first,
+                    onBack = {
                         navController.popBackStackSafely()
                     },
+                    listState = listState,
                     rightBarIcon = {
                         // 「更多」是本体化玻璃菜单（NexioSchedule 1.6.5）：
                         // 顶栏槽只放 42dp 占位，菜单本体（收起态就是这颗钮）住全屏弹层。
@@ -158,7 +183,14 @@ fun NormalMusic(navController: NavController) {
                                 onDismiss = { expanded.value = false },
                             )
                         }
-                    }
+                    },
+                    indexBarLabels = indexedResult.labels,
+                    onIndexSelect = { idx ->
+                        val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@Title
+                        scope.launch {
+                            listState.scrollToIndexedItem(3 + target, topBarHeightPx)
+                        }
+                    },
                 ) {
                     item("SearchField") {
                         val keyboardController = LocalSoftwareKeyboardController.current
@@ -191,14 +223,13 @@ fun NormalMusic(navController: NavController) {
                                 label = stringResource(id = R.string.normal_button_play),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                val currentList = list.value
-                                if (currentList.isEmpty()) return@NormalButton
+                                if (currentItems.isEmpty()) return@NormalButton
                                 // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
                                 MediaController.mediaControl?.shuffleModeEnabled = false
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
-                                        currentList.first(),
-                                        currentList
+                                        currentItems.first(),
+                                        currentItems
                                     )
                                 }
                             }
@@ -208,13 +239,12 @@ fun NormalMusic(navController: NavController) {
                                 label = stringResource(id = R.string.normal_button_shuffle),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                val currentList = list.value
-                                if (currentList.isEmpty()) return@NormalButton
+                                if (currentItems.isEmpty()) return@NormalButton
                                 MediaController.mediaControl?.shuffleModeEnabled = true
                                 scope.launch(Dispatchers.IO) {
                                     MediaController.prepare(
-                                        currentList.random(),
-                                        currentList
+                                        currentItems.random(),
+                                        currentItems
                                     )
                                 }
                             }
@@ -222,8 +252,9 @@ fun NormalMusic(navController: NavController) {
                     }
 
                     itemsIndexed(
-                        list.value,
-                        key = { _, music -> music }
+                        currentItems,
+                        key = { _, music -> music },
+                        contentType = { _, _ -> "normal_music_item" }
                     ) { index, music ->
                         MusicList(
                             music
@@ -231,13 +262,13 @@ fun NormalMusic(navController: NavController) {
                             scope.launch(Dispatchers.IO) {
                                 MediaController.prepare(
                                     music,
-                                    list.value
+                                    currentItems
                                 )
                             }
                         }
 
                         key(index) {
-                            val needDivider = index < musicList.size - 1
+                            val needDivider = index < currentItems.size - 1
                             if (needDivider) {
                                 Spacer(
                                     modifier = Modifier
@@ -259,28 +290,46 @@ fun NormalMusic(navController: NavController) {
     }
 }
 
-private fun List<YosMediaItem>.sortX() =
-    this.sortedBy { song ->
-        when (SongSort) {
-            SettingsLibrary.SongSortEnum.MUSIC_TITLE.ordinal -> Pinyin.toPinyin(
-                (song.title ?: defaultTitle)[0]
-            )
+private fun sortAndIndexSongs(
+    items: List<YosMediaItem>,
+    sortOrdinal: Int,
+    descending: Boolean,
+    isSearching: Boolean,
+): IndexedListResult<YosMediaItem> {
+    if (items.isEmpty()) return IndexedListResult(emptyList(), emptyList(), emptyList())
+    return when (sortOrdinal) {
+        SettingsLibrary.SongSortEnum.MUSIC_TITLE.ordinal -> buildAlphabetIndexedItems(
+            items = items,
+            descending = descending,
+            isSearching = isSearching,
+            keySelector = { it.title ?: defaultTitle },
+        )
 
-            SettingsLibrary.SongSortEnum.MUSIC_DURATION.ordinal -> song.duration
-            SettingsLibrary.SongSortEnum.ARTIST_NAME.ordinal -> Pinyin.toPinyin(
-                (song.artistsList ?: defaultArtists).first()[0]
-            )
+        SettingsLibrary.SongSortEnum.ARTIST_NAME.ordinal -> buildAlphabetIndexedItems(
+            items = items,
+            descending = descending,
+            isSearching = isSearching,
+            keySelector = { (it.artistsList ?: defaultArtists).firstOrNull().orEmpty() },
+        )
 
-            SettingsLibrary.SongSortEnum.MODIFIED_DATE.ordinal -> song.modifiedDate ?: 0
-            else -> Pinyin.toPinyin((song.title ?: defaultTitle)[0])
-        }.toString()
-    }.let {
-        if (EnableDescending) {
-            it.reversed()
-        } else {
-            it
+        SettingsLibrary.SongSortEnum.MUSIC_DURATION.ordinal -> {
+            val sorted = items.sortedBy { it.duration }.let { if (descending) it.asReversed() else it }
+            IndexedListResult(sorted, emptyList(), emptyList())
         }
+
+        SettingsLibrary.SongSortEnum.MODIFIED_DATE.ordinal -> {
+            val sorted = items.sortedBy { it.modifiedDate ?: 0L }.let { if (descending) it.asReversed() else it }
+            IndexedListResult(sorted, emptyList(), emptyList())
+        }
+
+        else -> buildAlphabetIndexedItems(
+            items = items,
+            descending = descending,
+            isSearching = isSearching,
+            keySelector = { it.title ?: defaultTitle },
+        )
     }
+}
 
 /**
  * 歌曲页排序玻璃菜单的内容（NexioSchedule 1.6.5 本体化菜单的菜单项）。
@@ -289,6 +338,7 @@ private fun List<YosMediaItem>.sortX() =
  * 调用方读好的 [selectedSort]/[descending]。分割线把两组分开（左缘与行文字对齐 22dp）。
  */
 @Composable
+@NonSkippableComposable
 private fun SongsSortMenuContent(
     selectedSort: Int,
     descending: Boolean,

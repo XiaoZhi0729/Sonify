@@ -313,6 +313,9 @@
     <string name="normal_button_sort_by_date">Recently Added</string>
     <string name="normal_button_sort_ascending">Ascending</string>
     <string name="normal_button_sort_descending">Descending</string>
+    <string name="list_sort_default">Default</string>
+    <string name="list_sort_by_song_count">Song Count</string>
+    <string name="list_sort_by_track_number">Track Number</string>
     <string name="settings_performance_lyric_blur_effect">Lyric Blur</string>
     <string name="settings_performance_lyric_hdr_effect">HDR highlight (experimental)</string>
     <string name="settings_performance_lyric_hdr_effect_desc">Needs Android 14 or later and an HDR display; otherwise it falls back to additive blooming. Higher strength drains the battery faster.</string>
@@ -440,6 +443,8 @@
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">Show the comments entry button on the player page.</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark">Climax Marker</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">Mark where the climax begins on the progress bar (online songs).</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover">Dynamic Album Cover</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">Load Dynamic Cover on Mobile Data</string>
     <string name="settings_performance_ui_theme">Theme</string>
     <string name="settings_performance_ui_theme_light">Light</string>
     <string name="settings_performance_ui_theme_dark">Dark</string>
@@ -787,4 +792,27 @@
     <string name="widget_cd_album_art">Album artwork</string>
     <string name="widget_no_track_title">Sonify</string>
     <string name="widget_no_track_artist">Tap to open Sonify</string>
+    <string name="settings_performance_lyric_preview_shared">Preview: Shared size (Portrait / Landscape)</string>
+    <string name="settings_performance_lyric_preview_option_portrait">Portrait</string>
+    <string name="settings_performance_lyric_preview_option_landscape">Landscape</string>
+    <string name="settings_performance_lyric_preview_portrait">Preview: Portrait size (Tap to switch to Landscape)</string>
+    <string name="settings_performance_lyric_preview_landscape">Preview: Landscape size (Tap to switch to Portrait)</string>
+    <string name="settings_performance_lyric_custom_section">Custom</string>
+    <string name="settings_performance_lyric_custom_font_pick">Select Font File</string>
+    <string name="settings_performance_lyric_custom_font_system_default">System Default</string>
+    <string name="settings_performance_lyric_custom_font_desc">%1$s · TTF / OTF / TTC</string>
+    <string name="settings_performance_lyric_custom_font_reset">Restore System Default Font</string>
+    <string name="settings_performance_lyric_custom_font_applied">Custom font applied: %1$s</string>
+    <string name="settings_performance_lyric_custom_font_reset_done">Restored system default font</string>
+    <string name="settings_performance_lyric_custom_font_unsupported">Only TTF, OTF, or TTC font files are supported</string>
+    <string name="settings_performance_lyric_custom_font_invalid">Unable to load this font file</string>
+    <string name="settings_performance_lyric_font_size_portrait">Portrait Font Size</string>
+    <string name="settings_performance_lyric_font_size_landscape">Landscape Font Size</string>
+    <string name="settings_performance_lyric_landscape_independent">Independent Landscape Font Size</string>
+    <string name="settings_performance_lyric_font_size_reset">Reset Font Size</string>
+    <string name="settings_performance_lyric_font_size_reset_done">Font size reset to 100%</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_title">Reset Font Size</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_message">Are you sure you want to reset both portrait and landscape lyric font sizes to 100%?</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm">Reset</string>
+    <string name="settings_performance_lyric_font_size_reset_cancel">Cancel</string>
 </resources>

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -50,23 +51,59 @@ import yos.music.player.data.libraries.FavPlayListLibrary
 import yos.music.player.data.libraries.MusicLibrary.songs
 import yos.music.player.data.libraries.PlayList
 import yos.music.player.data.libraries.PlayListLibrary.playList
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.LibrarySortMenuButton
+import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
 fun PlayLists(navController: NavController) {
-    val playLists = remember(playList) { playList.sortedBy { it.name } }
+    val sortOrdinal = SettingsLibrary.LocalPlaylistsSort
+    val descending = SettingsLibrary.LocalPlaylistsDescending
+    val indexedResult = remember(playList, sortOrdinal, descending) {
+        sortAndIndexLibraryItems(
+            items = playList,
+            sortOrdinal = sortOrdinal,
+            descending = descending,
+            isSearching = false,
+            nameSelector = { it.name },
+            songCountSelector = { it.songDataList.size },
+        )
+    }
+    val playLists = indexedResult.sortedItems
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    Title(title = stringResource(id = R.string.page_library_playlists),
+    val listState = rememberLazyListState()
+    val topBarHeightPx = rememberIndexScrollOffsetPx()
+    Title(
+        title = stringResource(id = R.string.page_library_playlists),
         onBack = {
             navController.popBackStackSafely()
+        },
+        listState = listState,
+        rightBarIcon = {
+            LibrarySortMenuButton(
+                selectedSort = { SettingsLibrary.LocalPlaylistsSort },
+                onSelectSort = { SettingsLibrary.LocalPlaylistsSort = it },
+                descending = { SettingsLibrary.LocalPlaylistsDescending },
+                onSelectDescending = { SettingsLibrary.LocalPlaylistsDescending = it },
+            )
+        },
+        indexBarLabels = indexedResult.labels,
+        onIndexSelect = { idx ->
+            val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@Title
+            scope.launch {
+                listState.scrollToIndexedItem(3 + target, topBarHeightPx)
+            }
         },
         content = {
             item("AddList") {
@@ -109,7 +146,8 @@ fun PlayLists(navController: NavController) {
 
             itemsIndexed(
                 playLists,
-                key = { _, playList -> playList.listID }
+                key = { _, playList -> playList.listID },
+                contentType = { _, _ -> "playlist_item" }
             ) { index, playList ->
                 PlayListItem(playList = playList) {
                     scope.launch(Dispatchers.IO) {
@@ -143,9 +181,8 @@ private fun convertToSongList(
     songDataList: List<Uri>,
     songs: List<YosMediaItem>
 ): List<YosMediaItem> {
-    return songDataList.fastMapNotNull { uri ->
-        songs.find { it.uri == uri }
-    }
+    val byUri = songs.associateBy { it.uri }
+    return songDataList.fastMapNotNull { uri -> byUri[uri] }
 }
 
 @Stable
@@ -166,8 +203,6 @@ private fun LazyItemScope.PlayListItem(playList: PlayList, itemClick: () -> Unit
             .padding(start = 22.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        println("重组：播放列表 ${playList.name}")
-
         val shape = YosRoundedCornerShape(4.dp)
         val density = LocalDensity.current
 
@@ -220,7 +255,7 @@ private fun LazyItemScope.PlayListItem(playList: PlayList, itemClick: () -> Unit
         Icon(
             painter = painterResource(id = R.drawable.ic_action_next), contentDescription = null,
             modifier = Modifier
-                .height(40.dp)
+                .height(12.dp)
                 .alpha(0.3f), tint = MaterialTheme.colorScheme.onBackground
         )
     }
@@ -293,7 +328,7 @@ private fun LazyItemScope.PlayListItem(playListType: PlayListType, title: String
         Icon(
             painter = painterResource(id = R.drawable.ic_action_next), contentDescription = null,
             modifier = Modifier
-                .height(40.dp)
+                .height(12.dp)
                 .alpha(0.3f), tint = MaterialTheme.colorScheme.onBackground
         )
     }

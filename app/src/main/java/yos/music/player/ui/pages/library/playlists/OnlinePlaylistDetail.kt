@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -96,6 +97,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouAccountState
@@ -122,8 +124,10 @@ import yos.music.player.ui.navigation.rememberPlaylistBackdropColors
 import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
+import yos.music.player.ui.pages.library.DetailSortMenuItems
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineStatusItem
+import yos.music.player.ui.pages.library.buildAlphabetIndexedItems
 import yos.music.player.ui.pages.library.artists.ArtistRoundActionButton
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -148,14 +152,18 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
 import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.isDropdownDarkTheme
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.widgets.mochi.IndexedListResult
+import yos.music.player.ui.widgets.mochi.MochiIndexBar
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -327,11 +335,13 @@ fun OnlinePlaylistDetail(
         tracks.value
     }
 
-    // 队列即取即建（占位符 URI，入队零网络请求；挂起歌单的待加歌同样可播）
-    fun currentQueue(): List<YosMediaItem> = displayTracks.map { KugouRepository.toQueueMediaItem(it) }
-
     // 服务端+挂起条目拼出的列表可能出现重复 FileHash，item key 按出现序号唯一化
     val trackKeys = remember(displayTracks) { lazyItemKeys(displayTracks) { it.hash } }
+    val indexedTrackEntries = remember(displayTracks, trackKeys) {
+        displayTracks.mapIndexed { idx, track ->
+            Triple(idx, track, trackKeys.getOrElse(idx) { "oob_$idx" })
+        }
+    }
 
     // 添加歌曲弹层 / 待删除歌曲（长按行触发，仅自有歌单）
     val showAddDialog = remember("OnlinePlaylistDetail_add") { mutableStateOf(false) }
@@ -432,19 +442,49 @@ fun OnlinePlaylistDetail(
         delay(250)
         searchKeyword.value = keyword
     }
-    // 列表实际渲染的数据：关键词为空时就是原歌单，否则是过滤结果。
-    // 这里刻意保留**原索引**：播放队列是完整歌单，点击要按原位置播放。
-    val visibleTracks: List<Pair<Int, KugouPlaylistTrack>> =
-        remember(displayTracks, searchKeyword.value) {
-            filterPlaylistTracks(displayTracks, searchKeyword.value)
-        }
-    // 与 visibleTracks 同一次状态派生，满足 LazyItemKeys 的红线 1
-    val visibleKeys = remember(visibleTracks, trackKeys) {
-        visibleTracks.map { (originalIndex, _) ->
-            trackKeys.getOrElse(originalIndex) { "oob_$originalIndex" }
+    val searching = searchKeyword.value.isNotEmpty()
+    val sortOrdinal = SettingsLibrary.OnlinePlaylistDetailSort
+    val descending = SettingsLibrary.OnlinePlaylistDetailDescending
+    val sortedIndexedResult = remember(indexedTrackEntries, sortOrdinal, descending, searching) {
+        when (sortOrdinal) {
+            SettingsLibrary.PlaylistDetailSortEnum.NAME.ordinal -> buildAlphabetIndexedItems(
+                items = indexedTrackEntries,
+                descending = descending,
+                isSearching = searching,
+                keySelector = { it.second.name },
+            )
+
+            SettingsLibrary.PlaylistDetailSortEnum.ARTIST.ordinal -> buildAlphabetIndexedItems(
+                items = indexedTrackEntries,
+                descending = descending,
+                isSearching = searching,
+                keySelector = { it.second.artist },
+            )
+
+            else -> {
+                val sorted = if (descending) indexedTrackEntries.asReversed() else indexedTrackEntries
+                IndexedListResult(sorted, emptyList(), emptyList())
+            }
         }
     }
-    val searching = searchKeyword.value.isNotEmpty()
+    val sortedEntries = sortedIndexedResult.sortedItems
+    fun currentQueue(): List<YosMediaItem> = sortedEntries.map { KugouRepository.toQueueMediaItem(it.second) }
+    val showIndexBar = sortedIndexedResult.labels.isNotEmpty()
+
+    // 列表实际渲染的数据：关键词为空时就是排序后歌单，否则是过滤结果。
+    // pair.first = sortedEntries 下标（用于按当前队列播放）；pair.second.first = displayTracks 原下标（用于删歌）。
+    val visibleTracks =
+        remember(sortedEntries, searchKeyword.value) {
+            filterTracks(
+                tracks = sortedEntries,
+                query = searchKeyword.value,
+                name = { it.second.name },
+                artist = { it.second.artist },
+            )
+        }
+    val visibleKeys = remember(visibleTracks) {
+        visibleTracks.map { it.second.third }
+    }
     // 换歌单时收起搜索，避免状态残留到下一个歌单
     LaunchedEffect(playlistId, accountUserid) {
         searchExpanded.value = false
@@ -676,6 +716,7 @@ fun OnlinePlaylistDetail(
     // 采样种子用**目标色**而不是逐帧的动画值：底色 600ms 渐变期间每帧换种子会重建
     // LayerBackdrop，把整个列表的录制层反复重录。
     val state = rememberLazyListState()
+    val topBarHeightPx = rememberIndexScrollOffsetPx()
     val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
     // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
@@ -759,7 +800,11 @@ fun OnlinePlaylistDetail(
                         .layerBackdrop(titleBackdrop)
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
-                    contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+                    contentPadding = PaddingValues(
+                        bottom = 18.dp,
+                        top = 54.dp,
+                        end = if (showIndexBar) 18.dp else 0.dp,
+                    )
                 ) {
                     item("PlaylistHeader") {
                         if (isWideScreen) {
@@ -992,30 +1037,34 @@ fun OnlinePlaylistDetail(
                     // visibleTracks 的长度，否则会与渲染行数不一致。
                     itemsIndexed(
                         visibleTracks,
-                        key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } }
+                        key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } },
+                        contentType = { _, _ -> "online_playlist_track" }
                     ) { index, pair ->
-                        val originalIndex = pair.first
-                        val track = pair.second
+                        val sortedIndex = pair.first
+                        val originalIndex = pair.second.first
+                        val track = pair.second.second
                         key(visibleKeys.getOrElse(index) { "oob_$index" }) {
                             // alpha 走页面级共享曲线：所有可见行同时渐入，
                             // 动画结束后恒 1f，后续补页的新行不会重新淡入。
                             Box(
-                                Modifier.graphicsLayer {
-                                    compositingStrategy = CompositingStrategy.ModulateAlpha
-                                    alpha = contentAlpha()
-                                }
+                                Modifier
+                                    .animateItem(fadeInSpec = null, fadeOutSpec = null)
+                                    .graphicsLayer {
+                                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                                        alpha = contentAlpha()
+                                    }
                             ) {
                                 if (isWideScreen) {
                                     DetailSongRowWide(
                                         music = KugouRepository.toDisplayMediaItem(track),
                                         onDelete = removeAt?.let { cb -> { cb(originalIndex) } }
                                     ) {
-                                        playAt(originalIndex)
+                                        playAt(sortedIndex)
                                     }
                                 } else {
                                     MusicList(
                                         music = KugouRepository.toDisplayMediaItem(track),
-                                        itemClick = { playAt(originalIndex) },
+                                        itemClick = { playAt(sortedIndex) },
                                         onLongClick = removeAt?.let { cb -> { cb(originalIndex) } }
                                     )
                                 }
@@ -1052,7 +1101,7 @@ fun OnlinePlaylistDetail(
                                 text = stringResource(
                                     id = R.string.page_library_album_info_others,
                                     visibleTracks.size,
-                                    (visibleTracks.sumOf { it.second.durationMs } / 60000).toInt()
+                                    (visibleTracks.sumOf { it.second.second.durationMs } / 60000).toInt()
                                 ),
                                 fontSize = 15.sp,
                                 modifier = Modifier
@@ -1143,9 +1192,46 @@ fun OnlinePlaylistDetail(
                                 )
                             },
                         )
+                        PlaylistMenuItemDivider()
+                        DetailSortMenuItems(
+                            sortOptions = listOf(
+                                SettingsLibrary.PlaylistDetailSortEnum.DEFAULT.ordinal to stringResource(id = R.string.list_sort_default),
+                                SettingsLibrary.PlaylistDetailSortEnum.NAME.ordinal to stringResource(id = R.string.normal_button_sort_by_name),
+                                SettingsLibrary.PlaylistDetailSortEnum.ARTIST.ordinal to stringResource(id = R.string.normal_button_sort_by_artist),
+                            ),
+                            selectedSort = SettingsLibrary.OnlinePlaylistDetailSort,
+                            onSelectSort = { SettingsLibrary.OnlinePlaylistDetailSort = it },
+                            descending = SettingsLibrary.OnlinePlaylistDetailDescending,
+                            onSelectDescending = { SettingsLibrary.OnlinePlaylistDetailDescending = it },
+                            divider = { PlaylistMenuItemDivider() },
+                        )
                     }
                 }
             )
+
+            if (showIndexBar) {
+                val tracksStartIndex = 2 +
+                    (if (isWideScreen && searchEnabled && searchMorph.value > 0.01f) 1 else 0) +
+                    (if (!editAllowed && CollectedPlaylistsObject.error.value != null) 1 else 0) +
+                    (if (isPendingPlaylist && pendingEntry.value?.isBound != true) 1 else 0) +
+                    (if (status.value != "empty" && !(searching && visibleTracks.isEmpty())) 1 else 0) +
+                    (if (showSkeleton) 1 else 0)
+                MochiIndexBar(
+                    labels = sortedIndexedResult.labels,
+                    onSelect = { idx ->
+                        val target = sortedIndexedResult.firstItemIndices.getOrNull(idx) ?: return@MochiIndexBar
+                        scope.launch {
+                            state.scrollToIndexedItem(tracksStartIndex + target, topBarHeightPx)
+                        }
+                    },
+                    accentColor = contentColor,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(top = 54.dp, bottom = 110.dp, end = 2.dp),
+                )
+            }
 
             // 页面级弹层宿主：弹层渲染在列表与顶栏之上（与专辑页同位置）
             TitleOverlayHostSlot(overlayHost)

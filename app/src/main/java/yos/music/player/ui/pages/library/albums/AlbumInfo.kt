@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -23,10 +24,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -55,10 +59,14 @@ import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
+import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.pages.library.AlbumTrackRow
 import yos.music.player.ui.pages.library.DetailPageHeader
 import yos.music.player.ui.pages.library.DetailSongRowWide
+import yos.music.player.ui.pages.library.DetailSortMenuItems
+import yos.music.player.ui.pages.library.buildAlphabetIndexedItems
 import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.artistsName
 import yos.music.player.data.libraries.defaultArtists
@@ -73,12 +81,21 @@ import yos.music.player.ui.widgets.basic.enterCoverCorner
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBar
+import yos.music.player.ui.widgets.basic.TitleOverlayHost
+import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
+import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
+import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import com.kyant.backdrop.backdrops.layerBackdrop
+import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 import yos.music.player.ui.widgets.effects.ShadowType
+import yos.music.player.ui.widgets.mochi.IndexedListResult
+import yos.music.player.ui.widgets.mochi.MochiIndexBar
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -120,46 +137,49 @@ fun AlbumInfo(
                 }
             }
         } else {
-            val songs = remember(albumName.value) {
-                MusicLibrary.Album[albumName.value].sortedWith(compareBy<YosMediaItem>{ it.trackNumber?:0 }.thenBy { it.title })
+            val rawSongs = remember(albumName.value) {
+                MusicLibrary.Album[albumName.value].sortedWith(compareBy<YosMediaItem> { it.trackNumber ?: 0 }.thenBy { it.title })
             }
-
-            /*Box(Modifier.height(56.dp), contentAlignment = Alignment.CenterStart) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .padding(horizontal = 18.dp)
-                        .size(24.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            navController.popBackStackSafely()
-                        },
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }*/
+            val sortOrdinal = SettingsLibrary.AlbumDetailSort
+            val descending = SettingsLibrary.AlbumDetailDescending
+            val indexedResult = remember(rawSongs, sortOrdinal, descending) {
+                if (sortOrdinal == SettingsLibrary.AlbumDetailSortEnum.NAME.ordinal) {
+                    buildAlphabetIndexedItems(
+                        items = rawSongs,
+                        descending = descending,
+                        isSearching = false,
+                        keySelector = { it.title ?: defaultTitle },
+                    )
+                } else {
+                    val sorted = if (descending) rawSongs.asReversed() else rawSongs
+                    IndexedListResult(sorted, emptyList(), emptyList())
+                }
+            }
+            val songs = indexedResult.sortedItems
+            val showIndexBar = indexedResult.labels.isNotEmpty()
 
             val state = rememberLazyListState()
+            val topBarHeightPx = rememberIndexScrollOffsetPx()
             // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
             val coverMotion = rememberCoverScrollMotion(state)
             // blit=true：本页无自带背景层，底色即 shell 的主题白/黑，与种子色严格相等，
             // 录制层可直接上屏，省掉整页内容的第二遍绘制。
             val titleBackdrop = rememberTitleBackdrop(blit = true)
+            val overlayHost = remember { TitleOverlayHost() }
+            val menuOpen = remember { mutableStateOf(false) }
             val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
 
             val mainArtists = rememberSaveable(key = "AlbumInfo_mainArtists") {
-                mutableStateOf(songs.first().artistsList ?: defaultArtists)
+                mutableStateOf(rawSongs.first().artistsList ?: defaultArtists)
             }
             val mainArtistsName = rememberSaveable(key = "AlbumInfo_mainArtistsName") {
-                mutableStateOf(songs.first().artistsName ?: defaultArtistsName)
+                mutableStateOf(rawSongs.first().artistsName ?: defaultArtistsName)
             }
 
-            val (songCount, totalMinutes) = rememberSaveable(songs) {
-                val totalDuration = songs.sumOf { it.duration }
+            val (songCount, totalMinutes) = remember(rawSongs) {
+                val totalDuration = rawSongs.sumOf { it.duration }
                 val totalMinutes = totalDuration / 60000
-                val songCount = songs.size
+                val songCount = rawSongs.size
                 songCount to totalMinutes
             }
 
@@ -168,15 +188,24 @@ fun AlbumInfo(
             // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
             val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
 
-            LazyColumn(
-                state = state,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .layerBackdrop(titleBackdrop)
-                    .overScrollVertical(),
-                flingBehavior = rememberOverscrollFlingBehavior { state },
-                contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+            CompositionLocalProvider(
+                LocalTitlePageBackdrop provides titleBackdrop,
+                LocalTitleOverlayHost provides overlayHost,
             ) {
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = state,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .layerBackdrop(titleBackdrop)
+                            .overScrollVertical(),
+                        flingBehavior = rememberOverscrollFlingBehavior { state },
+                        contentPadding = PaddingValues(
+                            bottom = 18.dp,
+                            top = 54.dp,
+                            end = if (showIndexBar) 18.dp else 0.dp,
+                        )
+                    ) {
                 item("AlbumInfo") {
                     if (isWideScreen) {
                         // 平板（≥600dp）：Apple Music 式头部（歌手行保持旧样式）
@@ -344,30 +373,32 @@ fun AlbumInfo(
 
                 itemsIndexed(
                     songs,
-                    key = { _, music -> music }/*,
-                    contentType = { _, _ -> "AlbumInfo_item" }*/
+                    key = { _, music -> music },
+                    contentType = { _, _ -> "AlbumInfo_item" }
                 ) { index, music ->
                     key(music) {
-                        if (isWideScreen) {
-                            DetailSongRowWide(music = music) {
-                                scope.launch(Dispatchers.IO) {
-                                    MediaController.prepare(
-                                        music,
-                                        songs
-                                    )
+                        Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) {
+                            if (isWideScreen) {
+                                DetailSongRowWide(music = music) {
+                                    scope.launch(Dispatchers.IO) {
+                                        MediaController.prepare(
+                                            music,
+                                            songs
+                                        )
+                                    }
                                 }
-                            }
-                        } else {
-                            AlbumTrackRow(
-                                music = music,
-                                trackNumber = music.trackNumber,
-                                mainArtists = mainArtists.value
-                            ) {
-                                scope.launch(Dispatchers.IO) {
-                                    MediaController.prepare(
-                                        music,
-                                        songs
-                                    )
+                            } else {
+                                AlbumTrackRow(
+                                    music = music,
+                                    trackNumber = music.trackNumber,
+                                    mainArtists = mainArtists.value
+                                ) {
+                                    scope.launch(Dispatchers.IO) {
+                                        MediaController.prepare(
+                                            music,
+                                            songs
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -414,13 +445,54 @@ fun AlbumInfo(
                 }
             }
 
-            // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
-            TitleBar(
-                title = albumName.value,
-                onBack = { navController.popBackStackSafely() },
-                showSmallTitle = showSmallTitle,
-                backdrop = titleBackdrop
-            )
+                    // 顶栏：滚动离屏浮现小标题 + 模糊，几何与参考页 TitleBar 一致
+                    TitleBar(
+                        title = albumName.value,
+                        onBack = { navController.popBackStackSafely() },
+                        showSmallTitle = showSmallTitle,
+                        backdrop = titleBackdrop,
+                        rightBarIcon = {
+                            TitleBarGlassMenu(
+                                expanded = menuOpen.value,
+                                onExpand = { menuOpen.value = true },
+                                onDismiss = { menuOpen.value = false },
+                                triggerIcon = Icons.Rounded.MoreHoriz,
+                                modifier = Modifier.padding(end = 10.dp),
+                            ) {
+                                DetailSortMenuItems(
+                                    sortOptions = listOf(
+                                        SettingsLibrary.AlbumDetailSortEnum.DEFAULT.ordinal to stringResource(id = R.string.list_sort_by_track_number),
+                                        SettingsLibrary.AlbumDetailSortEnum.NAME.ordinal to stringResource(id = R.string.normal_button_sort_by_name),
+                                    ),
+                                    selectedSort = SettingsLibrary.AlbumDetailSort,
+                                    onSelectSort = { SettingsLibrary.AlbumDetailSort = it },
+                                    descending = SettingsLibrary.AlbumDetailDescending,
+                                    onSelectDescending = { SettingsLibrary.AlbumDetailDescending = it },
+                                )
+                            }
+                        }
+                    )
+
+                    if (showIndexBar) {
+                        MochiIndexBar(
+                            labels = indexedResult.labels,
+                            onSelect = { idx ->
+                                val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@MochiIndexBar
+                                scope.launch {
+                                    state.scrollToIndexedItem(2 + target, topBarHeightPx)
+                                }
+                            },
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .statusBarsPadding()
+                                .navigationBarsPadding()
+                                .padding(top = 54.dp, bottom = 110.dp, end = 2.dp),
+                        )
+                    }
+
+                    TitleOverlayHostSlot(overlayHost)
+                }
+            }
         }
     }
 

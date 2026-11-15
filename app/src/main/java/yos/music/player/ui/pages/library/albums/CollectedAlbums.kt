@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemScope
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import kotlinx.coroutines.launch
 import yos.music.player.R
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.CollectedAlbumsObject
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.KugouCollectedAlbum
@@ -44,6 +46,8 @@ import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.ui.UI
 import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.pages.discovery.StatusFooter
+import yos.music.player.ui.pages.library.LibrarySortMenuButton
+import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.ShadowImage
@@ -51,6 +55,8 @@ import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -118,21 +124,53 @@ fun CollectedAlbums(
     val error = CollectedAlbumsObject.error.value
     val searchText = remember("CollectedAlbums_searchText") { mutableStateOf("") }
     // 条目里没有歌手字段（/user/playlist 不返回），只能按专辑名过滤
-    val filtered = if (searchText.value.isBlank()) {
-        albums
-    } else {
-        albums.filter { it.name.contains(searchText.value, ignoreCase = true) }
+    val filtered = remember(albums, searchText.value) {
+        if (searchText.value.isBlank()) {
+            albums
+        } else {
+            albums.filter { it.name.contains(searchText.value, ignoreCase = true) }
+        }
     }
+    val sortOrdinal = SettingsLibrary.CollectedAlbumsSort
+    val descending = SettingsLibrary.CollectedAlbumsDescending
+    val indexedResult = remember(filtered, sortOrdinal, descending, searchText.value) {
+        sortAndIndexLibraryItems(
+            items = filtered,
+            sortOrdinal = sortOrdinal,
+            descending = descending,
+            isSearching = searchText.value.isNotBlank(),
+            nameSelector = { it.name },
+            songCountSelector = { it.songCount },
+        )
+    }
+    val gridState = rememberLazyGridState()
+    val topBarHeightPx = rememberIndexScrollOffsetPx()
 
     Column(Modifier.fillMaxSize()) {
         TitleWithLazyVerticalGrid(
             title = stringResource(id = R.string.page_library_albums),
             onBack = { navController.popBackStackSafely() },
+            gridState = gridState,
+            rightBarIcon = {
+                LibrarySortMenuButton(
+                    selectedSort = { SettingsLibrary.CollectedAlbumsSort },
+                    onSelectSort = { SettingsLibrary.CollectedAlbumsSort = it },
+                    descending = { SettingsLibrary.CollectedAlbumsDescending },
+                    onSelectDescending = { SettingsLibrary.CollectedAlbumsDescending = it },
+                )
+            },
             onRefresh = {
                 refreshing.value = true
                 CollectedAlbumsObject.ensureLoaded(force = true)
             },
-            refreshing = refreshing.value
+            refreshing = refreshing.value,
+            indexBarLabels = indexedResult.labels,
+            onIndexSelect = { idx ->
+                val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@TitleWithLazyVerticalGrid
+                scope.launch {
+                    gridState.scrollToIndexedItem(2 + target, topBarHeightPx)
+                }
+            },
         ) {
             item("SearchField", span = { GridItemSpan(maxLineSpan) }) {
                 val keyboardController = LocalSoftwareKeyboardController.current
@@ -147,7 +185,7 @@ fun CollectedAlbums(
                 )
             }
 
-            if (filtered.isEmpty()) {
+            if (indexedResult.sortedItems.isEmpty()) {
                 item("Status", span = { GridItemSpan(maxLineSpan) }) {
                     val text = when {
                         error != null -> error
@@ -166,8 +204,12 @@ fun CollectedAlbums(
                 }
             } else {
                 itemsIndexed(
-                    filtered,
-                    key = { index, album -> "collected-album-$index-${album.albumId}-${album.name}" }
+                    indexedResult.sortedItems,
+                    key = { index, album ->
+                        album.albumId.takeIf { it.isNotBlank() }?.let { "collected-album:$it" }
+                            ?: "collected-album-fallback:$index:${album.name}"
+                    },
+                    contentType = { _, _ -> "collected_album_item" }
                 ) { _, album ->
                     CollectedAlbumCard(
                         album = album,
@@ -221,6 +263,7 @@ private fun LazyGridItemScope.CollectedAlbumCard(
 ) {
     Column(
         Modifier
+            .animateItem(fadeInSpec = null, fadeOutSpec = null)
             .fillMaxWidth()
             .clickable(
                 indication = null,

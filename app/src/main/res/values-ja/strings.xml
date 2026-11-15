@@ -236,6 +236,9 @@
     <string name="normal_button_sort_by_date">最近追加</string>
     <string name="normal_button_sort_ascending">昇順</string>
     <string name="normal_button_sort_descending">降順</string>
+    <string name="list_sort_default">デフォルト</string>
+    <string name="list_sort_by_song_count">曲数</string>
+    <string name="list_sort_by_track_number">トラック番号</string>
     <string name="settings_performance_lyric_blur_effect">歌詞のぼかし</string>
     <string name="settings_performance_lyric_hdr_effect">HDR ハイライト（実験的）</string>
     <string name="settings_performance_lyric_hdr_effect_desc">Android 14 以上と HDR 対応ディスプレイが必要で、それ以外では加算合成の発光に戻ります。強度が高いほどバッテリーを消費します。</string>
@@ -351,6 +354,8 @@
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">再生ページの下部にコメント入口ボタンを表示します。</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark">サビのマーカー</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">進行バー上にサビの開始位置を表示します（オンライン曲）。</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover">ダイナミックカバー</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">モバイルデータ通信で読み込む</string>
     <string name="settings_performance_ui_theme">テーマ</string>
     <string name="settings_performance_ui_theme_light">ライト</string>
     <string name="settings_performance_ui_theme_dark">ダーク</string>

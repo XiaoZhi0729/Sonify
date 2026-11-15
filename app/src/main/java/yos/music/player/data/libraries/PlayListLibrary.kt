@@ -19,7 +19,6 @@ data class PlayList(
 @Stable
 object PlayListLibrary {
 
-    @Stable
     var playList by mutableDataSaverListStateOf(
         dataSaverInterface = PlayListSaver,
         key = "yos_play_list",
@@ -62,7 +61,6 @@ object PlayListLibrary {
 
 @Stable
 object FavPlayListLibrary {
-    @Stable
     var favPlayList by mutableDataSaverListStateOf(
         dataSaverInterface = PlayListSaver,
         key = "yos_fav_play_list",

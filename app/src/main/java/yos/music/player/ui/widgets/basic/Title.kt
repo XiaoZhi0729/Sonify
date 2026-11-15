@@ -23,9 +23,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
+import yos.music.player.ui.widgets.mochi.MochiIndexBar
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -210,6 +212,8 @@ fun Title(
     // 下拉刷新（opt-in）：传 onRefresh 才启用；未传时列表路径逐像素不变
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
+    indexBarLabels: List<String> = emptyList(),
+    onIndexSelect: ((Int) -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) =
     BaseTitle(
@@ -229,6 +233,8 @@ fun Title(
         revealIndex = revealIndex,
         onRefresh = onRefresh,
         refreshing = refreshing,
+        indexBarLabels = indexBarLabels,
+        onIndexSelect = onIndexSelect,
         content = content
     )
 
@@ -249,6 +255,8 @@ fun TitleWithLazyVerticalGrid(
     // 下拉刷新（opt-in）：传 onRefresh 才启用；未传时网格路径逐像素不变
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
+    indexBarLabels: List<String> = emptyList(),
+    onIndexSelect: ((Int) -> Unit)? = null,
     content: LazyGridScope.() -> Unit
 ) =
     BaseTitle(
@@ -266,6 +274,8 @@ fun TitleWithLazyVerticalGrid(
         gridState = gridState,
         onRefresh = onRefresh,
         refreshing = refreshing,
+        indexBarLabels = indexBarLabels,
+        onIndexSelect = onIndexSelect,
         content = content
     )
 
@@ -291,6 +301,8 @@ private fun BaseTitle(
     revealIndex: Int? = null,
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
+    indexBarLabels: List<String> = emptyList(),
+    onIndexSelect: ((Int) -> Unit)? = null,
     content: Any
 ) {
     if (grid) {
@@ -308,6 +320,8 @@ private fun BaseTitle(
             gridState = gridState,
             onRefresh = onRefresh,
             refreshing = refreshing,
+            indexBarLabels = indexBarLabels,
+            onIndexSelect = onIndexSelect,
             content = content as LazyGridScope.() -> Unit
         )
     } else {
@@ -327,6 +341,8 @@ private fun BaseTitle(
             revealIndex = revealIndex,
             onRefresh = onRefresh,
             refreshing = refreshing,
+            indexBarLabels = indexBarLabels,
+            onIndexSelect = onIndexSelect,
             content = content as LazyListScope.() -> Unit
         )
     }
@@ -439,11 +455,14 @@ private fun BaseTitleGrid(
     gridState: LazyGridState = rememberLazyGridState(),
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
+    indexBarLabels: List<String> = emptyList(),
+    onIndexSelect: ((Int) -> Unit)? = null,
     content: LazyGridScope.() -> Unit
 ) {
     val state = gridState
     // Nexio 式二态折叠：大标题触及栏缘前不透明、没入后小标题才出现、松手吸附到两端
     val collapse = rememberTitleCollapse(state, extraTopPadding)
+    val showIndexBar = indexBarLabels.isNotEmpty() && onIndexSelect != null
 
     // 默认右上角图标：用于一级 Tab 页面（Home / Discovery / Library / Search）。
     // 当调用方没有自定义 rightBarIcon 但传了 topRightIcon + onTopRightIcon 时，
@@ -509,7 +528,7 @@ private fun BaseTitleGrid(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     contentPadding = PaddingValues(
                         start = 18.dp,
-                        end = 18.dp/*, bottom = 18.dp*/,
+                        end = if (showIndexBar) 24.dp else 18.dp/*, bottom = 18.dp*/,
                         top = 54.dp + extraTopPadding
                     )
                 ) {
@@ -552,6 +571,19 @@ private fun BaseTitleGrid(
                 rightBarIcon = effectiveRightBarIcon
             )
 
+            if (showIndexBar) {
+                MochiIndexBar(
+                    labels = indexBarLabels,
+                    onSelect = onIndexSelect!!,
+                    onDragActiveChange = { active -> collapse.touchActive.value = active },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(top = 54.dp, bottom = 110.dp, end = 2.dp)
+                )
+            }
+
             // 页面级弹层宿主：渲染在列表与顶栏之上（设置页下拉玻璃弹层）
             TitleOverlayHostSlot(overlayHost)
         }
@@ -578,11 +610,14 @@ private fun BaseTitleList(
     revealIndex: Int? = null,
     onRefresh: (() -> Unit)? = null,
     refreshing: Boolean = false,
+    indexBarLabels: List<String> = emptyList(),
+    onIndexSelect: ((Int) -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
     val state = listState
     // Nexio 式二态折叠：大标题触及栏缘前不透明、没入后小标题才出现、松手吸附到两端
     val collapse = rememberTitleCollapse(state, extraTopPadding)
+    val showIndexBar = indexBarLabels.isNotEmpty() && onIndexSelect != null
 
     // 默认右上角图标：用于一级 Tab 页面（Home / Discovery / Library / Search）。
     // 当调用方没有自定义 rightBarIcon 但传了 topRightIcon + onTopRightIcon 时，
@@ -643,7 +678,10 @@ private fun BaseTitleList(
                         )
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
-                    contentPadding = PaddingValues(top = 54.dp + extraTopPadding)
+                    contentPadding = PaddingValues(
+                        top = 54.dp + extraTopPadding,
+                        end = if (showIndexBar) 18.dp else 0.dp
+                    )
                 ) {
                     item("title") {
                         Column(
@@ -688,6 +726,19 @@ private fun BaseTitleList(
                 barBackgroundVisible = collapse.showBarBackground,
                 rightBarIcon = effectiveRightBarIcon
             )
+
+            if (showIndexBar) {
+                MochiIndexBar(
+                    labels = indexBarLabels,
+                    onSelect = onIndexSelect!!,
+                    onDragActiveChange = { active -> collapse.touchActive.value = active },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(top = 54.dp, bottom = 110.dp, end = 2.dp)
+                )
+            }
 
             // 页面级弹层宿主：渲染在列表与顶栏之上（设置页下拉玻璃弹层）
             TitleOverlayHostSlot(overlayHost)
@@ -1362,5 +1413,30 @@ private fun TitleItem(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun rememberIndexScrollOffsetPx(): Int {
+    // LazyColumn / LazyVerticalGrid 的 contentPadding(top = 54.dp) 已抵消顶栏自身高度，
+    // 这里只需补偿状态栏高度，否则会多留 54.dp 空白并触发大标题自动吸附回弹。
+    return rawStatusBarsTopPx()
+}
+
+suspend fun LazyListState.scrollToIndexedItem(itemIndex: Int, topBarHeightPx: Int) {
+    val safeIndex = itemIndex.coerceAtLeast(0)
+    if (safeIndex == 0) {
+        scrollToItem(0)
+    } else {
+        scrollToItem(safeIndex, scrollOffset = -topBarHeightPx)
+    }
+}
+
+suspend fun LazyGridState.scrollToIndexedItem(itemIndex: Int, topBarHeightPx: Int) {
+    val safeIndex = itemIndex.coerceAtLeast(0)
+    if (safeIndex == 0) {
+        scrollToItem(0)
+    } else {
+        scrollToItem(safeIndex, scrollOffset = -topBarHeightPx)
     }
 }

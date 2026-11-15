@@ -236,6 +236,9 @@
     <string name="normal_button_sort_by_date">最近添加</string>
     <string name="normal_button_sort_ascending">升序</string>
     <string name="normal_button_sort_descending">降序</string>
+    <string name="list_sort_default">預設</string>
+    <string name="list_sort_by_song_count">歌曲數量</string>
+    <string name="list_sort_by_track_number">音軌號</string>
     <string name="settings_performance_lyric_blur_effect">歌詞模糊</string>
     <string name="settings_performance_lyric_hdr_effect">HDR 高光（實驗性）</string>
     <string name="settings_performance_lyric_hdr_effect_desc">需要 Android 14 以上和支援 HDR 的螢幕，否則自動退回疊加泛光；強度越高越耗電。</string>
@@ -351,6 +354,8 @@
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">在播放頁底部顯示評論入口按鈕。</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark">高潮片段標記</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">在進度條上標出高潮開始的位置（線上歌曲）。</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover">專輯動態封面</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">允許行動網路下載入動態封面</string>
     <string name="settings_performance_ui_theme">主題</string>
     <string name="settings_performance_ui_theme_light">淺色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -685,4 +690,27 @@
     <string name="widget_cd_album_art">專輯封面</string>
     <string name="widget_no_track_title">Sonify</string>
     <string name="widget_no_track_artist">輕觸開啟 Sonify</string>
+    <string name="settings_performance_lyric_preview_shared">預覽：共享字號（豎屏 / 橫屏）</string>
+    <string name="settings_performance_lyric_preview_option_portrait">豎屏</string>
+    <string name="settings_performance_lyric_preview_option_landscape">橫屏</string>
+    <string name="settings_performance_lyric_preview_portrait">預覽：豎屏字號（點擊切換橫屏）</string>
+    <string name="settings_performance_lyric_preview_landscape">預覽：橫屏字號（點擊切換豎屏）</string>
+    <string name="settings_performance_lyric_custom_section">自訂</string>
+    <string name="settings_performance_lyric_custom_font_pick">選擇字體檔案</string>
+    <string name="settings_performance_lyric_custom_font_system_default">系統預設</string>
+    <string name="settings_performance_lyric_custom_font_desc">%1$s · TTF / OTF / TTC</string>
+    <string name="settings_performance_lyric_custom_font_reset">恢復系統預設字體</string>
+    <string name="settings_performance_lyric_custom_font_applied">已套用自訂字體：%1$s</string>
+    <string name="settings_performance_lyric_custom_font_reset_done">已恢復系統預設字體</string>
+    <string name="settings_performance_lyric_custom_font_unsupported">僅支援 TTF / OTF / TTC 格式字體檔案</string>
+    <string name="settings_performance_lyric_custom_font_invalid">無法解析此字體檔案</string>
+    <string name="settings_performance_lyric_font_size_portrait">豎屏字體大小</string>
+    <string name="settings_performance_lyric_font_size_landscape">橫屏字體大小</string>
+    <string name="settings_performance_lyric_landscape_independent">獨立配置橫屏字體大小</string>
+    <string name="settings_performance_lyric_font_size_reset">重設字體大小</string>
+    <string name="settings_performance_lyric_font_size_reset_done">字體大小已重設為 100%</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_title">重設字體大小</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_message">確定要將豎屏與橫屏的歌詞字體大小恢復為預設 100% 嗎？</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm">確定重設</string>
+    <string name="settings_performance_lyric_font_size_reset_cancel">取消</string>
 </resources>

@@ -312,6 +312,9 @@
     <string name="normal_button_sort_by_date">最近添加</string>
     <string name="normal_button_sort_ascending">升序</string>
     <string name="normal_button_sort_descending">降序</string>
+    <string name="list_sort_default">默认</string>
+    <string name="list_sort_by_song_count">歌曲数量</string>
+    <string name="list_sort_by_track_number">音轨号</string>
     <string name="settings_performance_lyric_blur_effect">歌词模糊</string>
     <string name="settings_performance_lyric_hdr_effect">HDR 高光（实验性）</string>
     <string name="settings_performance_lyric_hdr_effect_desc">需要 Android 14 以上和支持 HDR 的屏幕，否则自动退回叠加泛光；强度越高越耗电。</string>
@@ -322,7 +325,7 @@
     <string name="settings_performance_ui_title">用户界面</string>
     <string name="settings_performance_ui_basic">基本</string>
     <string name="settings_performance_ui_blur_effect_title">液态玻璃效果</string>
-    <string name="settings_performance_ui_glass_effect_title">玻璃效果调节</string>
+    <string name="settings_performance_ui_glass_effect_title">模糊效果调节</string>
     <string name="settings_performance_ui_glass_blur_strength">模糊强度</string>
     <string name="settings_performance_ui_glass_blur_reset">重置为 100%</string>
     <string name="settings_performance_ui_glass_effect_desc">只影响玻璃控件的模糊半径：工具栏按钮、底部标签栏、迷你播放器、下拉面板与对话框。顶部渐进模糊等背景类效果不受影响。</string>
@@ -439,6 +442,8 @@
     <string name="settings_performance_ui_nowplaying_show_comments_entry_desc">在播放页底部显示评论入口按钮。</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark">高潮片段标记</string>
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">在进度条上标出高潮开始的位置（在线歌曲）。</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover">专辑动态封面</string>
+    <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">允许移动网络下加载动态封面</string>
     <string name="settings_performance_ui_theme">主题</string>
     <string name="settings_performance_ui_theme_light">浅色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -786,4 +791,27 @@
     <string name="widget_cd_album_art">专辑封面</string>
     <string name="widget_no_track_title">Sonify</string>
     <string name="widget_no_track_artist">轻触打开 Sonify</string>
+    <string name="settings_performance_lyric_preview_shared">预览：共享字号（竖屏 / 横屏）</string>
+    <string name="settings_performance_lyric_preview_option_portrait">竖屏</string>
+    <string name="settings_performance_lyric_preview_option_landscape">横屏</string>
+    <string name="settings_performance_lyric_preview_portrait">预览：竖屏字号（点击切换横屏）</string>
+    <string name="settings_performance_lyric_preview_landscape">预览：横屏字号（点击切换竖屏）</string>
+    <string name="settings_performance_lyric_custom_section">自定义</string>
+    <string name="settings_performance_lyric_custom_font_pick">选择字体文件</string>
+    <string name="settings_performance_lyric_custom_font_system_default">系统默认</string>
+    <string name="settings_performance_lyric_custom_font_desc">%1$s · TTF / OTF / TTC</string>
+    <string name="settings_performance_lyric_custom_font_reset">恢复系统默认字体</string>
+    <string name="settings_performance_lyric_custom_font_applied">已应用自定义字体：%1$s</string>
+    <string name="settings_performance_lyric_custom_font_reset_done">已恢复系统默认字体</string>
+    <string name="settings_performance_lyric_custom_font_unsupported">仅支持 TTF / OTF / TTC 格式字体文件</string>
+    <string name="settings_performance_lyric_custom_font_invalid">无法解析该字体文件</string>
+    <string name="settings_performance_lyric_font_size_portrait">竖屏字体大小</string>
+    <string name="settings_performance_lyric_font_size_landscape">横屏字体大小</string>
+    <string name="settings_performance_lyric_landscape_independent">独立配置横屏字体大小</string>
+    <string name="settings_performance_lyric_font_size_reset">重置字体大小</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_title">重置字体大小</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm_message">确定要将竖屏和横屏的歌词字体大小恢复为默认 100% 吗？</string>
+    <string name="settings_performance_lyric_font_size_reset_confirm">确定重置</string>
+    <string name="settings_performance_lyric_font_size_reset_cancel">取消</string>
+    <string name="settings_performance_lyric_font_size_reset_done">字体大小已重置为 100%</string>
 </resources>

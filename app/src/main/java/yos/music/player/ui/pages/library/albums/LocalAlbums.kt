@@ -16,9 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemScope
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,22 +32,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.LibrarySortMenuButton
+import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleWithLazyVerticalGrid
-import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -97,29 +99,53 @@ fun LocalAlbums(
             }
         } else {
             val useSearch = remember { derivedStateOf { searchText.value.isNotEmpty() } }
-            val list = remember { mutableStateOf(albumsList) }
-
-            YosWrapper {
-                LaunchedEffect(searchText.value) {
-                    withContext(Dispatchers.IO) {
-                        val filteredList = withContext(Dispatchers.IO) {
-                            if (useSearch.value) {
-                                MusicLibrary.albums.asSequence().filter { album ->
-                                    album.contains(searchText.value, ignoreCase = true)
-                                }.toList()
-                            } else {
-                                albumsList
-                            }
-                        }
-                        list.value = filteredList
+            val filtered = remember(albumsList, searchText.value) {
+                if (useSearch.value) {
+                    albumsList.filter { album ->
+                        album.contains(searchText.value, ignoreCase = true)
                     }
+                } else {
+                    albumsList
                 }
             }
+            val sortOrdinal = SettingsLibrary.LocalAlbumsSort
+            val descending = SettingsLibrary.LocalAlbumsDescending
+            val indexedResult = remember(filtered, sortOrdinal, descending, useSearch.value) {
+                sortAndIndexLibraryItems(
+                    items = filtered,
+                    sortOrdinal = sortOrdinal,
+                    descending = descending,
+                    isSearching = useSearch.value,
+                    nameSelector = { it },
+                    songCountSelector = { MusicLibrary.Album[it].size },
+                )
+            }
 
+            val context = LocalContext.current
+            val prefetchScope = rememberCoroutineScope()
+            val gridState = rememberLazyGridState()
+            val topBarHeightPx = rememberIndexScrollOffsetPx()
             TitleWithLazyVerticalGrid(
-                title = stringResource(id = R.string.page_library_albums), onBack = {
+                title = stringResource(id = R.string.page_library_albums),
+                onBack = {
                     navController.popBackStackSafely()
-                }
+                },
+                gridState = gridState,
+                rightBarIcon = {
+                    LibrarySortMenuButton(
+                        selectedSort = { SettingsLibrary.LocalAlbumsSort },
+                        onSelectSort = { SettingsLibrary.LocalAlbumsSort = it },
+                        descending = { SettingsLibrary.LocalAlbumsDescending },
+                        onSelectDescending = { SettingsLibrary.LocalAlbumsDescending = it },
+                    )
+                },
+                indexBarLabels = indexedResult.labels,
+                onIndexSelect = { idx ->
+                    val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@TitleWithLazyVerticalGrid
+                    prefetchScope.launch {
+                        gridState.scrollToIndexedItem(2 + target, topBarHeightPx)
+                    }
+                },
             ) {
                 item("SearchField", span = { GridItemSpan(maxLineSpan) }) {
                     val keyboardController = LocalSoftwareKeyboardController.current
@@ -139,12 +165,10 @@ fun LocalAlbums(
                         })
                 }
                 itemsIndexed(
-                    list.value,
-                    key = { _, album -> album }/*,
-                    contentType = { _, _ -> "LocalAlbums_item" }*/
+                    indexedResult.sortedItems,
+                    key = { _, album -> album },
+                    contentType = { _, _ -> "LocalAlbums_item" }
                 ) { _, album ->
-                    val context = LocalContext.current
-                    val prefetchScope = rememberCoroutineScope()
                     AlbumItems(
                         albumName = album,
                         animatedContentScope = animatedContentScope,

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -78,6 +79,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.objects.CollectedAlbumsObject
 import yos.music.player.data.objects.KugouAccountState
@@ -101,7 +103,9 @@ import yos.music.player.ui.pages.library.AlbumTrackRow
 import yos.music.player.ui.pages.library.AlbumTrackRowWide
 import yos.music.player.ui.pages.library.DetailIntro
 import yos.music.player.ui.pages.library.DetailPageHeader
+import yos.music.player.ui.pages.library.DetailSortMenuItems
 import yos.music.player.ui.pages.library.OnlineStatusItem
+import yos.music.player.ui.pages.library.buildAlphabetIndexedItems
 import yos.music.player.ui.pages.library.artists.ArtistCollectButton
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -122,13 +126,17 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
 import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import com.kyant.backdrop.backdrops.layerBackdrop
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
+import yos.music.player.ui.widgets.mochi.IndexedListResult
+import yos.music.player.ui.widgets.mochi.MochiIndexBar
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -310,27 +318,54 @@ fun OnlineAlbumDetail(
     // 平板（≥600dp）启用 Apple Music 式头部与三列歌曲行；手机保持旧版布局
     val isWideScreen = LocalConfiguration.current.screenWidthDp >= 600
 
-    // ---------- 页内搜索 ----------
+    // ---------- 页内搜索与排序索引 ----------
     // 与在线歌单详情页共用同一套逻辑（PageSearchState / rememberPageSearch）。
     // 在线专辑是只读页面，所有专辑都能搜，不像歌单那样要编辑权限。
     val search = rememberPageSearch(resetKey = albumId)
-    // 搜索时渲染过滤结果，但每行带着**原索引**：播放队列始终是整张专辑，
-    // 点击按原位置播放。分隔线判据也必须用过滤结果的长度。
-    val visibleTracks: List<Pair<Int, KugouNewSong>> =
-        remember(trackItems, search.keyword) {
-            filterTracks(
-                tracks = trackItems,
-                query = search.keyword,
-                name = { it.name },
-                artist = { it.author }
-            )
-        }
-    // 与 visibleTracks 同一次状态派生，满足 LazyItemKeys 的红线 1
-    val visibleKeys = remember(visibleTracks, songKeys) {
-        visibleTracks.map { (originalIndex, _) ->
-            songKeys.getOrElse(originalIndex) { "oob_$originalIndex" }
+    val sortOrdinal = SettingsLibrary.AlbumDetailSort
+    val descending = SettingsLibrary.AlbumDetailDescending
+    val indexedTrackEntries = remember(trackItems, songKeys) {
+        trackItems.mapIndexed { idx, song ->
+            Triple(idx, song, songKeys.getOrElse(idx) { "oob_$idx" })
         }
     }
+    val sortedIndexedResult = remember(indexedTrackEntries, sortOrdinal, descending, search.filtering) {
+        if (sortOrdinal == SettingsLibrary.AlbumDetailSortEnum.NAME.ordinal) {
+            buildAlphabetIndexedItems(
+                items = indexedTrackEntries,
+                descending = descending,
+                isSearching = search.filtering,
+                keySelector = { it.second.name },
+            )
+        } else {
+            val sorted = if (descending) indexedTrackEntries.asReversed() else indexedTrackEntries
+            IndexedListResult(sorted, emptyList(), emptyList())
+        }
+    }
+    val sortedEntries = sortedIndexedResult.sortedItems
+    val sortedQueue = remember(sortedEntries) {
+        sortedEntries.map { KugouRepository.toQueueMediaItem(it.second) }
+    }
+    fun playSortedAt(index: Int) {
+        if (index !in sortedQueue.indices) return
+        scope.launch(Dispatchers.IO) {
+            MediaController.prepare(sortedQueue[index], sortedQueue)
+        }
+    }
+    // 搜索时渲染过滤结果，但每行带着在 sortedQueue 中的位置（按当前排序队列播放）与原始音轨号。
+    val visibleTracks =
+        remember(sortedEntries, search.keyword) {
+            filterTracks(
+                tracks = sortedEntries,
+                query = search.keyword,
+                name = { it.second.name },
+                artist = { it.second.author }
+            )
+        }
+    val visibleKeys = remember(visibleTracks) {
+        visibleTracks.map { it.second.third }
+    }
+    val showIndexBar = sortedIndexedResult.labels.isNotEmpty()
     val searching = search.filtering
     // 返回键：先收起搜索，再次返回才退页
     BackHandler(enabled = search.expanded) { search.dismiss() }
@@ -388,6 +423,7 @@ fun OnlineAlbumDetail(
     // 弹层宿主与 Title 页同款：LiquidDropdown 注册进它就能**同窗口**渲染，
     // 跨窗口 Popup 采不到本页的 layerBackdrop，玻璃材质会退化成实色面板。
     val state = rememberLazyListState()
+    val topBarHeightPx = rememberIndexScrollOffsetPx()
     // 采样种子用**目标色**而不是逐帧的动画值：底色 600ms 渐变期间每帧换种子会重建
     // LayerBackdrop，把整个列表的录制层反复重录（本机 RenderThread 上还会丢子层）。
     // 同时显式传色，避免在 CompositionLocalProvider 之前读不到 LocalTitlePageColor
@@ -422,7 +458,11 @@ fun OnlineAlbumDetail(
                 .layerBackdrop(titleBackdrop)
                 .overScrollVertical(),
             flingBehavior = rememberOverscrollFlingBehavior { state },
-            contentPadding = PaddingValues(bottom = 18.dp, top = 54.dp)
+            contentPadding = PaddingValues(
+                bottom = 18.dp,
+                top = 54.dp,
+                end = if (showIndexBar) 18.dp else 0.dp,
+            )
         ) {
             item("AlbumHeader") {
                 if (isWideScreen) {
@@ -472,13 +512,12 @@ fun OnlineAlbumDetail(
                         onPlayAll = {
                             // 「播放」= 顺序播放：显式关闭随机（随机为进程级粘性，必须关）
                             MediaController.mediaControl?.shuffleModeEnabled = false
-                            playAt(0)
+                            playSortedAt(0)
                         },
                         onShuffle = {
-                            val list = queue.value
-                            if (list.isNotEmpty()) {
+                            if (sortedQueue.isNotEmpty()) {
                                 MediaController.mediaControl?.shuffleModeEnabled = true
-                                playAt(list.indices.random())
+                                playSortedAt(sortedQueue.indices.random())
                             }
                         },
                         // 平板头部同款收藏开关（播放右侧的 + / ✓）
@@ -630,19 +669,18 @@ fun OnlineAlbumDetail(
                         PlayActionRowMotion(
                             fraction = search.morph,
                             foregroundColor = contentColor,
-                            playEnabled = queue.value.isNotEmpty(),
+                            playEnabled = sortedQueue.isNotEmpty(),
                             onShuffle = {
                                 // 随机：全部歌曲进队列 + Media3 原生 shuffle，从随机位置开始
-                                val list = queue.value
-                                if (list.isNotEmpty()) {
+                                if (sortedQueue.isNotEmpty()) {
                                     MediaController.mediaControl?.shuffleModeEnabled = true
-                                    playAt(list.indices.random())
+                                    playSortedAt(sortedQueue.indices.random())
                                 }
                             },
                             onPlayAll = {
                                 // 播放：全部歌曲进队列，从第一首开始（顺序播放：先关随机）
                                 MediaController.mediaControl?.shuffleModeEnabled = false
-                                playAt(0)
+                                playSortedAt(0)
                             },
                             searchQuery = search.query,
                             onSearchQueryChange = { search.query = it },
@@ -712,33 +750,34 @@ fun OnlineAlbumDetail(
 
             itemsIndexed(
                 visibleTracks,
-                key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } }
+                key = { index, _ -> visibleKeys.getOrElse(index) { "oob_$index" } },
+                contentType = { _, _ -> "online_album_track" }
             ) { index, pair ->
-                // 搜索时用**原索引**：播放队列是整张专辑，点第几条就播第几条；
-                // 序号仍显示专辑内原始曲目号（不是过滤后的序号）。
-                val originalIndex = pair.first
-                val song = pair.second
+                val sortedIndex = pair.first
+                val originalIndex = pair.second.first
+                val song = pair.second.second
                 key(visibleKeys.getOrElse(index) { "oob_$index" }) {
                     // 专辑歌曲行（无封面）：行首显示专辑内序号；
-                    // 点击 → 全部歌曲进队列，从被点击歌曲开始播放。
-                    // alpha 走页面级共享曲线：所有可见行同时渐入。
+                    // 点击 → 按当前排序队列播放。
                     Box(
-                        Modifier.graphicsLayer {
-                            compositingStrategy = CompositingStrategy.ModulateAlpha
-                            alpha = contentAlpha()
-                        }
+                        Modifier
+                            .animateItem(fadeInSpec = null, fadeOutSpec = null)
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.ModulateAlpha
+                                alpha = contentAlpha()
+                            }
                     ) {
                         if (isWideScreen) {
                             AlbumTrackRowWide(
                                 music = KugouRepository.toDisplayMediaItem(song),
                                 trackNumber = originalIndex + 1
-                            ) { playAt(originalIndex) }
+                            ) { playSortedAt(sortedIndex) }
                         } else {
                             AlbumTrackRow(
                                 music = KugouRepository.toDisplayMediaItem(song),
                                 trackNumber = originalIndex + 1,
                                 mainArtists = albumArtistNames
-                            ) { playAt(originalIndex) }
+                            ) { playSortedAt(sortedIndex) }
                         }
                     }
                 }
@@ -774,7 +813,7 @@ fun OnlineAlbumDetail(
                         text = stringResource(
                             id = R.string.page_library_album_info_others,
                             visibleTracks.size,
-                            (visibleTracks.sumOf { it.second.durationMs } / 60000).toInt()
+                            (visibleTracks.sumOf { it.second.second.durationMs } / 60000).toInt()
                         ),
                         fontSize = 15.sp,
                         modifier = Modifier
@@ -877,9 +916,42 @@ fun OnlineAlbumDetail(
                                 )
                             },
                         )
+                        AlbumMenuItemDivider()
+                        DetailSortMenuItems(
+                            sortOptions = listOf(
+                                SettingsLibrary.AlbumDetailSortEnum.DEFAULT.ordinal to stringResource(id = R.string.list_sort_by_track_number),
+                                SettingsLibrary.AlbumDetailSortEnum.NAME.ordinal to stringResource(id = R.string.normal_button_sort_by_name),
+                            ),
+                            selectedSort = SettingsLibrary.AlbumDetailSort,
+                            onSelectSort = { SettingsLibrary.AlbumDetailSort = it },
+                            descending = SettingsLibrary.AlbumDetailDescending,
+                            onSelectDescending = { SettingsLibrary.AlbumDetailDescending = it },
+                            divider = { AlbumMenuItemDivider() },
+                        )
                     }
                 }
             )
+
+            if (showIndexBar) {
+                val tracksStartIndex = 3 +
+                    (if (isWideScreen && search.morph.value > 0.01f) 1 else 0) +
+                    (if (showSkeleton) 1 else 0)
+                MochiIndexBar(
+                    labels = sortedIndexedResult.labels,
+                    onSelect = { idx ->
+                        val target = sortedIndexedResult.firstItemIndices.getOrNull(idx) ?: return@MochiIndexBar
+                        scope.launch {
+                            state.scrollToIndexedItem(tracksStartIndex + target, topBarHeightPx)
+                        }
+                    },
+                    accentColor = contentColor,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(top = 54.dp, bottom = 110.dp, end = 2.dp),
+                )
+            }
 
             // 页面级弹层宿主：弹层渲染在列表与顶栏之上（与 Title 页同位置）
             TitleOverlayHostSlot(overlayHost)

@@ -12,8 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.animation.AnimatedVisibilityScope
@@ -37,6 +36,7 @@ import com.tencent.mmkv.MMKV
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.KugouSyncCoordinator
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.objects.CollectedPlaylistsObject
@@ -46,8 +46,11 @@ import yos.music.player.data.repositories.KugouPlaylist
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.PendingPlaylistStore
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.LibraryMenuAction
+import yos.music.player.ui.pages.library.LibrarySortMenuButton
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
+import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.widgets.basic.ImageQuality
@@ -57,6 +60,8 @@ import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.preloadRawCover
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -356,20 +361,56 @@ fun OnlinePlaylists(
     }
     // Read the observable entries here so optimistic changes update an already visible list.
     val collectionEntries = CollectedPlaylistsObject.entries.value
-    val displayPlaylists = remember(playlists.value, collectionEntries) {
+    val rawDisplayPlaylists = remember(playlists.value, collectionEntries) {
         CollectedPlaylistsObject.mergeEntries(playlists.value)
             .filterNot { it.source == 2 || (it.isDef == 1 && it.songCount == 0) }
     }
+    val pinnedPlaylists = remember(rawDisplayPlaylists) {
+        rawDisplayPlaylists.filter { it.isDef != 0 }
+    }
+    val sortablePlaylists = remember(rawDisplayPlaylists) {
+        rawDisplayPlaylists.filter { it.isDef == 0 }
+    }
+    val sortOrdinal = SettingsLibrary.OnlinePlaylistsSort
+    val descending = SettingsLibrary.OnlinePlaylistsDescending
+    val indexedResult = remember(sortablePlaylists, sortOrdinal, descending) {
+        sortAndIndexLibraryItems(
+            items = sortablePlaylists,
+            sortOrdinal = sortOrdinal,
+            descending = descending,
+            isSearching = false,
+            nameSelector = { it.name },
+            songCountSelector = { it.songCount },
+        )
+    }
+    val displayPlaylists = remember(pinnedPlaylists, indexedResult.sortedItems) {
+        pinnedPlaylists + indexedResult.sortedItems
+    }
+    val listState = rememberLazyListState()
+    val topBarHeightPx = rememberIndexScrollOffsetPx()
+    val createPlaylistLabel = stringResource(id = R.string.online_playlists_create)
 
     Title(
         title = stringResource(id = R.string.page_online_playlists_title),
-        topRightIcon = Icons.Filled.Add,
-        onTopRightIcon = {
-            if (accountUserid == null) navController.navigate(UI.Settings.KugouLogin)
-            else {
-                createError.value = null
-                showCreateDialog.value = true
-            }
+        listState = listState,
+        rightBarIcon = {
+            LibrarySortMenuButton(
+                selectedSort = { SettingsLibrary.OnlinePlaylistsSort },
+                onSelectSort = { SettingsLibrary.OnlinePlaylistsSort = it },
+                descending = { SettingsLibrary.OnlinePlaylistsDescending },
+                onSelectDescending = { SettingsLibrary.OnlinePlaylistsDescending = it },
+                leadingAction = LibraryMenuAction(
+                    text = createPlaylistLabel,
+                    onClick = {
+                        if (accountUserid == null) {
+                            navController.navigate(UI.Settings.KugouLogin)
+                        } else {
+                            createError.value = null
+                            showCreateDialog.value = true
+                        }
+                    },
+                ),
+            )
         },
         onRefresh = {
             CollectedPlaylistsObject.ensureLoaded(force = true)
@@ -379,7 +420,14 @@ fun OnlinePlaylists(
         refreshing = status.value == "loading",
         onBack = {
             navController.popBackStackSafely()
-        }
+        },
+        indexBarLabels = indexedResult.labels,
+        onIndexSelect = { idx ->
+            val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@Title
+            scope.launch {
+                listState.scrollToIndexedItem(2 + pinnedPlaylists.size + target, topBarHeightPx)
+            }
+        },
     ) {
         item("Status") {
             OnlineStatusItem(
@@ -391,9 +439,9 @@ fun OnlinePlaylists(
 
         itemsIndexed(
             displayPlaylists,
-            key = { _, pl -> playlistKey(pl).ifEmpty { pl.name } }
+            key = { _, pl -> playlistKey(pl).ifEmpty { pl.name } },
+            contentType = { _, _ -> "online_playlist_item" }
         ) { index, pl ->
-            val context = LocalContext.current
             val playlistId = playlistKey(pl)
             val isLocalPending = pl.listid.startsWith("local_")
             val pendingEntry = if (isLocalPending) journal.value.firstOrNull { it.localId == pl.listid } else null
@@ -414,6 +462,7 @@ fun OnlinePlaylists(
                 )
             Row(
                 modifier = Modifier
+                    .animateItem(fadeInSpec = null, fadeOutSpec = null)
                     .height(64.dp)
                     .fillMaxWidth()
                     .combinedClickable(

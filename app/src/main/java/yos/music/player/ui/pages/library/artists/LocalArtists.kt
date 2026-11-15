@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,15 +49,21 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.library.LibrarySortMenuButton
+import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.SearchTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.YosWrapper
+import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
+import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
@@ -93,10 +101,42 @@ fun LocalArtists(navController: NavController) {
                 }
             }
         } else {
+            val sortOrdinal = SettingsLibrary.LocalArtistsSort
+            val descending = SettingsLibrary.LocalArtistsDescending
+            val indexedResult = remember(displayArtists, sortOrdinal, descending, searchText.value) {
+                sortAndIndexLibraryItems(
+                    items = displayArtists,
+                    sortOrdinal = sortOrdinal,
+                    descending = descending,
+                    isSearching = searchText.value.isNotEmpty(),
+                    nameSelector = { it },
+                    songCountSelector = { MusicLibrary.Artist[it].size },
+                )
+            }
+            val listState = rememberLazyListState()
+            val topBarHeightPx = rememberIndexScrollOffsetPx()
+            val scope = rememberCoroutineScope()
             Title(
-                title = stringResource(id = R.string.page_library_artists), onBack = {
+                title = stringResource(id = R.string.page_library_artists),
+                onBack = {
                     navController.popBackStackSafely()
-                }
+                },
+                listState = listState,
+                rightBarIcon = {
+                    LibrarySortMenuButton(
+                        selectedSort = { SettingsLibrary.LocalArtistsSort },
+                        onSelectSort = { SettingsLibrary.LocalArtistsSort = it },
+                        descending = { SettingsLibrary.LocalArtistsDescending },
+                        onSelectDescending = { SettingsLibrary.LocalArtistsDescending = it },
+                    )
+                },
+                indexBarLabels = indexedResult.labels,
+                onIndexSelect = { idx ->
+                    val target = indexedResult.firstItemIndices.getOrNull(idx) ?: return@Title
+                    scope.launch {
+                        listState.scrollToIndexedItem(2 + target, topBarHeightPx)
+                    }
+                },
             ) {
                 item("SearchField") {
                     val keyboardController = LocalSoftwareKeyboardController.current
@@ -119,7 +159,7 @@ fun LocalArtists(navController: NavController) {
                 }
 
                 itemsIndexed(
-                    displayArtists,
+                    indexedResult.sortedItems,
                     key = { _, artist -> "artist:$artist" },
                     contentType = { _, _ -> "local_artist" }
                 ) { index, artist ->
@@ -130,7 +170,7 @@ fun LocalArtists(navController: NavController) {
                         navController.toUI(UI.NormalMusic)
                     }
 
-                    if (index < displayArtists.lastIndex) {
+                    if (index < indexedResult.sortedItems.lastIndex) {
                         Spacer(
                             modifier = Modifier
                                 .fillMaxWidth()
