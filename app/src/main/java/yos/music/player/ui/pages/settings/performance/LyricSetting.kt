@@ -1,258 +1,796 @@
 package yos.music.player.ui.pages.settings.performance
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.kyant.capsule.ContinuousRoundedRectangle
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.code.utils.lrc.LyricCustomFontManager
 import yos.music.player.code.utils.lrc.LyricRenderWarmup
+import yos.music.player.code.utils.lrc.lyricMainTextStyle
+import yos.music.player.code.utils.lrc.parseLyricFontWeight
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.navigation.popBackStackSafely
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
+import yos.music.player.ui.pages.settings.GroupSpacerMedium
+import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
-import yos.music.player.ui.pages.settings.SelectItem
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
 import yos.music.player.ui.widgets.basic.RoundColumn
+import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.liquid.YosSlider
-import yos.music.player.ui.navigation.popBackStackSafely
+import yos.music.player.ui.widgets.mochi.MochiSegmentedControl
+import yos.music.player.ui.widgets.mochi.MochiSegmentedDefaults
+
+private const val WEIGHT_MIN = 100f
+private const val WEIGHT_MAX = 900f
+private const val WEIGHT_ANCHOR_STEP = 100f
+
+private const val SCALE_PERCENT_MIN = 80f
+private const val SCALE_PERCENT_MAX = 120f
+private const val SCALE_PERCENT_ANCHOR_STEP = 10f
+
+private const val OFFSET_MIN_MS = -600f
+private const val OFFSET_MAX_MS = 600f
+private const val OFFSET_ANCHOR_STEP_MS = 150f
+
+/** 与 YosUIConfig.subTextSize 对齐的播放页翻译字号（sp）。 */
+private const val PLAYBACK_TRANSLATION_FONT_SIZE_SP = 18f
+
+/**
+ * 磁性吸附计算：当数值靠近最近的固定锚点（跨度的 [snapFraction] 内）时自动吸附，
+ * 在锚点之外则允许无极停留。返回 `(吸附后数值, 是否命中锚点)`。
+ */
+internal fun snapToMagneticAnchor(
+    raw: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    anchorStep: Float,
+    snapFraction: Float = 0.024f,
+): Pair<Float, Boolean> {
+    val clamped = raw.coerceIn(valueRange.start, valueRange.endInclusive)
+    if (anchorStep <= 0f) return clamped to false
+    val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: return clamped to false
+    val snapRadius = span * snapFraction
+    val nearestIndex = ((clamped - valueRange.start) / anchorStep).roundToInt()
+    val nearest = (valueRange.start + nearestIndex * anchorStep)
+        .coerceIn(valueRange.start, valueRange.endInclusive)
+    return if (abs(clamped - nearest) <= snapRadius) {
+        nearest to true
+    } else {
+        clamped to false
+    }
+}
+
+/**
+ * 计算与 [YosSlider]（[LiquidSlider] / [MochiSlider]）拇指中心完全同源的 X 坐标（px）。
+ * - `MochiSlider`：拇指宽 38dp，中心行程为 `[19dp, width - 19dp]`。
+ * - `LiquidSlider`：拇指宽 40dp，`translationX = (-20dp + width * f).coerceIn(-10dp, width - 30dp)`，
+ *   对应中心坐标 `(width * f).coerceIn(10dp, width - 10dp)`。
+ */
+internal fun sliderAnchorCenterX(
+    widthPx: Float,
+    fraction: Float,
+    isLiquidGlass: Boolean,
+    density: Float,
+): Float {
+    if (widthPx <= 0f) return 0f
+    val f = fraction.coerceIn(0f, 1f)
+    return if (isLiquidGlass) {
+        val edgeInset = (10f * density).coerceAtMost(widthPx / 2f)
+        (widthPx * f).coerceIn(edgeInset, (widthPx - edgeInset).coerceAtLeast(edgeInset))
+    } else {
+        val halfThumb = 19f * density
+        val travel = (widthPx - halfThumb * 2f).coerceAtLeast(1f)
+        halfThumb + travel * f
+    }
+}
 
 @Composable
 fun LyricSetting(navController: NavController) =
     SettingBackground {
-        // 样式改动即时生效：排版缓存键已含字重/字号/行平衡，这里按当前曲把新键提前预热，
-        // 回到歌词页直接命中，不会走冷排版（空一帧/闪一下）。
         val context = LocalContext.current
-        Title(title = stringResource(id = R.string.settings_performance_lyric_title),
+        val scope = rememberCoroutineScope()
+
+        // 横屏独立字号预览切换（仅在 LyricLandscapeFontScaleIndependent 为 true 时可切换）
+        var previewLandscape by remember { mutableStateOf(false) }
+
+        val fontPickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    LyricCustomFontManager.importFontFromUri(context, uri)
+                }
+                when (result) {
+                    is LyricCustomFontManager.ImportResult.Success -> {
+                        LyricRenderWarmup.onRenderStyleChanged(context)
+                        Toast.makeText(
+                            context,
+                            context.getString(
+                                R.string.settings_performance_lyric_custom_font_applied,
+                                result.displayName
+                            ),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+
+                    is LyricCustomFontManager.ImportResult.Failure -> {
+                        val msgId = when (result.reason) {
+                            LyricCustomFontManager.FailureReason.UNSUPPORTED_FORMAT ->
+                                R.string.settings_performance_lyric_custom_font_unsupported
+                            else -> R.string.settings_performance_lyric_custom_font_invalid
+                        }
+                        Toast.makeText(context, msgId, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        Title(
+            title = stringResource(id = R.string.settings_performance_lyric_title),
             onBack = {
                 navController.popBackStackSafely()
             },
             titleHorizontalPadding = 34.5.dp,
             content = {
                 item("settings") {
-                    Column(Modifier.fillMaxSize()) {
-                        // ---------------- 样式 ----------------
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_style))
-
-                        RoundColumn {
-                            // 显示名必须先在这里一次性解析成普通字符串：stringResource 不能在
-                            // 下面 onValueChange 那种非 @Composable 的 lambda 里调用。
-                            val weightLabels = FONT_WEIGHT_KEYS.map { fontWeightLabel(it) }
-                            SelectItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_style_font_weight),
-                                items = weightLabels,
-                                value = { fontWeightLabel(SettingsLibrary.LyricFontWeight) },
-                                onValueChange = { label ->
-                                    // 按显示名反查存储值：这样换语言也不会把设置写坏
-                                    weightLabels.indexOf(label).takeIf { it >= 0 }?.let {
-                                        SettingsLibrary.LyricFontWeight = FONT_WEIGHT_KEYS[it]
-                                    }
-                                    LyricRenderWarmup.onRenderStyleChanged(context)
-                                }
-                            )
-
-                            Divider()
-
-                            // 歌词字号缩放（对齐 Flamingo 新版 LyricFontScale，钳制 0.8~1.2）
-                            SelectItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_style_font_size),
-                                items = listOf("80%", "90%", "100%", "110%", "120%"),
-                                value = {
-                                    when (SettingsLibrary.LyricFontScale.coerceIn(0.8f, 1.2f)) {
-                                        0.8f -> "80%"
-                                        0.9f -> "90%"
-                                        1.1f -> "110%"
-                                        1.2f -> "120%"
-                                        else -> "100%"
-                                    }
-                                },
-                                onValueChange = {
-                                    SettingsLibrary.LyricFontScale = when (it) {
-                                        "80%" -> 0.8f
-                                        "90%" -> 0.9f
-                                        "110%" -> 1.1f
-                                        "120%" -> 1.2f
-                                        else -> 1.0f
-                                    }
-                                    LyricRenderWarmup.onRenderStyleChanged(context)
-                                }
-                            )
-
-                            Divider()
-
-                            // 平衡行会重排每行字数，对某些语言有副作用 —— 这属于"反直觉"，
-                            // 但它是这一行的属性，所以写成行内小字，不写卡后脚注
-                            // （卡后脚注只能描述整张卡，挂在 3 行后面会被当成对三行的共同说明）。
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_line_balance),
-                                desc = stringResource(id = R.string.settings_performance_lyric_line_balance_desc),
-                                onClick = {
-                                    SettingsLibrary.LyricLineBalance =
-                                        !SettingsLibrary.LyricLineBalance
-                                    LyricRenderWarmup.onRenderStyleChanged(context)
-                                },
-                                checkedLambda = { SettingsLibrary.LyricLineBalance }
-                            )
-
-                            Divider()
-
-                            // 歌词时间偏移：正值 = 歌词提前，负值 = 歌词延后
-                            SelectItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_timing_offset),
-                                desc = stringResource(id = R.string.settings_performance_lyric_timing_offset_desc),
-                                items = OFFSET_STEPS_MS.map { offsetLabel(it) },
-                                value = {
-                                    offsetLabel(
-                                        OFFSET_STEPS_MS.minByOrNull {
-                                            kotlin.math.abs(it - SettingsLibrary.LyricTimingOffset)
-                                        } ?: 0
-                                    )
-                                },
-                                onValueChange = { label ->
-                                    SettingsLibrary.LyricTimingOffset =
-                                        OFFSET_STEPS_MS.firstOrNull { offsetLabel(it) == label } ?: 0
-                                }
+                    LyricSettingContent(
+                        previewLandscape = previewLandscape,
+                        onSelectPreviewLandscape = { previewLandscape = it },
+                        onPickFont = {
+                            fontPickerLauncher.launch(
+                                arrayOf(
+                                    "font/ttf",
+                                    "font/otf",
+                                    "font/collection",
+                                    "application/x-font-ttf",
+                                    "application/x-font-opentype",
+                                    "application/octet-stream",
+                                    "*/*"
+                                )
                             )
                         }
-
-                        GroupSpacer()
-
-                        // ---------------- 动效 ----------------
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_motion))
-
-                        RoundColumn {
-                            // 智能逐字歌词（对齐 Flamingo smart word-by-word）
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric),
-                                onClick = {
-                                    SettingsLibrary.SmartWordByWordLyric =
-                                        !SettingsLibrary.SmartWordByWordLyric
-                                },
-                                checkedLambda = { SettingsLibrary.SmartWordByWordLyric }
-                            )
-
-                            Divider()
-
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_blur_effect),
-                                onClick = {
-                                    SettingsLibrary.LyricBlurEffect =
-                                        !SettingsLibrary.LyricBlurEffect
-                                },
-                                checkedLambda = { SettingsLibrary.LyricBlurEffect }
-                            )
-
-                            Divider()
-
-                            // HDR 的硬件前提与耗电提示属于这一行本身，写行内；
-                            // 挂在 3 行卡后会变成"整组动效都要求 Android 14"的误读。
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_hdr_effect),
-                                desc = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc),
-                                onClick = {
-                                    SettingsLibrary.LyricHdrEffect =
-                                        !SettingsLibrary.LyricHdrEffect
-                                },
-                                checkedLambda = { SettingsLibrary.LyricHdrEffect }
-                            )
-                            // 强度滑杆只在 HDR 打开时露出：关着的时候它没有任何可调观感
-                            if (SettingsLibrary.LyricHdrEffect) {
-                                Divider()
-                                LyricHdrStrengthItem()
-                            }
-                        }
-
-                        GroupSpacer()
-
-                        // ---------------- 设备 ----------------
-                        // 设备歌词：把当前行写进会话标题，通知栏/锁屏/车机一起显示
-                        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
-
-                        RoundColumn {
-                            SwitchItem(
-                                title = stringResource(id = R.string.settings_performance_lyric_notification),
-                                desc = stringResource(id = R.string.settings_performance_lyric_notification_desc),
-                                onClick = {
-                                    SettingsLibrary.NotificationLyricEnabled =
-                                        !SettingsLibrary.NotificationLyricEnabled
-                                    // 关闭时立刻把通知栏/车机标题还给歌名，不等下一行歌词
-                                    if (!SettingsLibrary.NotificationLyricEnabled) {
-                                        MediaController.clearSessionLyric()
-                                    }
-                                },
-                                checkedLambda = { SettingsLibrary.NotificationLyricEnabled }
-                            )
-                        }
-
-                        GroupSpacer()
-                    }
+                    )
                 }
             }
         )
     }
 
-/**
- * 字重的**存储值**（写进 [SettingsLibrary.LyricFontWeight]，渲染侧按这些名字解析）。
- * 界面显示走 [fontWeightLabel]：直接把 "SemiBold" 摊给用户看等于让他读类型名。
- */
-private val FONT_WEIGHT_KEYS = listOf(
-    "Thin",
-    "ExtraLight",
-    "Light",
-    "Regular",
-    "Medium",
-    "SemiBold",
-    "Bold",
-    "ExtraBold",
-    "Black"
-)
-
-/** 存储值 → 本地化显示名。未知值原样返回，避免旧数据被显示成空白。 */
 @Composable
-private fun fontWeightLabel(key: String): String = stringResource(
-    id = when (key) {
-        "Thin" -> R.string.settings_performance_lyric_weight_thin
-        "ExtraLight" -> R.string.settings_performance_lyric_weight_extra_light
-        "Light" -> R.string.settings_performance_lyric_weight_light
-        "Regular" -> R.string.settings_performance_lyric_weight_regular
-        "Medium" -> R.string.settings_performance_lyric_weight_medium
-        "SemiBold" -> R.string.settings_performance_lyric_weight_semi_bold
-        "Bold" -> R.string.settings_performance_lyric_weight_bold
-        "ExtraBold" -> R.string.settings_performance_lyric_weight_extra_bold
-        "Black" -> R.string.settings_performance_lyric_weight_black
-        else -> R.string.settings_performance_lyric_weight_regular
+private fun LyricSettingContent(
+    previewLandscape: Boolean,
+    onSelectPreviewLandscape: (Boolean) -> Unit,
+    onPickFont: () -> Unit,
+) {
+    val context = LocalContext.current
+    var independentLandscape by remember {
+        mutableStateOf(SettingsLibrary.LyricLandscapeFontScaleIndependent)
     }
-)
+    LaunchedEffect(SettingsLibrary.LyricLandscapeFontScaleIndependent) {
+        independentLandscape = SettingsLibrary.LyricLandscapeFontScaleIndependent
+    }
+    val effectivePreviewLandscape = independentLandscape && previewLandscape
+    val activeScale = if (effectivePreviewLandscape) {
+        SettingsLibrary.LyricLandscapeFontScale.coerceIn(0.8f, 1.2f)
+    } else {
+        SettingsLibrary.LyricFontScale.coerceIn(0.8f, 1.2f)
+    }
+    val activeWeight = parseLyricFontWeight(SettingsLibrary.LyricFontWeight)
+    val customFontPath = SettingsLibrary.LyricCustomFontPath
+    val customFontName = SettingsLibrary.LyricCustomFontName
+    val lineBalance = SettingsLibrary.LyricLineBalance
+    var showResetFontSizeDialog by remember { mutableStateOf(false) }
 
-/** 时间偏移档位（毫秒）。正值让歌词提前显示。 */
-private val OFFSET_STEPS_MS = listOf(-500, -300, -200, -100, 0, 100, 200, 300, 500)
+    LaunchedEffect(independentLandscape) {
+        if (!independentLandscape && previewLandscape) {
+            onSelectPreviewLandscape(false)
+        }
+    }
+
+    // 连续拖动滑块时防抖触发后台排版预热，避免每像素拖动重建整首歌词测量协程。
+    var hasInitializedWarmup by remember { mutableStateOf(false) }
+    LaunchedEffect(
+        activeWeight,
+        SettingsLibrary.LyricFontScale,
+        SettingsLibrary.LyricLandscapeFontScale,
+        independentLandscape,
+        customFontPath,
+        lineBalance,
+    ) {
+        if (!hasInitializedWarmup) {
+            hasInitializedWarmup = true
+            return@LaunchedEffect
+        }
+        delay(250)
+        LyricRenderWarmup.onRenderStyleChanged(context)
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        // 1. 预览区（作为列表首部随页面滚动，深色卡片 + 1:1 真实播放页字号）
+        LyricStylePreviewArea(
+            weight = activeWeight,
+            scale = activeScale,
+            customFontPath = customFontPath,
+            lineBalance = lineBalance,
+            independentLandscape = independentLandscape,
+            previewLandscape = effectivePreviewLandscape,
+            onSelectPreviewLandscape = onSelectPreviewLandscape,
+        )
+
+        GroupSpacerMedium()
+
+        // 第一：独立配置横屏字体大小
+        RoundColumn {
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_landscape_independent),
+                onClick = {
+                    val next = !independentLandscape
+                    independentLandscape = next
+                    SettingsLibrary.LyricLandscapeFontScaleIndependent = next
+                    if (!next && previewLandscape) {
+                        onSelectPreviewLandscape(false)
+                    }
+                },
+                checkedLambda = { independentLandscape }
+            )
+        }
+
+        GroupSpacerMedium()
+
+        // 第二：字体字重（100~900，每 100 磁性吸附）
+        MagneticLyricSliderCard(
+            title = stringResource(id = R.string.settings_performance_lyric_style_font_weight),
+            valueText = activeWeight.toString(),
+            currentValue = activeWeight.toFloat(),
+            valueRange = WEIGHT_MIN..WEIGHT_MAX,
+            anchorStep = WEIGHT_ANCHOR_STEP,
+            onValueCommitted = { snapped ->
+                SettingsLibrary.LyricFontWeight = snapped.roundToInt().toString()
+            }
+        )
+
+        GroupSpacerMedium()
+
+        // 第三：字体大小（80%~120%，每 10% 磁性吸附，卡片内附带红色重置入口）
+        val fontSizeTitle = when {
+            !independentLandscape ->
+                stringResource(id = R.string.settings_performance_lyric_style_font_size)
+            effectivePreviewLandscape ->
+                stringResource(id = R.string.settings_performance_lyric_font_size_landscape)
+            else ->
+                stringResource(id = R.string.settings_performance_lyric_font_size_portrait)
+        }
+        val activePercent = (activeScale * 100f).roundToInt().toFloat()
+        MagneticLyricSliderCard(
+            title = fontSizeTitle,
+            valueText = "${activePercent.roundToInt()}%",
+            currentValue = activePercent,
+            valueRange = SCALE_PERCENT_MIN..SCALE_PERCENT_MAX,
+            anchorStep = SCALE_PERCENT_ANCHOR_STEP,
+            syncKey = effectivePreviewLandscape,
+            onValueCommitted = { snapped ->
+                val nextScale = (snapped.roundToInt() / 100f).coerceIn(0.8f, 1.2f)
+                if (effectivePreviewLandscape) {
+                    SettingsLibrary.LyricLandscapeFontScale = nextScale
+                } else {
+                    SettingsLibrary.LyricFontScale = nextScale
+                }
+            },
+            extraContent = {
+                Divider()
+                LabelItem(
+                    title = stringResource(id = R.string.settings_performance_lyric_font_size_reset),
+                    superLink = true,
+                    showArrow = false,
+                    onClick = { showResetFontSizeDialog = true }
+                )
+            }
+        )
+
+        GroupSpacerMedium()
+
+        // 第四：自定义字体
+        ListHeader(
+            content = stringResource(id = R.string.settings_performance_lyric_custom_section)
+        )
+        RoundColumn {
+            val displayFontName = customFontName.ifBlank {
+                stringResource(id = R.string.settings_performance_lyric_custom_font_system_default)
+            }
+            LabelItem(
+                title = stringResource(id = R.string.settings_performance_lyric_custom_font_pick),
+                desc = stringResource(
+                    id = R.string.settings_performance_lyric_custom_font_desc,
+                    displayFontName
+                ),
+                onClick = onPickFont
+            )
+            AnimatedVisibility(
+                visible = customFontPath.isNotBlank(),
+                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(140)) + shrinkVertically(tween(200)),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Divider()
+                    LabelItem(
+                        title = stringResource(id = R.string.settings_performance_lyric_custom_font_reset),
+                        superLink = true,
+                        showArrow = false,
+                        onClick = {
+                            LyricCustomFontManager.clearCustomFont(context)
+                            Toast.makeText(
+                                context,
+                                R.string.settings_performance_lyric_custom_font_reset_done,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                }
+            }
+        }
+
+        GroupSpacerMedium()
+
+        // 7. 歌词时间偏移（-600ms ~ +600ms，每 150ms 磁性吸附）
+        val offsetMs = SettingsLibrary.LyricTimingOffset
+            .coerceIn(OFFSET_MIN_MS.toInt(), OFFSET_MAX_MS.toInt())
+        MagneticLyricSliderCard(
+            title = stringResource(id = R.string.settings_performance_lyric_timing_offset),
+            valueText = offsetLabel(offsetMs),
+            desc = stringResource(id = R.string.settings_performance_lyric_timing_offset_desc),
+            currentValue = offsetMs.toFloat(),
+            valueRange = OFFSET_MIN_MS..OFFSET_MAX_MS,
+            anchorStep = OFFSET_ANCHOR_STEP_MS,
+            origin = 0f,
+            onValueCommitted = { snapped ->
+                SettingsLibrary.LyricTimingOffset = snapped.roundToInt()
+            }
+        )
+
+        GroupSpacerMedium()
+
+        // 8. 平衡行模式
+        RoundColumn {
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_line_balance),
+                desc = stringResource(id = R.string.settings_performance_lyric_line_balance_desc),
+                onClick = {
+                    SettingsLibrary.LyricLineBalance =
+                        !SettingsLibrary.LyricLineBalance
+                },
+                checkedLambda = { SettingsLibrary.LyricLineBalance }
+            )
+        }
+
+        GroupSpacer()
+
+        // ---------------- 动效 ----------------
+        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_motion))
+
+        RoundColumn {
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_smart_wbw_lyric),
+                onClick = {
+                    SettingsLibrary.SmartWordByWordLyric =
+                        !SettingsLibrary.SmartWordByWordLyric
+                },
+                checkedLambda = { SettingsLibrary.SmartWordByWordLyric }
+            )
+
+            Divider()
+
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_blur_effect),
+                onClick = {
+                    SettingsLibrary.LyricBlurEffect =
+                        !SettingsLibrary.LyricBlurEffect
+                },
+                checkedLambda = { SettingsLibrary.LyricBlurEffect }
+            )
+
+            Divider()
+
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_hdr_effect),
+                desc = stringResource(id = R.string.settings_performance_lyric_hdr_effect_desc),
+                onClick = {
+                    SettingsLibrary.LyricHdrEffect =
+                        !SettingsLibrary.LyricHdrEffect
+                },
+                checkedLambda = { SettingsLibrary.LyricHdrEffect }
+            )
+            if (SettingsLibrary.LyricHdrEffect) {
+                Divider()
+                LyricHdrStrengthItem()
+            }
+        }
+
+        GroupSpacer()
+
+        // ---------------- 设备 ----------------
+        ListHeader(content = stringResource(id = R.string.settings_performance_lyric_device_title))
+
+        RoundColumn {
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_notification),
+                desc = stringResource(id = R.string.settings_performance_lyric_notification_desc),
+                onClick = {
+                    SettingsLibrary.NotificationLyricEnabled =
+                        !SettingsLibrary.NotificationLyricEnabled
+                    if (!SettingsLibrary.NotificationLyricEnabled) {
+                        MediaController.clearSessionLyric()
+                    }
+                },
+                checkedLambda = { SettingsLibrary.NotificationLyricEnabled }
+            )
+        }
+
+        GroupSpacer()
+    }
+
+    if (showResetFontSizeDialog) {
+        SonifyDialog(
+            title = stringResource(id = R.string.settings_performance_lyric_font_size_reset_confirm_title),
+            message = stringResource(id = R.string.settings_performance_lyric_font_size_reset_confirm_message),
+            positiveContent = stringResource(id = R.string.settings_performance_lyric_font_size_reset_confirm),
+            onPositive = {
+                showResetFontSizeDialog = false
+                SettingsLibrary.LyricFontScale = 1.0f
+                SettingsLibrary.LyricLandscapeFontScale = 1.0f
+                Toast.makeText(
+                    context,
+                    R.string.settings_performance_lyric_font_size_reset_done,
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            negativeContent = stringResource(id = R.string.settings_performance_lyric_font_size_reset_cancel),
+            onNegative = { showResetFontSizeDialog = false },
+            onDismissRequest = { showResetFontSizeDialog = false },
+            destructive = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        )
+    }
+}
+
+/**
+ * 歌词预览卡片（模拟播放页暗色背景，1:1 使用播放页 37.5sp × scale 主词字号与 18sp 翻译字号）。
+ */
+@Composable
+private fun LyricStylePreviewArea(
+    weight: Int,
+    scale: Float,
+    customFontPath: String,
+    lineBalance: Boolean,
+    independentLandscape: Boolean,
+    previewLandscape: Boolean,
+    onSelectPreviewLandscape: (Boolean) -> Unit,
+) {
+    val mainStyle = remember(weight, scale, customFontPath, lineBalance) {
+        lyricMainTextStyle(
+            scaleOverride = scale,
+            weightOverride = weight,
+            customFontPath = customFontPath,
+        )
+    }
+    val translationStyle = remember(mainStyle.fontFamily) {
+        TextStyle(
+            fontSize = PLAYBACK_TRANSLATION_FONT_SIZE_SP.sp,
+            lineHeight = 24.sp,
+            fontWeight = FontWeight.Normal,
+            fontFamily = mainStyle.fontFamily,
+        )
+    }
+    val cardShape = ContinuousRoundedRectangle(22.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(cardShape)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF1D1E26),
+                        Color(0xFF121318),
+                    )
+                )
+            )
+            .border(0.75.dp, Color.White.copy(alpha = 0.08f), cardShape)
+            .padding(horizontal = 20.dp, vertical = 20.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            PreviewLyricPair(
+                lyric = "I know, I know I've let you down",
+                translation = "我知道，我让你失望了",
+                mainStyle = mainStyle,
+                translationStyle = translationStyle,
+                mainColor = Color.White,
+                translationColor = Color.White.copy(alpha = 0.62f),
+            )
+            PreviewLyricPair(
+                lyric = "I've been a fool to myself",
+                translation = "我一直在自欺欺人",
+                mainStyle = mainStyle,
+                translationStyle = translationStyle,
+                mainColor = Color.White.copy(alpha = 0.55f),
+                translationColor = Color.White.copy(alpha = 0.42f),
+            )
+
+            AnimatedContent(
+                targetState = independentLandscape,
+                transitionSpec = {
+                    (fadeIn(tween(200)) togetherWith fadeOut(tween(150)))
+                        .using(SizeTransform(clip = false))
+                },
+                label = "preview_mode_transition"
+            ) { showSegmented ->
+                if (showSegmented) {
+                    MochiSegmentedControl(
+                        selectedIndex = if (previewLandscape) 1 else 0,
+                        onSelect = { index -> onSelectPreviewLandscape(index == 1) },
+                        items = listOf(
+                            stringResource(id = R.string.settings_performance_lyric_preview_option_portrait),
+                            stringResource(id = R.string.settings_performance_lyric_preview_option_landscape),
+                        ),
+                        colors = MochiSegmentedDefaults.colors(
+                            track = Color.White.copy(alpha = 0.14f),
+                            thumb = Color.White.copy(alpha = 0.24f),
+                            selectedContent = Color.White,
+                            content = Color.White.copy(alpha = 0.68f),
+                            shadow = Color.Black,
+                        ),
+                        behavior = MochiSegmentedDefaults.behavior(
+                            height = 32.dp,
+                            segmentPadding = 14.dp,
+                        ),
+                    )
+                } else {
+                    Text(
+                        text = stringResource(id = R.string.settings_performance_lyric_preview_shared),
+                        fontSize = 12.5.sp,
+                        color = Color.White.copy(alpha = 0.45f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewLyricPair(
+    lyric: String,
+    translation: String,
+    mainStyle: TextStyle,
+    translationStyle: TextStyle,
+    mainColor: Color,
+    translationColor: Color,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            text = lyric,
+            style = mainStyle,
+            color = mainColor,
+        )
+        Text(
+            text = translation,
+            style = translationStyle,
+            color = translationColor,
+        )
+    }
+}
+
+/**
+ * 带固定锚点刻度与磁性吸附的无极滑块卡片（无加减按钮）。
+ */
+@Composable
+private fun MagneticLyricSliderCard(
+    title: String,
+    valueText: String,
+    currentValue: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    anchorStep: Float,
+    onValueCommitted: (Float) -> Unit,
+    desc: String? = null,
+    origin: Float? = null,
+    syncKey: Any? = Unit,
+    extraContent: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    val haptic = LocalHapticFeedback.current
+    var sliderValue by remember(syncKey) {
+        mutableFloatStateOf(currentValue.coerceIn(valueRange.start, valueRange.endInclusive))
+    }
+    var lastSnappedAnchor by remember(syncKey) { mutableStateOf<Float?>(null) }
+
+    // 仅在外部发生显著变化（如点击“重置字体大小”或切换横竖屏）时同步，避免拖动取整引起微跳。
+    LaunchedEffect(currentValue, syncKey) {
+        val target = currentValue.coerceIn(valueRange.start, valueRange.endInclusive)
+        if (abs(sliderValue - target) >= 1f) {
+            sliderValue = target
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 34.5.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AnimatedContent(
+                targetState = title,
+                transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) },
+                label = "slider_title_transition",
+                modifier = Modifier.weight(1f)
+            ) { animatedTitle ->
+                Text(
+                    text = "$animatedTitle · $valueText",
+                    fontSize = 13.5.sp,
+                    color = LocalContentColor.current.copy(alpha = 0.65f),
+                )
+            }
+        }
+
+        RoundColumn {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                YosSlider(
+                    value = { sliderValue },
+                    onValueChange = { raw ->
+                        val (snapped, hitAnchor) = snapToMagneticAnchor(
+                            raw = raw,
+                            valueRange = valueRange,
+                            anchorStep = anchorStep,
+                        )
+                        if (hitAnchor) {
+                            if (lastSnappedAnchor != snapped) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                lastSnappedAnchor = snapped
+                            }
+                        } else {
+                            lastSnappedAnchor = null
+                        }
+                        sliderValue = snapped
+                        onValueCommitted(snapped)
+                    },
+                    valueRange = valueRange,
+                    origin = origin,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                AnchorTickTrack(
+                    valueRange = valueRange,
+                    anchorStep = anchorStep,
+                    currentValue = sliderValue,
+                )
+
+                if (desc != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = desc,
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp,
+                        color = LocalContentColor.current.copy(alpha = 0.5f)
+                    )
+                }
+            }
+            if (extraContent != null) {
+                extraContent()
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnchorTickTrack(
+    valueRange: ClosedFloatingPointRange<Float>,
+    anchorStep: Float,
+    currentValue: Float,
+) {
+    val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: return
+    if (anchorStep <= 0f) return
+    val tickColor = LocalContentColor.current.copy(alpha = 0.28f)
+    val activeTickColor = MaterialTheme.colorScheme.primary
+    val count = ((span / anchorStep).roundToInt()).coerceAtLeast(1)
+    val isLiquidGlass = SettingsLibrary.BarBlurEffect
+    val density = LocalDensity.current.density
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(10.dp)
+    ) {
+        val cy = size.height / 2f
+        for (i in 0..count) {
+            val anchor = (valueRange.start + i * anchorStep)
+                .coerceIn(valueRange.start, valueRange.endInclusive)
+            val fraction = ((anchor - valueRange.start) / span).coerceIn(0f, 1f)
+            val x = sliderAnchorCenterX(
+                widthPx = size.width,
+                fraction = fraction,
+                isLiquidGlass = isLiquidGlass,
+                density = density,
+            )
+            val isActive = abs(currentValue - anchor) < 0.5f
+            drawCircle(
+                color = if (isActive) activeTickColor else tickColor,
+                radius = if (isActive) 2.5.dp.toPx() else 1.8.dp.toPx(),
+                center = Offset(x, cy)
+            )
+        }
+    }
+}
 
 private fun offsetLabel(ms: Int): String = if (ms > 0) "+$ms ms" else "$ms ms"
 
 /**
  * HDR 高光强度：用掉屏幕可用亮度余量的多少（0–100%）。
- *
- * 本地状态作为拖动期间的实时源：CupertinoSlider 内部用动画插值，直接读设置项
- * 会在手指还没抬起来时被持久化值拽回去，滑起来一顿一顿的。
  */
 @Composable
 private fun LyricHdrStrengthItem() {

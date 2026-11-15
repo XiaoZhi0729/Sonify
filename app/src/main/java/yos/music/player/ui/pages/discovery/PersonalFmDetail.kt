@@ -189,7 +189,8 @@ fun PersonalFmDetail(navController: NavController) {
 
         itemsIndexed(
             songItems,
-            key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
+            key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } },
+            contentType = { _, _ -> "personal_fm_song" }
         ) { index, song ->
             key(songKeys.getOrElse(index) { "oob_$index" }) {
                 MusicList(KugouRepository.toDisplayMediaItem(song)) {

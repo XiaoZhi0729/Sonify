@@ -132,28 +132,58 @@ class LyricRenderStyles(
 )
 
 /**
- * 主行样式（对齐 Flamingo：37.5/47.5sp）。纯函数版：供后台预热调用；
+ * 将设置项 [SettingsLibrary.LyricFontWeight] 解析为 100..900 的整数值。
+ * 向后兼容旧版枚举名（`"Thin"`..`"Black"`）与新版无极数值字符串（`"100"`..`"900"`）。
+ */
+fun parseLyricFontWeight(raw: String): Int {
+    raw.toIntOrNull()?.let { return it.coerceIn(100, 900) }
+    return when (raw) {
+        "Thin" -> 100
+        "ExtraLight" -> 200
+        "Light" -> 300
+        "Regular", "Normal" -> 400
+        "Medium" -> 500
+        "SemiBold" -> 600
+        "Bold" -> 700
+        "ExtraBold" -> 800
+        "Black" -> 900
+        else -> 800
+    }
+}
+
+/**
+ * 获取当前方向生效的歌词字号缩放（0.8f..1.2f）。
+ * 开启「独立配置横屏字体大小」时，横屏读取 [SettingsLibrary.LyricLandscapeFontScale]，
+ * 否则横竖屏共用 [SettingsLibrary.LyricFontScale]。
+ */
+fun effectiveLyricFontScale(isLandscape: Boolean): Float {
+    val raw = if (isLandscape && SettingsLibrary.LyricLandscapeFontScaleIndependent) {
+        SettingsLibrary.LyricLandscapeFontScale
+    } else {
+        SettingsLibrary.LyricFontScale
+    }
+    return raw.coerceIn(0.8f, 1.2f)
+}
+
+/**
+ * 主行样式（对齐 Flamingo：37.5/47.5sp）。纯函数版：供后台预热、歌词页与设置预览共用；
  * [yos.music.player.ui.widgets.mainTextStyle] 保留 @Composable 语义供组合读取。
  */
-fun lyricMainTextStyle(): TextStyle {
-    // LyricFontScale 即字号百分比（设置页 80~120），与 fontScale 全局 clamp 同义
-    val scale = SettingsLibrary.LyricFontScale.coerceIn(0.8f, 1.2f)
+fun lyricMainTextStyle(
+    isLandscape: Boolean = false,
+    scaleOverride: Float? = null,
+    weightOverride: Int? = null,
+    customFontPath: String = SettingsLibrary.LyricCustomFontPath,
+): TextStyle {
+    val scale = (scaleOverride ?: effectiveLyricFontScale(isLandscape)).coerceIn(0.8f, 1.2f)
+    val weightValue = (weightOverride ?: parseLyricFontWeight(SettingsLibrary.LyricFontWeight))
+        .coerceIn(100, 900)
+    val customFamily = LyricCustomFontManager.resolveFontFamily(customFontPath, weightValue)
     return TextStyle(
         fontSize = (LyricMainFontSizeSp * scale).sp,
         lineHeight = (LyricMainLineHeightSp * scale).sp,
-        fontWeight =
-        when (SettingsLibrary.LyricFontWeight) {
-            "Thin" -> FontWeight.Thin
-            "ExtraLight" -> FontWeight.ExtraLight
-            "Light" -> FontWeight.Light
-            "Regular" -> FontWeight.Normal
-            "Medium" -> FontWeight.Medium
-            "SemiBold" -> FontWeight.SemiBold
-            "Bold" -> FontWeight.Bold
-            "ExtraBold" -> FontWeight.ExtraBold
-            "Black" -> FontWeight.Black
-            else -> FontWeight.ExtraBold
-        },
+        fontWeight = FontWeight(weightValue),
+        fontFamily = customFamily,
         letterSpacing = 0.05.sp,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Center,
@@ -167,8 +197,8 @@ fun lyricMainTextStyle(): TextStyle {
     )
 }
 
-fun lyricRenderStyles(subTextSize: Int): LyricRenderStyles {
-    val normal = lyricMainTextStyle()
+fun lyricRenderStyles(subTextSize: Int, isLandscape: Boolean = false): LyricRenderStyles {
+    val normal = lyricMainTextStyle(isLandscape = isLandscape)
     return LyricRenderStyles(
         normal = normal,
         accompaniment = normal.copy(fontSize = 22.sp),
@@ -198,6 +228,7 @@ fun lyricRenderKey(
     fontScaleSetting: Float = SettingsLibrary.LyricFontScale,
     fontWeightSetting: String = SettingsLibrary.LyricFontWeight,
     lineBalance: Boolean = SettingsLibrary.LyricLineBalance,
+    customFontPath: String = "",
 ): String = buildString {
     append(mediaIdKey)
     append('|').append(layoutWidthDp.roundToInt())
@@ -207,6 +238,7 @@ fun lyricRenderKey(
     append('|').append(subTextSize)
     append('|').append(entriesSize)
     append('|').append((systemFontScale * 100).roundToInt())
+    append('|').append(customFontPath)
 }
 
 /**
@@ -405,8 +437,18 @@ object LyricRenderWarmup {
         }
         val density = appContext.resources.displayMetrics.density
         val fontScale = appContext.resources.configuration.fontScale
+        val isLandscape = appContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val activeScale = effectiveLyricFontScale(isLandscape)
         val widthPx = widthDp * density
-        val key = lyricRenderKey(mediaIdKey, widthDp, subTextSize, fontScale, entries.size)
+        val key = lyricRenderKey(
+            mediaIdKey = mediaIdKey,
+            layoutWidthDp = widthDp,
+            subTextSize = subTextSize,
+            systemFontScale = fontScale,
+            entriesSize = entries.size,
+            fontScaleSetting = activeScale,
+            customFontPath = SettingsLibrary.LyricCustomFontPath,
+        )
 
         if (key == liveKey) {
             label(reason, "skip", "live")
@@ -427,7 +469,7 @@ object LyricRenderWarmup {
 
             val startedAt = System.currentTimeMillis()
             val prepared = runCatching {
-                val styles = lyricRenderStyles(subTextSize)
+                val styles = lyricRenderStyles(subTextSize, isLandscape = isLandscape)
                 prepareLyrics(
                     lyrics = buildSyncedLyrics(entries, otherSideForLines),
                     profiles = DefaultLyricsProfiles,

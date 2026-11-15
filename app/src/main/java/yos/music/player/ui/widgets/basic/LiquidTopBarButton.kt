@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -144,31 +145,33 @@ fun LiquidTopBarButton(
                 translationY = size.minDimension * 0.05f * pressOffset.y / size.maxDimension
             }
             .size(buttonHeight)
-            .drawBehind {
-                val spread = shadowAlpha()
-                if (spread > 0.01f) {
-                    val blurRadius = 10f * density * spread
-                    val shadowSpread = 2f * density * spread
-                    val outerRadius = size.minDimension / 2f + shadowSpread
-                    val innerRadius = size.minDimension / 2f
-                    val path = Path().apply {
-                        addCircle(center.x, center.y, outerRadius, Path.Direction.CW)
-                        addCircle(center.x, center.y, innerRadius, Path.Direction.CCW)
-                    }
-                    val paint = android.graphics.Paint().apply {
-                        color = android.graphics.Color.argb(
+            .drawWithCache {
+                val path = Path()
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                var lastBlur = -1f
+                onDrawBehind {
+                    val spread = shadowAlpha()
+                    if (spread > 0.01f) {
+                        val blurRadius = (10f * density * spread).coerceAtLeast(0.1f)
+                        val shadowSpread = 2f * density * spread
+                        val outerRadius = size.minDimension / 2f + shadowSpread
+                        val innerRadius = size.minDimension / 2f
+                        path.rewind()
+                        path.addCircle(center.x, center.y, outerRadius, Path.Direction.CW)
+                        path.addCircle(center.x, center.y, innerRadius, Path.Direction.CCW)
+                        paint.color = android.graphics.Color.argb(
                             (android.graphics.Color.alpha(shadowColor) * 3.2f).coerceAtMost(255f).toInt(),
                             android.graphics.Color.red(shadowColor),
                             android.graphics.Color.green(shadowColor),
                             android.graphics.Color.blue(shadowColor)
                         )
-                        maskFilter = BlurMaskFilter(
-                            blurRadius.coerceAtLeast(0.1f),
-                            BlurMaskFilter.Blur.NORMAL
-                        )
-                    }
-                    drawIntoCanvas { canvas ->
-                        canvas.nativeCanvas.drawPath(path, paint)
+                        if (blurRadius != lastBlur) {
+                            lastBlur = blurRadius
+                            paint.maskFilter = BlurMaskFilter(blurRadius, BlurMaskFilter.Blur.NORMAL)
+                        }
+                        drawIntoCanvas { canvas ->
+                            canvas.nativeCanvas.drawPath(path, paint)
+                        }
                     }
                 }
             },

@@ -1262,10 +1262,10 @@ private fun CommentsList(
             }
     ) {
         if (singer.isNotEmpty()) {
-            item("singer_header") {
+            item("singer_header", contentType = "comment_header") {
                 SectionHeader(stringResource(id = R.string.nowplaying_comments_singer_section))
             }
-            items(singer, key = { "singer_${it.id}" }) { comment ->
+            items(singer, key = { "singer_${it.id}" }, contentType = { "comment_item" }) { comment ->
                 CommentItem(
                     comment = comment,
                     state = state,
@@ -1275,11 +1275,11 @@ private fun CommentsList(
                 )
             }
             // 有歌手区时才需要分隔标题；没有歌手区时头部已有排序胶囊，标题是重复信息
-            item("main_header") {
+            item("main_header", contentType = "comment_header") {
                 SectionHeader(stringResource(id = R.string.nowplaying_comments_all_section))
             }
         }
-        items(orderedRegular, key = { it.id }) { comment ->
+        items(orderedRegular, key = { it.id }, contentType = { "comment_item" }) { comment ->
             CommentItem(
                 comment = comment,
                 state = state,

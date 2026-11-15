@@ -82,7 +82,8 @@ fun RankListDetail(
 
         itemsIndexed(
             ranks.value,
-            key = { _, rank -> rank.rankId }
+            key = { _, rank -> rank.rankId },
+            contentType = { _, _ -> "rank_card" }
         ) { _, rank ->
             RankCardItem(
                 rank,

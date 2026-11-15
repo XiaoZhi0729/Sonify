@@ -134,7 +134,8 @@ fun ArtistHotSongsDetail(
             else -> {
                 itemsIndexed(
                     items = songs,
-                    key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
+                    key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } },
+                    contentType = { _, _ -> "artist_hot_song" }
                 ) { index, song ->
                     // alpha 走页面级共享曲线：所有可见行同时渐入；
                     // 动画结束后恒 1f，滚动补页的新行不会重新淡入。

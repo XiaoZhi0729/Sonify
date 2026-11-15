@@ -20,6 +20,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -516,9 +517,7 @@ private fun BackgroundLayer(
             .then(if (fallbackToBlack) Modifier.graphicsLayer { alpha = 1f } else Modifier)
     ) {
         if (fallbackToBlack) {
-            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                drawRect(Color.Black)
-            }
+            Box(Modifier.fillMaxSize().background(Color.Black))
         }
 
         if (layerDrawable != null) {

@@ -1,6 +1,7 @@
 package yos.music.player.ui.widgets.liquid
 
 import androidx.compose.runtime.MonotonicFrameClock
+import androidx.compose.runtime.snapshots.Snapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,7 @@ class DampedDragAnimationTest {
     private fun pumpFrames(clock: ManualFrameClock, count: Int) = runBlocking {
         repeat(count) {
             clock.advanceFrame()
+            Snapshot.sendApplyNotifications()
             delay(2L)
         }
     }
@@ -164,12 +166,49 @@ class DampedDragAnimationTest {
             anim.updateValue(1.8f)
             anim.release()
 
-            pumpFrames(clock, 150)
+            pumpFrames(clock, 220)
 
             assertEquals(1.8f, anim.value, 0.01f)
             assertEquals(0f, anim.velocity, 0.005f)
             assertEquals(1f, anim.scaleX, 0.005f)
             assertEquals(1f, anim.scaleY, 0.005f)
+            assertEquals(0f, anim.pressProgress, 0.005f)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun dragToThenSnapBackUpdateValueConvergesToAnchor() = runBlocking {
+        val clock = ManualFrameClock()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + clock)
+        try {
+            val anim = DampedDragAnimation(
+                animationScope = scope,
+                initialValue = 800f,
+                valueRange = 100f..900f,
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = 1.5f,
+                onDragStarted = {},
+                onDragStopped = {},
+                onDrag = { _, _ -> },
+            )
+
+            anim.press()
+            pumpFrames(clock, 12)
+            anim.dragTo(812f)
+            pumpFrames(clock, 1)
+            anim.dragTo(818f)
+            pumpFrames(clock, 1)
+            anim.updateValue(800f)
+            anim.release()
+
+            pumpFrames(clock, 150)
+
+            assertEquals(800f, anim.value, 0.05f)
+            assertEquals(0f, anim.velocity, 0.01f)
+            assertEquals(1f, anim.scaleX, 0.005f)
             assertEquals(0f, anim.pressProgress, 0.005f)
         } finally {
             scope.cancel()

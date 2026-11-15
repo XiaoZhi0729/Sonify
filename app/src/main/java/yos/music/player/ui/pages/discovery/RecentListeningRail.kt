@@ -114,7 +114,8 @@ internal fun RecentListeningRail(
     ) {
         items(
             items = displayedSongs.value,
-            key = ::recentSongKey
+            key = ::recentSongKey,
+            contentType = { "recent_song_card" }
         ) { music ->
             Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) {
                 RecommendCardItem(

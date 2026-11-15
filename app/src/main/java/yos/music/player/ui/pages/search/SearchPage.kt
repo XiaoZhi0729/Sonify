@@ -587,7 +587,8 @@ fun SearchPage(
                 } else {
                     itemsIndexed(
                         historyWords,
-                        key = { _, w -> "recent:$w" }
+                        key = { _, w -> "recent:$w" },
+                        contentType = { _, _ -> "search_history" }
                     ) { index, word ->
                         RecentSearchRow(
                             word = word,
@@ -604,7 +605,11 @@ fun SearchPage(
 
             // 输入联想区
             showSuggest -> {
-                itemsIndexed(SearchObject.suggestions.value, key = { _, w -> "sg:$w" }) { _, word ->
+                itemsIndexed(
+                    SearchObject.suggestions.value,
+                    key = { _, w -> "sg:$w" },
+                    contentType = { _, _ -> "search_suggest" }
+                ) { _, word ->
                     Text(
                         text = word,
                         fontSize = 16.sp,
@@ -678,7 +683,8 @@ fun SearchPage(
                 when (SearchObject.currentType.value) {
                     SearchObject.TYPE_ARTIST -> itemsIndexed(
                         artistItems,
-                        key = { index, _ -> "ar:${artistKeys.getOrElse(index) { "oob_$index" }}" }
+                        key = { index, _ -> "ar:${artistKeys.getOrElse(index) { "oob_$index" }}" },
+                        contentType = { _, _ -> "search_artist" }
                     ) { index, artist ->
                         ArtistResultRow(artist) {
                             // 带 singerId 直进详情，跳过 ArtistDetail 内的按名解析
@@ -725,7 +731,8 @@ fun SearchPage(
 
                     SearchObject.TYPE_LYRIC -> itemsIndexed(
                         lyricItems,
-                        key = { index, _ -> "ly:${lyricKeys.getOrElse(index) { "oob_$index" }}" }
+                        key = { index, _ -> "ly:${lyricKeys.getOrElse(index) { "oob_$index" }}" },
+                        contentType = { _, _ -> "search_lyric" }
                     ) { index, item ->
                         LyricResultRow(item) { playLyricSong(item) }
                         if (index < lyricItems.size - 1) {
@@ -748,7 +755,8 @@ fun SearchPage(
                         }
                         itemsIndexed(
                             songItems,
-                            key = { index, _ -> resultKeys.getOrElse(index) { "oob_$index" } }
+                            key = { index, _ -> resultKeys.getOrElse(index) { "oob_$index" } },
+                            contentType = { _, _ -> "search_song" }
                         ) { index, song ->
                             MusicList(KugouRepository.toDisplayMediaItem(song)) {
                                 playSong(song)

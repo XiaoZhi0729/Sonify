@@ -2,6 +2,7 @@ package yos.music.player.ui.widgets.liquid
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -10,7 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.LayoutDirection
@@ -80,29 +79,32 @@ fun LiquidSlider(
         else Color(0xFF787880).copy(0.36f)
 
     val trackBackdrop = rememberLayerBackdrop()
-    var trackWidth by remember { mutableIntStateOf(0) }
 
-    Box(
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .onSizeChanged { trackWidth = it.width }
             .testTag("liquid_slider"),
         contentAlignment = Alignment.CenterStart
     ) {
+        val trackWidth = constraints.maxWidth
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
+        val currentTrackWidth by rememberUpdatedState(trackWidth)
+        val currentValueRange by rememberUpdatedState(valueRange)
         val currentValue by rememberUpdatedState(value)
         val currentOnValueChange by rememberUpdatedState(onValueChange)
         var didDrag by remember { mutableStateOf(false) }
         var isInteracting by remember { mutableStateOf(false) }
         var downX by remember { mutableFloatStateOf(0f) }
+        var dragTargetValue by remember { mutableFloatStateOf(currentValue().coerceIn(valueRange)) }
 
         fun xToValue(x: Float): Float {
-            val safeWidth = trackWidth.coerceAtLeast(1)
+            val safeWidth = currentTrackWidth.coerceAtLeast(1)
+            val range = currentValueRange
             val p = (x / safeWidth).coerceIn(0f, 1f)
-            val span = valueRange.endInclusive - valueRange.start
-            return (if (isLtr) valueRange.start + span * p else valueRange.endInclusive - span * p)
-                .coerceIn(valueRange)
+            val span = range.endInclusive - range.start
+            return (if (isLtr) range.start + span * p else range.endInclusive - span * p)
+                .coerceIn(range)
         }
 
         val dampedDragAnimation = remember(animationScope) {
@@ -113,38 +115,51 @@ fun LiquidSlider(
                 visibilityThreshold = visibilityThreshold,
                 initialScale = 1f,
                 pressedScale = 1.5f,
-                onDragStopped = {
-                    val next = if (didDrag) targetValue else xToValue(downX)
-                    if (!didDrag) {
-                        updateValue(next)
-                    }
-                    currentOnValueChange(next)
-                    didDrag = false
-                    isInteracting = false
-                },
-                onDragCancelled = {
-                    if (didDrag) {
-                        currentOnValueChange(targetValue)
-                    }
-                    didDrag = false
-                    isInteracting = false
-                },
-                onDrag = { _, dragAmount ->
-                    if (!didDrag) {
-                        didDrag = dragAmount.x != 0f
-                    }
-                    val safeWidth = trackWidth.coerceAtLeast(1)
-                    val delta = (valueRange.endInclusive - valueRange.start) * (dragAmount.x / safeWidth)
-                    val next = (if (isLtr) targetValue + delta else targetValue - delta).coerceIn(valueRange)
-                    dragTo(next)
-                    currentOnValueChange(next)
-                },
                 onDragStarted = { position ->
                     // 记录落点但不立即跳转：拖动时 1:1 跟手，未越过 slop 抬手走点按跳转，
                     // 纵向滚动抢占（onDragCancelled）则不误改数值。
                     isInteracting = true
                     didDrag = false
                     downX = position.x
+                    dragTargetValue = targetValue
+                },
+                onDragStopped = {
+                    val next = if (didDrag) dragTargetValue else xToValue(downX)
+                    if (!didDrag) {
+                        updateValue(next)
+                    }
+                    currentOnValueChange(next)
+                    didDrag = false
+                    isInteracting = false
+                    val externalValue = currentValue().coerceIn(currentValueRange)
+                    if (targetValue != externalValue || dragTargetValue != externalValue) {
+                        dragTargetValue = externalValue
+                        updateValue(externalValue)
+                    }
+                },
+                onDragCancelled = {
+                    if (didDrag) {
+                        currentOnValueChange(dragTargetValue)
+                    }
+                    didDrag = false
+                    isInteracting = false
+                    val externalValue = currentValue().coerceIn(currentValueRange)
+                    if (targetValue != externalValue || dragTargetValue != externalValue) {
+                        dragTargetValue = externalValue
+                        updateValue(externalValue)
+                    }
+                },
+                onDrag = { _, dragAmount ->
+                    if (!didDrag) {
+                        didDrag = dragAmount.x != 0f
+                    }
+                    val safeWidth = currentTrackWidth.coerceAtLeast(1)
+                    val range = currentValueRange
+                    val delta = (range.endInclusive - range.start) * (dragAmount.x / safeWidth)
+                    val next = (if (isLtr) dragTargetValue + delta else dragTargetValue - delta).coerceIn(range)
+                    dragTargetValue = next
+                    dragTo(next)
+                    currentOnValueChange(next)
                 },
                 // 页面是 LazyColumn：只认领横向拖动，纵向滑动留给页面滚动
                 horizontalClaim = true
@@ -154,6 +169,7 @@ fun LiquidSlider(
             snapshotFlow { currentValue() }
                 .collectLatest { v ->
                     if (!isInteracting && dampedDragAnimation.targetValue != v) {
+                        dragTargetValue = v
                         dampedDragAnimation.updateValue(v)
                     }
                 }

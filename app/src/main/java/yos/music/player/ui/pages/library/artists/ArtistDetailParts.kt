@@ -418,6 +418,15 @@ private fun ArtistAlbumRail(
  * 白色渐变描边；左侧封面带投影，右侧自上而下为发行日期 / 专辑名 / 歌曲数。
  * 日期与歌曲数沿用专辑详情页「N 首」的发亮 primary 色；数据取艺人最新发布的专辑。
  */
+private val albumInputDateFormat = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+}
+
+private val albumOutputDateFormat = object : ThreadLocal<java.text.DateFormat>() {
+    override fun initialValue(): java.text.DateFormat =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.DEFAULT, Locale.getDefault())
+}
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 internal fun ArtistLatestAlbumCard(
@@ -445,8 +454,8 @@ internal fun ArtistLatestAlbumCard(
     val dateText = remember(album.publishTime) {
         album.publishTime?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
             runCatching {
-                val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(raw.take(10))
-                parsed?.let { java.text.DateFormat.getDateInstance(java.text.DateFormat.DEFAULT, Locale.getDefault()).format(it) }
+                val parsed = albumInputDateFormat.get()?.parse(raw.take(10))
+                parsed?.let { albumOutputDateFormat.get()?.format(it) }
             }.getOrNull() ?: raw
         }
     }

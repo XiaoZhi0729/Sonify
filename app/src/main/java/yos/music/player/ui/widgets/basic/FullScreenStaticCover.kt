@@ -47,6 +47,7 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.R
+import yos.music.player.data.objects.DynamicCoverState
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.TrackArtworkTransition
 import yos.music.player.ui.widgets.effects.artworkLayerAlpha
@@ -106,6 +107,8 @@ internal fun FullScreenStaticCover(
      * null = 退回"直接换图"（无过渡实例的调用方）。
      */
     artworkTransition: TrackArtworkTransition? = null,
+    isPlaying: () -> Boolean = { true },
+    dynamicCoverActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -192,6 +195,13 @@ internal fun FullScreenStaticCover(
                     transition = artworkTransition,
                     fallbackUrl = url,
                     originalUrl = originalUrl
+                )
+                // 专辑动态封面视频叠加层：共享同一 Offscreen 作用域与底边 DstIn 渐隐遮罩
+                DynamicCoverVideoOverlay(
+                    videoUri = DynamicCoverState.videoUri,
+                    isPlaying = isPlaying,
+                    active = dynamicCoverActive,
+                    suppressed = suppressed
                 )
             }
         }

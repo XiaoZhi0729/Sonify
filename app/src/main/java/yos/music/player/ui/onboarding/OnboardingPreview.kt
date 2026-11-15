@@ -341,14 +341,16 @@ private fun SweptLyric(
     modifier: Modifier = Modifier,
 ) {
     val measurer = rememberTextMeasurer()
-    val realWeight = lyricMainTextStyle().fontWeight ?: FontWeight.ExtraBold
+    val mainStyle = lyricMainTextStyle()
+    val realWeight = mainStyle.fontWeight ?: FontWeight.ExtraBold
     val style = TextStyle(
         fontSize = fontSize,
         fontWeight = realWeight,
+        fontFamily = mainStyle.fontFamily,
         letterSpacing = 0.05.sp
     )
-    // 尺寸与字重随真实歌词设置变，按 text+fontSize+realWeight 重新测量（不是每帧）
-    val layout: TextLayoutResult = remember(text, fontSize, realWeight) {
+    // 尺寸与字重随真实歌词设置变，按 text+fontSize+realWeight+fontFamily 重新测量（不是每帧）
+    val layout: TextLayoutResult = remember(text, fontSize, realWeight, mainStyle.fontFamily) {
         measurer.measure(text = text, style = style, maxLines = 1)
     }
 

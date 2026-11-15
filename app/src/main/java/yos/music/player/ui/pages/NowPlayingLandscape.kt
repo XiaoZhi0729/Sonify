@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -157,7 +158,8 @@ internal fun NowPlayingLandscape(
     // 更多菜单「前往该歌曲专辑」（外壳在当前 Tab 内导航并收回播放页）
     onOpenAlbum: () -> Unit = {},
     // 评论页未登录 → 去登录（由外壳在当前 Tab 内 push 登录页）
-    onOpenLogin: () -> Unit = {}
+    onOpenLogin: () -> Unit = {},
+    dynamicCoverActive: Boolean = true
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -196,7 +198,8 @@ internal fun NowPlayingLandscape(
             coverState = coverState,
             onOpenArtist = onOpenArtist,
             onOpenAlbum = onOpenAlbum,
-            onOpenLogin = onOpenLogin
+            onOpenLogin = onOpenLogin,
+            dynamicCoverActive = dynamicCoverActive
         )
         return
     }
@@ -303,7 +306,7 @@ internal fun NowPlayingLandscape(
                     .fillMaxSize()
                     .padding(start = mediaStartPadding)
                     // 封面/标题/控件带整体上抬；封面 morph 上报的坐标随之同步。
-                    .offset(y = -contentLift)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, -contentLift.roundToPx()) }
             ) {
                 LandscapeMediaColumn(
                     modifier = Modifier
@@ -332,7 +335,8 @@ internal fun NowPlayingLandscape(
                     // 单击左列封面 = 开/关歌词（与右下歌词入口同一个 lambda）
                     onCoverClick = onLyrics,
                     onOpenArtist = onOpenArtist,
-                    onOpenAlbum = onOpenAlbum
+                    onOpenAlbum = onOpenAlbum,
+                    dynamicCoverActive = dynamicCoverActive
                 )
             }
 
@@ -363,7 +367,7 @@ internal fun NowPlayingLandscape(
                     .padding(bottom = 40.dp)
                     // 右栏（歌词/评论/队列）与左列同步上抬；
                     // 上抬后不得裁切——父级 Box 不裁剪，面板顶部溢出内容区 20dp 是预期的。
-                    .offset(y = -contentLift)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, -contentLift.roundToPx()) }
             ) {
                 // 从 Album 打开歌词时水平滑入；从队列切到歌词时只淡入淡出。
                 AnimatedVisibility(
@@ -513,7 +517,8 @@ private fun LandscapeMediaColumn(
     // 歌手名点击 → 艺人主页
     onOpenArtist: (String) -> Unit = {},
     // 更多菜单「前往该歌曲专辑」
-    onOpenAlbum: () -> Unit = {}
+    onOpenAlbum: () -> Unit = {},
+    dynamicCoverActive: Boolean = true
 ) {
     Column(
         modifier = modifier,
@@ -535,7 +540,8 @@ private fun LandscapeMediaColumn(
                 albumCoverCoordsOnChanged = albumCoverCoordsOnChanged,
                 albumCoverSuppressed = albumCoverSuppressed,
                 coverState = coverState,
-                onCoverClick = onCoverClick
+                onCoverClick = onCoverClick,
+                dynamicCoverActive = dynamicCoverActive
             )
         }
 
@@ -607,7 +613,8 @@ private fun LandscapeAlbumCover(
     // 封面按压动效状态：由外壳层建立并传入（见 NowPlayingLandscape 的同名参数）。
     coverState: CoverArtworkState,
     // 单击封面 = 开/关歌词（与歌词入口按钮同一套逻辑）
-    onCoverClick: () -> Unit = {}
+    onCoverClick: () -> Unit = {},
+    dynamicCoverActive: Boolean = true
 ) {
     YosWrapper {
         val springSpec: AnimationSpec<Float> = remember("LandscapeAlbum_springSpec") {
@@ -712,6 +719,17 @@ private fun LandscapeAlbumCover(
                                 drawShadow = false
                             )
                         }
+                        yos.music.player.ui.widgets.basic.DynamicCoverVideoOverlay(
+                            videoUri = yos.music.player.data.objects.DynamicCoverState.videoUri,
+                            isPlaying = isPlayingStatusLambda,
+                            active = dynamicCoverActive,
+                            suppressed = albumCoverSuppressed,
+                            modifier = Modifier.clip(
+                                remember("LandscapeAlbum_dycoverShape") {
+                                    YosRoundedCornerShape(8.dp)
+                                }
+                            )
+                        )
                     }
                 }
             }
@@ -826,7 +844,8 @@ private fun NowPlayingLandscapePhone(
     coverState: CoverArtworkState,
     onOpenArtist: (String) -> Unit = {},
     onOpenAlbum: () -> Unit = {},
-    onOpenLogin: () -> Unit = {}
+    onOpenLogin: () -> Unit = {},
+    dynamicCoverActive: Boolean = true
 ) {
     val context = LocalContext.current
 
@@ -874,7 +893,8 @@ private fun NowPlayingLandscapePhone(
                     albumCoverSuppressed = albumCoverSuppressed,
                     coverState = coverState,
                     // 单击封面 = 开/关歌词
-                    onCoverClick = onLyrics
+                    onCoverClick = onLyrics,
+                    dynamicCoverActive = dynamicCoverActive
                 )
             }
 
@@ -910,7 +930,7 @@ private fun NowPlayingLandscapePhone(
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        val controlsAlpha by animateFloatAsState(
+                        val controlsAlphaState = animateFloatAsState(
                             targetValue = if (page == Album) 1f else 0f,
                             // snap：控件（含音量条/进度条）走 overlayEffect 的 Plus 提亮，
                             // 若让 alpha 经 tween 中间态会被渲染进离屏层→Plus 失效、
@@ -941,7 +961,7 @@ private fun NowPlayingLandscapePhone(
                             transportSpacing = 56.dp,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .alpha(controlsAlpha),
+                                .graphicsLayer { alpha = controlsAlphaState.value },
                             onWhile = onWhile,
                             onControlGesture = onControlGesture
                         )

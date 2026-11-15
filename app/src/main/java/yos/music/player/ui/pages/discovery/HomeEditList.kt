@@ -234,33 +234,43 @@ private fun LazyItemScope.HomeEditBlockItem(
     val title = section?.let { homeSectionTitle(it) } ?: id
     val dragging = dragHolder.latched && dragHolder.draggedId == id
     val geom = dragHolder.geometry
-    val myIndex = allKeys.indexOf(key)
+    val keyIndexMap = remember(allKeys) {
+        allKeys.withIndex().associate { it.value to it.index }
+    }
+    val myIndex = keyIndexMap[key] ?: -1
 
     // 拖拽落点（显示/隐藏两组都能拖）：供让位位移 + 被拖项实时预览显隐
-    val dragTarget = if (dragHolder.latched && geom != null && myIndex >= 0) {
-        val info = listState.layoutInfo
-        val centers = info.visibleItemsInfo
-            .mapNotNull { item ->
-                val k = item.key as? String ?: return@mapNotNull null
-                val vi = allKeys.indexOf(k)
-                if (vi < 0) null else vi to (item.offset - info.viewportStartOffset + item.size / 2f)
-            }
-            .sortedBy { it.first }
-        HomeDragMath.targetIndex(
-            itemCentersPx = centers,
-            draggedCenterPx = geom.draggedTopPx + geom.draggedHeightPx / 2f,
-            maxIndex = (allKeys.size - 1).coerceAtLeast(0)
-        )
-    } else null
+    val dragTarget by remember(dragHolder, listState, keyIndexMap, allKeys) {
+        androidx.compose.runtime.derivedStateOf {
+            val currentGeom = dragHolder.geometry
+            if (dragHolder.latched && currentGeom != null && myIndex >= 0) {
+                val info = listState.layoutInfo
+                val centers = info.visibleItemsInfo
+                    .mapNotNull { item ->
+                        val k = item.key as? String ?: return@mapNotNull null
+                        val vi = keyIndexMap[k] ?: return@mapNotNull null
+                        vi to (item.offset - info.viewportStartOffset + item.size / 2f)
+                    }
+                    .sortedBy { it.first }
+                HomeDragMath.targetIndex(
+                    itemCentersPx = centers,
+                    draggedCenterPx = currentGeom.draggedTopPx + currentGeom.draggedHeightPx / 2f,
+                    maxIndex = (allKeys.size - 1).coerceAtLeast(0)
+                )
+            } else null
+        }
+    }
+
+    val targetIndex = dragTarget
 
     // 让位位移（仅非被拖项）
-    val displacement = if (dragTarget != null && !dragging && myIndex >= 0 && geom != null) {
-        HomeDragMath.displacementFor(myIndex, geom.fromIndex, dragTarget, geom.draggedHeightPx)
+    val displacement = if (targetIndex != null && !dragging && myIndex >= 0 && geom != null) {
+        HomeDragMath.displacementFor(myIndex, geom.fromIndex, targetIndex, geom.draggedHeightPx)
     } else 0f
 
     // 被拖项实时预览：落点在显示区（<= 边界）→ 显示态，否则隐藏态（松手即按此落定）
     val boundary = if (cfg.visible) totalVisible - 1 else totalVisible
-    val effectiveVisible = if (dragging && dragTarget != null) dragTarget <= boundary else cfg.visible
+    val effectiveVisible = if (dragging && targetIndex != null) targetIndex <= boundary else cfg.visible
 
     // 被拖块位移（跟手 + 自滚补偿，越界阻尼）
     val draggedTarget = if (dragging && geom != null) {

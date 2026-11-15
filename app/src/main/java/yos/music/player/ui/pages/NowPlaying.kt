@@ -683,6 +683,10 @@ internal fun NowPlaying(
         // 人声分离引擎故障：处理器已自行退回原声，这里只负责告知一次（避免"声音突然变了"
         // 却没有任何解释）。用 phase 作为 key，同一次故障不会重复弹。
         val vocalSepPhase = yos.music.player.data.objects.VocalSeparationState.phase
+        val networkVersion = yos.music.player.data.repositories.NetworkObserver.version.intValue
+        LaunchedEffect(networkVersion) {
+            yos.music.player.data.objects.DynamicCoverState.onNetworkChanged()
+        }
         val vocalSepContext = LocalContext.current
         LaunchedEffect(vocalSepPhase) {
             if (vocalSepPhase == yos.music.player.data.objects.VocalSeparationState.Phase.Failed) {
@@ -735,7 +739,8 @@ internal fun NowPlaying(
                     albumCoverSuppressed = albumCoverSuppressed,
                     onOpenArtist = onOpenArtist,
                     onOpenAlbum = onOpenAlbum,
-                    onOpenLogin = onOpenLogin
+                    onOpenLogin = onOpenLogin,
+                    dynamicCoverActive = !showMiniPlayer
                 )
                 return@YosWrapper
             }
@@ -962,7 +967,9 @@ internal fun NowPlaying(
                                             coverState = coverState,
                                             coverEnabled = { nowPageLambda() == Album },
                                             onCoverClick = onLyricsAction,
-                                            artworkTransition = artworkTransition
+                                            artworkTransition = artworkTransition,
+                                            isPlaying = isPlayingStatusLambda,
+                                            dynamicCoverActive = !showMiniPlayer && nowPageLambda() == Album
                                         )
                                     }
                                     Column(
@@ -1010,7 +1017,8 @@ internal fun NowPlaying(
                                                             onAlbum
                                                     },
                                                     coordsOnChanged = albumCoverCoordsOnChanged,
-                                                    suppressed = albumCoverSuppressed
+                                                    suppressed = albumCoverSuppressed,
+                                                    dynamicCoverActive = !showMiniPlayer && nowPageLambda() == Album
                                                 )
                                                 }
                                                 // 切歌时标题/歌手/按钮就地瞬时更新：任何 alpha 交叉淡化
@@ -1617,7 +1625,8 @@ private fun ColumnScope.Album(
     // 外壳封面 morph：本封面节点的坐标上报；suppressed 为 true 时不绘制，
     // 由外壳单封面层接管，避免两张图叠加。
     coordsOnChanged: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {},
-    suppressed: () -> Boolean = { false }
+    suppressed: () -> Boolean = { false },
+    dynamicCoverActive: Boolean = true
 ) = Box(
     Modifier
         .weight(1f)
@@ -1750,6 +1759,17 @@ private fun ColumnScope.Album(
                                     drawShadow = false
                                 )
                             }
+                            yos.music.player.ui.widgets.basic.DynamicCoverVideoOverlay(
+                                videoUri = yos.music.player.data.objects.DynamicCoverState.videoUri,
+                                isPlaying = isPlaying,
+                                active = dynamicCoverActive,
+                                suppressed = suppressed,
+                                modifier = Modifier.clip(
+                                    remember("Album_dycoverShape") {
+                                        YosRoundedCornerShape(8.dp)
+                                    }
+                                )
+                            )
                         }
                     }
                 }
@@ -2253,12 +2273,13 @@ internal fun PlayingList(
                                 }
                             }/*, contentPadding = PaddingValues(vertical = 12.dp)*/
                         ) {
-                            item("blank_before") {
+                            item("blank_before", contentType = "queue_spacer") {
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                             itemsIndexed(
                                 queueItems,
-                                key = { index, _ -> queueKeys.getOrNull(index) ?: "index:$index" }
+                                key = { index, _ -> queueKeys.getOrNull(index) ?: "index:$index" },
+                                contentType = { _, _ -> "queue_item" }
                             ) { index, music ->
                                 val currentDragGeometry = displayGeometry?.takeIf { dragLatched }
                                 val currentDragIndex = currentDragGeometry?.fromIndex
@@ -2451,14 +2472,14 @@ private fun SmallMusicListItem(
         modifier = modifier
             .height(64.dp)
             .fillMaxWidth()
-            .alpha(if (dragging && hideWhenDragging) 0f else 1f)
             .onSizeChanged { onRowMeasured(it.height) }
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer {
+                alpha = if (dragging && hideWhenDragging) 0f else 1f
                 translationY = displacementPx
                 scaleX = dragScale
                 scaleY = dragScale
-                        shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp)
                 clip = false
             }
             .background(
@@ -4362,7 +4383,7 @@ internal fun PlayerControl(
         animationSpec = tween(durationMillis = 160),
         label = "sliderTimeAlpha"
     )
-    val sliderControlAlpha by animateFloatAsState(
+    val sliderControlAlphaState = animateFloatAsState(
         targetValue = if (sliderActive) 0.7f else 0.45f,
         animationSpec = tween(durationMillis = 160),
         label = "sliderControlAlpha"
@@ -4532,7 +4553,7 @@ internal fun PlayerControl(
                                 }
                             }
                             .overlayEffect()
-                            .alpha(sliderControlAlpha)
+                            .graphicsLayer { alpha = sliderControlAlphaState.value }
                             .height(sliderTrackHeight + 6.dp),
                         thumb = {
                         },
@@ -4891,7 +4912,7 @@ private fun VolumeSlider(
         animationSpec = volumePressedSpringDp,
         label = "volumeIconSize"
     )
-    val volumeAlpha by animateFloatAsState(
+    val volumeAlphaState = animateFloatAsState(
         targetValue = if (volumeActive) 0.7f else 0.45f,
         animationSpec = tween(durationMillis = 160),
         label = "volumeAlpha"
@@ -4904,7 +4925,9 @@ private fun VolumeSlider(
                 if (maxVolumeKnown) (newVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
         }
     }
-    val intentFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+    val intentFilter = remember("VolumeSlider_intentFilter") {
+        IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+    }
 
     // 轨道实际像素宽度，用于把拖动距离换算成音量增量；未测量到前回退为绝对定位
     val volumeSliderWidthPx = remember("VolumeSlider_widthPx") { mutableFloatStateOf(0f) }
@@ -4957,7 +4980,7 @@ private fun VolumeSlider(
             .padding(horizontal = volumeSideInset)
             .padding(top = 4.dp, bottom = 2.5.dp)
             .overlayEffect()
-            .alpha(volumeAlpha)
+            .graphicsLayer { alpha = volumeAlphaState.value }
     ) {
         Icon(
             painter = painterResource(id = R.drawable.ic_nowplaying_volume),

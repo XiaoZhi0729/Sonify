@@ -69,6 +69,7 @@ class DampedDragAnimation(
     private var isHeld = false
     private var pressJob: Job? = null
     private var releaseJob: Job? = null
+    private var valueJob: Job? = null
     private var velocityJob: Job? = null
     private var velocityIdleResetJob: Job? = null
 
@@ -173,7 +174,8 @@ class DampedDragAnimation(
 
     fun updateValue(value: Float) {
         val targetValue = value.coerceIn(valueRange)
-        animationScope.launch {
+        valueJob?.cancel()
+        valueJob = animationScope.launch {
             valueAnimation.animateTo(targetValue, valueAnimationSpec) { updateVelocity() }
             if (!isHeld) {
                 resetVelocity()
@@ -186,7 +188,8 @@ class DampedDragAnimation(
         releaseJob?.cancel()
         releaseJob = null
         val targetValue = value.coerceIn(valueRange)
-        animationScope.launch {
+        valueJob?.cancel()
+        valueJob = animationScope.launch {
             valueAnimation.snapTo(targetValue)
             updateVelocity()
         }
@@ -198,7 +201,8 @@ class DampedDragAnimation(
     }
 
     fun animateToValue(value: Float) {
-        animationScope.launch {
+        valueJob?.cancel()
+        valueJob = animationScope.launch {
             mutatorMutex.mutate {
                 press()
                 val targetValue = value.coerceIn(valueRange)

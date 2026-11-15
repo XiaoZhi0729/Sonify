@@ -99,6 +99,8 @@ fun RecommendPlaylistsDetail(
         }
     }
 
+    val context = LocalContext.current
+
     TitleWithLazyVerticalGrid(
         title = stringResource(id = R.string.discovery_recommend_playlists_title),
         onBack = { navController.popBackStackSafely() },
@@ -123,9 +125,9 @@ fun RecommendPlaylistsDetail(
 
         itemsIndexed(
             playlists.value,
-            key = { _, playlist -> playlist.globalCollectionId }
+            key = { _, playlist -> playlist.globalCollectionId },
+            contentType = { _, _ -> "recommend_playlist_card" }
         ) { _, playlist ->
-            val context = LocalContext.current
             RecommendPlaylistCard(
                 playlist = playlist,
                 modifier = Modifier.fillMaxWidth(),

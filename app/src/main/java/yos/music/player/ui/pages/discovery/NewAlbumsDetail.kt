@@ -129,7 +129,8 @@ fun NewAlbumsDetail(
 
         itemsIndexed(
             albums.value,
-            key = { _, album -> album.albumId }
+            key = { _, album -> album.albumId },
+            contentType = { _, _ -> "new_album_card" }
         ) { _, album ->
             NewAlbumCard(
                 album,

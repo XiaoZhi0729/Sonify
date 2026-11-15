@@ -225,6 +225,7 @@ internal fun Path.addG2RoundRect(rect: Rect, radius: Float, smoothing: Float) {
 internal class G2PathCache {
     private val local = Path()
     private val placed = Path()
+    internal val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
     private var w = -1f
     private var h = -1f
     private var r = -1f
@@ -275,7 +276,7 @@ internal fun DrawScope.drawPillThumb(
         val blur = (2.5f + 5f * lift).dp.toPx()
         val dy = (1f + 2f * lift).dp.toPx()
         drawIntoCanvas { c ->
-            val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            val p = path.shadowPaint.apply {
                 this.color = color.toArgb()
                 setShadowLayer(blur, 0f, dy, shadow.copy(alpha = shadow.alpha * (0.6f + 0.4f * lift)).toArgb())
             }

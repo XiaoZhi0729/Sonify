@@ -1516,6 +1516,41 @@ class KugouApiService private constructor() {
         }
     }
 
+    /**
+     * 专辑动态封面查询（Rust dycover.rs → /album/dycover?album_audio_id=<id>）。
+     * 非 2xx 也返回 JSON 体以便解析层区分「确定无动态封面」与「网络/服务故障」。
+     */
+    suspend fun getAlbumDynamicCover(albumAudioId: Long): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val (code, body) = httpGetAllowNonOk(
+                "/album/dycover",
+                mapOf("album_audio_id" to albumAudioId.toString())
+            )
+            Log.d(TAG, "/album/dycover -> HTTP $code, body length=${body.length}")
+            val json = runCatching { JSONObject(body) }.getOrNull()
+            when {
+                json != null -> Result.success(json)
+                code !in 200..299 -> Result.failure(IOException("/album/dycover HTTP $code"))
+                else -> Result.failure(IOException("/album/dycover invalid JSON body"))
+            }
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (e: Exception) {
+            Log.e(TAG, "getAlbumDynamicCover exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 本地回环动态封面视频流代理 URL（Rust dycover.rs → /album/dycover/media）。确保服务已启动。 */
+    suspend fun getAlbumDynamicCoverMediaUrl(albumAudioId: Long): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!ensureServer()) return@withContext null
+            val baseUrl = KugouNativeBridge.getBaseUrl()
+            "$baseUrl/album/dycover/media?album_audio_id=$albumAudioId"
+        }.getOrNull()
+    }
+
     /** 楼层回复（/comment/floor）：special_id 取评论区 childrenid，tid 为楼层根评论 id。 */
     suspend fun getCommentFloor(
         specialId: String,

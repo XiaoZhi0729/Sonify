@@ -230,7 +230,6 @@ fun Settings(navController: NavController) =
                             Divider()
                             BatteryOptimizationItem()
                         }
-                        ListHeader(content = stringResource(id = R.string.settings_performance_battery_miui_hint))
 
                         GroupSpacer()
                         ListHeader(stringResource(id = R.string.settings_general))

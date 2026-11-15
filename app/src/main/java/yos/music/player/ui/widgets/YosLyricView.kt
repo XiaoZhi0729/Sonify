@@ -1,5 +1,6 @@
 package yos.music.player.ui.widgets
 
+import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -85,6 +86,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
@@ -113,6 +115,7 @@ import yos.music.player.code.utils.lrc.LyricLayoutSpec
 import yos.music.player.code.utils.lrc.LyricPreparedCache
 import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.code.utils.lrc.buildSyncedLyrics
+import yos.music.player.code.utils.lrc.effectiveLyricFontScale
 import yos.music.player.code.utils.lrc.lyricListStateKey
 import yos.music.player.code.utils.lrc.lyricMainTextStyle
 import yos.music.player.code.utils.lrc.lyricRenderKey
@@ -219,7 +222,10 @@ class YosLyricScrollState {
  * 样式构造本身在 [lyricMainTextStyle] 里，后台预热读同一份，保证两边排版输入一致。
  */
 @Composable
-fun mainTextStyle(): TextStyle = lyricMainTextStyle()
+fun mainTextStyle(): TextStyle {
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    return lyricMainTextStyle(isLandscape = isLandscape)
+}
 
 /*val BackgroundTextStyle = TextStyle(
     fontSize = 34.sp,
@@ -261,7 +267,25 @@ fun YosLyricViewLib(
     val entries = lrcEntriesLambda()
     val otherSideForLines = MediaViewModelObject.otherSideForLines
     val renderStyleRevision by LyricRenderWarmup.renderStyleRevision
-    val style = remember(renderStyleRevision) { lyricMainTextStyle() }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val fontScaleSetting = effectiveLyricFontScale(isLandscape)
+    val fontWeightSetting = SettingsLibrary.LyricFontWeight
+    val lineBalanceSetting = SettingsLibrary.LyricLineBalance
+    val customFontPathSetting = SettingsLibrary.LyricCustomFontPath
+    val style = remember(
+        renderStyleRevision,
+        isLandscape,
+        fontScaleSetting,
+        fontWeightSetting,
+        lineBalanceSetting,
+        customFontPathSetting,
+    ) {
+        lyricMainTextStyle(
+            isLandscape = isLandscape,
+            scaleOverride = fontScaleSetting,
+            customFontPath = customFontPathSetting,
+        )
+    }
     val context = LocalContext.current
     val lyricCoverUri = MediaViewModelObject.bitmap.value
     LaunchedEffect(lyricCoverUri) {
@@ -348,16 +372,14 @@ fun YosLyricViewLib(
                     with(localDensity) { (maxWidth - 32.dp).toPx() }.coerceAtLeast(1f)
                 // 缓存键由 LyricRenderCache 统一生成：后台预热用同一个键，页面打开即命中。
                 val mediaIdKey = MediaViewModelObject.lyricMediaId.value ?: entries.hashCode().toString()
-                // 设置项须作为 remember 的键读取，否则改了字号/字重/行平衡仍会命中旧排版。
-                val fontScaleSetting = SettingsLibrary.LyricFontScale
-                val fontWeightSetting = SettingsLibrary.LyricFontWeight
-                val lineBalanceSetting = SettingsLibrary.LyricLineBalance
+                // 设置项须作为 remember 的键读取，否则改了字号/字重/行平衡/自定义字体仍会命中旧排版。
                 val cacheKey = remember(
                     lyrics,
                     layoutWidthPx,
                     fontScaleSetting,
                     fontWeightSetting,
                     lineBalanceSetting,
+                    customFontPathSetting,
                     localDensity.fontScale,
                 ) {
                     lyricRenderKey(
@@ -369,6 +391,7 @@ fun YosLyricViewLib(
                         fontScaleSetting = fontScaleSetting,
                         fontWeightSetting = fontWeightSetting,
                         lineBalance = lineBalanceSetting,
+                        customFontPath = customFontPathSetting,
                     )
                 }
                 // 排版结果只读缓存：这里绝不发起测量。组合期测量的结果回写状态会让库的

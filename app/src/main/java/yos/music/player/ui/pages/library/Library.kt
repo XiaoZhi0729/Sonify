@@ -53,8 +53,7 @@ fun Library(
             onTopRightIcon = {
                 openSettings()
             },
-            extraTopPadding = 57.dp,
-            titleHorizontalPadding = 32.dp
+            extraTopPadding = 57.dp
         ) {
             item("Library") {
                 Column(
@@ -64,7 +63,10 @@ fun Library(
                     // ---------- 本地音乐 ----------
                     // 设置页「显示本地资料库」关闭时整块隐藏，只保留在线音乐分区
                     if (SettingsLibrary.ShowLocalLibrary) {
-                        ListHeader(content = stringResource(id = R.string.library_section_local))
+                        ListHeader(
+                            content = stringResource(id = R.string.library_section_local),
+                            horizontalPadding = 20.dp
+                        )
 
                         YosWrapper {
                             val targetTitle = stringResource(
@@ -116,7 +118,10 @@ fun Library(
 
                     // ---------- 在线音乐 ----------
                     GroupSpacer()
-                    ListHeader(content = stringResource(id = R.string.settings_online_title))
+                    ListHeader(
+                        content = stringResource(id = R.string.settings_online_title),
+                        horizontalPadding = 20.dp
+                    )
 
                     // 在线艺人：选择 UI 与本地艺人一致，点击走酷狗歌手详情（artistId 空按名解析）
                     SmallLabelItem(

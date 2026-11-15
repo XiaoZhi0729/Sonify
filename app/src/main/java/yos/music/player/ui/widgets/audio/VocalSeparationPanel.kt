@@ -263,7 +263,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
     // 整体透明度：收起态压到 0.4，与旁边翻译按钮的 .alpha(0.4f) 一致。
     // 用 ModulateAlpha 而不是普通 alpha：加性/镂空混合在普通 alpha 下会先被
     // 离屏压暗再合成，观感与翻译按钮对不上。
-    val contentAlpha by animateFloatAsState(
+    val contentAlphaState = animateFloatAsState(
         targetValue = if (isOn) PillContentAlphaExpanded else PillContentAlphaCollapsed,
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
         label = "vocalSepPillAlpha"
@@ -433,7 +433,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                 // 反过来（Plus 落在离屏层内部）时目标缓冲是空的，Plus 退化成 SrcOver，
                 // 加性效果整个丢失。
                 .overlayEffect()
-                .alpha(contentAlpha)
+                .graphicsLayer { alpha = contentAlphaState.value }
                 .graphicsLayer {
                     scaleX = pressScale * (1f - JellySqueeze * jelly)
                     scaleY = pressScale * (1f + JellyStretch * jelly)

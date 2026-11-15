@@ -146,7 +146,8 @@ fun NewSongsDetail(navController: NavController) {
 
         itemsIndexed(
             songs,
-            key = { index, _ -> songKeys[index] }
+            key = { index, _ -> songKeys[index] },
+            contentType = { _, _ -> "new_song_item" }
         ) { index, song ->
             key(songKeys[index]) {
                 // 统一歌曲 Item：与本地/榜单列表同款 MusicList 视觉规范；

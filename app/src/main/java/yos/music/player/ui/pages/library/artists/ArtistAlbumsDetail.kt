@@ -87,7 +87,8 @@ fun ArtistAlbumsDetail(
 
         itemsIndexed(
             albums,
-            key = { index, album -> "artist-album-page-$index-${album.albumId}" }
+            key = { index, album -> "artist-album-page-$index-${album.albumId}" },
+            contentType = { _, _ -> "artist_album_card" }
         ) { _, album ->
             NewAlbumCard(
                 album = album,

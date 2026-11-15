@@ -19,6 +19,7 @@ class LyricRenderKeyTest {
         fontScale: Float = 1f,
         fontWeight: String = "ExtraBold",
         lineBalance: Boolean = false,
+        customFontPath: String = "",
     ) = lyricRenderKey(
         mediaIdKey = mediaIdKey,
         layoutWidthDp = width,
@@ -28,6 +29,7 @@ class LyricRenderKeyTest {
         fontScaleSetting = fontScale,
         fontWeightSetting = fontWeight,
         lineBalance = lineBalance,
+        customFontPath = customFontPath,
     )
 
     @Test
@@ -72,6 +74,11 @@ class LyricRenderKeyTest {
     @Test
     fun systemFontScaleIsPartOfKey() {
         assertNotEquals(key(systemFontScale = 1f), key(systemFontScale = 1.15f))
+    }
+
+    @Test
+    fun customFontPathIsPartOfKey() {
+        assertNotEquals(key(customFontPath = ""), key(customFontPath = "/data/user/0/app/files/lyric_fonts/a.ttf"))
     }
 
     @Test

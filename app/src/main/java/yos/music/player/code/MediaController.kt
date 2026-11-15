@@ -2962,6 +2962,9 @@ class YosPlaybackService : MediaSessionService() {
         // 通知栏歌词：新歌的歌词还没加载，先丢弃上一首的当前行，不让它被推到通知栏；
         // 这里只清状态不写会话——此刻 musicPlaying 还停在上一首，写回会张冠李戴。
         yos.music.player.code.MediaController.resetSessionLyricTracking()
+        if (mediaItem == null) {
+            yos.music.player.data.objects.DynamicCoverState.onTrackChanged(null)
+        }
         mediaItem?.let { item ->
             // 发布条目不携带自有 extras（见 MusicLibrary.toMediaItem）：当前曲的完整
             // YosMediaItem（时长/日期等）按 mediaId 从队列快照取，快照缺失再查库，
@@ -2978,6 +2981,8 @@ class YosPlaybackService : MediaSessionService() {
             // 高潮片段：进度条标记的数据源。与 CacheSongIndex.record 同点位——命中磁盘
             // 缓存时只是一次 MMKV 读，未命中才起后台请求；本地曲直接清空不发请求。
             yos.music.player.data.objects.SongClimaxState.onTrackChanged(yosItem.mediaId)
+            // 专辑动态封面：探测/读取本地缓存与 /album/dycover；本地曲与关闭开关时立即清空。
+            yos.music.player.data.objects.DynamicCoverState.onTrackChanged(yosItem.mediaId)
             // 换曲即刷新在线态镜像：isPlaying 由播放器真正态取（onIsPlayingChanged 也会推）
             pushListeningOnline(
                 currentPlayer?.isPlaying ?: MediaViewModelObject.isPlaying.value,

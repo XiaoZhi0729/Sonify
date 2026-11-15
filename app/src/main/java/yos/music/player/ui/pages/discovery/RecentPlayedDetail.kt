@@ -111,7 +111,8 @@ fun RecentPlayedDetail(navController: NavController) {
 
         itemsIndexed(
             songs,
-            key = { index, song -> song.mediaId ?: index }
+            key = { index, song -> song.mediaId ?: index },
+            contentType = { _, _ -> "recent_played_song" }
         ) { index, song ->
             key(song.mediaId ?: index) {
                 MusicList(song) {

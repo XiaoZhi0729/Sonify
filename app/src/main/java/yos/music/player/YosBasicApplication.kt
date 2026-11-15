@@ -177,6 +177,7 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // 音质切换要读偏好与网络形态：主进程侧提前注入应用级 Context（服务侧也会注入一次）
         yos.music.player.code.MediaController.appContext = applicationContext
         yos.music.player.data.repositories.NetworkObserver.init(this)
+        yos.music.player.data.objects.DynamicCoverState.init(this)
         yos.music.player.data.repositories.QualityTrace.strict =
             (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 

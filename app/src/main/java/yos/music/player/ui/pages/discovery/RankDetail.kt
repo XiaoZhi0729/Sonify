@@ -380,7 +380,8 @@ fun RankDetail(
 
                 itemsIndexed(
                     trackItems,
-                    key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } }
+                    key = { index, _ -> songKeys.getOrElse(index) { "oob_$index" } },
+                    contentType = { _, _ -> "rank_song_item" }
                 ) { index, song ->
                     key(songKeys.getOrElse(index) { "oob_$index" }) {
                         // 统一歌曲 Item；点击 → 全部歌曲进队列，从被点击歌曲开始播放。

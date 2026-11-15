@@ -58,6 +58,9 @@
     <fields>;
     public <init>();
 }
+-keep class yos.music.player.data.objects.DynamicCoverState$StoredMeta {
+    <fields>;
+}
 
 # 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }

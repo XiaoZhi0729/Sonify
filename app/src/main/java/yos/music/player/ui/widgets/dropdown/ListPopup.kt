@@ -1414,40 +1414,41 @@ private fun Modifier.popupPanelShadow(
     cornerRadius: Dp,
     isDark: Boolean,
     spread: () -> Float,
-): Modifier = drawBehind {
-    val s = spread()
-    if (s <= 0.01f) return@drawBehind
-
-    // 阴影画在玻璃画布上 → 直接用画布坐标系
-    val r = rect(size.width, size.height)
-    val left = r[0]
-    val top = r[1]
-    val boxW = r[2]
-    val boxH = r[3]
-    val blurRadius = PopupShadowBlur * density * s
-    val extend = PopupShadowExtend * density * s
+): Modifier = drawWithCache {
+    val shadowPath = android.graphics.Path()
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    var lastBlur = -1f
     val radius = cornerRadius.toPx()
     val shadowArgb = if (isDark) PopupShadowArgbDark else PopupShadowArgbLight
-
-    // 原实现是 android.graphics.Path + BlurMaskFilter + nativeCanvas 手绘，
-    // 会把整个文件钉死在 Android。改为跨平台 expect/actual（见 internal/PopupShadow.kt）：
-    // Android 侧仍是 BlurMaskFilter，视觉与改动前完全一致。
-    //
-    // 注意增益算法与原实现一致：PopupShadowAlphaGain 乘的是常量里存的**原 alpha**
-    // （0x1A/0x2E，即 26/46），不是 255。写成 *255 会被 coerceIn 截到 255，阴影直接爆掉。
     val shadowAlpha = ((shadowArgb ushr 24) * PopupShadowAlphaGain).coerceAtMost(255f).toInt()
-    drawBlurredRingShadow(
-        size = size,
-        left = left,
-        top = top,
-        width = boxW,
-        height = boxH,
-        radius = radius,
-        spread = extend,
-        blurRadius = blurRadius,
-        // 两个常量的 RGB 均为 0，即纯黑阴影；alpha 用上面算出的整数，与原 Paint 一致。
-        color = Color(0f, 0f, 0f, shadowAlpha / 255f),
-    )
+    val shadowColor = Color(0f, 0f, 0f, shadowAlpha / 255f)
+    onDrawBehind {
+        val s = spread()
+        if (s <= 0.01f) return@onDrawBehind
+
+        // 阴影画在玻璃画布上 → 直接用画布坐标系
+        val r = rect(size.width, size.height)
+        val left = r[0]
+        val top = r[1]
+        val boxW = r[2]
+        val boxH = r[3]
+        val blurRadius = PopupShadowBlur * density * s
+        val extend = PopupShadowExtend * density * s
+
+        lastBlur = drawBlurredRingShadow(
+            path = shadowPath,
+            paint = shadowPaint,
+            lastBlur = lastBlur,
+            left = left,
+            top = top,
+            width = boxW,
+            height = boxH,
+            radius = radius,
+            spread = extend,
+            blurRadius = blurRadius,
+            color = shadowColor,
+        )
+    }
 }
 
 // =====================================================================
@@ -1543,7 +1544,9 @@ fun Modifier.popupClipReveal(
  * 环形路径（外圈 CW 减内圈 CCW）+ BlurMaskFilter，模糊描边语义。
  */
 private fun DrawScope.drawBlurredRingShadow(
-    size: Size,
+    path: android.graphics.Path,
+    paint: android.graphics.Paint,
+    lastBlur: Float,
     left: Float,
     top: Float,
     width: Float,
@@ -1552,30 +1555,31 @@ private fun DrawScope.drawBlurredRingShadow(
     spread: Float,
     blurRadius: Float,
     color: Color,
-) {
-    if (blurRadius <= 0f) return
-    val path = android.graphics.Path().apply {
-        addRoundRect(
-            left - spread, top - spread,
-            left + width + spread, top + height + spread,
-            radius + spread, radius + spread,
-            android.graphics.Path.Direction.CW
-        )
-        addRoundRect(
-            left, top,
-            left + width, top + height,
-            radius, radius,
-            android.graphics.Path.Direction.CCW
-        )
-    }
-    val paint = android.graphics.Paint().apply {
-        this.color = android.graphics.Color.argb(
-            (color.alpha * 255f + 0.5f).toInt().coerceIn(0, 255),
-            (color.red * 255f + 0.5f).toInt().coerceIn(0, 255),
-            (color.green * 255f + 0.5f).toInt().coerceIn(0, 255),
-            (color.blue * 255f + 0.5f).toInt().coerceIn(0, 255),
-        )
-        maskFilter = android.graphics.BlurMaskFilter(blurRadius.coerceAtLeast(0.1f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+): Float {
+    if (blurRadius <= 0f) return lastBlur
+    path.rewind()
+    path.addRoundRect(
+        left - spread, top - spread,
+        left + width + spread, top + height + spread,
+        radius + spread, radius + spread,
+        android.graphics.Path.Direction.CW
+    )
+    path.addRoundRect(
+        left, top,
+        left + width, top + height,
+        radius, radius,
+        android.graphics.Path.Direction.CCW
+    )
+    paint.color = android.graphics.Color.argb(
+        (color.alpha * 255f + 0.5f).toInt().coerceIn(0, 255),
+        (color.red * 255f + 0.5f).toInt().coerceIn(0, 255),
+        (color.green * 255f + 0.5f).toInt().coerceIn(0, 255),
+        (color.blue * 255f + 0.5f).toInt().coerceIn(0, 255),
+    )
+    val clampedBlur = blurRadius.coerceAtLeast(0.1f)
+    if (clampedBlur != lastBlur) {
+        paint.maskFilter = android.graphics.BlurMaskFilter(clampedBlur, android.graphics.BlurMaskFilter.Blur.NORMAL)
     }
     drawIntoCanvas { canvas -> canvas.nativeCanvas.drawPath(path, paint) }
+    return clampedBlur
 }
