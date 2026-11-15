@@ -220,6 +220,8 @@ fun LiquidBottomTabs(
     )
 
     val tabsBackdrop = rememberLayerBackdrop()
+    val containerSurfaceBackdrop = rememberLayerBackdrop()
+    val combinedTabBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
 
     BoxWithConstraints(
         modifier,
@@ -285,6 +287,9 @@ fun LiquidBottomTabs(
                     }
                 }
             )
+        }
+        val isPressingTabs by remember(dampedDragAnimation) {
+            derivedStateOf { dampedDragAnimation.pressProgress > 0.001f }
         }
         LaunchedEffect(dampedDragAnimation) {
             snapshotFlow { latestSelectedTabIndex.value() }
@@ -419,6 +424,7 @@ fun LiquidBottomTabs(
                                         }
                                     },
                                     // 采样 + 记录（探针关掉采样时连 record 一起停）。
+                                    exportedBackdrop = containerSurfaceBackdrop,
                                     onDrawBackdrop = containerOnDrawBackdrop,
                                     onDrawSurface = containerSurfaceDraw
                                 )
@@ -446,13 +452,6 @@ fun LiquidBottomTabs(
                 Modifier
                     .clearAndSetSemantics {}
                     .alpha(0f)
-                    // 这个 Row 永久 alpha=0（它存在的唯一目的是把自身录成 tabsBackdrop 给
-                    // Tab 胶囊采样），但库内 LayerBackdropNode.draw() 每帧无条件 recordLayer，
-                    // 图层全透也不跳过绘制——所以它是一整份看不见的逐帧玻璃成本。
-                    //
-                    // 消融必须保住原始挂载顺序：layerBackdrop 原本夹在 alpha 与 translationX
-                    // 图层之间。记录层录的是"它内侧"的画面，把它挪到 translationX 之后就会把
-                    // 平移一并录进去，Tab 胶囊采样到的内容会偏移——那是外观差异，不是性能优化。
                     .then(
                         if (hiddenProducerEnabled && !solidCapsule) Modifier.layerBackdrop(tabsBackdrop)
                         else Modifier
@@ -462,28 +461,31 @@ fun LiquidBottomTabs(
                     }
                     .then(
                         if (hiddenProducerEnabled && !solidCapsule) Modifier.drawBackdrop(
-                            backdrop = backdrop,
+                            backdrop = if (!isPressingTabs && containerGlassEnabled) containerSurfaceBackdrop else backdrop,
                             shape = { Capsule() },
                             effects = {
-                                val progress = dampedDragAnimation.pressProgress
-                                vibrancy()
-                                // 与容器玻璃分支的 4dp 同源：这行是 Tab 指示器采样源
-                                // (tabsBackdrop) 的模糊。指示器自身静止态没有 blur，只有 lens(0)，
-                                // 它看到的玻璃模糊全来自这里。必须同乘 glassScale，否则调节
-                                // 「玻璃效果调节」时指示器里的模糊恒定 4dp 不受影响。
-                                blur(4f.dp.toPx() * glassScale)
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    lens(
-                                        16f.dp.toPx() * progress,
-                                        32f.dp.toPx() * progress
-                                    )
+                                if (isPressingTabs || !containerGlassEnabled) {
+                                    val progress = dampedDragAnimation.pressProgress
+                                    vibrancy()
+                                    blur(4f.dp.toPx() * glassScale)
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        lens(
+                                            16f.dp.toPx() * progress,
+                                            32f.dp.toPx() * progress
+                                        )
+                                    }
                                 }
                             },
                             highlight = {
                                 val progress = dampedDragAnimation.pressProgress
-                                Highlight.Default.copy(alpha = progress)
+                                if (progress <= 0.001f) null else Highlight.Default.copy(alpha = progress)
                             },
-                            onDrawSurface = { drawRect(containerColor) }
+                            onDrawBackdrop = containerOnDrawBackdrop,
+                            onDrawSurface = {
+                                if (isPressingTabs || !containerGlassEnabled) {
+                                    drawRect(containerColor)
+                                }
+                            }
                         ) else Modifier
                     )
                     .then(if (enableInteractiveHighlight) interactiveHighlight.modifier else Modifier)
@@ -547,7 +549,7 @@ fun LiquidBottomTabs(
                     // Tab 胶囊玻璃：即使 pressProgress==0，highlight/shadow 的 width 仍 >0，
                     // 库内依旧每帧 record 离屏层，所以 navtab 要连它一起摘掉。
                     else if (!tabGlassEnabled) Modifier else Modifier.drawBackdrop(
-                    backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
+                    backdrop = if (isPressingTabs || !containerGlassEnabled) combinedTabBackdrop else tabsBackdrop,
                     shape = { Capsule() },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
@@ -559,15 +561,15 @@ fun LiquidBottomTabs(
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        Highlight.Default.copy(alpha = progress)
+                        if (progress <= 0.001f) null else Highlight.Default.copy(alpha = progress)
                     },
                     shadow = {
                         val progress = dampedDragAnimation.pressProgress
-                        Shadow(alpha = progress)
+                        if (progress <= 0.001f) null else Shadow(alpha = progress)
                     },
                     innerShadow = {
                         val progress = dampedDragAnimation.pressProgress
-                        InnerShadow(
+                        if (progress <= 0.001f) null else InnerShadow(
                             radius = 8f.dp * progress,
                             alpha = progress
                         )

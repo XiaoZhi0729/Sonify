@@ -69,9 +69,17 @@ internal class ShadowNode(
     private var shadowLayer: GraphicsLayer? = null
 
     private val paint = Paint()
+    private var prevOutline: androidx.compose.ui.graphics.Outline? = null
+    private var prevRadius: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified
+    private var prevOffset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset.Unspecified
+    private var prevColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified
+    private var prevDensity = Float.NaN
+    private var prevLayoutDirection: androidx.compose.ui.unit.LayoutDirection? = null
+    private var hasRecorded = false
 
     override fun ContentDrawScope.draw() {
-        val shadow = shadow() ?: return drawContent()
+        val shadow = shadow()
+        if (shadow == null || shadow.alpha <= 0.001f) return drawContent()
 
         val shadowLayer = shadowLayer
         if (shadowLayer != null) {
@@ -80,26 +88,47 @@ internal class ShadowNode(
             val layoutDirection = layoutDirection
 
             val radius = shadow.radius.toPx()
-            val offsetX = shadow.offset.x.toPx()
-            val offsetY = shadow.offset.y.toPx()
-            val shadowSize = IntSize(
-                ceil(size.width + radius * 4f + offsetX).toInt(),
-                ceil(size.height + radius * 4f + offsetY).toInt()
-            )
             val outline = shapeProvider.shape.createOutline(size, layoutDirection, density)
-
-            configurePaint(shadow)
 
             shadowLayer.alpha = shadow.alpha
             shadowLayer.blendMode = shadow.blendMode
-            shadowLayer.record(shadowSize) {
-                translate(radius * 2f + offsetX, radius * 2f + offsetY) {
-                    val canvas = drawContext.canvas
-                    canvas.drawOutline(outline, paint)
-                    canvas.translate(-offsetX, -offsetY)
-                    canvas.drawOutline(outline, ShadowMaskPaint)
-                    canvas.translate(offsetX, offsetY)
+
+            val canReuse = hasRecorded &&
+                outline !is androidx.compose.ui.graphics.Outline.Generic &&
+                prevOutline == outline &&
+                prevRadius == shadow.radius &&
+                prevOffset == shadow.offset &&
+                prevColor == shadow.color &&
+                prevDensity == density.density &&
+                prevLayoutDirection == layoutDirection
+
+            if (!canReuse) {
+                val offsetX = shadow.offset.x.toPx()
+                val offsetY = shadow.offset.y.toPx()
+                val shadowSize = IntSize(
+                    ceil(size.width + radius * 4f + offsetX).toInt(),
+                    ceil(size.height + radius * 4f + offsetY).toInt()
+                )
+
+                configurePaint(shadow)
+
+                shadowLayer.record(shadowSize) {
+                    translate(radius * 2f + offsetX, radius * 2f + offsetY) {
+                        val canvas = drawContext.canvas
+                        canvas.drawOutline(outline, paint)
+                        canvas.translate(-offsetX, -offsetY)
+                        canvas.drawOutline(outline, ShadowMaskPaint)
+                        canvas.translate(offsetX, offsetY)
+                    }
                 }
+
+                prevOutline = outline
+                prevRadius = shadow.radius
+                prevOffset = shadow.offset
+                prevColor = shadow.color
+                prevDensity = density.density
+                prevLayoutDirection = layoutDirection
+                hasRecorded = true
             }
 
             translate(-radius * 2f, -radius * 2f) {
@@ -124,6 +153,8 @@ internal class ShadowNode(
             graphicsContext.releaseGraphicsLayer(layer)
             shadowLayer = null
         }
+        prevOutline = null
+        hasRecorded = false
     }
 
     private fun DrawScope.configurePaint(shadow: Shadow) {

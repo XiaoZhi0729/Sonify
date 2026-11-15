@@ -2525,7 +2525,7 @@ class MainActivity : BaseActivity() {
                                         CompositionLocalProvider(
                                             LocalGlassContentColor provides null
                                         ) {
-                                        BoxWithConstraints(
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(miniPlayerHeight)
@@ -2758,11 +2758,32 @@ class MainActivity : BaseActivity() {
         // This host remains in full-screen coordinates; scaling belongs to its child.
         // 生产者的 LayoutCoordinates 决定玻璃消费端（底栏/迷你条）的采样映射，
         // 因此它必须留在全屏坐标系里；缩放只作用于其子节点。
+        val navBackdropEnabled = remember(bottomScrimHeight, pageScale) {
+            { bottomScrimHeight > 0.dp || pageScale.value < 0.999f }
+        }
+        val navBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
+            bottomScrimHeight,
+            pageScale
+        ) {
+            {
+                if (pageScale.value < 0.999f || bottomScrimHeight <= 0.dp) {
+                    null
+                } else {
+                    val bandHeightPx = (bottomScrimHeight + 48.dp).toPx()
+                    val top = (size.height - bandHeightPx).coerceAtLeast(0f)
+                    androidx.compose.ui.geometry.Rect(0f, top, size.width, size.height)
+                }
+            }
+        }
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .layerBackdrop(navBackdrop)
+                    .layerBackdrop(
+                        backdrop = navBackdrop,
+                        enabled = navBackdropEnabled,
+                        clipRect = navBackdropClipRect
+                    )
             ) {
                 Box(
                     modifier = Modifier
@@ -2778,8 +2799,13 @@ class MainActivity : BaseActivity() {
                             }
                         }
                         .graphicsLayer {
-                            shape = RoundedCornerShape(pageCorner.value)
-                            clip = true
+                            val corner = pageCorner.value
+                            if (corner > 0.dp) {
+                                shape = RoundedCornerShape(corner)
+                                clip = true
+                            } else {
+                                clip = false
+                            }
                         }
                         // 绘制期读取底衬色（等价于 .background(pageBackground)，但颜色随
                         // 艺人页进出场逐帧变化，不进组合、不触发重组）。位置与 .background
@@ -2816,8 +2842,13 @@ class MainActivity : BaseActivity() {
                             }
                         }
                         .graphicsLayer {
-                            shape = RoundedCornerShape(pageCorner.value)
-                            clip = true
+                            val corner = pageCorner.value
+                            if (corner > 0.dp) {
+                                shape = RoundedCornerShape(corner)
+                                clip = true
+                            } else {
+                                clip = false
+                            }
                         }
                 ) {
                     Box(

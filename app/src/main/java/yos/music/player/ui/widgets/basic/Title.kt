@@ -199,8 +199,8 @@ fun Title(
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
     onTopRightIcon: (() -> Unit)? = null,
-    // 大标题水平 padding：默认 20dp（主页/详情页内容体系）；
-    // 设置系页面/资料库用 ListHeader(32dp) 分组标题，传 32.dp 与之对齐。
+    // 大标题水平 padding：默认 20dp（主页/资料库/搜索等一级 Tab 与详情页内容体系）；
+    // 设置系页面用 ListHeader(32dp) 分组标题，传 32.dp 与之对齐。
     titleHorizontalPadding: Dp = 20.dp,
     // 启动浮现的第几块（null = 不参与）。只作用于**大标题文案本身**：
     // 整页那个 layerBackdrop 录制层不能加 alpha，否则会给它多建一层离屏缓冲。
@@ -469,6 +469,22 @@ private fun BaseTitleGrid(
     val pageGradient = LocalPageGradient.current
     val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
+    val titleBackdropEnabled = remember(collapse, overlayHost) {
+        { collapse.showBarBackground.value || overlayHost.slots.isNotEmpty() }
+    }
+    val titleBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
+        overlayHost
+    ) {
+        {
+            if (overlayHost.slots.isNotEmpty()) null
+            else androidx.compose.ui.geometry.Rect(
+                0f,
+                0f,
+                size.width,
+                200.dp.toPx().coerceAtMost(size.height)
+            )
+        }
+    }
 
     CompositionLocalProvider(
         LocalTitlePageBackdrop provides titleBackdrop,
@@ -481,7 +497,11 @@ private fun BaseTitleGrid(
                     modifier = Modifier
                         .fillMaxSize()
                         .titleCollapseTouchTracker(collapse)
-                        .layerBackdrop(titleBackdrop)
+                        .layerBackdrop(
+                            titleBackdrop,
+                            enabled = titleBackdropEnabled,
+                            clipRect = titleBackdropClipRect
+                        )
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     columns = GridCells.Adaptive(minSize = minItemSize),
@@ -588,6 +608,22 @@ private fun BaseTitleList(
     val pageGradient = LocalPageGradient.current
     val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
+    val titleBackdropEnabled = remember(collapse, overlayHost) {
+        { collapse.showBarBackground.value || overlayHost.slots.isNotEmpty() }
+    }
+    val titleBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
+        overlayHost
+    ) {
+        {
+            if (overlayHost.slots.isNotEmpty()) null
+            else androidx.compose.ui.geometry.Rect(
+                0f,
+                0f,
+                size.width,
+                200.dp.toPx().coerceAtMost(size.height)
+            )
+        }
+    }
 
     CompositionLocalProvider(
         LocalTitlePageBackdrop provides titleBackdrop,
@@ -600,7 +636,11 @@ private fun BaseTitleList(
                     modifier = Modifier
                         .fillMaxSize()
                         .titleCollapseTouchTracker(collapse)
-                        .layerBackdrop(titleBackdrop)
+                        .layerBackdrop(
+                            titleBackdrop,
+                            enabled = titleBackdropEnabled,
+                            clipRect = titleBackdropClipRect
+                        )
                         .overScrollVertical(),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     contentPadding = PaddingValues(top = 54.dp + extraTopPadding)
@@ -1127,8 +1167,8 @@ fun TitleBar(
             ) {
                 Box(Modifier.height(48.dp), contentAlignment = Alignment.CenterStart) {
                     if (onBack != null) {
-                        // start 16.5dp：圆钮左缘与设置页卡片（RoundColumn）左缘对齐。
-                        Box(Modifier.padding(start = 16.5.dp)) {
+                        // start 16dp：圆钮左缘与设置页卡片（RoundColumn）左缘对齐。
+                        Box(Modifier.padding(start = 16.dp)) {
                             if (SettingsLibrary.BarBlurEffect) {
                                 // 返回键为液态玻璃圆钮（NexioSchedule 材质）：42dp 圆 +
                                 // ic_back 18dp、x -2dp 光学偏移（25dp 实测过大，用户反馈缩小）；

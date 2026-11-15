@@ -238,18 +238,31 @@ fun Discovery(
         recommendPlaylists.value,
         newAlbums.value,
         rankList.value,
+        newSongs.value,
+        everySongs.value,
+        recentlyPlayed.size,
         fmSongs.size
     ) {
-        val urls = buildList {
-            addAll(recommendPlaylists.value.take(4).map { it.artworkUrl })
-            addAll(newAlbums.value.take(4).map { it.coverUrl })
-            addAll(rankList.value.take(4).map { it.coverUrl })
+        val highUrls = buildList {
+            addAll(recommendPlaylists.value.take(6).map { it.artworkUrl })
+            addAll(newAlbums.value.take(6).map { it.coverUrl })
+            addAll(rankList.value.take(6).map { it.coverUrl })
             // 私人电台：预热前 3 张圆封面（可见窗口）。
             // prefetchCover 用 "$url|HIGH" 键，CircleCover 的 ImageRequest 必须
             // 用同一套 coverCacheKey 才能真正命中，否则只是白发一次请求。
             addAll(fmSongs.take(3).map { it.artworkUrl })
         }
-        urls.forEach { prefetchCover(prewarmContext, it) }
+        highUrls.forEach { prefetchCover(prewarmContext, it) }
+
+        newSongs.value.take(8).forEach {
+            yos.music.player.ui.widgets.basic.prefetchCoverLow(prewarmContext, it.artworkUrl)
+        }
+        everySongs.value.take(8).forEach {
+            yos.music.player.ui.widgets.basic.prefetchCoverLow(prewarmContext, it.artworkUrl)
+        }
+        recentlyPlayed.take(4).forEach {
+            yos.music.player.ui.widgets.basic.prefetchCoverLow(prewarmContext, it.thumb)
+        }
     }
 
     // ---------- 主页自定义（Home Layout） ----------
@@ -463,9 +476,9 @@ fun Discovery(
                         onClick = { navController.toUI(UI.RecommendPlaylistsDetail) }
                     )
 
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth()) {
                         val railLayout = calculateAdaptiveImageLayout(
-                            containerWidth = maxWidth,
+                            containerWidth = LocalConfiguration.current.screenWidthDp.dp,
                             startPadding = 20.dp,
                             endPadding = 20.dp
                         )
@@ -480,7 +493,7 @@ fun Discovery(
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { recommendPlaylists.value[it].globalCollectionId },
-                            beyondViewportPageCount = 1
+                            beyondViewportPageCount = 0
                         ) { page ->
                             val playlist = recommendPlaylists.value[page]
                             RecommendPlaylistCard(
@@ -551,9 +564,9 @@ fun Discovery(
                         onClick = { navController.toUI(UI.NewAlbumsDetail) }
                     )
 
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth()) {
                         val railLayout = calculateAdaptiveImageLayout(
-                            containerWidth = maxWidth,
+                            containerWidth = LocalConfiguration.current.screenWidthDp.dp,
                             startPadding = 20.dp,
                             endPadding = 20.dp
                         )
@@ -568,7 +581,7 @@ fun Discovery(
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { newAlbums.value[it].albumId },
-                            beyondViewportPageCount = 1
+                            beyondViewportPageCount = 0
                         ) { page ->
                             val album = newAlbums.value[page]
                             NewAlbumCard(
@@ -606,9 +619,9 @@ fun Discovery(
                         onClick = { navController.toUI(UI.RankListDetail) }
                     )
 
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth()) {
                         val railLayout = calculateAdaptiveImageLayout(
-                            containerWidth = maxWidth,
+                            containerWidth = LocalConfiguration.current.screenWidthDp.dp,
                             startPadding = 20.dp,
                             endPadding = 20.dp
                         )
@@ -623,7 +636,7 @@ fun Discovery(
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { rankList.value[it].rankId },
-                            beyondViewportPageCount = 1
+                            beyondViewportPageCount = 0
                         ) { page ->
                             val rank = rankList.value[page]
                             RankCardItem(
@@ -943,7 +956,7 @@ private fun DiscoveryPagedSongColumns(
         // 显式 Top 使所有页面统一顶部对齐。
         verticalAlignment = Alignment.Top,
         key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
-        beyondViewportPageCount = 1
+        beyondViewportPageCount = 0
     ) { page ->
         Column(Modifier.fillMaxWidth()) {
             repeat(songsPerColumn) { row ->

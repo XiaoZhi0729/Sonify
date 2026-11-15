@@ -64,6 +64,8 @@ internal fun PersonalFmGlassStage(
     frostedSurface: DrawScope.() -> Unit,
     modifier: Modifier = Modifier,
     glassModifier: Modifier = Modifier,
+    recordKey: Any? = null,
+    mustRecord: (() -> Boolean)? = null,
     backdropContent: @Composable BoxScope.() -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -82,7 +84,7 @@ internal fun PersonalFmGlassStage(
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop),
+                .layerBackdrop(backdrop, recordKey = recordKey, mustRecord = mustRecord),
             content = backdropContent
         )
 

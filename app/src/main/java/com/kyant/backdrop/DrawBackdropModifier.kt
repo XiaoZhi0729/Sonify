@@ -19,6 +19,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.LayoutModifierNode
@@ -274,10 +275,24 @@ private class DrawBackdropNode(
 
     private var padding by mutableFloatStateOf(0f)
 
+    private var effectVersion = 0
+    private var cachedBackdropVersion = -1
+    private var cachedLayerW = -1f
+    private var cachedLayerH = -1f
+    private var cachedLayerPadding = Float.NaN
+    private var cachedEffectVersion = -1
+    private var cachedWindowPos = androidx.compose.ui.geometry.Offset.Unspecified
+    private var hasCachedLayer = false
+
     private val recordBackdropBlock: (DrawScope.() -> Unit) = {
         val canvas = drawContext.canvas
         val padding = padding
+        val scale = effectScope.downsampleScale
 
+        canvas.save()
+        if (scale != 1f) {
+            canvas.scale(scale, scale)
+        }
         if (padding != 0f) {
             canvas.translate(padding, padding)
         }
@@ -290,14 +305,36 @@ private class DrawBackdropNode(
                 )
             }
         }
+        canvas.restore()
+    }
+
+    private fun DrawScope.drawDownsampledLayer(
+        layer: GraphicsLayer,
+        padding: Float,
+        scale: Float
+    ) {
+        layer.topLeft = IntOffset.Zero
+        if (padding == 0f && scale == 1f) {
+            drawLayer(layer)
+            return
+        }
+        val canvas = drawContext.canvas
+        canvas.save()
         if (padding != 0f) {
             canvas.translate(-padding, -padding)
         }
+        if (scale != 1f) {
+            val invScale = 1f / scale
+            canvas.scale(invScale, invScale)
+        }
+        drawLayer(layer)
+        canvas.restore()
     }
 
     private val drawBackdropLayer: DrawScope.() -> Unit = drawBackdropLayer@{
         val layer = graphicsLayer
         val padding = padding
+        val scale = effectScope.downsampleScale
 
         // 直采：既没有 RenderEffect（无模糊/折射运算）也没有 padding（不需要外扩），
         // 录进离屏缓冲再画出来就是纯粹白搬一次 —— 直接在当前 canvas 上采样
@@ -319,20 +356,45 @@ private class DrawBackdropNode(
             return@drawBackdropLayer
         }
 
-        recordLayer(
-            this@DrawBackdropNode,
-            layer,
-            size = IntSize(
-                size.width.toInt() + padding.toInt() * 2,
-                size.height.toInt() + padding.toInt() * 2
-            ),
-            block = recordBackdropBlock
-        )
+        val version = backdrop.contentVersion
+        val pos = if (backdrop.isCoordinatesDependent) {
+            layoutCoordinates?.takeIf { it.isAttached }?.positionInWindow()
+                ?: androidx.compose.ui.geometry.Offset.Unspecified
+        } else {
+            androidx.compose.ui.geometry.Offset.Zero
+        }
+        val canReuse = hasCachedLayer &&
+            layerBlock == null &&
+            cachedBackdropVersion == version &&
+            cachedLayerW == size.width &&
+            cachedLayerH == size.height &&
+            cachedLayerPadding == padding &&
+            cachedEffectVersion == effectVersion &&
+            cachedWindowPos == pos
 
-        layer.topLeft =
-            if (padding != 0f) IntOffset(-padding.toInt(), -padding.toInt())
-            else IntOffset.Zero
-        drawLayer(layer)
+        if (!canReuse) {
+            val fullW = size.width + padding * 2f
+            val fullH = size.height + padding * 2f
+            val targetW = kotlin.math.ceil(fullW * scale).toInt().coerceAtLeast(1)
+            val targetH = kotlin.math.ceil(fullH * scale).toInt().coerceAtLeast(1)
+            val recorded = recordLayer(
+                this@DrawBackdropNode,
+                layer,
+                size = IntSize(targetW, targetH),
+                block = recordBackdropBlock
+            )
+            if (recorded) {
+                cachedBackdropVersion = version
+                cachedLayerW = size.width
+                cachedLayerH = size.height
+                cachedLayerPadding = padding
+                cachedEffectVersion = effectVersion
+                cachedWindowPos = pos
+                hasCachedLayer = true
+            }
+        }
+
+        drawDownsampledLayer(layer, padding, scale)
     }
 
     override fun MeasureScope.measure(
@@ -349,6 +411,17 @@ private class DrawBackdropNode(
     override fun ContentDrawScope.draw() {
         if (effectScope.update(this)) {
             updateEffects()
+        }
+
+        if (backdrop === com.kyant.backdrop.backdrops.emptyBackdrop() &&
+            graphicsLayer == null &&
+            padding == 0f &&
+            onDrawBehind == null &&
+            onDrawSurface == null &&
+            onDrawFront == null
+        ) {
+            drawContent()
+            return
         }
 
         val contentScope = this
@@ -386,10 +459,15 @@ private class DrawBackdropNode(
         drawContent()
         onDrawFront?.invoke(this)
 
-        exportedBackdrop?.graphicsLayer?.let { layer ->
-            recordLayer(this@DrawBackdropNode, layer) {
+        exportedBackdrop?.graphicsLayer?.let { exportedLayer ->
+            recordLayer(this@DrawBackdropNode, exportedLayer) {
                 onDrawBehind?.invoke(this)
-                drawBackdropLayer()
+                val layer = graphicsLayer
+                if (layer != null && (padding != 0f || layer.renderEffect != null)) {
+                    drawDownsampledLayer(layer, padding, effectScope.downsampleScale)
+                } else {
+                    drawBackdropLayer()
+                }
                 onDrawSurface?.invoke(this)
                 onDrawFront?.invoke(this)
             }
@@ -440,6 +518,7 @@ private class DrawBackdropNode(
             graphicsLayer?.renderEffect = null
         }
         padding = effectScope.padding
+        effectVersion++
     }
 
     private fun obtainGraphicsLayer(): GraphicsLayer {
@@ -461,5 +540,6 @@ private class DrawBackdropNode(
         layoutCoordinates = null
         exportedBackdrop?.layerCoordinates = null
         clipPathCache = null
+        hasCachedLayer = false
     }
 }

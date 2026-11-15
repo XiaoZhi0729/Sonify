@@ -191,7 +191,7 @@ fun ShadowImage(
     matchDisplaySize: Boolean = false,
     onImageLoaded: (() -> Unit)? = null
 ) = YosWrapper {
-    val shape = YosRoundedCornerShape(cornerRadius)
+    val shape = remember(cornerRadius) { YosRoundedCornerShape(cornerRadius) }
     val density = LocalDensity.current
     val url = dataLambda()
     // matchDisplaySize 走高清档 URL（源图侧要有 1080 可拿），再按自身像素宽解码；
@@ -200,53 +200,54 @@ fun ShadowImage(
     // 测量到的实际显示边长（px）。0 = 尚未测量，此时先用 1080 占位请求，
     // 测完立刻按真实尺寸重建请求（Compose 会在同一帧内完成，用户看不到中间态）。
     var displayPx by remember(loadUrl) { mutableIntStateOf(0) }
-        val imgContext = LocalContext.current
-    AsyncImage(
-        model =         ImageRequest.Builder(imgContext).data(data = loadUrl).crossfade(true)
-                .error(R.drawable.placeholder_music_default_artwork)
-                .placeholder(R.drawable.placeholder_music_default_artwork)
-                .fallback(R.drawable.placeholder_music_default_artwork)
-                // 占位槽用**列表那张**的档位：开了 hiresCover 的调用点（详情页大封面）
-                // 来源基本都是 HIGH 档网格卡片，用 HIGH 才能在转场第一帧就贴上同一张图。
-                // 用 LOW（128px）会直接落空 → 转场期间露出通用占位图。
-                .placeholderMemoryCacheKey(
-                    coverCacheKey(url, if (hiresCover) ImageQuality.HIGH else ImageQuality.LOW)
-                )
-                .memoryCacheKey(coverCacheKey(loadUrl, imageQuality))
-                // 磁盘键必须跟**实际请求的 URL** 走。留着原 URL 会让 Coil 去磁盘取那张
-                // 400 的旧图当成本次解码结果（列表行早就把它写进同一个键了），
-                // 高清档等于白设——这是"改了还是糊"的隐蔽来源。
-                .diskCacheKey(loadUrl.toString())
-                .allowHardware(true)
-                .crossfade(true)
-                .apply {
-                    when {
-                        imageQuality == ImageQuality.RAW -> {
-                            // RAW = 按源图原尺寸解码（与 ShadowImageWithCache RAW 分支一致）：
-                            // 尺寸确定 ⇒ 内存缓存重进必命中；若按画布尺寸请求，源图小于画布时
-                            // 永远无法满足 Coil 的精确尺寸校验（详情页封面每次重新加载的根因）
-                            this.precision(Precision.EXACT)
-                            this.size(coil.size.Size.ORIGINAL)
-                        }
-                        matchDisplaySize -> {
-                            // 按自身像素边长取图（尚未测量时先按源图右侧的高清档）。
-                            // INEXACT：源图本身小于显示尺寸时也接受放大版本，不反复重试。
+    val imgContext = LocalContext.current
+    val request = remember(loadUrl, url, imageQuality, hiresCover, matchDisplaySize, displayPx, imgContext) {
+        ImageRequest.Builder(imgContext).data(data = loadUrl).crossfade(false)
+            .error(R.drawable.placeholder_music_default_artwork)
+            .placeholder(R.drawable.placeholder_music_default_artwork)
+            .fallback(R.drawable.placeholder_music_default_artwork)
+            // 占位槽用**列表那张**的档位：开了 hiresCover 的调用点（详情页大封面）
+            // 来源基本都是 HIGH 档网格卡片，用 HIGH 才能在转场第一帧就贴上同一张图。
+            // 用 LOW（128px）会直接落空 → 转场期间露出通用占位图。
+            .placeholderMemoryCacheKey(
+                coverCacheKey(url, if (hiresCover) ImageQuality.HIGH else ImageQuality.LOW)
+            )
+            .memoryCacheKey(coverCacheKey(loadUrl, imageQuality))
+            // 磁盘键必须跟**实际请求的 URL** 走。留着原 URL 会让 Coil 去磁盘取那张
+            // 400 的旧图当成本次解码结果（列表行早就把它写进同一个键了），
+            // 高清档等于白设——这是"改了还是糊"的隐蔽来源。
+            .diskCacheKey(loadUrl.toString())
+            .allowHardware(true)
+            .apply {
+                when {
+                    imageQuality == ImageQuality.RAW -> {
+                        // RAW = 按源图原尺寸解码（与 ShadowImageWithCache RAW 分支一致）：
+                        // 尺寸确定 ⇒ 内存缓存重进必命中；若按画布尺寸请求，源图小于画布时
+                        // 永远无法满足 Coil 的精确尺寸校验（详情页封面每次重新加载的根因）
+                        this.precision(Precision.EXACT)
+                        this.size(coil.size.Size.ORIGINAL)
+                    }
+                    matchDisplaySize -> {
+                        // 按自身像素边长取图（尚未测量时先按源图右侧的高清档）。
+                        // INEXACT：源图本身小于显示尺寸时也接受放大版本，不反复重试。
+                        this.precision(Precision.INEXACT)
+                        this.size(
+                            if (displayPx > 0) displayPx else PlaybackCoverSize
+                        )
+                    }
+                    else -> {
+                        val size = getSizeFromQuality(imageQuality)
+                        this.size(size)
+                        if (imageQuality == ImageQuality.LOW) {
                             this.precision(Precision.INEXACT)
-                            this.size(
-                                if (displayPx > 0) displayPx else PlaybackCoverSize
-                            )
-                        }
-                        else -> {
-                            val size = getSizeFromQuality(imageQuality)
-                            this.size(size)
-                            if (imageQuality == ImageQuality.LOW) {
-                                this.precision(Precision.INEXACT)
-                            }
                         }
                     }
                 }
-                .build()
-        ,
+            }
+            .build()
+    }
+    AsyncImage(
+        model = request,
         contentDescription = contentDescription.toString(),
         contentScale = ContentScale.Crop,
         modifier = modifier
@@ -268,9 +269,6 @@ fun ShadowImage(
                 compositingStrategy = CompositingStrategy.Offscreen
                 clip = true
                 this.shape = shape
-                /*this.shape = shape
-                shadowElevation = shadowAlphaPx
-                spotShadowColor = Color.Black.copy(alpha = 0.8f)*/
             }
             .drawWithCache {
                 val outline = shape.createOutline(
@@ -282,14 +280,8 @@ fun ShadowImage(
                     drawContent()
                     drawOutline(
                         outline = outline,
-                        color = Color.Gray.copy(alpha = 0.1f),
+                        color = Color.Gray.copy(alpha = 0.2f),
                         style = Stroke(width = 12f)
-                    )
-                    drawOutline(
-                        outline = outline,
-                        color = Color.Gray.copy(alpha = 0.5f),
-                        style = Stroke(width = 12f),
-                        blendMode = BlendMode.Overlay
                     )
                 }
             }
@@ -327,42 +319,43 @@ fun ShadowImageWithCache(
      */
     drawShadow: Boolean = true
 ) = YosWrapper {
-    val shape = YosRoundedCornerShape(cornerRadius)
+    val shape = remember(cornerRadius) { YosRoundedCornerShape(cornerRadius) }
     val url = dataLambda()
     val loadUrl = if (hiresCover || matchDisplaySize) hiresCoverUrl(url) else url
     var displayPx by remember(loadUrl) { mutableIntStateOf(0) }
     val density = LocalDensity.current
-        val imgContext = LocalContext.current
-    AsyncImage(
-        model =         ImageRequest.Builder(imgContext).data(data = loadUrl).crossfade(true)
-                .error(R.drawable.placeholder_music_default_artwork)
-                .placeholder(R.drawable.placeholder_music_default_artwork)
-                .fallback(R.drawable.placeholder_music_default_artwork)
-                .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
-                .memoryCacheKey(coverCacheKey(loadUrl, imageQuality))
-                .allowHardware(true)
-                .crossfade(true)
-                .apply {
-                    when {
-                        imageQuality == ImageQuality.RAW -> {
-                            this.precision(Precision.EXACT)
-                            this.size(coil.size.Size.ORIGINAL)
-                        }
-                        matchDisplaySize -> {
+    val imgContext = LocalContext.current
+    val request = remember(loadUrl, url, imageQuality, hiresCover, matchDisplaySize, displayPx, imgContext) {
+        ImageRequest.Builder(imgContext).data(data = loadUrl).crossfade(false)
+            .error(R.drawable.placeholder_music_default_artwork)
+            .placeholder(R.drawable.placeholder_music_default_artwork)
+            .fallback(R.drawable.placeholder_music_default_artwork)
+            .placeholderMemoryCacheKey(coverCacheKey(url, ImageQuality.LOW))
+            .memoryCacheKey(coverCacheKey(loadUrl, imageQuality))
+            .allowHardware(true)
+            .apply {
+                when {
+                    imageQuality == ImageQuality.RAW -> {
+                        this.precision(Precision.EXACT)
+                        this.size(coil.size.Size.ORIGINAL)
+                    }
+                    matchDisplaySize -> {
+                        this.precision(Precision.INEXACT)
+                        this.size(if (displayPx > 0) displayPx else PlaybackCoverSize)
+                    }
+                    else -> {
+                        val size = getSizeFromQuality(imageQuality)
+                        this.size(size)
+                        if (imageQuality == ImageQuality.LOW) {
                             this.precision(Precision.INEXACT)
-                            this.size(if (displayPx > 0) displayPx else PlaybackCoverSize)
-                        }
-                        else -> {
-                            val size = getSizeFromQuality(imageQuality)
-                            this.size(size)
-                            if (imageQuality == ImageQuality.LOW) {
-                                this.precision(Precision.INEXACT)
-                            }
                         }
                     }
                 }
-                .build()
-        ,
+            }
+            .build()
+    }
+    AsyncImage(
+        model = request,
         contentDescription = contentDescription.toString(),
         contentScale = ContentScale.Crop,
         modifier = modifier
@@ -382,9 +375,6 @@ fun ShadowImageWithCache(
                 compositingStrategy = CompositingStrategy.Offscreen
                 clip = true
                 this.shape = shape
-                /*this.shape = shape
-                shadowElevation = shadowAlphaPx
-                spotShadowColor = Color.Black.copy(alpha = 0.8f)*/
             }
             .drawWithCache {
                 val outline = shape.createOutline(
@@ -396,14 +386,8 @@ fun ShadowImageWithCache(
                     drawContent()
                     drawOutline(
                         outline = outline,
-                        color = Color.Gray.copy(alpha = 0.1f),
+                        color = Color.Gray.copy(alpha = 0.2f),
                         style = Stroke(width = 12f)
-                    )
-                    drawOutline(
-                        outline = outline,
-                        color = Color.Gray.copy(alpha = 0.5f),
-                        style = Stroke(width = 12f),
-                        blendMode = BlendMode.Overlay
                     )
                 }
             }

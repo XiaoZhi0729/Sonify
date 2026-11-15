@@ -1,7 +1,10 @@
 package com.kyant.backdrop.backdrops
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -27,18 +30,22 @@ import kotlin.math.roundToInt
 fun Modifier.layerBackdrop(
     backdrop: LayerBackdrop,
     recordKey: Any? = null,
-    mustRecord: (() -> Boolean)? = null
+    mustRecord: (() -> Boolean)? = null,
+    enabled: (() -> Boolean)? = null,
+    clipRect: (DrawScope.() -> Rect?)? = null
 ): Modifier =
-    this then LayerBackdropElement(backdrop, recordKey, mustRecord)
+    this then LayerBackdropElement(backdrop, recordKey, mustRecord, enabled, clipRect)
 
 private class LayerBackdropElement(
     val backdrop: LayerBackdrop,
     val recordKey: Any? = null,
-    val mustRecord: (() -> Boolean)? = null
+    val mustRecord: (() -> Boolean)? = null,
+    val enabled: (() -> Boolean)? = null,
+    val clipRect: (DrawScope.() -> Rect?)? = null
 ) : ModifierNodeElement<LayerBackdropNode>() {
 
     override fun create(): LayerBackdropNode {
-        return LayerBackdropNode(backdrop, recordKey, mustRecord)
+        return LayerBackdropNode(backdrop, recordKey, mustRecord, enabled, clipRect)
     }
 
     override fun update(node: LayerBackdropNode) {
@@ -48,6 +55,8 @@ private class LayerBackdropElement(
         }
         node.recordKey = recordKey
         node.mustRecord = mustRecord
+        node.enabled = enabled
+        node.clipRect = clipRect
         node.markNeedsRecord()
         node.invalidateDraw()
     }
@@ -63,8 +72,10 @@ private class LayerBackdropElement(
 
         if (backdrop != other.backdrop) return false
         if (recordKey != other.recordKey) return false
-        // mustRecord 按引用比较：remember 出来的稳定 lambda 才能让 equals 为 true
+        // mustRecord / enabled / clipRect 按引用比较：remember 出来的稳定 lambda 才能让 equals 为 true
         if (mustRecord !== other.mustRecord) return false
+        if (enabled !== other.enabled) return false
+        if (clipRect !== other.clipRect) return false
 
         return true
     }
@@ -73,14 +84,20 @@ private class LayerBackdropElement(
         var result = backdrop.hashCode()
         result = 31 * result + (recordKey?.hashCode() ?: 0)
         result = 31 * result + (mustRecord?.hashCode() ?: 0)
+        result = 31 * result + (enabled?.hashCode() ?: 0)
+        result = 31 * result + (clipRect?.hashCode() ?: 0)
         return result
     }
 }
 
+private var activeParentRecordDepth = 0
+
 private class LayerBackdropNode(
     var backdrop: LayerBackdrop,
     var recordKey: Any? = null,
-    var mustRecord: (() -> Boolean)? = null
+    var mustRecord: (() -> Boolean)? = null,
+    var enabled: (() -> Boolean)? = null,
+    var clipRect: (DrawScope.() -> Rect?)? = null
 ) : DrawModifierNode, GlobalPositionAwareModifierNode, Modifier.Node() {
 
     private var needsRecord = true
@@ -90,33 +107,60 @@ private class LayerBackdropNode(
     fun markNeedsRecord() { needsRecord = true }
 
     override fun ContentDrawScope.draw() {
+        if (enabled?.invoke() == false) {
+            if (backdrop.contentOnlyCapture) {
+                backdrop.onDraw(this@draw)
+            } else {
+                drawContent()
+            }
+            return
+        }
+        if (activeParentRecordDepth > 0) {
+            if (backdrop.contentOnlyCapture) {
+                backdrop.onDraw(this@draw)
+            } else {
+                drawContent()
+            }
+            return
+        }
         val w = size.width.roundToInt()
         val h = size.height.roundToInt()
-        // recordKey == null：内容可能每帧变化（滚动中的课表/顶栏），必须每帧重录。
-        // 之前误写成只在 needsRecord/尺寸变化时录，与文档「null = 每帧录制」不一致，
-        // 会导致采样层停在旧帧，和当帧内容对不齐，慢滑时看起来发闪。
-        // mustRecord：recordKey 非空但滚动/动画仍在改像素时强制重录（draw 阶段读，不触发组合）。
         val force = mustRecord?.invoke() == true
         val shouldRecord = recordKey == null || force || needsRecord || recordedW != w || recordedH != h
+        val clip = if (shouldRecord) clipRect?.invoke(this@draw) else null
         if (shouldRecord) {
             needsRecord = false
             recordedW = w
             recordedH = h
-            // 先录进图层。contentOnly 时上屏直接 blit 该图层，内容树只走一遍；
-            // 否则 onDraw 可能多画背景，上屏仍 drawContent()（内容会走两遍，但保证像素一致）。
-            // 拆除期节点可能已 detach，recordLayer 会返回 false，此时退回直绘内容。
-            val recorded = recordLayer(this@LayerBackdropNode, backdrop.graphicsLayer) {
-                backdrop.onDraw(this@draw)
+            activeParentRecordDepth++
+            val recorded = try {
+                recordLayer(this@LayerBackdropNode, backdrop.graphicsLayer) {
+                    if (clip != null) {
+                        clipRect(clip.left, clip.top, clip.right, clip.bottom) {
+                            this@draw.clipRect(clip.left, clip.top, clip.right, clip.bottom) {
+                                backdrop.onDraw(this@draw)
+                            }
+                        }
+                    } else {
+                        backdrop.onDraw(this@draw)
+                    }
+                }
+            } finally {
+                activeParentRecordDepth--
             }
             if (recorded) {
                 backdrop.contentVersion++
-                if (backdrop.contentOnlyCapture) {
+                if (backdrop.contentOnlyCapture && clip == null) {
                     drawLayer(backdrop.graphicsLayer)
                     return
                 }
             }
         }
-        drawContent()
+        if (backdrop.contentOnlyCapture) {
+            backdrop.onDraw(this@draw)
+        } else {
+            drawContent()
+        }
     }
 
     override fun onGloballyPositioned(coordinates: LayoutCoordinates) {

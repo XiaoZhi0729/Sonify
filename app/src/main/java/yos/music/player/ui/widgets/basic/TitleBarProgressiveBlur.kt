@@ -31,21 +31,20 @@ import com.kyant.backdrop.internal.RuntimeShaderEffect
  *
  * API < 33 降级为单一半径模糊（与旧实现一致，无渐进）。
  */
-private val MaxBlurRadius = 12.dp
+private val MaxBlurRadius = 14.dp
 
 /**
  * 模糊层向顶栏**下方**多画的高度：布局高度不变，只把采样/绘制延伸出去。
  * 渐进衰减与淡出尾巴因此能延伸到顶栏下方，观感上是一条更长的过渡，
  * 而不是在顶栏底边处戛然而止。
  */
-private val BlurTail = 40.dp
+private val BlurTail = 24.dp
 
 /**
  * 淡出总长度（相对模糊层底部向上量）。它必须 ≤ 模糊层高度，
  * 且**恰好在层底降到 0**，否则层底边界处会留下一条硬边。
- * 与 [BlurTail] 的差值即"淡出从顶栏底边往上多早开始"（当前 12dp）。
  */
-private val FadeLength = 52.dp
+private val FadeLength = 42.dp
 
 /**
  * 页面底色渐变在**顶栏最顶端**的不透明度（底端恒为 0，按模糊能量 u² 平滑递增到这里）。
@@ -81,37 +80,28 @@ fun titleBarProgressiveBlur(
         remember(tintColor) {
             {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // 取整数值：backdrop 1.0.5 用 padding.toInt() 开缓冲，而录制端按 float
-                    // 平移，非整数 padding 会产生 ≤1px 的采样错位（模糊边缘一圈偏色）。
+                    val scale = this.downsampleScale
                     val maxRadiusPx = MaxBlurRadius.roundToPx().toFloat()
                     // 缓冲向外扩一圈，边缘采样可摸到框外真实内容
                     padding = maxRadiusPx
-                    val pad = padding
-                    val contentW = size.width
-                    val contentH = size.height
+                    val pad = padding * scale
+                    val contentW = size.width * scale
+                    val contentH = size.height * scale
                     val bufferW = contentW + 2f * pad
                     val bufferH = contentH + 2f * pad
                     // 淡出终点固定在层底（否则层底出现硬边），起点由 FadeLength 决定
-                    val fadeStart = (contentH - FadeLength.toPx()).coerceAtLeast(0f)
+                    val fadeStart = ((size.height - FadeLength.toPx()) * scale).coerceAtLeast(0f)
 
                     val blurShader =
                         obtainRuntimeShader("ProgressiveBlur", PROGRESSIVE_BLUR_SHADER)
                     blurShader.setFloatUniform("contentOrigin", pad, pad)
                     blurShader.setFloatUniform("contentSize", contentW, contentH)
                     blurShader.setFloatUniform("bufferSize", bufferW, bufferH)
-                    blurShader.setFloatUniform("maxRadius", maxRadiusPx)
+                    blurShader.setFloatUniform("maxRadius", maxRadiusPx * scale)
                     blurShader.setFloatUniform("fadeStart", fadeStart)
                     blurShader.setColorUniform("tint", tintColor)
                     blurShader.setFloatUniform("tintMax", TINT_MAX_ALPHA)
                     effect(RuntimeShaderEffect(blurShader, "content"))
-
-                    val denoiseShader =
-                        obtainRuntimeShader("ProgressiveDenoise", PROGRESSIVE_DENOISE_SHADER)
-                    denoiseShader.setFloatUniform("contentOrigin", pad, pad)
-                    denoiseShader.setFloatUniform("contentSize", contentW, contentH)
-                    denoiseShader.setFloatUniform("bufferSize", bufferW, bufferH)
-                    denoiseShader.setFloatUniform("maxRadius", maxRadiusPx)
-                    effect(RuntimeShaderEffect(denoiseShader, "content"))
                 } else {
                     // 无 AGSL：保持旧观感（恒定半径），不扩边
                     blur(4.dp.toPx())
@@ -163,36 +153,63 @@ uniform float tintMax;
 
 $SOFTER_STEP
 
-float hash12(float2 p) {
-    float3 p3 = fract(float3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+float ign(float2 p) {
+    return fract(52.9829189 * fract(dot(p, float2(0.06711056, 0.00583715))));
 }
 
 half4 progressiveBlur(float2 coord, float radius) {
     if (radius < 0.5) {
         return content.eval(coord);
     }
-    float h = hash12(coord);
-    float2 dir = float2(cos(h * 6.2831853), sin(h * 6.2831853));
-    float2 g = float2(cos(2.39996323), sin(2.39996323));
+    float ang = ign(coord) * 6.2831853;
+    float ca = cos(ang);
+    float sa = sin(ang);
+    float2 u = float2(ca, sa) * radius;
+    float2 v = float2(-sa, ca) * radius;
+    float2 maxCoord = max(bufferSize - 1.0, float2(0.0));
     half4 sum = half4(0.0);
     float wsum = 0.0;
-    for (int i = 0; i < 32; i++) {
-        float fi = float(i);
-        float ff = (fi + 0.5) / 32.0;
-        float r = radius * sqrt(ff);
-        r *= 0.90 + 0.20 * fract(h * 93.9898 + fi * 0.7548776662);
-        float2 o = dir * r;
-        float w = exp(-ff / 0.85);
-        float2 sc = clamp(coord + o, float2(0.0), max(bufferSize - 1.0, float2(0.0)));
-        half4 c = content.eval(sc);
-        if (c.a > 0.02) {
-            sum += c * w;
-            wsum += w;
-        }
-        dir = float2(dir.x * g.x - dir.y * g.y, dir.x * g.y + dir.y * g.x);
-    }
+    half4 c;
+    c = content.eval(coord);
+    if (c.a > 0.02) { sum += c * 0.07571; wsum += 0.07571; }
+    c = content.eval(clamp(coord + u * -0.20194 + v * 0.18499, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.07077; wsum += 0.07077; }
+    c = content.eval(clamp(coord + u * 0.03091 + v * -0.35220, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.06765; wsum += 0.06765; }
+    c = content.eval(clamp(coord + u * 0.25453 + v * 0.33199, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.06468; wsum += 0.06468; }
+    c = content.eval(clamp(coord + u * -0.46709 + v * -0.08262, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.06183; wsum += 0.06183; }
+    c = content.eval(clamp(coord + u * 0.44247 + v * -0.28146, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.05911; wsum += 0.05911; }
+    c = content.eval(clamp(coord + u * -0.14800 + v * 0.55054, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.05651; wsum += 0.05651; }
+    c = content.eval(clamp(coord + u * -0.28225 + v * -0.54345, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.05402; wsum += 0.05402; }
+    c = content.eval(clamp(coord + u * 0.61236 + v * 0.22363, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.05165; wsum += 0.05165; }
+    c = content.eval(clamp(coord + u * -0.63706 + v * 0.26297, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.04937; wsum += 0.04937; }
+    c = content.eval(clamp(coord + u * 0.30711 + v * -0.65627, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.04720; wsum += 0.04720; }
+    c = content.eval(clamp(coord + u * 0.22694 + v * 0.72353, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.04512; wsum += 0.04512; }
+    c = content.eval(clamp(coord + u * -0.68401 + v * -0.39640, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.04314; wsum += 0.04314; }
+    c = content.eval(clamp(coord + u * 0.80242 + v * -0.17641, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.04124; wsum += 0.04124; }
+    c = content.eval(clamp(coord + u * -0.48971 + v * 0.69656, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03942; wsum += 0.03942; }
+    c = content.eval(clamp(coord + u * -0.11313 + v * -0.87304, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03769; wsum += 0.03769; }
+    c = content.eval(clamp(coord + u * 0.69453 + v * 0.58535, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03603; wsum += 0.03603; }
+    c = content.eval(clamp(coord + u * -0.93462 + v * 0.03865, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03445; wsum += 0.03445; }
+    c = content.eval(clamp(coord + u * 0.68173 + v * -0.67841, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03293; wsum += 0.03293; }
+    c = content.eval(clamp(coord + u * -0.04561 + v * 0.98637, float2(0.0), maxCoord));
+    if (c.a > 0.02) { sum += c * 0.03148; wsum += 0.03148; }
     if (wsum < 0.0001) {
         return content.eval(coord);
     }

@@ -20,8 +20,9 @@ fun BackdropEffectScope.blur(
         }
     }
 
-    // 模糊作用在降采样缓冲上，半径需同步 ×scale，使视觉扩散范围保持一致。
-    val scaledRadius = radius * DOWNSAMPLE_SCALE
+    // 模糊作用在降采样缓冲上，半径需同步 × (DOWNSAMPLE_SCALE * downsampleScale)，
+    // 使 2x 放大上屏后的等效视觉扩散范围保持完全一致。
+    val scaledRadius = radius * DOWNSAMPLE_SCALE * this.downsampleScale
     renderEffect =
         BlurEffect(
             renderEffect,

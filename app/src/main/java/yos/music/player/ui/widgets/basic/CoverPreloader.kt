@@ -50,3 +50,17 @@ fun prefetchCover(context: Context, url: String?) {
     context.imageLoader.enqueue(request)
 }
 
+/** 预取列表行小缩略图（与 [ShadowImage] LOW 档 128px + Precision.INEXACT 一致）。 */
+fun prefetchCoverLow(context: Context, data: Any?) {
+    if (data == null || (data is String && data.isBlank())) return
+    val request = ImageRequest.Builder(context)
+        .data(data)
+        .memoryCacheKey(coverCacheKey(data, ImageQuality.LOW))
+        .diskCacheKey(data.toString())
+        .precision(Precision.INEXACT)
+        .size(128)
+        .allowHardware(true)
+        .build()
+    context.imageLoader.enqueue(request)
+}
+

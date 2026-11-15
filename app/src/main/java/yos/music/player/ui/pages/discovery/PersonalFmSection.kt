@@ -504,7 +504,8 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
     // ★只加 `clipToBounds()` 防止滑出的封面画到相邻板块上；
     //   不能用 `graphicsLayer { clip = true }` —— 那会多建一个离屏合成层，
     //   而玻璃采样要读这一层的内容，等于每帧多录一次。
-    BoxWithConstraints(
+    val maxWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    Box(
         Modifier
             .fillMaxWidth()
             .height(FmStageHeight)
@@ -558,6 +559,11 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
         val pageSizePx = with(density) { FmPageSize.toPx() }
         val fadeStartXPx = with(density) { (FmRailStart + FmGlassWidth).toPx() }
         val fadeEndXPx = with(density) { FmRailStart.toPx() }
+        var imageLoadTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        val fmRecordKey = Triple(focusedSong?.hash, smearBrush, imageLoadTick)
+        val fmMustRecord = remember(pagerState, spinningKey) {
+            { spinningKey != null || pagerState.isScrollInProgress }
+        }
 
         PersonalFmGlassStage(
             backdrop = stageBackdrop,
@@ -568,6 +574,8 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
             glassSurface = glassSurface,
             frostedSurface = frostedSurface,
             modifier = Modifier.fillMaxSize(),
+            recordKey = fmRecordKey,
+            mustRecord = fmMustRecord,
             // ★尺寸与内缩一律不在这里给：PersonalFmGlassStage 内部按
             //   FmGlassWidth / FmGlassHeight 唯一定义。这里再传 height 或
             //   padding(vertical) 就会扣两遍（历史 bug：玻璃短 16dp 且上偏 8dp）。
@@ -638,16 +646,17 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                         //   ★整段淡出被关在玻璃内部：1.0 在玻璃右缘，
                         //   0.0 在玻璃左缘——滑出玻璃之前就已经彻底消失，
                         //   不会在玻璃左边拖出一截半透明的残影。
-                        fadeAlpha = {
-                            fmCoverAlpha(
-                                page = page,
-                                pagerPosition = pagerPosition,
-                                pageSizePx = pageSizePx,
-                                fadeStartXPx = fadeStartXPx,
-                                fadeEndXPx = fadeEndXPx
-                            )
-                        }
-                    )
+                            fadeAlpha = {
+                                fmCoverAlpha(
+                                    page = page,
+                                    pagerPosition = pagerPosition,
+                                    pageSizePx = pageSizePx,
+                                    fadeStartXPx = fadeStartXPx,
+                                    fadeEndXPx = fadeEndXPx
+                                )
+                            },
+                            onImageReady = { imageLoadTick++ }
+                        )
                 }
             }
         ) {
@@ -676,7 +685,8 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
 private fun CircleCover(
     song: KugouNewSong,
     rotation: () -> Float,
-    fadeAlpha: () -> Float
+    fadeAlpha: () -> Float,
+    onImageReady: () -> Unit
 ) {
     val context = LocalContext.current
     val url = song.artworkUrl
@@ -704,6 +714,8 @@ private fun CircleCover(
             model = request,
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            onSuccess = { onImageReady() },
+            onError = { onImageReady() },
             modifier = Modifier
                 .size(FmCircleDiameter)
                 .clip(CircleShape)

@@ -208,7 +208,7 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                         this.shape = shape
                     }
                     .drawWithCache {
-                                                val outline = shape.createOutline(
+                        val outline = shape.createOutline(
                             Size(size.width, size.height),
                             LayoutDirection.Ltr,
                             density
@@ -217,14 +217,8 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                             drawContent()
                             drawOutline(
                                 outline = outline,
-                                color = Color.DarkGray.copy(alpha = 0.08f),
+                                color = Color.DarkGray.copy(alpha = 0.16f),
                                 style = Stroke(width = 8f)
-                            )
-                            drawOutline(
-                                outline = outline,
-                                color = Color.DarkGray.copy(alpha = 0.4f),
-                                style = Stroke(width = 8f),
-                                blendMode = BlendMode.Overlay
                             )
                         }
                     }
