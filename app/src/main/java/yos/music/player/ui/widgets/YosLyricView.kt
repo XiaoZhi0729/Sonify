@@ -119,6 +119,7 @@ import yos.music.player.code.utils.lrc.effectiveLyricFontScale
 import yos.music.player.code.utils.lrc.lyricListStateKey
 import yos.music.player.code.utils.lrc.lyricMainTextStyle
 import yos.music.player.code.utils.lrc.lyricRenderKey
+import yos.music.player.code.utils.lrc.scaledLyricTranslationFontSizeSp
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MainViewModelObject
@@ -485,7 +486,7 @@ fun YosLyricViewLib(
                     modifier = Modifier.fillMaxSize(),
                     normalLineTextStyle = style,
                     translationTextStyle = style.copy(
-                        fontSize = uiConfig.subTextSize.sp,
+                        fontSize = scaledLyricTranslationFontSizeSp(uiConfig.subTextSize, fontScaleSetting).sp,
                         fontWeight = FontWeight.Normal,
                     ),
                     accompanimentLineTextStyle = style.copy(fontSize = 22.sp),

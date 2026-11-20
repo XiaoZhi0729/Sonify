@@ -41,6 +41,20 @@ object SettingsLibrary {
     )
 
     /**
+     * 播放页自动隐藏状态栏：播放页展开期间隐藏系统状态栏，背景/封面铺满到屏幕顶端。
+     *
+     * **布局位置不变**——隐藏期间顶部 inset 由 RawWindowInsets 钉在隐藏前的实测值上
+     * （见 code/systemui/AutoHideStatusBar.kt）。默认关闭：这是明显的界面风格改变，
+     * 与「背景动态效果」「封面取色背景」同惯例，由用户主动选择。
+     */
+    @Stable
+    var NowPlayingAutoHideStatusBar by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_nowplaying_auto_hide_status_bar",
+        initialValue = false
+    )
+
+    /**
      * 应用主题
      */
     @Stable
@@ -912,6 +926,7 @@ object SettingsLibrary {
         NowplayingBackgroundLandscapePreset = 3
         NowplayingBackgroundRandomPreset = false
         NowPlayingShowClimaxMark = true
+        NowPlayingAutoHideStatusBar = false
         TrackBackdropGradient = false
         NowplayingStaticFullScreenAlbum = false
         NowPlayingDynamicCover = true

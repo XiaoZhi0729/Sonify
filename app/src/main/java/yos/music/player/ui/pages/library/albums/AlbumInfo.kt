@@ -203,7 +203,6 @@ fun AlbumInfo(
                         contentPadding = PaddingValues(
                             bottom = 18.dp,
                             top = 54.dp,
-                            end = if (showIndexBar) 18.dp else 0.dp,
                         )
                     ) {
                 item("AlbumInfo") {

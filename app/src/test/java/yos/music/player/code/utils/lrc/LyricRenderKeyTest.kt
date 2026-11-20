@@ -97,4 +97,14 @@ class LyricRenderKeyTest {
         assertNotEquals(base, lyricListStateKey("kugou-online-def", 899.4f))
         assertNotEquals(base, lyricListStateKey("kugou-online-abc", 400f))
     }
+
+    @Test
+    fun translationFontSizeScalesProportionallyFrom100Percent() {
+        assertEquals(18f, scaledLyricTranslationFontSizeSp(18, 1.0f), 0.001f)
+        assertEquals(14.4f, scaledLyricTranslationFontSizeSp(18, 0.8f), 0.001f)
+        assertEquals(21.6f, scaledLyricTranslationFontSizeSp(18, 1.2f), 0.001f)
+        // 越界比例应被夹紧在 0.8f..1.2f
+        assertEquals(14.4f, scaledLyricTranslationFontSizeSp(18, 0.5f), 0.001f)
+        assertEquals(21.6f, scaledLyricTranslationFontSizeSp(18, 1.5f), 0.001f)
+    }
 }

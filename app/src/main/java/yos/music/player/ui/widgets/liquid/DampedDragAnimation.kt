@@ -1,6 +1,8 @@
 package yos.music.player.ui.widgets.liquid
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationConstants
+import androidx.compose.animation.core.FloatSpringSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.MutatorMutex
 import androidx.compose.runtime.snapshotFlow
@@ -40,10 +42,12 @@ class DampedDragAnimation(
 
     private val valueAnimationSpec =
         spring(1f, 1000f, visibilityThreshold)
-    private val velocityAnimationSpec =
-        spring(0.5f, 300f, visibilityThreshold * 10f)
-    private val velocityZeroSpec =
-        spring(0.8f, 350f, minOf(visibilityThreshold * 2f, 0.01f))
+    private val valueFloatSpringSpec =
+        FloatSpringSpec(1f, 1000f, visibilityThreshold)
+    private val velocityFloatSpringSpec =
+        FloatSpringSpec(0.5f, 300f, visibilityThreshold * 10f)
+    private val velocityZeroFloatSpringSpec =
+        FloatSpringSpec(0.8f, 350f, minOf(visibilityThreshold * 2f, 0.01f))
     private val pressProgressAnimationSpec =
         spring(1f, 1000f, 0.001f)
     private val scaleXAnimationSpec =
@@ -72,10 +76,19 @@ class DampedDragAnimation(
     private var valueJob: Job? = null
     private var velocityJob: Job? = null
     private var velocityIdleResetJob: Job? = null
+    // 同步跟踪最新目标值：Animatable.targetValue 要等到 launch 的协程调度进入 animateTo/snapTo
+    // 才会更新；连续事件在同一帧内取消旧 valueJob 时若读异步值会丢失前面所有增量。
+    private var pendingTargetValue = initialValue
+    private var valueSpringActive = false
+    private var currentValueVelocity = 0f
+    private var pendingVelocityTarget = 0f
+    private var activeVelocitySpec = velocityFloatSpringSpec
+    private var velocitySpringActive = false
+    private var currentVelocityVelocity = 0f
 
     val value: Float get() = valueAnimation.value
     val progress: Float get() = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-    val targetValue: Float get() = valueAnimation.targetValue
+    val targetValue: Float get() = pendingTargetValue
     val pressProgress: Float get() = pressProgressAnimation.value
     val scaleX: Float get() = scaleXAnimation.value
     val scaleY: Float get() = scaleYAnimation.value
@@ -162,7 +175,7 @@ class DampedDragAnimation(
             if (value != targetValue) {
                 val threshold = (valueRange.endInclusive - valueRange.start) * 0.025f
                 snapshotFlow { valueAnimation.value }
-                    .filter { abs(it - valueAnimation.targetValue) < threshold }
+                    .filter { abs(it - pendingTargetValue) < threshold }
                     .first()
             }
             launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
@@ -173,12 +186,26 @@ class DampedDragAnimation(
     }
 
     fun updateValue(value: Float) {
-        val targetValue = value.coerceIn(valueRange)
+        val target = value.coerceIn(valueRange)
+        pendingTargetValue = target
+        if (valueSpringActive && valueJob?.isActive == true) {
+            return
+        }
         valueJob?.cancel()
+        valueSpringActive = true
         valueJob = animationScope.launch {
-            valueAnimation.animateTo(targetValue, valueAnimationSpec) { updateVelocity() }
-            if (!isHeld) {
+            try {
+                runContinuousSpring(
+                    animatable = valueAnimation,
+                    getTarget = { pendingTargetValue },
+                    getSpec = { valueFloatSpringSpec },
+                    getCurrentVelocity = { currentValueVelocity },
+                    setCurrentVelocity = { currentValueVelocity = it },
+                    onStep = { updateVelocity() },
+                )
                 resetVelocity()
+            } finally {
+                valueSpringActive = false
             }
         }
     }
@@ -187,10 +214,13 @@ class DampedDragAnimation(
     fun dragTo(value: Float) {
         releaseJob?.cancel()
         releaseJob = null
-        val targetValue = value.coerceIn(valueRange)
+        val target = value.coerceIn(valueRange)
+        pendingTargetValue = target
+        valueSpringActive = false
+        currentValueVelocity = 0f
         valueJob?.cancel()
         valueJob = animationScope.launch {
-            valueAnimation.snapTo(targetValue)
+            valueAnimation.snapTo(target)
             updateVelocity()
         }
         velocityIdleResetJob?.cancel()
@@ -201,12 +231,15 @@ class DampedDragAnimation(
     }
 
     fun animateToValue(value: Float) {
+        val target = value.coerceIn(valueRange)
+        pendingTargetValue = target
+        valueSpringActive = false
+        currentValueVelocity = 0f
         valueJob?.cancel()
         valueJob = animationScope.launch {
             mutatorMutex.mutate {
                 press()
-                val targetValue = value.coerceIn(valueRange)
-                launch { valueAnimation.animateTo(targetValue, valueAnimationSpec) }
+                launch { valueAnimation.animateTo(target, valueAnimationSpec) }
                 resetVelocity()
                 release()
             }
@@ -219,22 +252,113 @@ class DampedDragAnimation(
             Offset(value, 0f)
         )
         val targetVelocity = velocityTracker.calculateVelocity().x / (valueRange.endInclusive - valueRange.start)
-        velocityJob?.cancel()
-        velocityJob = animationScope.launch {
-            velocityAnimation.animateTo(targetVelocity, velocityAnimationSpec)
-        }
+        animateVelocityTo(targetVelocity, velocityFloatSpringSpec)
     }
 
     private fun resetVelocity() {
         velocityTracker.resetTracking()
         velocityIdleResetJob?.cancel()
         velocityIdleResetJob = null
+        if (!velocitySpringActive && velocityAnimation.value == 0f && pendingVelocityTarget == 0f) {
+            return
+        }
+        animateVelocityTo(0f, velocityZeroFloatSpringSpec)
+    }
+
+    private fun animateVelocityTo(target: Float, spec: FloatSpringSpec) {
+        pendingVelocityTarget = target
+        activeVelocitySpec = spec
+        if (velocitySpringActive && velocityJob?.isActive == true) {
+            return
+        }
         velocityJob?.cancel()
+        velocitySpringActive = true
         velocityJob = animationScope.launch {
-            if (velocityAnimation.value != 0f || velocityAnimation.targetValue != 0f) {
-                velocityAnimation.animateTo(0f, velocityZeroSpec)
+            try {
+                runContinuousSpring(
+                    animatable = velocityAnimation,
+                    getTarget = { pendingVelocityTarget },
+                    getSpec = { activeVelocitySpec },
+                    getCurrentVelocity = { currentVelocityVelocity },
+                    setCurrentVelocity = { currentVelocityVelocity = it },
+                )
+            } finally {
+                velocitySpringActive = false
             }
-            velocityAnimation.snapTo(0f)
+        }
+    }
+
+    private data class SpringStepResult(
+        val value: Float,
+        val finished: Boolean,
+        val target: Float,
+        val spec: FloatSpringSpec,
+    )
+
+    private suspend fun runContinuousSpring(
+        animatable: Animatable<Float, *>,
+        getTarget: () -> Float,
+        getSpec: () -> FloatSpringSpec,
+        getCurrentVelocity: () -> Float,
+        setCurrentVelocity: (Float) -> Unit,
+        onStep: () -> Unit = {},
+    ) {
+        var segmentStartTimeNanos = AnimationConstants.UnspecifiedTime
+        var lastFrameNanos = AnimationConstants.UnspecifiedTime
+        var segmentStartValue = animatable.value
+        var segmentStartVelocity = getCurrentVelocity()
+        var segmentTarget = getTarget()
+        var segmentSpec = getSpec()
+        var segmentDurationNanos = segmentSpec.getDurationNanos(
+            segmentStartValue, segmentTarget, segmentStartVelocity
+        )
+
+        while (true) {
+            val step = withFrameNanos { frameTimeNanos ->
+                val latestTarget = getTarget()
+                val latestSpec = getSpec()
+                if (segmentStartTimeNanos == AnimationConstants.UnspecifiedTime) {
+                    segmentStartTimeNanos = frameTimeNanos
+                    segmentTarget = latestTarget
+                    segmentSpec = latestSpec
+                    segmentStartValue = animatable.value
+                    segmentStartVelocity = getCurrentVelocity()
+                    segmentDurationNanos = segmentSpec.getDurationNanos(
+                        segmentStartValue, segmentTarget, segmentStartVelocity
+                    )
+                } else if (segmentTarget != latestTarget || segmentSpec !== latestSpec) {
+                    segmentStartValue = animatable.value
+                    segmentStartVelocity = getCurrentVelocity()
+                    segmentTarget = latestTarget
+                    segmentSpec = latestSpec
+                    segmentStartTimeNanos = lastFrameNanos
+                    segmentDurationNanos = segmentSpec.getDurationNanos(
+                        segmentStartValue, segmentTarget, segmentStartVelocity
+                    )
+                }
+                lastFrameNanos = frameTimeNanos
+                val playTimeNanos = (frameTimeNanos - segmentStartTimeNanos).coerceAtLeast(0L)
+                val isFinished = playTimeNanos >= segmentDurationNanos
+                val nextValue = if (isFinished) {
+                    setCurrentVelocity(0f)
+                    segmentTarget
+                } else {
+                    setCurrentVelocity(
+                        segmentSpec.getVelocityFromNanos(
+                            playTimeNanos, segmentStartValue, segmentTarget, segmentStartVelocity
+                        )
+                    )
+                    segmentSpec.getValueFromNanos(
+                        playTimeNanos, segmentStartValue, segmentTarget, segmentStartVelocity
+                    )
+                }
+                SpringStepResult(nextValue, isFinished, segmentTarget, segmentSpec)
+            }
+            animatable.snapTo(step.value)
+            onStep()
+            if (step.finished && step.target == getTarget() && step.spec === getSpec()) {
+                break
+            }
         }
     }
 }

@@ -1,9 +1,11 @@
 package yos.music.player.ui.pages.settings.audio.exoPlayer
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -29,6 +31,7 @@ fun ExoPlayerSettings(navController: NavController) =
             titleHorizontalPadding = 34.5.dp,
             content = {
                 item("settings") {
+                    val context = LocalContext.current
                     Column(Modifier.fillMaxSize()) {
                         // 三项都是"音频输出怎么走"，一张卡三行。
                         // 页头副标题已经写了「部分设置需彻底重启应用生效」，卡后不再重复。
@@ -55,7 +58,14 @@ fun ExoPlayerSettings(navController: NavController) =
                                 ),
                                 value = { SettingsLibrary.Codec },
                                 onValueChange = {
-                                    SettingsLibrary.Codec = it
+                                    if (it != SettingsLibrary.Codec) {
+                                        SettingsLibrary.Codec = it
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.settings_audio_exoplayer_decode_codec_restart_toast),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 }
                             )
 

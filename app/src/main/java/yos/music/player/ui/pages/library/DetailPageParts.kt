@@ -289,7 +289,7 @@ fun DetailSongRowWide(
             .height(64.dp)
             .fillMaxWidth()
             .clickable(onClick = itemClick)
-            .padding(horizontal = 22.dp),
+            .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 左半：封面 + 歌名
@@ -450,7 +450,7 @@ fun AlbumTrackRowWide(
             .height(64.dp)
             .fillMaxWidth()
             .clickable(onClick = itemClick)
-            .padding(horizontal = 22.dp),
+            .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 左半：序号 + 歌名

@@ -11,6 +11,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.util.fastFirstOrNull
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 suspend fun PointerInputScope.inspectDragGestures(
@@ -47,24 +48,42 @@ suspend fun PointerInputScope.inspectDragGestures(
  * 父级 LazyColumn/LazyVerticalGrid 不再跟着滚页面。未越过 touchSlop 即抬起仍视为
  * 点按（走 [onEnd]，由调用方按"未拖动"处理）；被其它手势先消费时走 [onCancel]，
  * 调用方应回弹而不提交。
+ *
+ * 当提供 [onLongPress] 时，在越过 touchSlop 前按住超过系统长按阈值会触发一次
+ * [onLongPress]，且不中断当前手势——用户不抬手继续滑动仍会接续触发 [onDrag]。
  */
 suspend fun PointerInputScope.claimDragGestures(
     onStart: (down: PointerInputChange) -> Unit,
     onEnd: () -> Unit,
     onCancel: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
     onDrag: (dragAmount: Offset) -> Unit
 ) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         onStart(down)
 
-        var pointer = down.id
+        val pointer = down.id
         var total = Offset.Zero
         var claimed = false
         var finished = false
         var cancelled = false
+        val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+        var budget = longPressTimeout
+        var lastUptime = down.uptimeMillis
+        var longPressed = false
         while (true) {
-            val event = awaitPointerEvent()
+            val event = if (onLongPress == null || claimed || longPressed) {
+                awaitPointerEvent()
+            } else {
+                withTimeoutOrNull(budget) { awaitPointerEvent() }
+            }
+            if (event == null) {
+                longPressed = true
+                total = Offset.Zero
+                onLongPress?.invoke()
+                continue
+            }
             val change = event.changes.fastFirstOrNull { it.id == pointer }
             if (change == null) {
                 cancelled = true
@@ -81,9 +100,26 @@ suspend fun PointerInputScope.claimDragGestures(
             val delta = change.positionChange()
             total += delta
             if (!claimed) {
+                if (onLongPress != null && !longPressed) {
+                    val elapsed = change.uptimeMillis - lastUptime
+                    if (elapsed > 0L) {
+                        budget -= elapsed
+                        lastUptime = change.uptimeMillis
+                    }
+                    if (budget <= 0L) {
+                        longPressed = true
+                        total = Offset.Zero
+                        onLongPress.invoke()
+                        change.consume()
+                        continue
+                    }
+                }
                 // touchSlop 前不认领也不上报：既是点按判定窗口，也避免拇指在滑动手势
                 // 起点微抖；越过即独占，方向不论（纵向滑动同样不该滚页面）。
-                if (total.getDistance() <= viewConfiguration.touchSlop) continue
+                if (total.getDistance() <= viewConfiguration.touchSlop) {
+                    if (longPressed) change.consume()
+                    continue
+                }
                 claimed = true
             }
             change.consume()

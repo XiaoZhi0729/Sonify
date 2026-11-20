@@ -65,6 +65,9 @@
 # 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }
 
+# 底栏自定义布局：Gson 反序列化 Array<BottomBarTabConfig>，需保留字段（含 Signature）
+-keep class yos.music.player.data.libraries.BottomBarTabConfig { <fields>; }
+
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** e(...);

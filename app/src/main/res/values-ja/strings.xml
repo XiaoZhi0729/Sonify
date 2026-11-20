@@ -201,7 +201,8 @@
     <string name="settings_performance">外観</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">ハードウェアレベルの音声速度調整</string>
     <string name="settings_audio_exoplayer_decode_codec">音声デコーダ</string>
-    <string name="settings_audio_exoplayer_decode_codec_desc">Auto はデバイスのデコーダを優先し、非対応時は FFmpeg にフォールバックします。FFmpeg はソフトウェアデコードを強制（異音の切り分け用）、System はデバイスのデコーダのみを使用します。</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto は通常形式にデバイスのデコーダを優先し、FLAC はフリーズ回避のため FFmpeg ソフトウェアデコードを使用します。FFmpeg はすべてソフトウェアデコード、System はデバイスのデコーダのみを使用します。変更後はアプリを完全に再起動すると反映されます。</string>
+    <string name="settings_audio_exoplayer_decode_codec_restart_toast">デコーダを変更しました。アプリを完全に再起動すると反映されます</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">音声フォーカス</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">有効にすると、他のアプリと同時に再生しません。</string>
     <string name="tip_intent_resolve_failed">該当する操作を実行できるアプリが見つかりませんでした。</string>
@@ -356,6 +357,7 @@
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">進行バー上にサビの開始位置を表示します（オンライン曲）。</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover">ダイナミックカバー</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">モバイルデータ通信で読み込む</string>
+    <string name="settings_performance_ui_nowplaying_auto_hide_status_bar">プレイヤーでステータスバーを隠す</string>
     <string name="settings_performance_ui_theme">テーマ</string>
     <string name="settings_performance_ui_theme_light">ライト</string>
     <string name="settings_performance_ui_theme_dark">ダーク</string>
@@ -690,4 +692,19 @@
     <string name="widget_cd_album_art">アルバムアートワーク</string>
     <string name="widget_no_track_title">Sonify</string>
     <string name="widget_no_track_artist">タップして Sonify を開く</string>
+
+    <!-- ボトムバーのカスタマイズ -->
+    <string name="settings_performance_ui_bottom_bar_header">ボトムバー</string>
+    <string name="settings_performance_ui_bottom_bar_title">ボトムバーのカスタマイズ</string>
+    <string name="settings_performance_ui_bottom_bar_desc">タブの並び替え、表示設定、起動時の初期ページを設定</string>
+    <string name="bottom_bar_setting_preview_label">プレビュー</string>
+    <string name="bottom_bar_setting_visible_header">表示中のタブ</string>
+    <string name="bottom_bar_setting_hidden_header">非表示</string>
+    <string name="bottom_bar_setting_hint">ドラッグで並び替えや表示切替ができます（最低2つのタブが必要です）</string>
+    <string name="bottom_bar_setting_launch_header">起動時のページ</string>
+    <string name="bottom_bar_setting_launch_first">ボトムバーの最初のタブ</string>
+    <string name="bottom_bar_setting_launch_first_desc">現在：%1$s</string>
+    <string name="bottom_bar_setting_reset">初期設定に戻す</string>
+    <string name="bottom_bar_setting_hide_tab">%1$s を非表示</string>
+    <string name="bottom_bar_setting_show_tab">%1$s を表示</string>
 </resources>

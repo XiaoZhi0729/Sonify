@@ -56,23 +56,44 @@
 | [MD3 Music](https://github.com/zzyoxml/md3Music) | 基于 Material Design 3 的本地音乐播放器，本项目在线播放能力的上游 |
 | [Flamingo (FlamingoSank)](https://github.com/Yos-X/FlamingoSank) | 本项目的上游基底 |
 
+部分界面与效果是从下列项目**逐行移植**或改写的，在此向原作者致谢：
+
+| 项目 | 说明 | 许可 |
+|---|---|---|
+| [Cresto / Glasense](https://github.com/nevodev) | 居中玻璃弹窗、材质与动效的设计及实现来源 | Apache-2.0 |
+| [Pear Wall](https://github.com/Nevodev/Pear-Wall) | 流体网格播放背景（网格形变、多重模糊、镜头预设）。修改说明见 `assets/licenses/pear-wall-NOTICE.txt` | Apache-2.0 |
+| [Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds) | Pear Wall 的网格控制点预设与观感上游 | Apache-2.0 |
+| [NexioSchedule](https://github.com/HaoZai000/NexioSchedule) | 顶栏玻璃圆钮、液态玻璃下拉弹层、渐进模糊顶栏 | AGPL-3.0 |
+| [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) | 液态玻璃滑块、自适应亮度采样 | Apache-2.0 |
+| [ComposeOverscroll](https://github.com/Cormor/ComposeOverscroll) | 列表越界回弹（`overscroll_core` 模块） | GPL-3.0 |
+| [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) | 玻璃对话框的配色取值。见 `assets/licenses/cresto-THIRD_PARTY_NOTICES.md` | MIT |
+
 同时感谢以下开源库：
 
 [Jetpack Compose](https://developer.android.com/jetpack/compose) ·
 [Media3 / ExoPlayer](https://github.com/androidx/media3) ·
+[Media3 FFmpeg 扩展](https://github.com/androidx/media/tree/release/libraries/decoder_ffmpeg)（音频软解） ·
 [Coil](https://github.com/coil-kt/coil) ·
 [Accompanist](https://github.com/google/accompanist) ·
+[Accompanist Lyrics](https://github.com/6xingyv/accompanist-lyrics-ui)（歌词渲染，本项目打补丁修改，见 `docs/LYRIC_LIB_VALIDATION.md`） ·
 [Backdrop](https://github.com/Kyant0/backdrop)（液态玻璃背景模糊） ·
 [Haze](https://github.com/chrisbanes/haze)（模糊玻璃材质） ·
+[Shapes](https://github.com/Kyant0/Shapes)（连续曲率圆角） ·
 [Cupertino](https://github.com/alexzhirkevich/cupertino) ·
 [ComposeDataSaver](https://github.com/FunnySaltyFish/ComposeDataSaver) ·
+[ConfettiKit](https://github.com/vinceglb/ConfettiKit) ·
 [AndroidUtilCode](https://github.com/Blankj/AndroidUtilCode) ·
+[AndroidX Palette](https://developer.android.com/jetpack/androidx/releases/palette) ·
+[Material Color Utilities](https://github.com/evant/material-color-utilities) ·
 [MMKV](https://github.com/Tencent/MMKV) ·
 [OkHttp](https://github.com/square/okhttp) ·
 [Gson](https://github.com/google/gson) ·
 [TinyPinyin](https://github.com/promeG/TinyPinyin) ·
+[TensorFlow Lite](https://github.com/tensorflow/tensorflow)（人声分离推理） ·
 [TagLib](https://github.com/Kyant0/taglib) ·
-[Lyric Getter API](https://github.com/xiaowine/Lyric-Getter-Api)
+[libPhonograph](https://github.com/FoedusProgramme/libPhonograph)（本地音乐库扫描） ·
+[Lyric Getter API](https://github.com/xiaowine/Lyric-Getter-Api) ·
+[mochi-compose](https://github.com/feice11/mochi-compose)（HDR 高光）
 
 ## 构建与测试
 

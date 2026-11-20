@@ -201,7 +201,8 @@
     <string name="settings_performance">外觀</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">硬體級音頻速度調整</string>
     <string name="settings_audio_exoplayer_decode_codec">音頻解碼器</string>
-    <string name="settings_audio_exoplayer_decode_codec_desc">Auto 優先使用裝置解碼，裝置不支援時回退到 FFmpeg；FFmpeg 強制軟體解碼（排查雜音時可試）；System 只使用裝置解碼。</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto 對一般格式優先裝置解碼，FLAC 無損自動改用 FFmpeg 軟解以避免卡死；FFmpeg 全部強制軟解；System 僅用裝置解碼。切換後需徹底重啟應用生效。</string>
+    <string name="settings_audio_exoplayer_decode_codec_restart_toast">解碼器已切換，徹底重啟應用後生效</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">音頻焦點</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">開啟後不會和其它應用一同播放。</string>
     <string name="tip_intent_resolve_failed">未找到可以執行該操作的應用。</string>
@@ -356,6 +357,7 @@
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">在進度條上標出高潮開始的位置（線上歌曲）。</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover">專輯動態封面</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">允許行動網路下載入動態封面</string>
+    <string name="settings_performance_ui_nowplaying_auto_hide_status_bar">播放頁隱藏狀態列</string>
     <string name="settings_performance_ui_theme">主題</string>
     <string name="settings_performance_ui_theme_light">淺色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -713,4 +715,19 @@
     <string name="settings_performance_lyric_font_size_reset_confirm_message">確定要將豎屏與橫屏的歌詞字體大小恢復為預設 100% 嗎？</string>
     <string name="settings_performance_lyric_font_size_reset_confirm">確定重設</string>
     <string name="settings_performance_lyric_font_size_reset_cancel">取消</string>
+
+    <!-- 自訂底欄 -->
+    <string name="settings_performance_ui_bottom_bar_header">底欄</string>
+    <string name="settings_performance_ui_bottom_bar_title">自訂底欄</string>
+    <string name="settings_performance_ui_bottom_bar_desc">調整標籤順序、顯示與冷啟動預設頁面</string>
+    <string name="bottom_bar_setting_preview_label">即時預覽</string>
+    <string name="bottom_bar_setting_visible_header">底欄顯示項目</string>
+    <string name="bottom_bar_setting_hidden_header">已隱藏</string>
+    <string name="bottom_bar_setting_hint">拖曳可調整順序或跨組隱藏/顯示，至少保留 2 個標籤</string>
+    <string name="bottom_bar_setting_launch_header">啟動預設頁</string>
+    <string name="bottom_bar_setting_launch_first">底欄第一項</string>
+    <string name="bottom_bar_setting_launch_first_desc">目前：%1$s</string>
+    <string name="bottom_bar_setting_reset">恢復預設設定</string>
+    <string name="bottom_bar_setting_hide_tab">隱藏%1$s</string>
+    <string name="bottom_bar_setting_show_tab">顯示%1$s</string>
 </resources>

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.tencent.mmkv.MMKV
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import yos.music.player.R
@@ -53,6 +54,7 @@ import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.navigation.rememberPageData
 import yos.music.player.ui.navigation.PlaylistSelection
+import yos.music.player.ui.navigation.preloadPlaylistBackdropColor
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
@@ -443,6 +445,14 @@ fun OnlinePlaylists(
             contentType = { _, _ -> "online_playlist_item" }
         ) { index, pl ->
             val playlistId = playlistKey(pl)
+            LaunchedEffect(playlistId, pl.coverUrl) {
+                preloadPlaylistBackdropColor(
+                    context = context,
+                    source = PlaylistSelection.Source.User.name,
+                    playlistId = playlistId,
+                    coverUrl = pl.coverUrl
+                )
+            }
             val isLocalPending = pl.listid.startsWith("local_")
             val pendingEntry = if (isLocalPending) journal.value.firstOrNull { it.localId == pl.listid } else null
             val coverKey = sharedPlaylistCoverKey(PlaylistSelection.Source.User, playlistId)
@@ -470,7 +480,17 @@ fun OnlinePlaylists(
                             // 挂起行（local_ id）也可进入详情页（挂起模式，加删歌暂存补发）
                             SharedCoverStyle.lastSourceCorner = 3.5.dp
                             scope.launch {
-                                preloadRawCover(context, pl.coverUrl)
+                                coroutineScope {
+                                    launch { preloadRawCover(context, pl.coverUrl) }
+                                    launch {
+                                        preloadPlaylistBackdropColor(
+                                            context = context,
+                                            source = PlaylistSelection.Source.User.name,
+                                            playlistId = playlistId,
+                                            coverUrl = pl.coverUrl
+                                        )
+                                    }
+                                }
                                 openOnlinePlaylist(
                                     PlaylistSelection(
                                         source = PlaylistSelection.Source.User,
@@ -488,7 +508,7 @@ fun OnlinePlaylists(
                         // 长按删除：系统歌单（is_def != 0）不响应
                         onLongClick = { if (pl.isCollectedPlaylist || (pl.isDef == 0 && pl.canEditTracks)) deleteTarget.value = pl }
                     )
-                    .padding(horizontal = 22.dp),
+                    .padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(coverModifier) {

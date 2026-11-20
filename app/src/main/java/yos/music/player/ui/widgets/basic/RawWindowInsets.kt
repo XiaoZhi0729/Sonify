@@ -7,7 +7,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -46,6 +48,94 @@ private fun View.readRawSystemBars(): androidx.core.graphics.Insets {
 }
 
 /**
+ * 状态栏顶 inset 的「钉住」状态（播放页自动隐藏状态栏用）。
+ *
+ * 为什么需要：系统隐藏状态栏后 `systemBars().top` 会归零，播放页 6 处
+ * `statusBarsPadding()` 与两处高度算式会同时塌掉，整页上跳一个状态栏高度。
+ * 而设计要求是**内容位置一个像素都不动、只有背景/封面铺满到顶端**，因此隐藏期间
+ * 顶部读数必须沿用隐藏前的实测值。
+ *
+ * 为什么记实测值而不是写死常量：状态栏高度随机型/DPI/刘海变化（本机 152px，
+ * 其它机型不同），写死常量在别的设备上必然错位。
+ *
+ * 为什么基线是「最近一次真实非零读数」而不是 pin 那一刻的读数：隐藏期间读到的
+ * 恒为 0，若在已隐藏态重新 pin（例如旋转后重建），当场读值会得到 0；
+ * 而旋转回竖屏时状态栏仍是隐藏的，再也没有机会量到真值。保留最近一次非零读数
+ * 才能覆盖"横屏↔竖屏来回转"的情形。
+ *
+ * 为什么按方向生效：横屏状态栏在**侧边**，顶 inset 合法为 0。若在横屏也套用竖屏
+ * 的基线，横屏播放页顶部会被凭空压掉一个状态栏高度。故 [apply] 只在竖屏生效。
+ *
+ * 只在布局监听/`post` 里写状态，不在组合期写（组合期写快照会触发反复重组）。
+ * 未钉住、方向不匹配或还没量到过基线时，[apply] 原样返回 —— 与历史行为完全一致。
+ */
+private object StatusBarTopPin {
+    /** 最近一次读到的非零顶 inset（px）。0 表示本进程还没量到过。 */
+    var baselinePx: Int by mutableIntStateOf(0)
+        private set
+
+    /** 是否处于「隐藏状态栏但布局按原值让位」的钉住态。 */
+    var pinned: Boolean by mutableStateOf(false)
+        private set
+
+    /** 由 [ProvideRawWindowInsets] 的布局监听调用，记录真实读数作基线。 */
+    fun recordReading(topPx: Int) {
+        if (topPx > 0 && topPx != baselinePx) baselinePx = topPx
+    }
+
+    fun pin() {
+        pinned = true
+    }
+
+    fun release() {
+        pinned = false
+    }
+
+    /**
+     * 把原始读数套上钉住值。
+     *
+     * [landscape] 时必须原样返回：横屏顶 inset 本就该是 0，钉住会压低内容。
+     */
+    fun apply(
+        raw: androidx.core.graphics.Insets,
+        landscape: Boolean
+    ): androidx.core.graphics.Insets {
+        if (!pinned || landscape || baselinePx <= 0) return raw
+        val top = maxOf(raw.top, baselinePx)
+        if (top == raw.top) return raw
+        return androidx.core.graphics.Insets.of(raw.left, top, raw.right, raw.bottom)
+    }
+}
+
+/**
+ * 开始钉住状态栏顶 inset。必须紧接在真正调用 `hide()` 之前调用，
+ * 由 `code/systemui/AutoHideStatusBar.kt` 的窗口效果独占使用，其它地方不要调。
+ */
+fun pinStatusBarTopInset() = StatusBarTopPin.pin()
+
+/**
+ * 解除钉住，但只在系统状态栏**真的已经回来**之后。
+ *
+ * 时序问题：`show()` 是异步的，紧接着读 inset 往往还是 0。那时若立即解除钉住，
+ * 顶部留白会在这一帧塌成 0、下一帧又弹回来（一次可见的上跳）。
+ *
+ * 判据用 `isVisible(statusBars)` 而不是「inset > 0」：横屏下状态栏在侧边、
+ * 顶 inset 本就是 0，用 inset 判会永远解不开。逐帧重试有限次；仍不可见就保持钉住
+ * （此时竖屏读数被钳在真实基线、横屏不套用，都不影响布局）。
+ */
+fun releaseStatusBarTopInsetPin(view: View, attemptsLeft: Int = 6) {
+    view.post {
+        val root = runCatching { ViewCompat.getRootWindowInsets(view) }.getOrNull()
+        val visible = root != null && root.isVisible(WindowInsetsCompat.Type.statusBars())
+        if (visible) {
+            StatusBarTopPin.release()
+        } else if (attemptsLeft > 0) {
+            releaseStatusBarTopInsetPin(view, attemptsLeft - 1)
+        }
+    }
+}
+
+/**
  * 以系统真实 insets（getRootWindowInsets）为数据源向子树提供 insets。
  * 挂在 Activity 组合根部，替代 accompanist 的 ProvideWindowInsets。
  */
@@ -54,8 +144,13 @@ fun ProvideRawWindowInsets(content: @Composable () -> Unit) {
     val view = LocalView.current
     val insetsState = remember("RawWindowInsets_state") { mutableStateOf(view.readRawSystemBars()) }
     DisposableEffect(view) {
+        // 首次布局前先把当前读数记成基线，避免"还没发生过布局事件就第一次 pin"时
+        // 没有基线可用（那种情况下钉住等于没钉，顶部会塌一次）。
+        StatusBarTopPin.recordReading(insetsState.value.top)
         val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
             val next = view.readRawSystemBars()
+            // 记录真实读数作为钉住基线：隐藏状态栏期间这里是 0，不会覆盖已有值。
+            StatusBarTopPin.recordReading(next.top)
             if (next != insetsState.value) {
                 insetsState.value = next
             }
@@ -63,7 +158,15 @@ fun ProvideRawWindowInsets(content: @Composable () -> Unit) {
         view.viewTreeObserver.addOnGlobalLayoutListener(listener)
         onDispose { view.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
     }
-    CompositionLocalProvider(LocalRawWindowInsets provides insetsState.value, content = content)
+    // 横屏时状态栏在侧边、顶 inset 本就该是 0，钉住只在竖屏生效。
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val landscape = configuration.screenWidthDp > configuration.screenHeightDp
+    // 钉住态只在「播放页自动隐藏状态栏」期间为真；为假时 apply() 原样返回，
+    // 与历史行为逐字节相同。这里在组合期只**读**状态，不写。
+    CompositionLocalProvider(
+        LocalRawWindowInsets provides StatusBarTopPin.apply(insetsState.value, landscape),
+        content = content
+    )
 }
 
 @Composable

@@ -277,7 +277,8 @@
     <string name="settings_performance">外观</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">硬件级音频速度调整</string>
     <string name="settings_audio_exoplayer_decode_codec">音频解码器</string>
-    <string name="settings_audio_exoplayer_decode_codec_desc">Auto 优先使用设备解码，设备不支持时回退到 FFmpeg；FFmpeg 强制软件解码（排查怪声时可试）；System 只使用设备解码。</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto 对普通格式优先设备解码，FLAC 无损自动走 FFmpeg 软解以避免卡死；FFmpeg 全部强制软解；System 仅用设备解码。切换后需彻底重启应用生效。</string>
+    <string name="settings_audio_exoplayer_decode_codec_restart_toast">解码器已切换，彻底重启应用后生效</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">音频焦点</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">开启后不会和其它应用一同播放。</string>
     <string name="tip_intent_resolve_failed">未找到可以执行该操作的应用。</string>
@@ -444,6 +445,7 @@
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">在进度条上标出高潮开始的位置（在线歌曲）。</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover">专辑动态封面</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">允许移动网络下加载动态封面</string>
+    <string name="settings_performance_ui_nowplaying_auto_hide_status_bar">播放页隐藏状态栏</string>
     <string name="settings_performance_ui_theme">主题</string>
     <string name="settings_performance_ui_theme_light">浅色</string>
     <string name="settings_performance_ui_theme_dark">深色</string>
@@ -814,4 +816,19 @@
     <string name="settings_performance_lyric_font_size_reset_confirm">确定重置</string>
     <string name="settings_performance_lyric_font_size_reset_cancel">取消</string>
     <string name="settings_performance_lyric_font_size_reset_done">字体大小已重置为 100%</string>
+
+    <!-- 自定义底栏 -->
+    <string name="settings_performance_ui_bottom_bar_header">底栏</string>
+    <string name="settings_performance_ui_bottom_bar_title">自定义底栏</string>
+    <string name="settings_performance_ui_bottom_bar_desc">调整标签顺序、显隐与冷启动默认页面</string>
+    <string name="bottom_bar_setting_preview_label">实时预览</string>
+    <string name="bottom_bar_setting_visible_header">底栏显示项</string>
+    <string name="bottom_bar_setting_hidden_header">已隐藏</string>
+    <string name="bottom_bar_setting_hint">拖动可调整顺序或跨组隐藏/恢复，至少保留 2 个标签</string>
+    <string name="bottom_bar_setting_launch_header">启动默认页</string>
+    <string name="bottom_bar_setting_launch_first">底栏第一项</string>
+    <string name="bottom_bar_setting_launch_first_desc">当前：%1$s</string>
+    <string name="bottom_bar_setting_reset">恢复默认设置</string>
+    <string name="bottom_bar_setting_hide_tab">隐藏%1$s</string>
+    <string name="bottom_bar_setting_show_tab">显示%1$s</string>
 </resources>

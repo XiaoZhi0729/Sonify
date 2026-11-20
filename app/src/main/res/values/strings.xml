@@ -278,7 +278,8 @@
     <string name="settings_performance">Appearance</string>
     <string name="settings_audio_exoplayer_decode_hardware_audio_track_playback_params">Hardware-level Audio Speed Adjustment</string>
     <string name="settings_audio_exoplayer_decode_codec">Audio Decoder</string>
-    <string name="settings_audio_exoplayer_decode_codec_desc">Auto uses the device decoder when available and falls back to FFmpeg; FFmpeg forces software decoding; System uses the device decoder only.</string>
+    <string name="settings_audio_exoplayer_decode_codec_desc">Auto prefers the device decoder for standard formats and uses FFmpeg for FLAC to avoid stalls; FFmpeg forces software decoding for all formats; System uses the device decoder only. Fully restart the app after changing.</string>
+    <string name="settings_audio_exoplayer_decode_codec_restart_toast">Decoder changed. Fully restart the app to apply.</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes">Audio Focus</string>
     <string name="settings_audio_exoplayer_behaviors_audio_attributes_desc">When enabled, it will not play along with other apps.</string>
     <string name="tip_intent_resolve_failed">No application found to perform this operation.</string>
@@ -445,6 +446,7 @@
     <string name="settings_performance_ui_nowplaying_show_climax_mark_desc">Mark where the climax begins on the progress bar (online songs).</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover">Dynamic Album Cover</string>
     <string name="settings_performance_ui_nowplaying_dynamic_cover_mobile">Load Dynamic Cover on Mobile Data</string>
+    <string name="settings_performance_ui_nowplaying_auto_hide_status_bar">Hide Status Bar in Player</string>
     <string name="settings_performance_ui_theme">Theme</string>
     <string name="settings_performance_ui_theme_light">Light</string>
     <string name="settings_performance_ui_theme_dark">Dark</string>
@@ -815,4 +817,19 @@
     <string name="settings_performance_lyric_font_size_reset_confirm_message">Are you sure you want to reset both portrait and landscape lyric font sizes to 100%?</string>
     <string name="settings_performance_lyric_font_size_reset_confirm">Reset</string>
     <string name="settings_performance_lyric_font_size_reset_cancel">Cancel</string>
+
+    <!-- Customize Bottom Bar -->
+    <string name="settings_performance_ui_bottom_bar_header">Bottom Bar</string>
+    <string name="settings_performance_ui_bottom_bar_title">Customize Bottom Bar</string>
+    <string name="settings_performance_ui_bottom_bar_desc">Reorder tabs, hide tabs, or choose the default startup page</string>
+    <string name="bottom_bar_setting_preview_label">Preview</string>
+    <string name="bottom_bar_setting_visible_header">Visible Tabs</string>
+    <string name="bottom_bar_setting_hidden_header">Hidden</string>
+    <string name="bottom_bar_setting_hint">Drag to reorder or move between groups. At least 2 tabs must stay visible.</string>
+    <string name="bottom_bar_setting_launch_header">Startup Page</string>
+    <string name="bottom_bar_setting_launch_first">First Bottom Bar Tab</string>
+    <string name="bottom_bar_setting_launch_first_desc">Currently: %1$s</string>
+    <string name="bottom_bar_setting_reset">Restore Defaults</string>
+    <string name="bottom_bar_setting_hide_tab">Hide %1$s</string>
+    <string name="bottom_bar_setting_show_tab">Show %1$s</string>
 </resources>

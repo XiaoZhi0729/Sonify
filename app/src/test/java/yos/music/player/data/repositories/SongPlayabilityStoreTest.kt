@@ -46,6 +46,7 @@ class SongPlayabilityStoreTest {
     @Test
     fun typedAccountErrorsStayInconclusiveWithTheirOwnReasonsEvenWhenWrapped() = runTest {
         val cases = listOf(
+            KugouNotLoggedInException("未登录酷狗账号") to "请先登录酷狗账号",
             KugouVerificationRequiredException("20028") to "请求需要安全验证，请稍后重试",
             KugouSignatureRejectedException("31833") to "请求签名被拒绝，请稍后重试",
             KugouTokenRejectedException("20017") to "登录凭据暂未被接受，请稍后重试",

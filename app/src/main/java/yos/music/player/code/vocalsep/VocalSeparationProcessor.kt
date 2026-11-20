@@ -8,6 +8,15 @@ import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.vocalsep.MssEngine
 import java.nio.ByteBuffer
 
+/** 人声分离工作模式。 */
+enum class VocalSeparationMode {
+    /** 去人声、留背景音乐（伴奏模式）。 */
+    ACCOMPANIMENT,
+
+    /** 只留人声、去背景音乐（人声模式）。 */
+    VOCALS,
+}
+
 /**
  * 把实时人声分离挂进 Media3 音频链的 [AudioProcessor]。
  *
@@ -88,7 +97,10 @@ class VocalSeparationProcessor(
     @Volatile
     private var targetEnabled = false
 
-    /** 目标原声含量 0..1（0 = 纯伴奏，1 = 原声 = 等同关闭）。 */
+    @Volatile
+    private var targetMode: VocalSeparationMode = VocalSeparationMode.ACCOMPANIMENT
+
+    /** 目标原声含量 0..1（0 = 纯分轨，1 = 原声 = 等同关闭）。 */
     @Volatile
     private var targetRatio = 1f
 
@@ -97,6 +109,9 @@ class VocalSeparationProcessor(
 
     /** 生效中的开关度 0..1，向 [targetEnabled] 逐块逼近。 */
     private var rampedMix = 0f
+
+    /** 生效中的人声分轨权重 0..1（0 = 伴奏分轨 accomp，1 = 人声分轨 vocals）。 */
+    private var rampedVocalWeight = 0f
 
     /** 引擎已判定不可用（模型缺失 / 连续 NaN / 连续异常）。true 后永久直通。 */
     @Volatile
@@ -158,9 +173,18 @@ class VocalSeparationProcessor(
         targetRatio = ratio.coerceIn(0f, 1f)
     }
 
+    fun setMode(mode: VocalSeparationMode) {
+        targetMode = mode
+        if (rampedMix <= 0f && !targetEnabled) {
+            rampedVocalWeight = if (mode == VocalSeparationMode.VOCALS) 1f else 0f
+        }
+    }
+
     fun currentEnabled(): Boolean = targetEnabled
 
     fun currentRatio(): Float = targetRatio
+
+    fun currentMode(): VocalSeparationMode = targetMode
 
     /** 引擎是否仍然可用（模型存在且没被判故障）。 */
     fun isUsable(): Boolean = !failed
@@ -252,6 +276,7 @@ class VocalSeparationProcessor(
         errorBlocks = 0
         rampedMix = 0f
         rampedRatio = targetRatio
+        rampedVocalWeight = if (targetMode == VocalSeparationMode.VOCALS) 1f else 0f
     }
 
     private fun clearBuffers() {
@@ -416,16 +441,19 @@ class VocalSeparationProcessor(
             )
         }
 
-        // 不能用等功率（sin/cos）：分离出的伴奏与原声**同源高度相关**
-        // （dry ≈ vocals + accomp），线性交叉淡化恰好等价于 accomp + r·vocals，
+        // 不能用等功率（sin/cos）：分离出的分轨与原声**同源高度相关**
+        // （dry ≈ vocals + accomp），线性交叉淡化恰好等价于目标分轨与原声按比例混合，
         // 等功率会在中段过冲约 +3 dB。
         val r = rampedRatio
         val mix = rampedMix
         val inv = 1f - mix
+        val w = rampedVocalWeight
+        val invW = 1f - w
 
         val mixed = FloatArray(MssEngine.CHUNK * 2)
         for (i in mixed.indices) {
-            val wet = accomp[i] * (1f - r) + dryPrev[i] * r
+            val stem = accomp[i] * invW + vocals[i] * w
+            val wet = stem * (1f - r) + dryPrev[i] * r
             mixed[i] = wet * mix + dryPrev[i] * inv
         }
         pushFifo(mixed, MssEngine.CHUNK)
@@ -491,6 +519,7 @@ class VocalSeparationProcessor(
         val ms = frames * 1000f / sampleRate
         val step = if (ms <= 0f) 1f else (ms / RAMP_MS).coerceIn(0f, 1f)
 
+        val wasOff = rampedMix <= 0f
         val targetMix = if (targetEnabled) 1f else 0f
         rampedMix = when {
             rampedMix < targetMix -> minOf(targetMix, rampedMix + step)
@@ -503,6 +532,17 @@ class VocalSeparationProcessor(
             rampedRatio < r -> minOf(r, rampedRatio + step)
             rampedRatio > r -> maxOf(r, rampedRatio - step)
             else -> r
+        }
+
+        val targetWeight = if (targetMode == VocalSeparationMode.VOCALS) 1f else 0f
+        rampedVocalWeight = if (wasOff) {
+            targetWeight
+        } else {
+            when {
+                rampedVocalWeight < targetWeight -> minOf(targetWeight, rampedVocalWeight + step)
+                rampedVocalWeight > targetWeight -> maxOf(targetWeight, rampedVocalWeight - step)
+                else -> targetWeight
+            }
         }
     }
 

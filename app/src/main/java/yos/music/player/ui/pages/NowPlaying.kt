@@ -1416,7 +1416,7 @@ internal fun NowPlaying(
                             // 槽位底边 = 本容器顶边 + 88dp = 原控件带顶边 + 36dp
                             // = 药丸原来的底边。于是收起态与改动前逐像素一致，
                             // 展开时向上长满槽位上方那 52dp——底边固定、只向上延伸。
-                            if (page == Lyric) {
+                            if (page == Lyric && controlMounted) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
@@ -1430,7 +1430,7 @@ internal fun NowPlaying(
                                         },
                                     contentAlignment = Alignment.BottomCenter
                                 ) {
-                                    VocalSeparationPill()
+                                    VocalSeparationPill(enabled = controlVisible)
                                 }
                             }
                             // 外层控件带为了容纳药丸向上多留了 52dp，这里把它**钉回原尺寸
@@ -2669,6 +2669,7 @@ internal fun Lyric(
         modifier.fillMaxSize()
     ) {
         YosWrapper {
+            val lyricHdrEffect = SettingsLibrary.LyricHdrEffect
 
             Spacer(
                 modifier = if (topSpacerWithStatusBar) {
@@ -2707,7 +2708,7 @@ internal fun Lyric(
                     // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束
                     .drawWithCache {
                     val overlayPaint = Paint().apply {
-                        blendMode = BlendMode.Plus
+                        blendMode = if (lyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver
                     }
                     val rect = Rect(0f, 0f, size.width, size.height)
                     val topFadeEnd = lyricTopMaskEndPx(

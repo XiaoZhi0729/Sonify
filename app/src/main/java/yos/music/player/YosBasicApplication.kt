@@ -287,43 +287,47 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
 
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        val playListData = MusicLibrary.loadPlayList()
-                        // 复用上面主线程那次读取的快照；只有那次失败（null）时才回源重读。
-                        val playStatusData = restoredPlayStatus ?: MusicLibrary.loadPlayStatus()
+                        if (yos.music.player.code.MediaController.consumePendingExternalAudio(this@YosBasicApplication)) {
+                            // 冷启动由外部音频 ACTION_VIEW 拉起：优先起播外部音频，跳过历史队列恢复。
+                        } else {
+                            val playListData = MusicLibrary.loadPlayList()
+                            // 复用上面主线程那次读取的快照；只有那次失败（null）时才回源重读。
+                            val playStatusData = restoredPlayStatus ?: MusicLibrary.loadPlayStatus()
 
-                        println("prepare 读取历史")
-                        if (playListData.mainMusicList != null) {
-                            println("prepare 准备调用")
-                            /*launch {
-                                runCatching {
-                                    // 无论设置与否，先还原
-                                    val thisMainMusicList = playListData.mainMusicList
-                                    mainMusicList.value = thisMainMusicList
-                                    println("prepare 恢复主歌单")
+                            println("prepare 读取历史")
+                            if (playListData.mainMusicList != null) {
+                                println("prepare 准备调用")
+                                /*launch {
+                                    runCatching {
+                                        // 无论设置与否，先还原
+                                        val thisMainMusicList = playListData.mainMusicList
+                                        mainMusicList.value = thisMainMusicList
+                                        println("prepare 恢复主歌单")
+                                    }
+                                }*/
+
+                                if (playStatusData.music != null) {
+                                    yos.music.player.code.MediaController.prepare(
+                                        playStatusData.music,
+                                        playListData.playingMusicList!!,
+                                        playStatusData.position,
+                                        playStatusData.shuffleModeEnabled,
+                                        playStatusData.repeatMode,
+                                        false
+                                    )
                                 }
-                            }*/
 
-                            if (playStatusData.music != null) {
-                                yos.music.player.code.MediaController.prepare(
-                                    playStatusData.music,
-                                    playListData.playingMusicList!!,
-                                    playStatusData.position,
-                                    playStatusData.shuffleModeEnabled,
-                                    playStatusData.repeatMode,
-                                    false
-                                )
-                            }
-
-                            if (playListData.playingMusicList != null) {
-                                // 该协程在 IO 线程;state 写入须回到 Main,避免主线程
-                                // 组合/measure 中途读到换帧数据(见 PlayingList 越界崩溃)
-                                // 历史快照里有旧版「下一首」写入的 uri=null 条目：恢复时补回
-                                // kugou:// 占位符，否则恢复出来的队列与播放器时间线仍然错位。
-                                val restored = playListData.playingMusicList.map {
-                                    it.withPlayableUri()
-                                }
-                                withContext(Dispatchers.Main) {
-                                    playingMusicList.value = restored
+                                if (playListData.playingMusicList != null) {
+                                    // 该协程在 IO 线程;state 写入须回到 Main,避免主线程
+                                    // 组合/measure 中途读到换帧数据(见 PlayingList 越界崩溃)
+                                    // 历史快照里有旧版「下一首」写入的 uri=null 条目：恢复时补回
+                                    // kugou:// 占位符，否则恢复出来的队列与播放器时间线仍然错位。
+                                    val restored = playListData.playingMusicList.map {
+                                        it.withPlayableUri()
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        playingMusicList.value = restored
+                                    }
                                 }
                             }
                         }

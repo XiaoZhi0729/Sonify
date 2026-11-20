@@ -1,9 +1,12 @@
 package yos.music.player.ui.navigation
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -15,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yos.music.player.data.objects.ArtistPresentationCache
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 /**
@@ -37,10 +41,14 @@ internal fun albumPaletteKey(albumId: String): String =
  *
  * 与 [albumPaletteKey] 必须用不同命名空间：歌单 id 与专辑 id 都是数字串，共用
  * `album-cover:` 前缀会让「专辑 123」和「歌单 123」读到同一个缓存色。
- * 来源（User/Recommend）也进键：同一个 gcid/listid 在不同来源下可能是不同封面。
+ * 来源（User/Recommend）与封面 URL 也进键：同一个 gcid/listid 在不同来源下可能是不同封面，
+ * 且用户歌单增删曲目后封面 URL 会变化，必须按新封面重算取色。
  */
-internal fun playlistPaletteKey(source: String, playlistId: String): String =
-    "playlist-cover:$source:$playlistId#square-avg-v1-128"
+internal fun playlistPaletteKey(
+    source: String,
+    playlistId: String,
+    coverUrl: String
+): String = "playlist-cover:$source:$playlistId:$coverUrl#square-avg-v1-128"
 
 /**
  * 整幅（去掉 4% 边框）的 alpha 加权平均色。
@@ -98,6 +106,13 @@ internal fun artworkContentColor(accent: Color): Color {
 }
 
 /**
+ * 记录同一实体（歌单/专辑）最近一次解析出的封面 RGB：
+ * 当封面 URL 变化、新封面尚在解码取色期间，保持展示上一张封面的提取色，
+ * 避免过渡期先闪回主题兜底色再切回新封面提取色。
+ */
+private val lastEntityPaletteRgb = ConcurrentHashMap<String, Int>()
+
+/**
  * 读取（必要时计算）某张专辑的封面色。
  *
  * 计算走 [ArtistPresentationCache.loadPalette]：在缓存自身 scope 上跑，页面销毁不
@@ -108,6 +123,7 @@ internal fun artworkContentColor(accent: Color): Color {
 internal fun rememberAlbumBackdropColors(albumId: String, coverUrl: String?): ArtistArtworkColors? {
     if (albumId.isBlank()) return null
     return rememberCoverBackdropColors(
+        entityKey = "album:$albumId",
         paletteKey = remember(albumId) { albumPaletteKey(albumId) },
         memoryCacheId = "album-palette:$albumId",
         coverUrl = coverUrl
@@ -127,9 +143,17 @@ internal fun rememberPlaylistBackdropColors(
     coverUrl: String?
 ): ArtistArtworkColors? {
     if (playlistId.isBlank()) return null
+    val entityKey = "playlist:$source:$playlistId"
+    if (coverUrl.isNullOrBlank()) {
+        lastEntityPaletteRgb.remove(entityKey)
+        return null
+    }
     return rememberCoverBackdropColors(
-        paletteKey = remember(source, playlistId) { playlistPaletteKey(source, playlistId) },
-        memoryCacheId = "playlist-palette:$source:$playlistId",
+        entityKey = entityKey,
+        paletteKey = remember(source, playlistId, coverUrl) {
+            playlistPaletteKey(source, playlistId, coverUrl)
+        },
+        memoryCacheId = "playlist-palette:$source:$playlistId:$coverUrl",
         coverUrl = coverUrl
     )
 }
@@ -143,6 +167,7 @@ internal fun rememberPlaylistBackdropColors(
  */
 @Composable
 private fun rememberCoverBackdropColors(
+    entityKey: String,
     paletteKey: String,
     memoryCacheId: String,
     coverUrl: String?
@@ -150,37 +175,23 @@ private fun rememberCoverBackdropColors(
     val context = LocalContext.current
     val isDark = isFlamingoInDarkMode()
     val paletteState = remember(paletteKey) { ArtistPresentationCache.palette(paletteKey) }
-    val rgb = paletteState.value
+    val fallbackRgbState = remember(entityKey) { mutableStateOf(lastEntityPaletteRgb[entityKey]) }
+    val currentPaletteRgb = paletteState.value
+    SideEffect {
+        if (currentPaletteRgb != null) {
+            lastEntityPaletteRgb[entityKey] = currentPaletteRgb
+            if (fallbackRgbState.value != currentPaletteRgb) {
+                fallbackRgbState.value = currentPaletteRgb
+            }
+        }
+    }
+    val rgb = currentPaletteRgb ?: fallbackRgbState.value
 
     LaunchedEffect(paletteKey, coverUrl) {
         if (coverUrl.isNullOrBlank()) return@LaunchedEffect
         // 已有缓存色（本次或上次进程算的）就不再解码
         if (paletteState.value != null) return@LaunchedEffect
-        val bitmap = runCatching {
-            context.imageLoader.execute(
-                ImageRequest.Builder(context)
-                    .data(coverUrl)
-                    // 取色要读像素 → 必须软件位图
-                    .allowHardware(false)
-                    .size(256)
-                    .memoryCacheKey(memoryCacheId)
-                    .diskCacheKey(coverUrl)
-                    .build()
-            ).drawable?.toBitmap()
-        }.getOrNull() ?: return@LaunchedEffect
-
-        val sampleSrc = if (bitmap.width > 128) Bitmap.createScaledBitmap(
-            bitmap,
-            128,
-            (128f * bitmap.height / bitmap.width).roundToInt().coerceAtLeast(1),
-            false
-        ) else bitmap
-
-        val sampled = runCatching {
-            ArtistPresentationCache.loadPalette(paletteKey) {
-                withContext(Dispatchers.Default) { sampleAlbumCoverColor(sampleSrc) }
-            }
-        }.getOrNull()
+        val sampled = preloadCoverPalette(context, paletteKey, memoryCacheId, coverUrl)
         android.util.Log.d(
             "AlbumPalette",
             "key=$paletteKey rgb=${sampled?.let { Integer.toHexString(it) }}"
@@ -188,4 +199,75 @@ private fun rememberCoverBackdropColors(
     }
 
     return remember(rgb, isDark) { rgb?.let { ArtistArtworkColors.fromRgb(it, isDark) } }
+}
+
+/**
+ * 预计算并缓存封面调色板，供列表页卡片在可见时或点击转场前提前把颜色落入
+ * [ArtistPresentationCache]，使详情页首帧即可同步命中、直接以提取色开屏。
+ *
+ * 内部走 [ArtistPresentationCache.loadPalette]：按 [paletteKey] 去重，且在缓存自身
+ * scope 上执行，调用方离开组合也不会取消计算。
+ */
+internal suspend fun preloadCoverPalette(
+    context: Context,
+    paletteKey: String,
+    memoryCacheId: String,
+    coverUrl: String?
+): Int? {
+    if (paletteKey.isBlank() || coverUrl.isNullOrBlank()) return null
+    ArtistPresentationCache.palette(paletteKey).value?.let { return it }
+    return runCatching {
+        ArtistPresentationCache.loadPalette(paletteKey) {
+            val bitmap = runCatching {
+                context.imageLoader.execute(
+                    ImageRequest.Builder(context)
+                        .data(coverUrl)
+                        // 取色要读像素 → 必须软件位图
+                        .allowHardware(false)
+                        .size(256)
+                        .memoryCacheKey(memoryCacheId)
+                        .diskCacheKey(coverUrl)
+                        .build()
+                ).drawable?.toBitmap()
+            }.getOrNull() ?: return@loadPalette null
+
+            val sampleSrc = if (bitmap.width > 128) Bitmap.createScaledBitmap(
+                bitmap,
+                128,
+                (128f * bitmap.height / bitmap.width).roundToInt().coerceAtLeast(1),
+                false
+            ) else bitmap
+
+            withContext(Dispatchers.Default) { sampleAlbumCoverColor(sampleSrc) }
+        }
+    }.getOrNull()
+}
+
+internal suspend fun preloadPlaylistBackdropColor(
+    context: Context,
+    source: String,
+    playlistId: String,
+    coverUrl: String?
+): Int? {
+    if (playlistId.isBlank() || coverUrl.isNullOrBlank()) return null
+    return preloadCoverPalette(
+        context = context,
+        paletteKey = playlistPaletteKey(source, playlistId, coverUrl),
+        memoryCacheId = "playlist-palette:$source:$playlistId:$coverUrl",
+        coverUrl = coverUrl
+    )
+}
+
+internal suspend fun preloadAlbumBackdropColor(
+    context: Context,
+    albumId: String,
+    coverUrl: String?
+): Int? {
+    if (albumId.isBlank() || coverUrl.isNullOrBlank()) return null
+    return preloadCoverPalette(
+        context = context,
+        paletteKey = albumPaletteKey(albumId),
+        memoryCacheId = "album-palette:$albumId",
+        coverUrl = coverUrl
+    )
 }

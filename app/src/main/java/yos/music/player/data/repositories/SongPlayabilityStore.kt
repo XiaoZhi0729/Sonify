@@ -325,6 +325,7 @@ internal suspend fun <T> resolveSongPlayabilityProbe(
     }
     causes.filterIsInstance<CancellationException>().firstOrNull()?.let { throw it }
     val reason = when {
+        causes.any { it is KugouNotLoggedInException } -> "请先登录酷狗账号"
         causes.any { it is KugouAuthInvalidException } -> SongPlayabilityStore.LOGIN_EXPIRED_REASON
         causes.any { it is KugouVerificationRequiredException } -> "请求需要安全验证，请稍后重试"
         causes.any { it is KugouSignatureRejectedException } -> "请求签名被拒绝，请稍后重试"

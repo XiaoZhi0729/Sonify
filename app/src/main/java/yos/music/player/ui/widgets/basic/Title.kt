@@ -410,9 +410,11 @@ fun rememberTitleBackdrop(
     val pageColor = pageColorOverride
         ?: LocalTitlePageColor.current
         ?: (Color.White withNight Color.Black)
-    val onDraw: ContentDrawScope.() -> Unit = remember(pageColor, gradient) {
+    val pageColorState = rememberUpdatedState(pageColor)
+    val onDraw: ContentDrawScope.() -> Unit = remember(gradient) {
         {
             // 渐变优先：绘制期取当前值，交叉淡化推进只失效重绘，不重建 backdrop。
+            // pageColor 同理经 State 在绘制期读取，底色渐变动画期间不重建 LayerBackdrop。
             //
             // 种子层是 3× 尺寸、录制后被裁到节点范围，可见的只有画布中间三分之一，
             // 所以必须用 tripleCanvasBrush（把整条渐变映射到 1/3–2/3），否则页面
@@ -426,7 +428,7 @@ fun rememberTitleBackdrop(
                 )
             } else {
                 drawRect(
-                    color = pageColor,
+                    color = pageColorState.value,
                     size = Size(size.width * 3f, size.height * 3f),
                     topLeft = Offset(-size.width, -size.height)
                 )
@@ -527,8 +529,8 @@ private fun BaseTitleGrid(
                     horizontalArrangement = Arrangement.spacedBy(15.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     contentPadding = PaddingValues(
-                        start = 18.dp,
-                        end = if (showIndexBar) 24.dp else 18.dp/*, bottom = 18.dp*/,
+                        start = 20.dp,
+                        end = 20.dp/*, bottom = 18.dp*/,
                         top = 54.dp + extraTopPadding
                     )
                 ) {
@@ -680,7 +682,6 @@ private fun BaseTitleList(
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     contentPadding = PaddingValues(
                         top = 54.dp + extraTopPadding,
-                        end = if (showIndexBar) 18.dp else 0.dp
                     )
                 ) {
                     item("title") {

@@ -578,15 +578,20 @@ fun OnlinePlaylistDetail(
                     // 的那首（列表第一行），比列表页的尾部页猜测更精确且零网络。
                     // 仅在确定歌单属于本账号且没自定义过封面时覆盖；userEntry 尚未读到
                     // （null）时不动，避免自定义封面先被顶掉再翻回来。
-                    if (source == PlaylistSelection.Source.User && list.isNotEmpty()) {
+                    if (source == PlaylistSelection.Source.User) {
                         val entry = userEntry.value
                         val entryId = entry?.listid?.ifEmpty { entry.gid }
                         val applicable = entry != null && entry.usesTrackCover && !entry.isCustomPic
                         if (applicable) {
-                            PlaylistTrackOrder.newestCover(list)?.let { newest ->
-                                if (coverState.value != newest) coverState.value = newest
+                            val newest = PlaylistTrackOrder.newestCover(list).orEmpty()
+                            if (coverState.value != newest) coverState.value = newest
+                            if (newest.isNotEmpty()) {
                                 entryId?.takeIf { it.isNotEmpty() }?.let {
                                     PlaylistCoverCache.write(it, PlaylistCoverCache.version(entry), newest)
+                                }
+                            } else {
+                                entryId?.takeIf { it.isNotEmpty() }?.let {
+                                    PlaylistCoverCache.invalidate(it)
                                 }
                             }
                         }
@@ -685,7 +690,7 @@ fun OnlinePlaylistDetail(
 
 
     // ---- 封面色底（与在线专辑详情共用同一条取色管线） ----
-    // 键按「来源 + 歌单 id」建，不按封面 URL：列表封面与详情封面常是同一张图的不同尺寸。
+    // 键按「来源 + 歌单 id + 封面 URL」建：歌单增删曲目会改变封面 URL，必须随封面重算取色。
     val playlistColors = rememberPlaylistBackdropColors(
         source = source?.name.orEmpty(),
         playlistId = playlistId.orEmpty(),
@@ -694,15 +699,25 @@ fun OnlinePlaylistDetail(
     val isDark = isFlamingoInDarkMode()
     val themeAccent = remember(isDark) { ArtistArtworkColors.fromRgb(null, isDark).accent }
     val resolvedAccent = playlistColors?.accent
+    val hasHadResolvedAccent = remember(playlistId) { mutableStateOf(resolvedAccent != null) }
+    if (resolvedAccent != null && !hasHadResolvedAccent.value) {
+        hasHadResolvedAccent.value = true
+    }
+    val useAnimatedTransition = resolvedAccent != null || hasHadResolvedAccent.value
     val backdropState = animateColorAsState(
         targetValue = resolvedAccent ?: themeAccent,
-        animationSpec = if (resolvedAccent != null) tween(600) else tween(0),
+        animationSpec = if (useAnimatedTransition) tween(600) else tween(0),
         label = "onlinePlaylistBackdrop"
     )
     val backdrop = backdropState.value
-    // 文字色：歌单提取色 → 主题默认（继承 LocalContentColor）
-    val contentColor = playlistColors?.let { artworkContentColor(it.accent) }
+    // 文字色：歌单提取色 → 主题默认（继承 LocalContentColor），与底色同步过渡
+    val targetContentColor = playlistColors?.let { artworkContentColor(it.accent) }
         ?: LocalContentColor.current
+    val contentColor = animateColorAsState(
+        targetValue = targetContentColor,
+        animationSpec = if (useAnimatedTransition) tween(600) else tween(0),
+        label = "onlinePlaylistContentColor"
+    ).value
 
     // 底栏遮罩 / NavHost 底衬：注册本条目当前底色，与页面铺底同源同帧
     if (entryId.isNotBlank() && scrimTransition != null) {
@@ -713,11 +728,11 @@ fun OnlinePlaylistDetail(
     }
 
     // 滚动状态 / 顶栏模糊采样源。
-    // 采样种子用**目标色**而不是逐帧的动画值：底色 600ms 渐变期间每帧换种子会重建
-    // LayerBackdrop，把整个列表的录制层反复重录。
+    // rememberTitleBackdrop 内部通过 State 在绘制期读取当前动画色，不会每帧重建 LayerBackdrop，
+    // 从而让顶栏渐进模糊的采样底色与页面背景/底栏遮罩严格同帧同步。
     val state = rememberLazyListState()
     val topBarHeightPx = rememberIndexScrollOffsetPx()
-    val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
+    val titleBackdrop = rememberTitleBackdrop(backdrop)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
     // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
     val coverMotion = rememberCoverScrollMotion(state)
@@ -733,9 +748,9 @@ fun OnlinePlaylistDetail(
         LocalContentColor provides contentColor,
         LocalTitlePageColor provides backdrop,
         LocalTitlePageBackdrop provides titleBackdrop,
-        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 封面提取色 tint，
-        // HSV 整形与浓度见 accentTintOf）。无提取色时为 null，钮回退到纯固定色。
-        LocalTitleBarAccentTint provides resolvedAccent?.let { accentTintOf(it, isDark) },
+        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 当前动画底色 tint），
+        // 跟随 backdrop 逐帧同步过渡；从未有过提取色时为 null，钮回退到纯固定色。
+        LocalTitleBarAccentTint provides if (useAnimatedTransition) accentTintOf(backdrop, isDark) else null,
         LocalTitleOverlayHost provides overlayHost
     ) {
         Box(
@@ -803,7 +818,6 @@ fun OnlinePlaylistDetail(
                     contentPadding = PaddingValues(
                         bottom = 18.dp,
                         top = 54.dp,
-                        end = if (showIndexBar) 18.dp else 0.dp,
                     )
                 ) {
                     item("PlaylistHeader") {
@@ -1271,7 +1285,10 @@ fun OnlinePlaylistDetail(
                                 }
                                 // 歌单内容变了，封面缓存作废；封面随后按剩余曲目就地重算
                                 PlaylistCoverCache.invalidate(playlistId.orEmpty())
-                                PlaylistTrackOrder.newestCover(tracks.value)?.let { coverState.value = it }
+                                val currentEntry = userEntry.value
+                                if (currentEntry == null || (currentEntry.usesTrackCover && !currentEntry.isCustomPic)) {
+                                    coverState.value = PlaylistTrackOrder.newestCover(tracks.value).orEmpty()
+                                }
                             }
                             KugouSyncCoordinator.notifyPlaylistsChanged()
                         }

@@ -25,6 +25,7 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -77,6 +78,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -192,12 +194,14 @@ import androidx.media3.common.Player.REPEAT_MODE_ONE
 import yos.music.player.code.MediaController
 import yos.music.player.code.MediaController.mediaControl
 import yos.music.player.code.hdr.LyricHdrWindowGate
+import yos.music.player.code.systemui.StatusBarAutoHideWindowGate
 import yos.music.player.code.YosPlaybackService
 import yos.music.player.code.utils.others.GlassDiagnostics
 import yos.music.player.code.utils.others.GlassProbe
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.code.utils.player.FadeExo.fadePause
 import yos.music.player.code.utils.player.FadeExo.fadePlay
+import yos.music.player.data.libraries.BottomBarLayoutStore
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.artistsList
@@ -220,7 +224,8 @@ import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.accentTintOf
 import yos.music.player.ui.navigation.AppTabsShell
 import yos.music.player.ui.navigation.HouseId
-import yos.music.player.ui.navigation.houseForTabIndex
+import yos.music.player.ui.navigation.resolveLaunchHouse
+import yos.music.player.ui.navigation.visibleHouses
 import yos.music.player.ui.navigation.SharedNavHost
 import yos.music.player.ui.UI.Settings.Companion.ExoplayerSetting
 import yos.music.player.ui.pages.Home
@@ -419,6 +424,9 @@ class MainActivity : BaseActivity() {
             yos.music.player.code.hdr.LyricHdr.markWindowColorModeHdr(true)
         }
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            handleIncomingAudioIntent(intent)
+        }
         val needOnboarding = savedInstanceState == null &&
             !yos.music.player.ui.onboarding.OnboardingPrefs.startedThisProcess &&
             !yos.music.player.ui.onboarding.OnboardingPrefs.completed
@@ -699,7 +707,7 @@ class MainActivity : BaseActivity() {
                         val searchNavController = rememberNavController()
                         val favoritesNavController = rememberNavController()
                         val selectedHouse = rememberSaveable(key = "MainActivity_selectedHouse") {
-                            mutableStateOf(HouseId.Home)
+                            mutableStateOf(BottomBarLayoutStore.resolveLaunchHouse())
                         }
                         val activeHouseController = when (selectedHouse.value) {
                             HouseId.Home -> homeNavController
@@ -707,10 +715,13 @@ class MainActivity : BaseActivity() {
                             HouseId.Search -> searchNavController
                             HouseId.Favorites -> favoritesNavController
                         }
-                        // Key the observation to its controller so a tab switch cannot briefly
-                        // reuse the previous retained house's entry before the new flow emits.
+                        // Key the observation to its controller and seed from currentBackStackEntry
+                        // so a tab switch synchronously sees the retained house's top entry on frame 0
+                        // without a transient null frame.
                         val activeEntry = key(activeHouseController) {
-                            activeHouseController.currentBackStackEntryAsState()
+                            activeHouseController.currentBackStackEntryFlow.collectAsState(
+                                initial = activeHouseController.currentBackStackEntry
+                            )
                         }
                         val rootEntry = rootNavController.currentBackStackEntryAsState()
                         // 全屏沉浸页（音乐画廊）：隐藏全局底栏 + 迷你播放条、底部遮罩归零、
@@ -722,6 +733,34 @@ class MainActivity : BaseActivity() {
                         // 路由判据天然随栈变化，切 Tab / 返回都会立即还原。
                         val hideAppChrome =
                             activeEntry.value?.destination?.route == UI.MusicGallery
+                        val bottomBarTabs = BottomBarLayoutStore.tabs.value
+                        val visibleHouses = remember(bottomBarTabs) {
+                            BottomBarLayoutStore.visibleHouses()
+                        }
+                        // 若用户在「自定义底栏」中隐藏了当前所在 Tab，编辑期间保留设置栈不打断；
+                        // 退出设置并回到已隐藏 Tab 的根页时，自动切到启动默认页 / 首个可见页。
+                        LaunchedEffect(selectedHouse.value, activeEntry.value?.destination?.route, visibleHouses) {
+                            if (selectedHouse.value !in visibleHouses &&
+                                activeEntry.value?.destination?.route == selectedHouse.value.rootRoute
+                            ) {
+                                selectedHouse.value = BottomBarLayoutStore.resolveLaunchHouse()
+                            }
+                        }
+                        // 进入「自定义底栏」页时：真实底栏向下淡出退场，迷你播放器同步平稳下移到
+                        // 手势栏安全区上方（仍保持可见与可展开），避免与顶部实时预览产生双底栏干扰或误触。
+                        val hideBottomBarOnly =
+                            activeEntry.value?.destination?.route == UI.Settings.BottomBarSetting
+                        val hideBottomBarOnlyState = rememberUpdatedState(hideBottomBarOnly)
+                        val bottomBarVisibilityState = animateFloatAsState(
+                            targetValue = if (hideBottomBarOnly) 0f else 1f,
+                            animationSpec = spring(dampingRatio = 0.92f, stiffness = 420f),
+                            label = "MainActivity_bottomBarVisibility"
+                        )
+                        val bottomBarVisibilitySettled by remember(bottomBarVisibilityState) {
+                            derivedStateOf {
+                                bottomBarVisibilityState.value == (if (hideBottomBarOnlyState.value) 0f else 1f)
+                            }
+                        }
                         GlassDiagnostics.state(
                             "navigation",
                             "house=${selectedHouse.value} active=${activeEntry.value?.destination?.route} root=${rootEntry.value?.destination?.route}"
@@ -871,8 +910,10 @@ class MainActivity : BaseActivity() {
                                         // navigationBarsPadding() 使底栏内容底边位于 parentHeight - bottom inset。
                                         return@with parentHeight.intValue.toFloat() - navBarBottomInsetPx
                                     }
+                                    val bottomBarReservedPx =
+                                        (height.intValue + 5.dp.toPx()) * bottomBarVisibilityState.value
                                     parentHeight.intValue.toFloat() -
-                                            (height.intValue + navBarBottomInsetPx + 5.dp.toPx())
+                                            (bottomBarReservedPx + navBarBottomInsetPx)
                                 }
                             val collapsedTopPx: Float
                                 get() = with(density) {
@@ -1296,6 +1337,10 @@ class MainActivity : BaseActivity() {
                         // HDR 窗口只随播放壳展开：歌词页之外没有 HDR 内容，全应用常开只会
                         // 白白提背光耗电。门禁带滞回且自成小节点，避免整块外壳跟着重组。
                         LyricHdrWindowGate(progress = { yosBottomSheetConfig.progress })
+                        // 播放页自动隐藏状态栏（设置项开关）。与 HDR 同一范式的窗口属性门禁：
+                        // 阈值带滞回且自成小节点，避免整块外壳跟着重组。隐藏期间顶部 inset
+                        // 由 RawWindowInsets 钉住，播放页内容位置一个像素都不动。
+                        StatusBarAutoHideWindowGate(progress = { yosBottomSheetConfig.progress })
 
                         // hideAppChrome 是组合期的普通 Boolean；derivedStateOf 的闭包只捕获
                         // 创建时的值，必须经 rememberUpdatedState 转成 State 才能在 lambda 内
@@ -1418,6 +1463,10 @@ class MainActivity : BaseActivity() {
                             // 需要确认 producer 是否还在跑，用下方 GlassDiagnostics.state
                             // （只在值变化时打印）就够，不要往 onDraw 里塞任何逐帧代码。
                             //
+                            // Observe scrimColorProvider in draw phase so stationary page backdrop animations
+                            // (which draw inside a child graphicsLayer) also invalidate and re-record navBackdrop
+                            // on the exact same frame as the bottom scrim.
+                            scrimColorProvider()
                             // Producer 的全屏底层保持黑色；页面视觉层仍单独使用主题背景。
                             drawRect(Color.Black)
                             drawContent()
@@ -1511,7 +1560,7 @@ class MainActivity : BaseActivity() {
                                     else (
                                             miniPlayerHeightPx +
                                                     (if (isSplitMode) 0f
-                                                    else 5.dp.toPx() + height.intValue) +
+                                                    else (5.dp.toPx() + height.intValue) * bottomBarVisibilityState.value) +
                                                     navBarBottomInsetPx
                                             ).toDp()
                                 }
@@ -1560,11 +1609,25 @@ class MainActivity : BaseActivity() {
                                     // NavPageVisual 之下——画廊全屏内容在上，底栏（含
                                     // appChromePointerGate）退出命中路径，不再吞掉底部药丸的
                                     // 指针事件；非隐藏时 zIndex=0，组合顺序原样，层叠不变。
+                                    // 自定义底栏页：退场动画期间保持 zIndex=0f 使向下淡出可见，
+                                    // 彻底淡出（<= 0.01f）后再沉到下方并停止绘制。
                                     chromeGate = Modifier
-                                        .zIndex(if (hideAppChrome) -1f else 0f)
-                                        .appChromeGate(hideAppChrome),
-                                    chromePointerGate = Modifier.appChromePointerGate(hideAppChrome),
+                                        .zIndex(
+                                            if (hideAppChrome || (hideBottomBarOnly && bottomBarVisibilityState.value <= 0.01f)) -1f
+                                            else 0f
+                                        )
+                                        .appChromeGate(
+                                            hideAppChrome || (hideBottomBarOnly && bottomBarVisibilityState.value <= 0.01f)
+                                        )
+                                        .graphicsLayer {
+                                            val vis = bottomBarVisibilityState.value
+                                            alpha = vis
+                                            translationY = (1f - vis) *
+                                                (height.intValue + navBarBottomInsetPx + with(density) { 12.dp.toPx() })
+                                        },
+                                    chromePointerGate = Modifier.appChromePointerGate(hideAppChrome || hideBottomBarOnly),
                                     navBackdrop = navBackdrop,
+                                    visibleHouses = visibleHouses,
                                     selectedHouse = { selectedHouse.value },
                                     onHouseSelected = { house -> appNavigator.switchHouse(house) },
                                     onHouseReselected = { house ->
@@ -1669,8 +1732,10 @@ class MainActivity : BaseActivity() {
                                     LaunchedEffect(
                                         parentHeight.intValue,
                                         height.intValue,
-                                        navBarBottomInsetPx
+                                        navBarBottomInsetPx,
+                                        bottomBarVisibilitySettled
                                     ) {
+                                        if (!bottomBarVisibilitySettled) return@LaunchedEffect
                                         val newAnchor = yosBottomSheetConfig.expandedAnchorPx
                                         if (newAnchor <= 0f) return@LaunchedEffect
                                         val oldAnchor = lastPlayerAnchor.value
@@ -2766,6 +2831,18 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingAudioIntent(intent)
+    }
+
+    private fun handleIncomingAudioIntent(intent: Intent?) {
+        val request = yos.music.player.code.ExternalAudioIntentHandler.extractAudioViewRequest(intent)
+            ?: return
+        MediaController.playExternalAudio(this, request)
+    }
+
     @Composable
     private fun NavPageVisual(
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
@@ -2909,6 +2986,7 @@ class MainActivity : BaseActivity() {
         chromeGate: Modifier = Modifier,
         chromePointerGate: Modifier = Modifier,
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
+        visibleHouses: List<HouseId>,
         selectedHouse: () -> HouseId,
         onHouseSelected: (HouseId) -> Unit,
         onHouseReselected: (HouseId) -> Unit,
@@ -2955,50 +3033,41 @@ YosWrapper {
             contentAlignment = if (effectiveSplitMode) Alignment.BottomEnd else Alignment.BottomCenter
         ) {
             val navItems = remember(
+                visibleHouses,
                 defaultHome,
                 defaultLibrary,
                 defaultSearch,
                 defaultFavorites
             ) {
-                listOf(
-                    NavItem(defaultHome, R.drawable.ic_uitabbar_home),
-                    NavItem(defaultFavorites, R.drawable.ic_uitabbar_favorites),
-                    NavItem(defaultLibrary, R.drawable.ic_uitabbar_library),
-                    NavItem(defaultSearch, R.drawable.ic_uitabbar_search)
-                )
+                visibleHouses.map { house ->
+                    when (house) {
+                        HouseId.Home -> NavItem(defaultHome, R.drawable.ic_uitabbar_home)
+                        HouseId.Favorites -> NavItem(defaultFavorites, R.drawable.ic_uitabbar_favorites)
+                        HouseId.Library -> NavItem(defaultLibrary, R.drawable.ic_uitabbar_library)
+                        HouseId.Search -> NavItem(defaultSearch, R.drawable.ic_uitabbar_search)
+                    }
+                }
             }
             val externalIndex: () -> Int = {
-                selectedHouse().tabIndex
+                visibleHouses.indexOf(selectedHouse())
             }
             // 注：关闭"工具栏液态玻璃"时，BottomNavigator 内部会退回 flamingo 原始扁平底栏。
             BottomNavigator(
                 initialIndex = externalIndex(),
                 externalIndex = externalIndex,
                 onIndexChange = { index ->
-                    nowLabel.value = navItems[index].label
-                    val target = when (index) {
-                        0 -> UI.HomePage
-                        1 -> UI.Favorites
-                        2 -> UI.Library
-                        3 -> UI.Search
-                        else -> null
-                    }
-                    if (target != null) {
-                        houseForTabIndex(index)?.let { house ->
-                            nowLabel.value = navItems[index].label
-                            if (house == selectedHouse()) {
-                                onHouseReselected(house)
-                            } else {
-                                onHouseSelected(house)
-                            }
-                        }
+                    val house = visibleHouses.getOrNull(index) ?: return@BottomNavigator
+                    nowLabel.value = navItems.getOrNull(index)?.label ?: nowLabel.value
+                    if (house == selectedHouse()) {
+                        onHouseReselected(house)
+                    } else {
+                        onHouseSelected(house)
                     }
                 },
                 onTabReselected = { index ->
-                    houseForTabIndex(index)?.let { house ->
-                        if (house == selectedHouse()) {
-                            onHouseReselected(house)
-                        }
+                    val house = visibleHouses.getOrNull(index) ?: return@BottomNavigator
+                    if (house == selectedHouse()) {
+                        onHouseReselected(house)
                     }
                 },
                 items = navItems,

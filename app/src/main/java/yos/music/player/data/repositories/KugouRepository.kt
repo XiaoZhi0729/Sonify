@@ -2121,6 +2121,10 @@ object KugouRepository {
         purpose: PlaybackRequestPurpose = PlaybackRequestPurpose.PLAYBACK
     ): String {
         val lower = hash.lowercase()
+        if (!KugouApiService.isLoggedIn()) {
+            QualityTrace.log("RESOLVE", "path" to "not_logged_in", "hash" to lower, "intent" to quality)
+            throw KugouNotLoggedInException("未登录酷狗账号")
+        }
         val key = "$lower:$quality"
         urlCache[key]?.takeIf { isFreshUrl(it) }
             ?.let {

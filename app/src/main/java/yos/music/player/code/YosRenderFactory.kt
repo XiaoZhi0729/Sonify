@@ -5,7 +5,9 @@ import android.os.Handler
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
@@ -116,27 +118,38 @@ class YosRenderFactory(
         // super 在 ON / PREFER 两档本来就会用反射构造 FfmpegAudioRenderer 并**传入本 sink**
         // （DefaultRenderersFactory 里走的正是 (Handler, AudioRendererEventListener, AudioSink)
         // 这个构造器），所以人声分离处理器照样在管线上；只有 OFF（System 档）才完全不装软解。
-        // 交给它之后三档各有明确含义（映射见 MediaController.renderFactory），本处不再插手：
-        //   Auto   → ON     → 硬件在最前，FFmpeg 兜底
+        //
+        // ## 为什么 Auto 档也要把 FLAC 分流给 FFmpeg（2026-11-19 真机排查）
+        //
+        // 在无损 FLAC 上，部分 Android 设备的系统 MediaCodec FLAC 解码器会在特定帧卡死，
+        // 既不输出 PCM 也不抛错，导致 ExoPlayer 在 STATE_READY ↔ STATE_BUFFERING 间以约
+        // 200ms 周期无限震荡、播放键抽搐（同一份缓存切到 FFmpeg 软解并重启后无需清缓存即恢复）。
+        // 因此 ON（Auto）档只要确认 FFmpeg FLAC 解码器可用（FfmpegLibrary.supportsFormat），
+        // 就对 audio/flac 返回空解码器列表，让 MediaCodecAudioRenderer 自动放弃并回落到
+        // 紧随其后的 FfmpegAudioRenderer；MP3/AAC 等普通格式继续走系统解码，System/FFmpeg
+        // 两档或 FFmpeg 不可用时保持原选择器不变：
+        //   Auto   → ON     → 普通格式硬件优先，FLAC 走 FFmpeg 软解，其余硬解不支持时 FFmpeg 兜底
         //   FFmpeg → PREFER → FFmpeg 在最前，软解优先（排查硬件解码怪声/无声时用）
         //   System → OFF    → 只有硬件，完全不装软解
+        val effectiveSelector = audioCodecSelectorFor(extensionRendererMode, mediaCodecSelector)
         super.buildAudioRenderers(
             context,
             extensionRendererMode,
-            mediaCodecSelector,
+            effectiveSelector,
             enableDecoderFallback,
             audioSink,
             eventHandler,
             eventListener,
             out
         )
-        // 记下"谁拿着哪个 sink"：若实际出声的渲染器没拿我们这个 sink，
+        // 记下"谁拿着哪个 sink"与 FLAC 是否分流给 FFmpeg：若实际出声的渲染器没拿我们这个 sink，
         // 处理器永远收不到 configure——这条能当场把"两套音频通路"的问题暴露出来。
         YosDiagnostics.log(
             "VSEP_REND",
             "pkey" to playerKey,
             "sink" to System.identityHashCode(audioSink),
             "mode" to extensionRendererMode,
+            "flac_ff" to (effectiveSelector !== mediaCodecSelector),
             "renderers" to out.joinToString(",") { it.javaClass.simpleName }
         )
     }
@@ -303,5 +316,32 @@ class YosRenderFactory(
 
         /** 每台播放器一个分析器实例，状态互不污染。 */
         private val levelMeter = PlaybackLevelMeter()
+    }
+}
+
+/**
+ * 为 `Auto` 档（[DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON]）分流 FLAC 解码器。
+ *
+ * 当 FFmpeg FLAC 解码器确认可用（[ffmpegSupportsFlac] 为真）时，对 `audio/flac` 返回空列表，
+ * 让 Media3 跳过系统 `MediaCodecAudioRenderer` 并自动回退到紧随其后的 `FfmpegAudioRenderer`；
+ * 其余格式原样透传给 [upstream]，`System` / `FFmpeg` 两档或 FFmpeg 不可用时不做拦截。
+ */
+@OptIn(UnstableApi::class)
+internal fun audioCodecSelectorFor(
+    extensionRendererMode: Int,
+    upstream: MediaCodecSelector,
+    ffmpegSupportsFlac: () -> Boolean = {
+        runCatching { FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_FLAC) }.getOrDefault(false)
+    },
+): MediaCodecSelector {
+    if (extensionRendererMode != DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON || !ffmpegSupportsFlac()) {
+        return upstream
+    }
+    return MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+        if (mimeType.equals(MimeTypes.AUDIO_FLAC, ignoreCase = true)) {
+            emptyList()
+        } else {
+            upstream.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        }
     }
 }

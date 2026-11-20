@@ -6,6 +6,10 @@ import java.io.IOException
 class KugouAuthInvalidException(detail: String) :
     IOException("鉴权已确认失效: $detail")
 
+/** 未登录酷狗账号时直接拦截在线播放，避免无凭据请求触发上游签名/鉴权错误。 */
+class KugouNotLoggedInException(detail: String = "未登录酷狗账号") :
+    IOException(detail)
+
 /** [eventId] 是上游 20028 附带的二次验证凭据；[edt] 是另一种一次性凭据（真机 /song/url 常见）。 */
 class KugouVerificationRequiredException(
     detail: String,

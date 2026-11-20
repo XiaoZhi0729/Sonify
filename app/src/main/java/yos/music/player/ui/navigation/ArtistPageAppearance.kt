@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -75,11 +76,22 @@ object ArtistPageAppearance {
      */
     fun blendedScrimColor(default: Color, activeId: String?): Color {
         var result = default
+        var activeRegistration: ScrimRegistration? = null
         for ((id, registration) in registrations) {
+            if (id == activeId) {
+                activeRegistration = registration
+                continue
+            }
+            if (!registration.transition.transitioning.value) continue
             val progress = registration.transition.progress.value
             if (progress <= 0f) continue
-            if (id != activeId && !registration.transition.transitioning.value) continue
             result = lerp(result, registration.color.value, progress.coerceIn(0f, 1f))
+        }
+        if (activeRegistration != null) {
+            val progress = activeRegistration.transition.progress.value
+            if (progress > 0f) {
+                result = lerp(result, activeRegistration.color.value, progress.coerceIn(0f, 1f))
+            }
         }
         return result
     }
@@ -134,13 +146,24 @@ object ArtistPageAppearance {
      */
     fun blendedTintColor(default: Color, activeId: String?, tintOf: (Color) -> Color): Color {
         var result = default
+        var activeRegistration: ScrimRegistration? = null
         for ((id, registration) in registrations) {
             // 封面取色页只参与遮罩色，不参与玻璃着色（见 ScrimRegistration.contributesTint）
             if (!registration.contributesTint) continue
+            if (id == activeId) {
+                activeRegistration = registration
+                continue
+            }
+            if (!registration.transition.transitioning.value) continue
             val progress = registration.transition.progress.value
             if (progress <= 0f) continue
-            if (id != activeId && !registration.transition.transitioning.value) continue
             result = lerp(result, tintOf(registration.color.value), progress.coerceIn(0f, 1f))
+        }
+        if (activeRegistration != null) {
+            val progress = activeRegistration.transition.progress.value
+            if (progress > 0f) {
+                result = lerp(result, tintOf(activeRegistration.color.value), progress.coerceIn(0f, 1f))
+            }
         }
         return result
     }
@@ -169,12 +192,38 @@ internal fun accentTintOf(source: Color, isDark: Boolean): Color {
 }
 
 /**
+ * 当前所在 Tab 外壳（HouseLayer）的进出场过渡。
+ *
+ * 四个 Tab 常驻组合并通过 [AppTabsShell] 动画 alpha 切换；仅靠 NavHost 的
+ * `AnimatedContent` 过渡在切 Tab 时全程处于已落定态（progress=1f, transitioning=false），
+ * 会导致底栏遮罩色在切 Tab 首帧瞬跳，与页面 200ms 淡入淡出割裂。
+ * 由 [AppTabsShell] 在每个 house 根节点下提供，供 [scrimTransition] 与页内转场合并。
+ */
+val LocalHouseScrimTransition = compositionLocalOf<PageScrimTransition?> { null }
+
+internal fun combineScrimTransitions(
+    navTransition: PageScrimTransition,
+    houseTransition: PageScrimTransition?
+): PageScrimTransition {
+    if (houseTransition == null) return navTransition
+    return PageScrimTransition(
+        progress = derivedStateOf {
+            (navTransition.progress.value * houseTransition.progress.value).coerceIn(0f, 1f)
+        },
+        transitioning = derivedStateOf {
+            navTransition.transitioning.value || houseTransition.transitioning.value
+        }
+    )
+}
+
+/**
  * 取当前 destination 的进出场进度。NavHost 的 fadeIn/fadeOut 默认 spec 是
  * spring(1f, 400f, 0.01f)（反编译 animation 1.10.2 确认），这里的
  * Transition.animateFloat 挂在同一个 AnimatedContent Transition 上、用同 spec，
  * 故与页面淡入淡出逐帧一致；无转场（初始 destination/进程恢复）时 progress 恒为
- * 1f，transitioning 恒为 false。须在 NavHost 的 composable 内容 lambda
- * （AnimatedContentScope 接收者）内调用。
+ * 1f，transitioning 恒为 false。当存在 [LocalHouseScrimTransition]（Tab 外壳淡入淡出）时
+ * 与之合并，保证底栏切换 Tab 与页内导航均与页面视觉透明度同帧同步。须在 NavHost 的
+ * composable 内容 lambda（AnimatedContentScope 接收者）内调用。
  */
 @Composable
 fun AnimatedContentScope.scrimTransition(): PageScrimTransition {
@@ -194,7 +243,11 @@ fun AnimatedContentScope.scrimTransition(): PageScrimTransition {
     val transitioning = remember(transition) {
         derivedStateOf { transition.currentState != transition.targetState }
     }
-    return remember(transition, progress, transitioning) {
-        PageScrimTransition(progress, transitioning)
+    val houseTransition = LocalHouseScrimTransition.current
+    return remember(transition, progress, transitioning, houseTransition) {
+        combineScrimTransitions(
+            PageScrimTransition(progress, transitioning),
+            houseTransition
+        )
     }
 }

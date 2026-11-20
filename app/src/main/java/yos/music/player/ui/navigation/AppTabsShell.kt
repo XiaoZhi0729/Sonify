@@ -4,8 +4,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
@@ -37,22 +39,22 @@ fun AppTabsShell(
     // 只在根页生效，二级页（艺人页/专辑页/歌单页）继续用各自的提取色。
     trackGradient: TrackBackdropGradient? = null,
 ) {
-    val homeAlpha by animateFloatAsState(
+    val homeAlphaState = animateFloatAsState(
         targetValue = if (selectedHouse == HouseId.Home) 1f else 0f,
         animationSpec = tween(200),
         label = "home-house-alpha"
     )
-    val libraryAlpha by animateFloatAsState(
+    val libraryAlphaState = animateFloatAsState(
         targetValue = if (selectedHouse == HouseId.Library) 1f else 0f,
         animationSpec = tween(200),
         label = "library-house-alpha"
     )
-    val searchAlpha by animateFloatAsState(
+    val searchAlphaState = animateFloatAsState(
         targetValue = if (selectedHouse == HouseId.Search) 1f else 0f,
         animationSpec = tween(200),
         label = "search-house-alpha"
     )
-    val favoritesAlpha by animateFloatAsState(
+    val favoritesAlphaState = animateFloatAsState(
         targetValue = if (selectedHouse == HouseId.Favorites) 1f else 0f,
         animationSpec = tween(200),
         label = "favorites-house-alpha"
@@ -82,7 +84,7 @@ fun AppTabsShell(
     Box(modifier) {
         CompositionLocalProvider(LocalTrackGradientSource provides trackGradient) {
             HouseLayer(
-                alpha = homeAlpha,
+                alphaState = homeAlphaState,
                 active = selectedHouse == HouseId.Home,
                 drawWhenHidden = probe.houseLayersDrawWhenHidden,
                 modulateAlpha = probe.houseModulateAlpha,
@@ -95,7 +97,7 @@ fun AppTabsShell(
                 }
             }
             HouseLayer(
-                alpha = libraryAlpha,
+                alphaState = libraryAlphaState,
                 active = selectedHouse == HouseId.Library,
                 drawWhenHidden = probe.houseLayersDrawWhenHidden,
                 modulateAlpha = probe.houseModulateAlpha,
@@ -108,7 +110,7 @@ fun AppTabsShell(
                 }
             }
             HouseLayer(
-                alpha = searchAlpha,
+                alphaState = searchAlphaState,
                 active = selectedHouse == HouseId.Search,
                 drawWhenHidden = probe.houseLayersDrawWhenHidden,
                 modulateAlpha = probe.houseModulateAlpha,
@@ -121,7 +123,7 @@ fun AppTabsShell(
                 }
             }
             HouseLayer(
-                alpha = favoritesAlpha,
+                alphaState = favoritesAlphaState,
                 active = selectedHouse == HouseId.Favorites,
                 drawWhenHidden = probe.houseLayersDrawWhenHidden,
                 modulateAlpha = probe.houseModulateAlpha,
@@ -139,19 +141,30 @@ fun AppTabsShell(
 
 @Composable
 private fun HouseLayer(
-    alpha: Float,
+    alphaState: State<Float>,
     active: Boolean,
     drawWhenHidden: Boolean,
     modulateAlpha: Boolean,
     backOwner: HouseBackDispatcherOwner,
     content: @Composable () -> Unit
 ) {
+    // 驱动底栏遮罩与页内页面同帧同步：必须共享同一个 animateFloatAsState 状态，
+    // targetAlphaState 在组合期同步更新，使切换首帧（alphaState 尚未推进前）
+    // transitioning 即刻为 true，避免旧页提前退出混合或新页提前跳色。
+    val targetAlphaState = rememberUpdatedState(if (active) 1f else 0f)
+    val houseTransitioning = remember(alphaState, targetAlphaState) {
+        derivedStateOf { alphaState.value != targetAlphaState.value }
+    }
+    val houseScrimTransition = remember(alphaState, houseTransitioning) {
+        PageScrimTransition(progress = alphaState, transitioning = houseTransitioning)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .zIndex(if (active) 1f else 0f)
             .graphicsLayer {
-                this.alpha = alpha
+                this.alpha = alphaState.value
                 // Auto 下“图层带 alpha”会走一次离屏合成（atrace 里的 alpha caused saveLayer）；
                 // ModulateAlpha 把 alpha 乘进每条绘制指令，不再开离屏缓冲。
                 if (modulateAlpha) compositingStrategy = CompositingStrategy.ModulateAlpha
@@ -162,8 +175,8 @@ private fun HouseLayer(
             // **默认走 drawWithContent 拦截**（drawWhenHidden=false）：alpha==0 时一行
             // drawContent() 都不调用，子树完全不产出绘制指令。
             // 这条拦截是恒等变换——alpha 为 0 的图层本来就不贡献任何可见像素。
-            // `alpha` 是普通 Float 参数，闭包每次重组换新实例 → node update → invalidateDraw，
-            // 所以淡入淡出过程（alpha 在 0..1 之间）照常逐帧绘制，只有真正落定到 0 才省。
+            // `alphaState.value` 在绘制期读取，淡入淡出过程只失效重绘而不触发重组，
+            // 真正落定到 0 后便不再重绘。
             //
             // ★不要改成「按隐藏状态挂/卸 Modifier 节点」：那会改 Modifier 链结构，
             // 正是 perf-demand-gating-ablation-20261024 里 63fps→18fps 的死法。
@@ -171,7 +184,7 @@ private fun HouseLayer(
             .then(
                 if (drawWhenHidden) Modifier
                 else Modifier.drawWithContent {
-                    if (alpha > 0f) drawContent()
+                    if (alphaState.value > 0f) drawContent()
                 }
             )
             .then(
@@ -186,7 +199,8 @@ private fun HouseLayer(
         // 仍是 activity，NavHost/页面里依赖它的生命周期观察不受影响。
         CompositionLocalProvider(
             androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner provides backOwner,
-            LocalOnBackPressedDispatcherOwner provides backOwner
+            LocalOnBackPressedDispatcherOwner provides backOwner,
+            LocalHouseScrimTransition provides houseScrimTransition
         ) {
             content()
         }

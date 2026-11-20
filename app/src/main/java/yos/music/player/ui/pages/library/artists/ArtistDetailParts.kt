@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -50,12 +51,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.navigation.preloadAlbumBackdropColor
 import yos.music.player.ui.pages.discovery.DiscoveryRailSnapDistance
 import yos.music.player.ui.pages.discovery.NewAlbumCard
 import yos.music.player.ui.pages.library.MusicList
@@ -451,6 +454,9 @@ internal fun ArtistLatestAlbumCard(
     val secondaryGlow = Modifier.then(if (lightCard) Modifier else Modifier.overlayEffect())
     val context = LocalContext.current
     val prefetchScope = rememberCoroutineScope()
+    LaunchedEffect(album.albumId, album.coverUrl) {
+        preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
+    }
     val dateText = remember(album.publishTime) {
         album.publishTime?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
             runCatching {
@@ -485,7 +491,10 @@ internal fun ArtistLatestAlbumCard(
                 // 两处同专辑同屏时不再争抢；详情页按此 key 与本卡封面配对
                 OnlineAlbumObject.setSharedCoverKey(album.albumId, "album/latest/${album.albumId}")
                 prefetchScope.launch {
-                    preloadRawCover(context, album.coverUrl)
+                    coroutineScope {
+                        launch { preloadRawCover(context, album.coverUrl) }
+                        launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
+                    }
                     onOpen(album)
                 }
             }

@@ -197,13 +197,27 @@ fun lyricMainTextStyle(
     )
 }
 
-fun lyricRenderStyles(subTextSize: Int, isLandscape: Boolean = false): LyricRenderStyles {
-    val normal = lyricMainTextStyle(isLandscape = isLandscape)
+/** 根据基准译文字号（100% 时为 18sp）与当前字号缩放比例计算等比例译文字号（sp）。 */
+fun scaledLyricTranslationFontSizeSp(
+    subTextSize: Int,
+    scale: Float,
+): Float = subTextSize * scale.coerceIn(0.8f, 1.2f)
+
+fun lyricRenderStyles(
+    subTextSize: Int,
+    isLandscape: Boolean = false,
+    scaleOverride: Float? = null,
+): LyricRenderStyles {
+    val scale = (scaleOverride ?: effectiveLyricFontScale(isLandscape)).coerceIn(0.8f, 1.2f)
+    val normal = lyricMainTextStyle(isLandscape = isLandscape, scaleOverride = scale)
     return LyricRenderStyles(
         normal = normal,
         accompaniment = normal.copy(fontSize = 22.sp),
         phonetic = normal.copy(fontSize = 18.sp),
-        translation = normal.copy(fontSize = subTextSize.sp, fontWeight = FontWeight.Normal),
+        translation = normal.copy(
+            fontSize = scaledLyricTranslationFontSizeSp(subTextSize, scale).sp,
+            fontWeight = FontWeight.Normal,
+        ),
     )
 }
 
@@ -469,7 +483,11 @@ object LyricRenderWarmup {
 
             val startedAt = System.currentTimeMillis()
             val prepared = runCatching {
-                val styles = lyricRenderStyles(subTextSize, isLandscape = isLandscape)
+                val styles = lyricRenderStyles(
+                    subTextSize = subTextSize,
+                    isLandscape = isLandscape,
+                    scaleOverride = activeScale,
+                )
                 prepareLyrics(
                     lyrics = buildSyncedLyrics(entries, otherSideForLines),
                     profiles = DefaultLyricsProfiles,

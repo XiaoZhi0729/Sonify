@@ -5,6 +5,8 @@ import androidx.compose.runtime.Immutable
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import yos.music.player.data.libraries.BottomBarLayoutStore
+import yos.music.player.data.libraries.BottomBarTabId
 import yos.music.player.ui.UI
 
 @Immutable
@@ -178,13 +180,27 @@ fun onlineAlbumArguments() = listOf(
 @Immutable
 enum class HouseId(
     val rootRoute: String,
-    val tabIndex: Int
+    val tabIndex: Int,
+    val tabId: BottomBarTabId
 ) {
-    Home(UI.HomePage, 0),
-    Favorites(UI.Favorites, 1),
-    Library(UI.Library, 2),
-    Search(UI.Search, 3)
+    Home(UI.HomePage, 0, BottomBarTabId.Home),
+    Favorites(UI.Favorites, 1, BottomBarTabId.Favorites),
+    Library(UI.Library, 2, BottomBarTabId.Library),
+    Search(UI.Search, 3, BottomBarTabId.Search)
 }
+
+fun BottomBarTabId.toHouseId(): HouseId = when (this) {
+    BottomBarTabId.Home -> HouseId.Home
+    BottomBarTabId.Favorites -> HouseId.Favorites
+    BottomBarTabId.Library -> HouseId.Library
+    BottomBarTabId.Search -> HouseId.Search
+}
+
+fun BottomBarLayoutStore.visibleHouses(): List<HouseId> =
+    visibleTabIds().map { it.toHouseId() }
+
+fun BottomBarLayoutStore.resolveLaunchHouse(): HouseId =
+    resolveLaunchTab().toHouseId()
 
 fun houseForTabIndex(index: Int): HouseId? = HouseId.entries.firstOrNull { it.tabIndex == index }
 

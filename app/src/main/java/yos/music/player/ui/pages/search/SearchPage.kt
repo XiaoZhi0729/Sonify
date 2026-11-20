@@ -73,6 +73,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -93,6 +94,8 @@ import yos.music.player.ui.UI
 import yos.music.player.ui.lazyItemKeys
 import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.PlaylistSelection
+import yos.music.player.ui.navigation.preloadAlbumBackdropColor
+import yos.music.player.ui.navigation.preloadPlaylistBackdropColor
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
@@ -1139,6 +1142,9 @@ private fun AlbumGrid(
         albums.chunked(2).forEach { rowAlbums ->
             Row(Modifier.fillMaxWidth()) {
                 rowAlbums.forEach { album ->
+                    LaunchedEffect(album.albumId, album.coverUrl) {
+                        preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
+                    }
                     Column(
                         Modifier
                             .weight(1f)
@@ -1148,7 +1154,10 @@ private fun AlbumGrid(
                                 // 记录来源 key：详情页据此与本卡封面配对
                                 OnlineAlbumObject.setSharedCoverKey(album.albumId, "album/online/${album.albumId}")
                                 preloadScope.launch {
-                                    preloadRawCover(context, album.coverUrl)
+                                    coroutineScope {
+                                        launch { preloadRawCover(context, album.coverUrl) }
+                                        launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
+                                    }
                                     onAlbumClick(album)
                                 }
                             }
@@ -1224,6 +1233,16 @@ private fun PlaylistGrid(
         playlists.chunked(2).forEach { rowPlaylists ->
             Row(Modifier.fillMaxWidth()) {
                 rowPlaylists.forEach { playlist ->
+                    val playlistId = playlist.globalCollectionId
+                        ?: playlist.specialId.toString()
+                    LaunchedEffect(playlistId, playlist.cover) {
+                        preloadPlaylistBackdropColor(
+                            context = context,
+                            source = PlaylistSelection.Source.Recommend.name,
+                            playlistId = playlistId,
+                            coverUrl = playlist.cover
+                        )
+                    }
                     Column(
                         Modifier
                             .weight(1f)
@@ -1231,14 +1250,22 @@ private fun PlaylistGrid(
                             .clickable {
                                 SharedCoverStyle.lastSourceCorner = 8.dp
                                 preloadScope.launch {
-                                    preloadRawCover(context, playlist.cover ?: "")
+                                    coroutineScope {
+                                        launch { preloadRawCover(context, playlist.cover ?: "") }
+                                        launch {
+                                            preloadPlaylistBackdropColor(
+                                                context = context,
+                                                source = PlaylistSelection.Source.Recommend.name,
+                                                playlistId = playlistId,
+                                                coverUrl = playlist.cover
+                                            )
+                                        }
+                                    }
                                     onPlaylistClick(playlist)
                                 }
                             }
                             .padding(8.dp)
                     ) {
-                        val playlistId = playlist.globalCollectionId
-                            ?: playlist.specialId.toString()
                         // 圆角保持列表自身的 8dp；转场中的圆角渐变由详情端依据 SharedCoverStyle 完成
                         val coverModifier = Modifier
                             .fillMaxWidth()

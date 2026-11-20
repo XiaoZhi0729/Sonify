@@ -117,6 +117,15 @@ fun PlaybackSetting(navController: NavController) =
                                 )
                             }
                             Divider()
+                            SwitchItem(
+                                title = stringResource(id = R.string.settings_performance_ui_nowplaying_auto_hide_status_bar),
+                                onClick = {
+                                    SettingsLibrary.NowPlayingAutoHideStatusBar =
+                                        !SettingsLibrary.NowPlayingAutoHideStatusBar
+                                },
+                                checkedLambda = { SettingsLibrary.NowPlayingAutoHideStatusBar }
+                            )
+                            Divider()
                             BackgroundModeItem()
                         }
 

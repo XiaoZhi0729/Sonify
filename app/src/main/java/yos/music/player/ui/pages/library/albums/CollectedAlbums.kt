@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
@@ -45,6 +46,7 @@ import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.ui.UI
 import yos.music.player.ui.navigation.NavGuard
+import yos.music.player.ui.navigation.preloadAlbumBackdropColor
 import yos.music.player.ui.pages.discovery.StatusFooter
 import yos.music.player.ui.pages.library.LibrarySortMenuButton
 import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
@@ -211,6 +213,11 @@ fun CollectedAlbums(
                     },
                     contentType = { _, _ -> "collected_album_item" }
                 ) { _, album ->
+                    if (album.albumId.isNotBlank()) {
+                        LaunchedEffect(album.albumId, album.coverUrl) {
+                            preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
+                        }
+                    }
                     CollectedAlbumCard(
                         album = album,
                         sharedTransitionScope = sharedTransitionScope,
@@ -240,7 +247,10 @@ fun CollectedAlbums(
                                     publishTime = null
                                 )
                             )
-                            preloadRawCover(context, album.coverUrl)
+                            coroutineScope {
+                                launch { preloadRawCover(context, album.coverUrl) }
+                                launch { preloadAlbumBackdropColor(context, albumId, album.coverUrl) }
+                            }
                             // 单层防抖：组件内部不设，只在这里包一次
                             NavGuard.run {
                                 navController.navigate(UI.onlineAlbumRoute(albumId))

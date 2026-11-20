@@ -36,6 +36,31 @@ private val ackProjects = listOf(
         name = "Cresto / Glasense",
         desc = "居中玻璃弹窗、材质与动效的设计及实现来源（Apache-2.0）",
         url = "https://github.com/nevodev"
+    ),
+    AckEntry(
+        name = "Pear Wall",
+        desc = "流体网格播放背景（网格形变、多重模糊与镜头预设）的移植来源，由 Nevodev 开发（Apache-2.0）",
+        url = "https://github.com/Nevodev/Pear-Wall"
+    ),
+    AckEntry(
+        name = "Lyricify Backgrounds",
+        desc = "Pear Wall 的网格控制点预设与观感上游（Apache-2.0）",
+        url = "https://github.com/WXRIW/Lyricify-Backgrounds"
+    ),
+    AckEntry(
+        name = "NexioSchedule",
+        desc = "顶栏玻璃圆钮、液态玻璃下拉弹层与渐进模糊顶栏的移植来源，由 HaoZai000 开发（AGPL-3.0）",
+        url = "https://github.com/HaoZai000/NexioSchedule"
+    ),
+    AckEntry(
+        name = "AndroidLiquidGlass",
+        desc = "液态玻璃滑块与自适应亮度采样的移植来源，由 Kyant 开发（Apache-2.0）",
+        url = "https://github.com/Kyant0/AndroidLiquidGlass"
+    ),
+    AckEntry(
+        name = "ComposeOverscroll",
+        desc = "列表越界回弹效果（overscroll_core 模块），由 cormor 开发（GPL-3.0）",
+        url = "https://github.com/Cormor/ComposeOverscroll"
     )
 )
 
@@ -55,7 +80,44 @@ private val ackLibraries = listOf(
     AckEntry("TinyPinyin", "拼音索引", "https://github.com/promeG/TinyPinyin"),
     AckEntry("TagLib", "音频元数据解析", "https://github.com/Kyant0/taglib"),
     AckEntry("Lyric Getter API", "歌词获取接口", "https://github.com/xiaowine/Lyric-Getter-Api"),
-    AckEntry("mochi-compose", "HDR 高光与分段选择器 / 滑块动画来源（Apache-2.0）", "https://github.com/feice11/mochi-compose")
+    AckEntry("mochi-compose", "HDR 高光与分段选择器 / 滑块动画来源（Apache-2.0）", "https://github.com/feice11/mochi-compose"),
+    AckEntry(
+        "Accompanist Lyrics",
+        "歌词渲染组件（lyrics-ui / lyrics-core），本项目在其基础上打补丁修改，详见 docs/LYRIC_LIB_VALIDATION.md（Apache-2.0）",
+        "https://github.com/6xingyv/accompanist-lyrics-ui"
+    ),
+    AckEntry("Shapes", "胶囊与连续曲率圆角图形（Apache-2.0）", "https://github.com/Kyant0/Shapes"),
+    AckEntry("ConfettiKit", "关于页横幅连点彩带动效（MIT）", "https://github.com/vinceglb/ConfettiKit"),
+    AckEntry(
+        "AndroidX Palette",
+        "艺人页与歌词页封面取色",
+        "https://developer.android.com/jetpack/androidx/releases/palette"
+    ),
+    AckEntry(
+        "Material Color Utilities",
+        "HCT 色彩空间、封面量化与同色系明度阶梯（Apache-2.0）",
+        "https://github.com/evant/material-color-utilities"
+    ),
+    AckEntry(
+        "TensorFlow Lite",
+        "人声分离的本地实时推理（Apache-2.0）",
+        "https://github.com/tensorflow/tensorflow"
+    ),
+    AckEntry(
+        "libPhonograph",
+        "本地音乐库扫描与 MediaStore 读取，由 FoedusProgramme 开发（GPL-3.0）",
+        "https://github.com/FoedusProgramme/libPhonograph"
+    ),
+    AckEntry(
+        "Media3 FFmpeg 扩展",
+        "音频软解解码器（Apache-2.0，内含 FFmpeg / libavcodec）",
+        "https://github.com/androidx/media/tree/release/libraries/decoder_ffmpeg"
+    ),
+    AckEntry(
+        "Tailwind CSS",
+        "玻璃对话框的配色取值（MIT）",
+        "https://github.com/tailwindlabs/tailwindcss"
+    )
 )
 
 @Composable

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.code.utils.others.Vibrator
+import yos.music.player.code.vocalsep.VocalSeparationMode
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.VocalSeparationState
 import yos.music.player.ui.theme.YosRoundedCornerShape
@@ -90,19 +92,9 @@ private val PillIconBottomPad = 2.dp
 /** 展开态白色计量区。0% 时就是没有，不留最小线——留一条会让"拖到底"永远拖不干净。 */
 
 /**
- * 展开态圆角：比胶囊明显更方，读起来是一块"竖向面板"而不是药丸。
+ * 药丸圆角，收起/按压/展开全过程保持恒定，与播放页其它圆钮同一语言。
  *
- * 这是需求里「展开后圆角减小」的落点——旧版展开时反而收到胶囊（18dp），
- * 与设计图相反。
- */
-private val PillRadiusExpanded = 10.dp
-
-/**
- * 收起态圆角，与播放页其它圆钮同一语言。
- *
- * **按下时不要改圆角**（踩过）：36dp 宽配 18dp 半径就是一个正圆，
- * 手指一按按钮会先"变成圆形"再长成圆角矩形，像换了个控件。
- * 按压反馈只靠 [pressScale] 的缩放，形状不动。
+ * 按压反馈只靠 [pressScale] 的缩放，圆角形状不动。
  */
 private val PillRadiusIdle = 9.dp
 
@@ -190,7 +182,10 @@ private val JellySpan = 6.dp
  * - 白色条拖动中直接跟手（snap），松手才用 spring 收敛。
  */
 @Composable
-fun VocalSeparationPill(modifier: Modifier = Modifier) {
+fun VocalSeparationPill(
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val available = VocalSeparationState.available
@@ -203,17 +198,18 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
     // 手指一停形变就回到 0，这才像"跟着手指走"而不是"被拉变形了"。
     var jellyTarget by remember { mutableFloatStateOf(0f) }
 
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            pressed = false
+            dragging = false
+            jellyTarget = 0f
+        }
+    }
+
     val pillHeight by animateDpAsState(
         targetValue = if (isOn) PillHeightOn else PillHeightOff,
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f),
         label = "vocalSepPillHeight"
-    )
-    // 圆角**不随按下变化**：36dp 宽配 18dp 半径就是正圆，按下去会先变圆形再长成矩形。
-    // 按压反馈只靠 pressScale 的缩放。
-    val radius by animateDpAsState(
-        targetValue = if (isOn) PillRadiusExpanded else PillRadiusIdle,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = 600f),
-        label = "vocalSepPillRadius"
     )
     // 拖动期间不再叠加按压缩放：1.08 与果冻 6% 叠在一起会过冲成"被捏扁"
     val pressScale by animateFloatAsState(
@@ -248,7 +244,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
     // 普通 RoundedCornerShape 的四角是正圆弧，和曲率突变的直边相接，
     // 在 36dp 这么小的尺寸上能看出"角是贴上去了"；YosRoundedCornerShape 用
     // 超椭圆曲线把曲率连续过渡到直边，观感才是本项目其它圆钮的样子。
-    val shape = YosRoundedCornerShape(radius)
+    val shape = remember { YosRoundedCornerShape(PillRadiusIdle) }
     // 收起态图标跟随页面内容色（与翻译按钮一致）；展开态底层用白色，
     // 因为图标大部分区域压在水位线以上那块深色底衬上。
     // **不能**用 Color.Unspecified：那会让图标回落到 drawable 里写死的黑色，
@@ -302,12 +298,14 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
             // 祖先撑高是无效的：先把 Row 撑到 88dp、后来又把祖先 Box 撑到 88dp 都没用，
             // 因为最内层的这个 36dp 节点自己就把指针挡在外面了。
             .height(pillHeight)
-            .pointerInput(available) {
+            .pointerInput(available, enabled) {
+                if (!enabled) return@pointerInput
                 // key 只能是 available：isOn / 高度会在手势进行中变化
                 // （拖动第一帧就会开启、展开动画会改 bodyHeightPx），把它们当 key 会在
                 // 拖动中途重启 pointerInput、把当前手势整个取消掉。
                 // 其余状态在回调里按需读实时值即可（MutableState 读取总是拿当前值）。
                 var claimed = false
+                var longPressed = false
                 var baseRatio = 0f
                 var accumulated = 0f
                 var toppedOut = false
@@ -317,6 +315,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                     onStart = {
                         pressed = true
                         claimed = false
+                        longPressed = false
                         accumulated = 0f
                         toppedOut = false
                         jellyTarget = 0f
@@ -328,9 +327,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                             SettingsLibrary.VocalSeparationDefaultRatio
                                 .coerceIn(0f, 1f)
                                 .let {
-                                    if (it <
-                                        VocalSeparationState.RatioAtBottom
-                                    ) {
+                                    if ((1f - it) <= VocalSeparationState.FillAtBottom) {
                                         VocalSeparationState.FallbackOnRatio
                                     } else {
                                         it
@@ -339,16 +336,31 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                         }
                         startRatio = baseRatio
                     },
+                    onLongPress = {
+                        longPressed = true
+                        if (available) {
+                            Vibrator.longClick(context)
+                            VocalSeparationState.longPress(mediaId)
+                            baseRatio = VocalSeparationState.ratio
+                            startRatio = baseRatio
+                        } else {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.vocal_separation_unavailable),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
                     onEnd = {
                         pressed = false
                         dragging = false
                         jellyTarget = 0f
                         if (claimed) {
-                            // 水位拖到**最底** = 完全原声 = 关闭；拖到最顶（人声最低）**不关闭**。
+                            // 水位拖到**最底** = 完全原声 = 关闭；拖到最顶（效果最强）**不关闭**。
                             // 等松手再收最顺（拖到底那一帧就收会让展开体在手底下瞬间塌掉）。
                             //
                             // 用「水位」而不是 ratio 判定，避免再次搞反方向：
-                            // ratio 是原声含量（0=原声、1=纯伴奏），水位是 1-ratio，
+                            // ratio 是原声含量（0=纯分轨、1=完全原声），水位是 1-ratio，
                             // 两者方向相反，直接比 ratio 极易写错边界（已经踩过一次）。
                             val endFill = 1f - VocalSeparationState.ratio
                             if (endFill <= VocalSeparationState.FillAtBottom) {
@@ -358,15 +370,17 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                                 SettingsLibrary.VocalSeparationDefaultRatio =
                                     VocalSeparationState.ratio
                             }
-                        } else if (available) {
-                            Vibrator.click(context)
-                            VocalSeparationState.toggle(mediaId)
-                        } else {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.vocal_separation_unavailable),
-                                Toast.LENGTH_SHORT
-                            ).show()
+                        } else if (!longPressed) {
+                            if (available) {
+                                Vibrator.click(context)
+                                VocalSeparationState.toggle(mediaId)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.vocal_separation_unavailable),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     },
                     onCancel = {
@@ -377,15 +391,20 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                     onDrag = { delta ->
                         if (!available) return@claimDragGestures
                         if (!claimed) {
-                            // 越过 slop 的第一帧：收起态直接开启（一步到位）
+                            // 越过 slop 的第一帧：收起态直接开启（伴奏模式）；
+                            // 若由长按展开后继续拖动，则保持已切换的人声模式不变。
                             claimed = true
                             dragging = true
                             if (!VocalSeparationState.isOn) {
-                                VocalSeparationState.applyEnabled(true, mediaId)
+                                VocalSeparationState.applyEnabled(
+                                    enabled = true,
+                                    mediaId = mediaId,
+                                    targetMode = VocalSeparationMode.ACCOMPANIMENT
+                                )
                                 baseRatio = VocalSeparationState.ratio
                             }
                         }
-                        // 向上拖（delta.y 为负）= 水位上升 = 人声减少 = 原声含量下降。
+                        // 向上拖（delta.y 为负）= 水位上升 = 效果增强 = 原声含量下降。
                         // 所以这里对 ratio 取**负**增量，与 fillFraction = 1 - ratio 一致。
                         accumulated += delta.y
                         val span = if (dragSpanPx > 1f) dragSpanPx else 1f
@@ -395,7 +414,7 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                         // 越档才给一次触感，不能每帧都震
                         if ((next * 20f).toInt() != before) Vibrator.click(context)
                         // 到底（水位归零）= 关闭，给一次重一点的提示。
-                        // 到顶不震：那是"人声最低"的正常效果位置，不是要关闭。
+                        // 到顶不震：那是效果最强的正常位置，不是要关闭。
                         val atBottom = (1f - next) <= VocalSeparationState.FillAtBottom
                         if (atBottom && !toppedOut) {
                             toppedOut = true
@@ -433,8 +452,8 @@ fun VocalSeparationPill(modifier: Modifier = Modifier) {
                 // 反过来（Plus 落在离屏层内部）时目标缓冲是空的，Plus 退化成 SrcOver，
                 // 加性效果整个丢失。
                 .overlayEffect()
-                .graphicsLayer { alpha = contentAlphaState.value }
                 .graphicsLayer {
+                    alpha = contentAlphaState.value
                     scaleX = pressScale * (1f - JellySqueeze * jelly)
                     scaleY = pressScale * (1f + JellyStretch * jelly)
                     // 以底边为缩放原点：放大/拉长都向上长，不挤动下方邻居

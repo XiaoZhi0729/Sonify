@@ -214,4 +214,103 @@ class DampedDragAnimationTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun rapidSequentialUpdateValueAccumulatesTargetValueWithoutDroppingDeltas() = runBlocking {
+        val clock = ManualFrameClock()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + clock)
+        try {
+            val anim = DampedDragAnimation(
+                animationScope = scope,
+                initialValue = 0f,
+                valueRange = 0f..3f,
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = 1.3f,
+                onDragStarted = {},
+                onDragStopped = {},
+                onDrag = { _, _ -> },
+            )
+
+            anim.press()
+            // 同一帧内连续 5 次基于 targetValue 的增量更新（未推进时钟），
+            // 不得因 valueJob.cancel() 而丢弃前面尚未调度执行的增量。
+            repeat(5) {
+                anim.updateValue(anim.targetValue + 0.2f)
+            }
+            assertEquals("targetValue must accumulate synchronously", 1.0f, anim.targetValue, 0.0001f)
+
+            pumpFrames(clock, 120)
+            assertEquals(1.0f, anim.value, 0.01f)
+
+            anim.release()
+            pumpFrames(clock, 120)
+            assertEquals(1.0f, anim.value, 0.01f)
+            assertEquals(0f, anim.velocity, 0.005f)
+            assertEquals(1f, anim.scaleX, 0.005f)
+            assertEquals(0f, anim.pressProgress, 0.005f)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun animateToValueUpdatesTargetValueSynchronously() = runBlocking {
+        val clock = ManualFrameClock()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + clock)
+        try {
+            val anim = DampedDragAnimation(
+                animationScope = scope,
+                initialValue = 0f,
+                valueRange = 0f..3f,
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = 1.3f,
+                onDragStarted = {},
+                onDragStopped = {},
+                onDrag = { _, _ -> },
+            )
+
+            anim.animateToValue(1.5f)
+            assertEquals("animateToValue must update targetValue synchronously", 1.5f, anim.targetValue, 0.0001f)
+
+            pumpFrames(clock, 180)
+            assertEquals(1.5f, anim.value, 0.01f)
+            assertEquals(0f, anim.velocity, 0.005f)
+            assertEquals(1f, anim.scaleX, 0.005f)
+            assertEquals(0f, anim.pressProgress, 0.005f)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun frameByFrameUpdateValueAdvancesValueDuringDrag() = runBlocking {
+        val clock = ManualFrameClock()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + clock)
+        try {
+            val anim = DampedDragAnimation(
+                animationScope = scope,
+                initialValue = 0f,
+                valueRange = 0f..3f,
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = 1.3f,
+                onDragStarted = {},
+                onDragStopped = {},
+                onDrag = { _, _ -> },
+            )
+
+            anim.press()
+            pumpFrames(clock, 2)
+            repeat(15) {
+                anim.updateValue(anim.targetValue + 0.1f)
+                pumpFrames(clock, 1)
+            }
+            println("DEBUG_FRAME_BY_FRAME value=${anim.value} target=${anim.targetValue}")
+            assertTrue("Expected anim.value to advance substantially during 15 frames of drag, was ${anim.value}", anim.value > 0.5f)
+        } finally {
+            scope.cancel()
+        }
+    }
 }

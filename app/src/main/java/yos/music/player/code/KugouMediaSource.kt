@@ -37,6 +37,7 @@ import yos.music.player.data.repositories.QualityTrace
 import yos.music.player.data.repositories.QualityVerdict
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.PlaybackRequestPurpose
+import yos.music.player.data.repositories.KugouNotLoggedInException
 import yos.music.player.data.repositories.KugouVerificationRequiredException
 import yos.music.player.data.repositories.KugouSignatureRejectedException
 import yos.music.player.data.repositories.KugouTokenRejectedException
@@ -357,8 +358,8 @@ class KugouResolvingDataSource(
     private fun asFatalIfDeterministic(e: IOException): IOException =
         if (KugouUpstreamError.hasAuthInvalidCause(e) || isBlockedByUpstream(e) ||
             generateSequence<Throwable>(e) { it.cause }.any {
-                it is KugouVerificationRequiredException || it is KugouSignatureRejectedException ||
-                    it is KugouTokenRejectedException
+                it is KugouNotLoggedInException || it is KugouVerificationRequiredException ||
+                    it is KugouSignatureRejectedException || it is KugouTokenRejectedException
             }
         ) {
             Loader.UnexpectedLoaderException(e)

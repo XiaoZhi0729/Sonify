@@ -51,7 +51,11 @@ object VocalSeparationController {
     @Volatile
     private var enabled = false
 
-    /** 全局占比 0..1（原声含量；0 = 纯伴奏，1 = 原声）。 */
+    /** 全局工作模式。 */
+    @Volatile
+    private var mode = VocalSeparationMode.ACCOMPANIMENT
+
+    /** 全局占比 0..1（原声含量；0 = 纯分轨，1 = 原声）。 */
     @Volatile
     private var ratio = 0.5f
 
@@ -75,6 +79,7 @@ object VocalSeparationController {
      * 新处理器会立即套用当前的全局开关与占比，避免"注册后要再点一次才生效"。
      */
     fun attach(playerKey: String, processor: VocalSeparationProcessor) {
+        processor.setMode(mode)
         processor.setEnabled(enabled && processor.isUsable())
         processor.setRatio(ratio)
         processors[playerKey] = processor
@@ -82,6 +87,7 @@ object VocalSeparationController {
             "VSEP_ATTACH", "pkey" to playerKey,
             "count" to processors.size,
             "on" to enabled,
+            "mode" to mode.name,
             "r" to ratio
         )
     }
@@ -132,6 +138,7 @@ object VocalSeparationController {
         processors.clear()
         engineProviders.clear()
         enabled = false
+        mode = VocalSeparationMode.ACCOMPANIMENT
         ratio = 1f
         _available.value = false
     }
@@ -144,6 +151,11 @@ object VocalSeparationController {
         }
         enabled = value
         broadcastEnabled()
+    }
+
+    fun setMode(value: VocalSeparationMode) {
+        mode = value
+        processors.values.forEach { it.setMode(value) }
     }
 
     fun setRatio(value: Float) {
@@ -159,13 +171,17 @@ object VocalSeparationController {
     /** 切歌：清状态并关闭开关（产品决定：换歌自动关闭）。 */
     fun resetAndDisable() {
         enabled = false
+        mode = VocalSeparationMode.ACCOMPANIMENT
         processors.values.forEach {
             it.resetEngineState()
+            it.setMode(mode)
             it.setEnabled(false)
         }
     }
 
     fun isEnabled(): Boolean = enabled
+
+    fun currentMode(): VocalSeparationMode = mode
 
     fun currentRatio(): Float = ratio
 

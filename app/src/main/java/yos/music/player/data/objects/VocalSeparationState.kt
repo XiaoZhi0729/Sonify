@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.vocalsep.VocalSeparationController
+import yos.music.player.code.vocalsep.VocalSeparationMode
 import yos.music.player.data.libraries.SettingsLibrary
 
 /**
@@ -62,7 +63,11 @@ object VocalSeparationState {
     var phase: Phase by mutableStateOf(Phase.Off)
         private set
 
-    /** 原声含量 0..1（0 = 纯伴奏，1 = 原声 = 等同关闭）。 */
+    /** 当前工作模式：伴奏模式（去人声）或人声模式（只留人声）。 */
+    var mode: VocalSeparationMode by mutableStateOf(VocalSeparationMode.ACCOMPANIMENT)
+        private set
+
+    /** 原声含量 0..1（0 = 纯分轨，1 = 原声 = 等同关闭）。 */
     var ratio: Float by mutableFloatStateOf(FallbackOnRatio)
         private set
 
@@ -80,26 +85,40 @@ object VocalSeparationState {
         available = value
         if (!value && phase != Phase.Off) {
             phase = Phase.Off
+            mode = VocalSeparationMode.ACCOMPANIMENT
         }
     }
 
     fun toggle(mediaId: String?) {
         if (!available) return
-        applyEnabled(phase != Phase.On, mediaId)
+        applyEnabled(phase != Phase.On, mediaId, VocalSeparationMode.ACCOMPANIMENT)
     }
 
-    fun applyEnabled(enabled: Boolean, mediaId: String?) {
+    fun applyEnabled(
+        enabled: Boolean,
+        mediaId: String?,
+        targetMode: VocalSeparationMode = VocalSeparationMode.ACCOMPANIMENT,
+    ) {
         if (enabled && !available) return
         trackId = mediaId
         if (enabled) {
+            mode = targetMode
+            VocalSeparationController.setMode(targetMode)
             // 每次开启都用持久化的默认占比：用户上次拖到的位置就是他想要的起点。
             //
-            // 持久化值的语义是「原声含量」：0 = 完全原声（= 关闭）、1 = 纯伴奏。
-            // 注意与 UI 水位**方向相反**——水位是「人声抑制量」，拉得越高人声越少。
-            // 这里若读到 0（= 原声 = 等同没开）就换成 50%，否则点开按钮会毫无反应。
+            // 持久化值的语义是「原声含量」：0 = 纯分轨、1 = 完全原声（= 关闭）。
+            // 注意与 UI 水位**方向相反**——水位越高效果越强。
+            // 这里若读到无效或已处于最底（等同没开）的边界值就换成 50%，否则点开按钮会毫无反应。
             val persisted = SettingsLibrary.VocalSeparationDefaultRatio.coerceIn(0f, 1f)
-            ratio = if (persisted > MinRatioForEffect) persisted else FallbackOnRatio
+            ratio = if (persisted > MinRatioForEffect && (1f - persisted) > FillAtBottom) {
+                persisted
+            } else {
+                FallbackOnRatio
+            }
             VocalSeparationController.setRatio(ratio)
+        } else {
+            mode = VocalSeparationMode.ACCOMPANIMENT
+            VocalSeparationController.setMode(VocalSeparationMode.ACCOMPANIMENT)
         }
         phase = if (enabled) Phase.On else Phase.Off
         VocalSeparationController.setEnabled(enabled)
@@ -107,11 +126,37 @@ object VocalSeparationState {
         // 说明广播没送到任何处理器（多半是播放器还没注册）。
         YosDiagnostics.log(
             "VSEP_UI", "on" to enabled,
+            "mode" to mode.name,
             "r" to ratio, "avail" to available, "mid" to mediaId,
             "persisted" to runCatching {
                 SettingsLibrary.VocalSeparationDefaultRatio
             }.getOrDefault(-1f)
         )
+    }
+
+    /**
+     * 长按交互：
+     * - 收起态：自动展开并进入「只保留人声（去背景音乐）」模式（[VocalSeparationMode.VOCALS]）。
+     * - 展开态：在「去人声」与「只留人声」两种模式间直接切换，保持展开与当前水位不变。
+     */
+    fun longPress(mediaId: String?) {
+        if (!available) return
+        if (phase != Phase.On) {
+            applyEnabled(true, mediaId, VocalSeparationMode.VOCALS)
+        } else {
+            val nextMode = if (mode == VocalSeparationMode.ACCOMPANIMENT) {
+                VocalSeparationMode.VOCALS
+            } else {
+                VocalSeparationMode.ACCOMPANIMENT
+            }
+            mode = nextMode
+            VocalSeparationController.setMode(nextMode)
+            YosDiagnostics.log(
+                "VSEP_UI", "on" to true,
+                "mode" to mode.name,
+                "r" to ratio, "avail" to available, "mid" to mediaId
+            )
+        }
     }
 
     fun updateRatio(value: Float) {
@@ -131,7 +176,7 @@ object VocalSeparationState {
     fun disableByFullRatio(mediaId: String?, restoreRatio: Float) {
         val restore = restoreRatio
             .coerceIn(0f, 1f)
-            .takeIf { it > MinRatioForEffect }
+            .takeIf { it > MinRatioForEffect && (1f - it) > FillAtBottom }
             ?: FallbackOnRatio
         SettingsLibrary.VocalSeparationDefaultRatio = restore
         ratio = restore
@@ -142,6 +187,7 @@ object VocalSeparationState {
     fun onEngineFailed(reason: String) {
         if (phase != Phase.On) return
         phase = Phase.Failed
+        mode = VocalSeparationMode.ACCOMPANIMENT
         available = false
         // 处理器自己已经关掉了开关，这里只同步全局态
         VocalSeparationController.setEnabled(false)
@@ -166,6 +212,7 @@ object VocalSeparationState {
         val owner = trackId
         if (mediaId != null && owner != null && mediaId == owner) return
         phase = Phase.Off
+        mode = VocalSeparationMode.ACCOMPANIMENT
         trackId = mediaId
         VocalSeparationController.resetAndDisable()
     }

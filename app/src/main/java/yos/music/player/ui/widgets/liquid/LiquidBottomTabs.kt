@@ -67,6 +67,7 @@ import com.kyant.backdrop.shadow.Shadow
 import yos.music.player.code.utils.others.GlassProbe
 import yos.music.player.code.utils.others.GlassDiagnostics
 import com.kyant.shapes.Capsule
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -135,22 +136,28 @@ fun LiquidBottomTabs(
     // 采样记录挂进探针门禁内的稳定单回调：重组间引用不变
     // （文件级单例 NavContainerOnDrawBackdrop 的教训同样适用于这里的 remember lambda）。
     val containerOnDrawBackdrop = NavContainerOnDrawBackdrop
+    val latestContainerTintProvider = rememberUpdatedState(containerTintProvider)
 
     // surface + tint 的组合绘制：tint 在 surface 色之上、描边高光之下（高光由库画在
     // surface 之后），绘制期读取 provider，页面转场时逐帧重绘不重组。
-    val containerSurfaceDraw: DrawScope.() -> Unit = {
-        drawRect(containerColor)
-        containerTintProvider?.invoke()?.let { tint ->
-            if (tint.alpha > 0.005f) drawRect(tint)
+    // 用 remember 稳定引用，避免 isPressingTabs 切换触发重组时连带失效容器层缓存。
+    val containerSurfaceDraw: DrawScope.() -> Unit = remember(containerColor) {
+        {
+            drawRect(containerColor)
+            latestContainerTintProvider.value?.invoke()?.let { tint ->
+                if (tint.alpha > 0.005f) drawRect(tint)
+            }
         }
     }
 
     // 磨砂胶囊的 surface：迷你条关玻璃同款表面色，提取色 tint 层序与 containerSurfaceDraw
     // 一致（tint 在表面色之上、描边高光之下）。
-    val solidCapsuleSurfaceDraw: DrawScope.() -> Unit = {
-        drawRect(solidCapsuleColor)
-        containerTintProvider?.invoke()?.let { tint ->
-            if (tint.alpha > 0.005f) drawRect(tint)
+    val solidCapsuleSurfaceDraw: DrawScope.() -> Unit = remember(solidCapsuleColor) {
+        {
+            drawRect(solidCapsuleColor)
+            latestContainerTintProvider.value?.invoke()?.let { tint ->
+                if (tint.alpha > 0.005f) drawRect(tint)
+            }
         }
     }
 
@@ -159,65 +166,67 @@ fun LiquidBottomTabs(
     // 主层的黑色环绕高光。磨砂胶囊与玻璃分支共用这一层——迷你播放器关玻璃分支
     // （MainActivity PlayerShell Kyant 分支）同样挂着这层高光+内阴影延伸，缺了它
     // 关闭玻璃时底栏会比迷你条少一层亮边（用户报告的材质不一致）。
-    val containerHighlightOverlay = Modifier.drawBackdrop(
-        backdrop = emptyBackdrop(),
-        shape = { Capsule() },
-        effects = {},
-        highlight = {
-            if (GlassProbe.current.navContainerHighlight) {
-                Highlight.Default.copy(
-                    width = 1f.dp,
-                    blurRadius = if (isLightTheme) 0.1f.dp else 0.5f.dp,
-                    alpha = if (isLightTheme) 0.8f else 1f,
-                    style = HighlightStyle.Default(
-                        color = Color.White.copy(alpha = if (isLightTheme) 0.2f else 0.1f),
-                        blendMode = BlendMode.Plus,
-                        angle = 90f,
-                        falloff = 1f
+    val containerHighlightOverlay = remember(isLightTheme) {
+        Modifier.drawBackdrop(
+            backdrop = emptyBackdrop(),
+            shape = { Capsule() },
+            effects = {},
+            highlight = {
+                if (GlassProbe.current.navContainerHighlight) {
+                    Highlight.Default.copy(
+                        width = 1f.dp,
+                        blurRadius = if (isLightTheme) 0.1f.dp else 0.5f.dp,
+                        alpha = if (isLightTheme) 0.8f else 1f,
+                        style = HighlightStyle.Default(
+                            color = Color.White.copy(alpha = if (isLightTheme) 0.2f else 0.1f),
+                            blendMode = BlendMode.Plus,
+                            angle = 90f,
+                            falloff = 1f
+                        )
                     )
-                )
-            } else null
-        },
-        shadow = { null },
-        innerShadow = { null },
-        onDrawBackdrop = { },
-        onDrawSurface = {
-            // 上下高光的内阴影延伸（与迷你条同款）：顶部高光向下、底部高光向上各拉
-            // 一条白色内渐变带，颜色与白高光一致、同用 Plus 叠加。画在本层 surface
-            // 记录内，节点已按 Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
-            if (GlassProbe.current.navContainerHighlight) {
-                // 浅色 0.2 → 0.1（2026-11-09 用户要求只削弱这两条渐变带）：6dp 白渐变带
-                // 直接压在 0.5 白纱上偏亮。只动这里——1dp 描边高光（上面 HighlightStyle.Default
-                // 的 color，仍为浅色 0.2）与黑边环绕高光保持原值，胶囊轮廓不受影响。
-                // 深色原本就是 0.1，改后两态同值。
-                val glowColor = Color.White.copy(alpha = 0.1f)
-                val glowH = 6f.dp.toPx()
-                // 顶边高光向下渐隐
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to glowColor,
-                        1f to Color.Transparent,
-                        startY = 0f,
-                        endY = glowH
-                    ),
-                    size = Size(size.width, glowH),
-                    blendMode = BlendMode.Plus
-                )
-                // 底边高光向上渐隐
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        1f to glowColor,
-                        startY = size.height - glowH,
-                        endY = size.height
-                    ),
-                    topLeft = Offset(0f, size.height - glowH),
-                    size = Size(size.width, glowH),
-                    blendMode = BlendMode.Plus
-                )
+                } else null
+            },
+            shadow = { null },
+            innerShadow = { null },
+            onDrawBackdrop = { },
+            onDrawSurface = {
+                // 上下高光的内阴影延伸（与迷你条同款）：顶部高光向下、底部高光向上各拉
+                // 一条白色内渐变带，颜色与白高光一致、同用 Plus 叠加。画在本层 surface
+                // 记录内，节点已按 Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
+                if (GlassProbe.current.navContainerHighlight) {
+                    // 浅色 0.2 → 0.1（2026-11-09 用户要求只削弱这两条渐变带）：6dp 白渐变带
+                    // 直接压在 0.5 白纱上偏亮。只动这里——1dp 描边高光（上面 HighlightStyle.Default
+                    // 的 color，仍为浅色 0.2）与黑边环绕高光保持原值，胶囊轮廓不受影响。
+                    // 深色原本就是 0.1，改后两态同值。
+                    val glowColor = Color.White.copy(alpha = 0.1f)
+                    val glowH = 6f.dp.toPx()
+                    // 顶边高光向下渐隐
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to glowColor,
+                            1f to Color.Transparent,
+                            startY = 0f,
+                            endY = glowH
+                        ),
+                        size = Size(size.width, glowH),
+                        blendMode = BlendMode.Plus
+                    )
+                    // 底边高光向上渐隐
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to glowColor,
+                            startY = size.height - glowH,
+                            endY = size.height
+                        ),
+                        topLeft = Offset(0f, size.height - glowH),
+                        size = Size(size.width, glowH),
+                        blendMode = BlendMode.Plus
+                    )
+                }
             }
-        }
-    )
+        )
+    }
 
     val tabsBackdrop = rememberLayerBackdrop()
     val containerSurfaceBackdrop = rememberLayerBackdrop()
@@ -227,14 +236,16 @@ fun LiquidBottomTabs(
         modifier,
         contentAlignment = Alignment.CenterStart
     ) {
+        val safeTabsCount = tabsCount.coerceAtLeast(1)
+        val maxTabIndex = (safeTabsCount - 1).coerceAtLeast(0)
         val density = LocalDensity.current
         GlassDiagnostics.state(
             "bottom_tabs_layout",
-            "width=${constraints.maxWidth} height=${constraints.maxHeight} tabs=$tabsCount " +
+            "width=${constraints.maxWidth} height=${constraints.maxHeight} tabs=$safeTabsCount " +
                     "tabsBackdrop=${System.identityHashCode(tabsBackdrop)}"
         )
         val tabWidth = with(density) {
-            (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / tabsCount
+            (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / safeTabsCount
         }
 
         val offsetAnimation = remember { Animatable(0f) }
@@ -253,24 +264,30 @@ fun LiquidBottomTabs(
         val latestOnTabSelected = rememberUpdatedState(onTabSelected)
         val latestOnTabReselected = rememberUpdatedState(onTabReselected)
         var currentIndex by remember {
-            mutableIntStateOf(selectedTabIndex())
+            mutableIntStateOf(selectedTabIndex().fastCoerceIn(0, maxTabIndex))
         }
         // split 布局会在首次测量后把底栏从全宽缩到 30%；onDrag 必须捕获当前 tabWidth，
         // 否则手势仍按首次全宽的 Tab 尺寸换算，玻璃胶囊看起来会被强力阻尼拖住。
-        val dampedDragAnimation = remember(animationScope, tabWidth, isLtr, tabsCount) {
+        val dampedDragAnimation = remember(animationScope, tabWidth, isLtr, safeTabsCount) {
+            var dragOffsetX = 0f
+            var offsetJob: Job? = null
             DampedDragAnimation(
                 animationScope = animationScope,
-                initialValue = latestSelectedTabIndex.value().toFloat(),
-                valueRange = 0f..(tabsCount - 1).toFloat(),
+                initialValue = latestSelectedTabIndex.value().toFloat().fastCoerceIn(0f, maxTabIndex.toFloat()),
+                valueRange = 0f..maxTabIndex.toFloat(),
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 pressedScale = 65f / 50f,
-                onDragStarted = {},
+                onDragStarted = {
+                    dragOffsetX = offsetAnimation.value
+                },
                 onDragStopped = {
-                    val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+                    val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, maxTabIndex)
                     currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
-                    animationScope.launch {
+                    dragOffsetX = 0f
+                    offsetJob?.cancel()
+                    offsetJob = animationScope.launch {
                         offsetAnimation.animateTo(
                             0f,
                             spring(1f, 300f, 0.5f)
@@ -280,10 +297,13 @@ fun LiquidBottomTabs(
                 onDrag = { _, dragAmount ->
                     updateValue(
                         (targetValue + dragAmount.x / tabWidth * if (isLtr) 1f else -1f)
-                            .fastCoerceIn(0f, (tabsCount - 1).toFloat())
+                            .fastCoerceIn(0f, maxTabIndex.toFloat())
                     )
-                    animationScope.launch {
-                        offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x)
+                    dragOffsetX += dragAmount.x
+                    val nextOffset = dragOffsetX
+                    offsetJob?.cancel()
+                    offsetJob = animationScope.launch {
+                        offsetAnimation.snapTo(nextOffset)
                     }
                 }
             )
@@ -294,19 +314,22 @@ fun LiquidBottomTabs(
         LaunchedEffect(dampedDragAnimation) {
             snapshotFlow { latestSelectedTabIndex.value() }
                 .collectLatest { index ->
-                    currentIndex = index
+                    if (index in 0..maxTabIndex) {
+                        currentIndex = index
+                    }
                 }
         }
         LaunchedEffect(dampedDragAnimation) {
             snapshotFlow { currentIndex }
                 .drop(1)
                 .collectLatest { index ->
-                    dampedDragAnimation.animateToValue(index.toFloat())
-                    latestOnTabSelected.value(index)
+                    val clamped = index.fastCoerceIn(0, maxTabIndex)
+                    dampedDragAnimation.animateToValue(clamped.toFloat())
+                    latestOnTabSelected.value(clamped)
                 }
         }
 
-        val interactiveHighlight = remember(animationScope, tabWidth, isLtr, tabsCount, dampedDragAnimation) {
+        val interactiveHighlight = remember(animationScope, tabWidth, isLtr, safeTabsCount, dampedDragAnimation) {
             InteractiveHighlight(
                 animationScope = animationScope,
                 onTap = { latestOnTabReselected.value() },
@@ -324,6 +347,63 @@ fun LiquidBottomTabs(
         // 玻璃模糊强度倍率：乘在玻璃容器分支 + tabsBackdrop 生产者行（Tab 指示器采样源）
         // 两处同源的 4dp 上；磨砂分支的 12dp 是"无玻璃材质"回退，不乘。
         val glassScale = glassBlurScale
+        val frostedScale = frostedBlurScale
+        val containerCapsuleShape: () -> com.kyant.shapes.RoundedRectangularShape = remember { { Capsule() } }
+        val containerHighlight: () -> Highlight? = remember(isLightTheme) {
+            {
+                if (GlassProbe.current.navContainerHighlight) {
+                    Highlight.Default.copy(
+                        width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
+                        blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
+                        alpha = 1f,
+                        style = WrapHighlightStyle(
+                            color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
+                            blendMode = BlendMode.SrcOver,
+                            angle = 0f,
+                            falloff = 0.9f,
+                            baseline = 0.4f
+                        )
+                    )
+                } else null
+            }
+        }
+        val solidEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit = remember(frostedScale) {
+            { blur(12.dp.toPx() * frostedScale) }
+        }
+        val solidShadow: () -> Shadow? = remember { { Shadow.Default } }
+        val noInnerShadow: () -> InnerShadow? = remember { { null } }
+        val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit = remember(glassScale) {
+            {
+                // 整条效果链一个开关：量它挂在 1190x208 层上到底贵不贵。
+                if (GlassProbe.current.navContainerEffects) {
+                    vibrancy()
+                    blur(4f.dp.toPx() * glassScale)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        lens(16f.dp.toPx(), 32f.dp.toPx())
+                    }
+                }
+            }
+        }
+        val glassShadow: () -> Shadow? = remember {
+            { if (GlassProbe.current.navContainerShadow) Shadow.Default else null }
+        }
+        val glassLayerBlock: (androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit)? = remember(dampedDragAnimation) {
+            if (!GlassProbe.current.navContainerLayer) null else {
+                {
+                    val progress = dampedDragAnimation.pressProgress
+                    val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                    scaleX = scale
+                    scaleY = scale
+                }
+            }
+        }
+        val containerFallbackDraw: DrawScope.() -> Unit = remember(containerSurfaceDraw) {
+            { containerSurfaceDraw() }
+        }
+        val panelTranslationLayer: androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit = remember(density) {
+            { translationX = panelOffset }
+        }
+
         CompositionLocalProvider(
             LocalGlassContentColor provides null
         ) {
@@ -333,9 +413,7 @@ fun LiquidBottomTabs(
             key(solidCapsule) {
                 Row(
                     Modifier
-                        .graphicsLayer {
-                            translationX = panelOffset
-                        }
+                        .graphicsLayer(panelTranslationLayer)
                         .then(
                             if (solidCapsule) {
                                 // 无玻璃材质：磨砂胶囊（Haze 式）——只做背景模糊，不做折射/透镜/
@@ -345,84 +423,36 @@ fun LiquidBottomTabs(
                                 // 玻璃态才有的黑色描边。
                                 Modifier.drawBackdrop(
                                     backdrop = backdrop,
-                                    shape = { Capsule() },
+                                    shape = containerCapsuleShape,
                                     // 采样层已降为 1/2，模糊由库经 drawImage 作用其上。半径取 12dp。
                                     // 磨砂分支使用独立的 frostedBlurScale（与液态玻璃的 glassBlurScale 互不干扰）。
-                                    effects = { blur(12.dp.toPx() * frostedBlurScale) },
+                                    effects = solidEffects,
                                     // 黑边环绕高光：与玻璃分支/迷你条玻璃面同配方
                                     // （ClassYaba LiquidButton blackSideHighlight）。
-                                    highlight = {
-                                        if (GlassProbe.current.navContainerHighlight) {
-                                            Highlight.Default.copy(
-                                                width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
-                                                blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
-                                                alpha = 1f,
-                                                style = WrapHighlightStyle(
-                                                    color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
-                                                    blendMode = BlendMode.SrcOver,
-                                                    angle = 0f,
-                                                    falloff = 0.9f,
-                                                    baseline = 0.4f
-                                                )
-                                            )
-                                        } else null
-                                    },
-                                    shadow = { Shadow.Default },
-                                    innerShadow = { null },
+                                    highlight = containerHighlight,
+                                    shadow = solidShadow,
+                                    innerShadow = noInnerShadow,
                                     onDrawSurface = solidCapsuleSurfaceDraw
                                 )
                                     .then(containerHighlightOverlay)
                             }
                             // 底栏容器玻璃：navcontainer 时整块不挂，退回 containerColor。
                             else if (!containerGlassEnabled) {
-                                Modifier.drawBehind { containerSurfaceDraw() }
+                                Modifier.drawBehind(containerFallbackDraw)
                             } else {
                                 Modifier.drawBackdrop(
                                     backdrop = backdrop,
-                                    shape = { Capsule() },
+                                    shape = containerCapsuleShape,
                                     // 玻璃材质与迷你播放器收起态逐项对齐（MainActivity PlayerShell）：
                                     // 自适应 colorControls + blur 4dp + lens(16,32) + Shadow.Default。
                                     // 黑边环绕高光（数值与 ClassYaba LiquidButton blackSideHighlight 一致）：
                                     // WrapHighlightStyle 整圈连续、左右最深、上下保留 baseline=0.4；
                                     // 白色提亮高光由下方 emptyBackdrop 覆盖层单独叠加。
-                                    effects = {
-                                        // 整条效果链一个开关：量它挂在 1190x208 层上到底贵不贵。
-                                        if (GlassProbe.current.navContainerEffects) {
-                                            vibrancy()
-                                            blur(4f.dp.toPx() * glassScale)
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                                lens(16f.dp.toPx(), 32f.dp.toPx())
-                                            }
-                                        }
-                                    },
-                                    highlight = {
-                                        if (GlassProbe.current.navContainerHighlight) {
-                                            Highlight.Default.copy(
-                                                width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
-                                                blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
-                                                alpha = 1f,
-                                                style = WrapHighlightStyle(
-                                                    color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
-                                                    blendMode = BlendMode.SrcOver,
-                                                    angle = 0f,
-                                                    falloff = 0.9f,
-                                                    baseline = 0.4f
-                                                )
-                                            )
-                                        } else null
-                                    },
-                                    shadow = {
-                                        if (GlassProbe.current.navContainerShadow) Shadow.Default else null
-                                    },
+                                    effects = glassEffects,
+                                    highlight = containerHighlight,
+                                    shadow = glassShadow,
                                     // 静止时 pressProgress==0，缩放恒为 1 —— 这层 graphicsLayer 是白开的。
-                                    layerBlock = if (!GlassProbe.current.navContainerLayer) null else {
-                                        {
-                                            val progress = dampedDragAnimation.pressProgress
-                                            val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
-                                            scaleX = scale
-                                            scaleY = scale
-                                        }
-                                    },
+                                    layerBlock = glassLayerBlock,
                                     // 采样 + 记录（探针关掉采样时连 record 一起停）。
                                     exportedBackdrop = containerSurfaceBackdrop,
                                     onDrawBackdrop = containerOnDrawBackdrop,
@@ -513,7 +543,7 @@ fun LiquidBottomTabs(
                     // 按压/拖动速度的缩放锚点：端点 Tab 固定朝屏幕内侧生长，
                     // 避免玻璃胶囊放大后越出玻璃面板乃至屏幕边缘
                     transformOrigin = TransformOrigin(
-                        (dampedDragAnimation.value / (tabsCount - 1).coerceAtLeast(1))
+                        (dampedDragAnimation.value / maxTabIndex.coerceAtLeast(1))
                             .fastCoerceIn(0f, 1f),
                         0.5f
                     )
@@ -598,7 +628,7 @@ fun LiquidBottomTabs(
                     )
                 )
                 .height(50f.dp)
-                .fillMaxWidth(1f / tabsCount)
+                .fillMaxWidth(1f / safeTabsCount)
         )
     }
 }

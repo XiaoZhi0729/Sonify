@@ -38,8 +38,24 @@ class VocalSeparationProcessorTest {
         override fun close() = Unit
     }
 
-    private fun newProcessor(): VocalSeparationProcessor =
-        VocalSeparationProcessor(engineProvider = { MssEngine(IdentityModel()) })
+    /** 恒等伴奏模型：伴奏(stem 1)=输入频谱、人声(stem 0)与其余填零。 */
+    private class AccompanimentOnlyModel : MssModel {
+        override val stateSizes = IntArray(28) { 1 }
+        override fun run(spectrumIn: FloatArray, states: Array<FloatArray>, spectrumOut: FloatArray) {
+            java.util.Arrays.fill(spectrumOut, 0f)
+            for (t in 0 until MssEngine.FRAMES) {
+                for (c in 0 until 2) {
+                    val src = t * 4 * MssEngine.BINS + c * 2 * MssEngine.BINS
+                    val dst = t * 16 * MssEngine.BINS + 4 * MssEngine.BINS + c * 2 * MssEngine.BINS
+                    System.arraycopy(spectrumIn, src, spectrumOut, dst, MssEngine.BINS * 2)
+                }
+            }
+        }
+        override fun close() = Unit
+    }
+
+    private fun newProcessor(modelFactory: () -> MssModel = { IdentityModel() }): VocalSeparationProcessor =
+        VocalSeparationProcessor(engineProvider = { MssEngine(modelFactory()) })
 
     private fun pcm16(vararg values: Short): ByteBuffer {
         val buf = ByteBuffer.allocateDirect(values.size * 2).order(ByteOrder.nativeOrder())
@@ -297,19 +313,70 @@ class VocalSeparationProcessorTest {
      * 调用方按 `MssEngine.CHUNK` 整数块喂，保证每次 queueInput 正好凑满一块，
      * 输出节奏与输入一一对应，便于按整块做内容断言。
      */
-    private fun runBlocks(ratio: Float, blocks: Int): Pair<FloatArray, FloatArray> {
-        val p = newProcessor()
-        p.configure(AudioFormat(MssEngine.SR, 2, C.ENCODING_PCM_FLOAT))
-        p.flush()
-        p.setRatio(ratio)
-        p.setEnabled(true)
-
-        val totalFrames = MssEngine.CHUNK * blocks
+    private fun stereoSine(totalFrames: Int): FloatArray {
         val input = FloatArray(totalFrames * 2)
         for (i in 0 until totalFrames) {
             input[2 * i] = (0.4 * kotlin.math.sin(2 * Math.PI * 440.0 * i / MssEngine.SR)).toFloat()
             input[2 * i + 1] = (0.4 * kotlin.math.sin(2 * Math.PI * 660.0 * i / MssEngine.SR)).toFloat()
         }
+        return input
+    }
+
+    private fun computeSnrDb(
+        input: FloatArray,
+        output: FloatArray,
+        fromFrame: Int,
+        toFrame: Int,
+        lag: Int = MssEngine.CHUNK,
+    ): Double {
+        var signal = 0.0
+        var noise = 0.0
+        for (i in fromFrame until toFrame) {
+            for (c in 0 until 2) {
+                val expected = input[(i - lag) * 2 + c]
+                val actual = output[i * 2 + c]
+                signal += expected.toDouble() * expected
+                val err = (actual - expected).toDouble()
+                noise += err * err
+            }
+        }
+        return 10 * kotlin.math.log10(signal / maxOf(noise, 1e-30))
+    }
+
+    private fun maxScaledDiff(
+        input: FloatArray,
+        output: FloatArray,
+        fromFrame: Int,
+        scale: Float,
+        lag: Int = MssEngine.CHUNK,
+    ): Float {
+        var maxErr = 0f
+        val totalFrames = input.size / 2
+        for (i in fromFrame until totalFrames) {
+            for (c in 0 until 2) {
+                val expected = scale * input[(i - lag) * 2 + c]
+                val err = kotlin.math.abs(output[i * 2 + c] - expected)
+                if (err > maxErr) maxErr = err
+            }
+        }
+        return maxErr
+    }
+
+    private fun runBlocks(
+        ratio: Float,
+        blocks: Int,
+        mode: VocalSeparationMode = VocalSeparationMode.ACCOMPANIMENT,
+        modelFactory: () -> MssModel = { IdentityModel() },
+    ): Pair<FloatArray, FloatArray> {
+        val p = newProcessor(modelFactory)
+        p.configure(AudioFormat(MssEngine.SR, 2, C.ENCODING_PCM_FLOAT))
+        p.flush()
+        p.setMode(mode)
+        p.setRatio(ratio)
+        p.setEnabled(true)
+
+        val totalFrames = MssEngine.CHUNK * blocks
+        val input = stereoSine(totalFrames)
 
         val collected = ArrayList<Float>(totalFrames * 2)
         var srcPos = 0
@@ -371,5 +438,106 @@ class VocalSeparationProcessorTest {
             }
         }
         assertTrue("ratio=0.5 must be exactly half of dry (linear law), max err was $maxErr", maxErr < 1e-5f)
+    }
+
+    @Test
+    fun `vocals mode at ratio zero outputs the vocals stem`() {
+        val blocks = 12
+        val (input, output) = runBlocks(
+            ratio = 0f,
+            blocks = blocks,
+            mode = VocalSeparationMode.VOCALS,
+            modelFactory = { IdentityModel() }
+        )
+
+        val snrDb = computeSnrDb(
+            input = input,
+            output = output,
+            fromFrame = MssEngine.CHUNK * 6,
+            toFrame = input.size / 2
+        )
+        assertTrue(
+            "vocals mode ratio=0 must output vocals stem (SNR > 100 dB), was $snrDb dB",
+            snrDb > 100.0
+        )
+    }
+
+    @Test
+    fun `vocals mode strips accompaniment and blends linearly with dry signal`() {
+        val blocks = 12
+        val skipFrames = MssEngine.CHUNK * 6
+
+        // ratio = 0f（UI 最顶）：只留人声、去掉背景音乐（在伴奏模型下人声分轨为 0 → 输出静音）
+        val (_, pureVocalsOut) = runBlocks(
+            ratio = 0f,
+            blocks = blocks,
+            mode = VocalSeparationMode.VOCALS,
+            modelFactory = { AccompanimentOnlyModel() }
+        )
+        var purePeak = 0f
+        for (i in (skipFrames * 2) until pureVocalsOut.size) {
+            val a = kotlin.math.abs(pureVocalsOut[i])
+            if (a > purePeak) purePeak = a
+        }
+        assertTrue("vocals mode ratio=0 must strip accompaniment, peak was $purePeak", purePeak < 1e-4f)
+
+        // ratio = 0.5f（UI 中段）与 ratio = 1f（UI 最底 = 无效果原声）均按线性混音律叠加干声
+        for (ratio in floatArrayOf(0.5f, 1f)) {
+            val (input, out) = runBlocks(
+                ratio = ratio,
+                blocks = blocks,
+                mode = VocalSeparationMode.VOCALS,
+                modelFactory = { AccompanimentOnlyModel() }
+            )
+            val maxErr = maxScaledDiff(input = input, output = out, fromFrame = skipFrames, scale = ratio)
+            assertTrue(
+                "vocals mode ratio=$ratio must equal $ratio * dry, max err was $maxErr",
+                maxErr < 1e-5f
+            )
+        }
+    }
+
+    @Test
+    fun `switching mode mid stream transitions between accompaniment and vocals`() {
+        val p = newProcessor { IdentityModel() }
+        p.configure(AudioFormat(MssEngine.SR, 2, C.ENCODING_PCM_FLOAT))
+        p.flush()
+        p.setMode(VocalSeparationMode.ACCOMPANIMENT)
+        p.setRatio(0f)
+        p.setEnabled(true)
+
+        val blocks = 16
+        val totalFrames = MssEngine.CHUNK * blocks
+        val input = stereoSine(totalFrames)
+
+        val collected = ArrayList<Float>(totalFrames * 2)
+        for (b in 0 until blocks) {
+            if (b == 8) p.setMode(VocalSeparationMode.VOCALS)
+            val start = b * MssEngine.CHUNK * 2
+            val chunk = input.copyOfRange(start, start + MssEngine.CHUNK * 2)
+            p.queueInput(pcmFloat(*chunk))
+            val out = p.getOutput()
+            val got = FloatArray(out.remaining() / 4)
+            out.asFloatBuffer().get(got)
+            for (v in got) collected.add(v)
+        }
+        val output = collected.toFloatArray()
+
+        // 切换前（块 6..7）：伴奏模式，伴奏分轨为 0 → 静音
+        var accPeak = 0f
+        for (i in (MssEngine.CHUNK * 6 * 2) until (MssEngine.CHUNK * 8 * 2)) {
+            val a = kotlin.math.abs(output[i])
+            if (a > accPeak) accPeak = a
+        }
+        assertTrue("before switch must be silent in accompaniment mode, peak=$accPeak", accPeak < 1e-4f)
+
+        // 切换后稳定段（块 12..15）：人声模式，重建输入信号
+        val snrDb = computeSnrDb(
+            input = input,
+            output = output,
+            fromFrame = MssEngine.CHUNK * 12,
+            toFrame = totalFrames
+        )
+        assertTrue("after switching to vocals mode SNR must be > 100 dB, was $snrDb dB", snrDb > 100.0)
     }
 }

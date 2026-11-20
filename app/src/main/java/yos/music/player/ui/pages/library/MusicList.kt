@@ -30,7 +30,7 @@ import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
 @Composable
 fun /*LazyItemScope.*/MusicList(
     music: YosMediaItem,
-    horizontalPadding: Dp = 22.dp,
+    horizontalPadding: Dp = 20.dp,
     onLongClick: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {

@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
 import yos.music.player.R
@@ -17,6 +18,7 @@ import yos.music.player.data.objects.PlaylistCoverCache
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.ui.navigation.PageScrimTransition
 import yos.music.player.ui.navigation.PlaylistSelection
+import yos.music.player.ui.navigation.preloadPlaylistBackdropColor
 import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.widgets.basic.Title
 
@@ -43,6 +45,7 @@ fun FavoriteSongsPage(
     entryId: String = "",
     scrimTransition: PageScrimTransition? = null
 ) {
+    val context = LocalContext.current
     val loggedIn = KugouAccountState.isLoggedIn
     val accountUserid = KugouAccountState.userid
     val selection = remember(accountUserid) { mutableStateOf<PlaylistSelection?>(null) }
@@ -78,6 +81,12 @@ fun FavoriteSongsPage(
         if (cover.isEmpty()) {
             cover = fav.coverUrl
         }
+        preloadPlaylistBackdropColor(
+            context = context,
+            source = PlaylistSelection.Source.User.name,
+            playlistId = listid,
+            coverUrl = cover
+        )
         selection.value = PlaylistSelection(
             source = PlaylistSelection.Source.User,
             id = listid,

@@ -76,6 +76,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
 import io.github.alexzhirkevich.cupertino.icons.outlined.PersonCropCircle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
@@ -109,6 +110,8 @@ import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.PlaylistSelection
+import yos.music.player.ui.navigation.preloadAlbumBackdropColor
+import yos.music.player.ui.navigation.preloadPlaylistBackdropColor
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImage
@@ -1103,6 +1106,9 @@ internal fun NewAlbumCard(
 ) {
     val context = LocalContext.current
     val prefetchScope = rememberCoroutineScope()
+    LaunchedEffect(album.albumId, album.coverUrl) {
+        preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
+    }
     val sharedKey = "album/online/${album.albumId}"
     Column(
         modifier.clickable {
@@ -1114,7 +1120,10 @@ internal fun NewAlbumCard(
             // 记录本次来源 key：详情页据此与本卡封面配对，避免艺人页同专辑多处争抢
             OnlineAlbumObject.setSharedCoverKey(album.albumId, sharedKey)
             prefetchScope.launch {
-                preloadRawCover(context, album.coverUrl)
+                coroutineScope {
+                    launch { preloadRawCover(context, album.coverUrl) }
+                    launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
+                }
                 onClick()
             }
         }
@@ -1206,11 +1215,29 @@ internal fun RecommendPlaylistCard(
 
     val context = LocalContext.current
     val prefetchScope = rememberCoroutineScope()
+    LaunchedEffect(id, playlist.artworkUrl) {
+        preloadPlaylistBackdropColor(
+            context = context,
+            source = PlaylistSelection.Source.Recommend.name,
+            playlistId = id,
+            coverUrl = playlist.artworkUrl
+        )
+    }
     Column(
         modifier
             .clickable {
                 prefetchScope.launch {
-                    preloadRawCover(context, playlist.artworkUrl)
+                    coroutineScope {
+                        launch { preloadRawCover(context, playlist.artworkUrl) }
+                        launch {
+                            preloadPlaylistBackdropColor(
+                                context = context,
+                                source = PlaylistSelection.Source.Recommend.name,
+                                playlistId = id,
+                                coverUrl = playlist.artworkUrl
+                            )
+                        }
+                    }
                     onClick()
                 }
             }

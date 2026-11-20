@@ -96,6 +96,9 @@ private const val OFFSET_ANCHOR_STEP_MS = 150f
 /** 与 YosUIConfig.subTextSize 对齐的播放页翻译字号（sp）。 */
 private const val PLAYBACK_TRANSLATION_FONT_SIZE_SP = 18f
 
+/** 100% 缩放下预览卡片翻译行高（sp），随字号缩放比例等比例调整。 */
+private const val PLAYBACK_TRANSLATION_LINE_HEIGHT_SP = 24f
+
 /**
  * 磁性吸附计算：当数值靠近最近的固定锚点（跨度的 [snapFraction] 内）时自动吸附，
  * 在锚点之外则允许无极停留。返回 `(吸附后数值, 是否命中锚点)`。
@@ -533,10 +536,11 @@ private fun LyricStylePreviewArea(
             customFontPath = customFontPath,
         )
     }
-    val translationStyle = remember(mainStyle.fontFamily) {
+    val clampedScale = scale.coerceIn(0.8f, 1.2f)
+    val translationStyle = remember(mainStyle.fontFamily, clampedScale) {
         TextStyle(
-            fontSize = PLAYBACK_TRANSLATION_FONT_SIZE_SP.sp,
-            lineHeight = 24.sp,
+            fontSize = (PLAYBACK_TRANSLATION_FONT_SIZE_SP * clampedScale).sp,
+            lineHeight = (PLAYBACK_TRANSLATION_LINE_HEIGHT_SP * clampedScale).sp,
             fontWeight = FontWeight.Normal,
             fontFamily = mainStyle.fontFamily,
         )

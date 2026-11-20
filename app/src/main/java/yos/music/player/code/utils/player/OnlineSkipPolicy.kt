@@ -5,6 +5,9 @@ package yos.music.player.code.utils.player
  * 全账号失效时跳多少首都一样，逐首拦截时跳恰恰是对的。
  */
 enum class OnlineFailureKind {
+    /** 当前未登录账号，不能播放，也不做自动重试或切歌。 */
+    NOT_LOGGED_IN,
+
     /** 账号恢复后仍确认鉴权无效，不能靠切歌恢复。 */
     AUTH_INVALID,
 
@@ -105,6 +108,9 @@ object OnlineSkipPolicy {
         authWindowActive: Boolean,
         retryRound: Int,
     ): Decision = when {
+        // 未登录时直接停止，不切歌也不排自动重试。
+        kind == OnlineFailureKind.NOT_LOGGED_IN -> Decision.STOP
+
         // 验证、签名和未确认 token 拒绝也只能原地退避，轮次用尽就停。
         authWindowActive || requiresAccountRecovery(kind) ->
             if (roundsExhausted(retryRound + 1)) Decision.STOP else Decision.HOLD_AND_RETRY

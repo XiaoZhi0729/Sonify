@@ -8,27 +8,24 @@ import android.os.Build
 import android.view.Display
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import yos.music.player.data.libraries.SettingsLibrary
 import java.util.function.Consumer
 
 /**
- * 歌词页的真 HDR 高光：把窗口切到 HDR 模式，正在唱的那一句用超过 SDR 白的亮度画。
+ * 歌词页与全局液态玻璃的真 HDR 高光：开启设置开关时把窗口切到 HDR 模式，
+ * 正在唱的那一句与底栏等交互高光可突破 SDR 白的亮度限制。
  *
  * 改写自 mochi-compose（Apache-2.0）的 `MochiHdr` / `MochiHdrWindowEffect`。
  * 需要 Android 14（API 34）以上和支持 HDR 的屏幕；其他情况 `supported == false`、
  * `boost` 恒为 1，整条链路退回原来的 SDR 画法，外观与关闭时完全一样。
  *
- * HDR 模式下屏幕会提高背光、比 SDR 更耗电，所以只在播放页展开时打开（见 [LyricHdrWindowEffect]）。
+ * 开关开启期间窗口保持 HDR（见 [LyricHdrWindowGate]），关闭时立即切回默认颜色模式。
  */
 object LyricHdr {
     /** 屏幕当前的 HDR / SDR 亮度比（1 = 没有余量）；系统按环境光和亮度实时调整 */
@@ -133,7 +130,7 @@ object LyricHdr {
 /**
  * 跟踪屏幕亮度余量，并在 [active] 时把窗口切到 HDR 模式。
  *
- * [active] 由调用方决定（本项目是「播放页已展开」）；关掉或离开时恢复默认颜色模式。
+ * [active] 由调用方决定（本项目直接跟随「HDR 高光」设置开关）；关闭或离开时恢复默认颜色模式。
  * 必须挂在 Activity 内容的根组合上，且全程只应有一处调用。
  */
 @Composable
@@ -177,10 +174,15 @@ fun LyricHdrWindowEffect(active: Boolean) {
             }
             LyricHdr.markWindowActive(true)
         } else {
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(0f)
+                window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
+            }
+            LyricHdr.markRequestedHeadroom(0f)
             LyricHdr.markWindowActive(false)
         }
         onDispose {
-            if (on && window != null) {
+            if (window != null) {
                 if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(0f)
                 window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
             }
@@ -197,22 +199,14 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 /**
- * 播放壳展开门禁：把 [LyricHdrWindowEffect] 的开关收到一个小节点里。
+ * HDR 窗口门禁：把 [LyricHdrWindowEffect] 的开关收到一个小节点里。
  *
- * 阈值带滞回（0.55 进 / 0.45 出）：拖到 0.55 附近反复抖动时不会来回切颜色模式。
- * 单独成 composable 是为了让状态只重组这里——直接写在 MainActivity 的大作用域里，
- * 每次跨界都会让整块外壳重组一次。
+ * 直接跟随 [SettingsLibrary.LyricHdrEffect]，保证开启时底栏跟手高光与播放页歌词
+ * 全程保持 HDR，关闭时立即切回默认颜色模式。单独成 composable 是为了让设置项变化
+ * 只重组这里，不拖累 MainActivity 的大作用域。
  */
 @Composable
-fun LyricHdrWindowGate(progress: () -> Float) {
-    val currentProgress by rememberUpdatedState(progress)
-    var expanded by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        snapshotFlow { currentProgress() }.collect { p ->
-            expanded = if (expanded) p > 0.45f else p > 0.55f
-        }
-    }
-    val wanted = SettingsLibrary.LyricHdrEffect && expanded
-    LyricHdrWindowEffect(active = wanted)
+fun LyricHdrWindowGate(@Suppress("UNUSED_PARAMETER") progress: () -> Float) {
+    LyricHdrWindowEffect(active = SettingsLibrary.LyricHdrEffect)
 }
 

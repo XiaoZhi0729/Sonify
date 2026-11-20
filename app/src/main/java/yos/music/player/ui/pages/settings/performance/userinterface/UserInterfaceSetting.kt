@@ -121,6 +121,20 @@ fun UserInterfaceSetting(navController: NavController) =
 
                         GroupSpacer()
 
+                        // ---------------- 底栏 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_bottom_bar_header))
+
+                        RoundColumn {
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_performance_ui_bottom_bar_title),
+                                desc = stringResource(id = R.string.settings_performance_ui_bottom_bar_desc),
+                            ) {
+                                navController.toUI(UI.Settings.BottomBarSetting)
+                            }
+                        }
+
+                        GroupSpacer()
+
                         // ---------------- 背景 ----------------
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_background_title))
 

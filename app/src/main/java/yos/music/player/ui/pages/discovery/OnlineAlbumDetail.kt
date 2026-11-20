@@ -424,11 +424,9 @@ fun OnlineAlbumDetail(
     // 跨窗口 Popup 采不到本页的 layerBackdrop，玻璃材质会退化成实色面板。
     val state = rememberLazyListState()
     val topBarHeightPx = rememberIndexScrollOffsetPx()
-    // 采样种子用**目标色**而不是逐帧的动画值：底色 600ms 渐变期间每帧换种子会重建
-    // LayerBackdrop，把整个列表的录制层反复重录（本机 RenderThread 上还会丢子层）。
-    // 同时显式传色，避免在 CompositionLocalProvider 之前读不到 LocalTitlePageColor
-    // 而退成深色模式的黑底。
-    val titleBackdrop = rememberTitleBackdrop(resolvedAccent ?: themeAccent)
+    // rememberTitleBackdrop 内部通过 State 在绘制期读取当前动画色，不会每帧重建 LayerBackdrop，
+    // 从而让顶栏渐进模糊的采样底色与页面背景/底栏遮罩严格同帧同步。
+    val titleBackdrop = rememberTitleBackdrop(backdrop)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
     // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出）。进度由 state 的滚动量驱动，
     // 与顶栏折叠共用同一个 LazyListState，两者严格同帧。
@@ -441,9 +439,9 @@ fun OnlineAlbumDetail(
         LocalContentColor provides contentColor,
         LocalTitlePageColor provides backdrop,
         LocalTitlePageBackdrop provides titleBackdrop,
-        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 封面提取色 tint，
-        // HSV 整形与浓度见 accentTintOf）。无提取色时为 null，钮回退到纯固定色。
-        LocalTitleBarAccentTint provides resolvedAccent?.let { accentTintOf(it, isDark) },
+        // 顶栏玻璃圆钮的表面 tint：与底栏胶囊同一套（固定表面色 + 当前动画底色 tint），
+        // 无提取色时为 null，钮回退到纯固定色。
+        LocalTitleBarAccentTint provides if (resolvedAccent != null) accentTintOf(backdrop, isDark) else null,
         LocalTitleOverlayHost provides overlayHost
     ) {
         Box(
@@ -461,7 +459,6 @@ fun OnlineAlbumDetail(
             contentPadding = PaddingValues(
                 bottom = 18.dp,
                 top = 54.dp,
-                end = if (showIndexBar) 18.dp else 0.dp,
             )
         ) {
             item("AlbumHeader") {

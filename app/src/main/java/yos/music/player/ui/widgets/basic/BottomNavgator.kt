@@ -46,17 +46,19 @@ fun BottomNavigator(
     /** 容器玻璃面的提取色 tint（见 LiquidBottomTabs.containerTintProvider）。 */
     containerTintProvider: (() -> Color)? = null
 ) {
+    if (items.isEmpty()) return
+
     // 单一状态源：selectedIndex 由底栏自身持有，
     // 路由变化通过 externalIndex 在 LaunchedEffect 中异步回投，
     // 拖动/点击/路由三者不竞争同一帧。
     var selectedIndex by rememberSaveable(items) {
         mutableIntStateOf(initialIndex.coerceIn(0, items.lastIndex))
     }
-    LaunchedEffect(externalIndex()) {
+    LaunchedEffect(externalIndex(), items) {
         val target = externalIndex()
         // target < 0 表示当前路由不属于任何主 Tab（二级页/设置等），
         // 保持来处高亮不变，与底栏点击行为互不干扰
-        if (target in 0..items.lastIndex && target != selectedIndex) {
+        if (target in items.indices && target != selectedIndex) {
             selectedIndex = target
         }
     }

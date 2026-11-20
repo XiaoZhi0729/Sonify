@@ -136,6 +136,14 @@ class OnlineSkipPolicyTest {
     }
 
     @Test
+    fun notLoggedInStopsImmediatelyWithoutSkippingOrRetrying() {
+        assertEquals(Decision.STOP, decide(OnlineFailureKind.NOT_LOGGED_IN, 0, hasNext = true))
+        assertEquals(Decision.STOP, decide(OnlineFailureKind.NOT_LOGGED_IN, 0, hasNext = false))
+        assertEquals(Decision.STOP, decide(OnlineFailureKind.NOT_LOGGED_IN, 0, authWindow = true))
+        assertFalse(OnlineSkipPolicy.requiresAccountRecovery(OnlineFailureKind.NOT_LOGGED_IN))
+    }
+
+    @Test
     fun limitsAreSane() {
         assertEquals(5, OnlineSkipPolicy.RETRY_BACKOFF_MS.size)
         assertTrue(OnlineSkipPolicy.TRANSIENT_LIMIT > 0)

@@ -109,6 +109,7 @@ import yos.music.player.data.objects.PersonalFmObject
 import yos.music.player.data.repositories.FavoriteRepository
 import yos.music.player.data.repositories.IntentSource
 import yos.music.player.data.repositories.KugouAuthInvalidException
+import yos.music.player.data.repositories.KugouNotLoggedInException
 import yos.music.player.data.repositories.KugouVerificationRequiredException
 import yos.music.player.data.repositories.KugouSignatureRejectedException
 import yos.music.player.data.repositories.KugouTokenRejectedException
@@ -153,6 +154,65 @@ object MediaController {
     var mediaSession: MediaSession? = null
 
     private val shuffleNavigationHistory = ShuffleNavigationHistory()
+
+    private val externalAudioLock = Any()
+    private var pendingExternalAudio: ExternalAudioIntentHandler.AudioViewRequest? = null
+
+    fun hasPendingExternalAudio(): Boolean = synchronized(externalAudioLock) {
+        pendingExternalAudio != null
+    }
+
+    /**
+     * 播放外部 `ACTION_VIEW` 传入的音频：
+     * - 若 `mediaControl` 已连接，立即在 IO 线程解析元数据并起播。
+     * - 若仍在冷启动建连中，暂存请求，由 [YosBasicApplication] 在控制器就绪后消费并跳过历史恢复。
+     */
+    fun playExternalAudio(context: Context, request: ExternalAudioIntentHandler.AudioViewRequest) {
+        val controllerReady = synchronized(externalAudioLock) {
+            if (mediaControl == null) {
+                pendingExternalAudio = request
+                false
+            } else {
+                pendingExternalAudio = null
+                true
+            }
+        }
+        if (controllerReady) {
+            launchExternalAudio(context.applicationContext, request)
+        }
+    }
+
+    /**
+     * 消费冷启动期间暂存的外部音频请求；若无待播请求则返回 `false`。
+     */
+    suspend fun consumePendingExternalAudio(context: Context): Boolean {
+        val request = synchronized(externalAudioLock) {
+            val req = pendingExternalAudio
+            pendingExternalAudio = null
+            req
+        } ?: return false
+        val item = ExternalAudioIntentHandler.resolveExternalAudioItem(
+            context.applicationContext,
+            request.uri,
+            request.mimeType
+        )
+        prepare(item, listOf(item), play = true)
+        return true
+    }
+
+    private fun launchExternalAudio(
+        appContext: Context,
+        request: ExternalAudioIntentHandler.AudioViewRequest
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val item = ExternalAudioIntentHandler.resolveExternalAudioItem(
+                appContext,
+                request.uri,
+                request.mimeType
+            )
+            prepare(item, listOf(item), play = true)
+        }
+    }
 
     /** 队列编辑后等待 controller 时间线回推的上限；超时只记诊断，不判失败。 */
     private const val QUEUE_APPLY_TIMEOUT_MS = 300L
@@ -2142,7 +2202,7 @@ class YosPlaybackService : MediaSessionService() {
                     // 又自己把手build 的 FFmpeg 排在第一位，导致三档全都走软解（详见
                     // YosRenderFactory.buildAudioRenderers 的注释）。现在软解由
                     // DefaultRenderersFactory 自己插，档位才真正对应行为：
-                    //   Auto   = ON   → 硬件优先，软解兜底（硬解不支持的格式才轮到 FFmpeg）
+                    //   Auto   = ON   → 普通格式硬件优先，FLAC 走 FFmpeg 软解避开系统解码器卡死，其余硬解不支持时 FFmpeg 兜底
                     //   FFmpeg = PREFER → 软解优先（用于排查硬件解码出的怪声/无声）
                     //   System = OFF  → 只用硬件
                     when (SettingsLibrary.Codec) {
@@ -2305,7 +2365,11 @@ class YosPlaybackService : MediaSessionService() {
                                 holdForRetry(reason)
 
                             OnlineSkipPolicy.Decision.STOP ->
-                                stopAutoSkip(reason)
+                                if (kind == OnlineFailureKind.NOT_LOGGED_IN) {
+                                    stopNotLoggedIn(reason)
+                                } else {
+                                    stopAutoSkip(reason)
+                                }
                         }
                     }
                 }
@@ -2691,6 +2755,7 @@ class YosPlaybackService : MediaSessionService() {
     private fun classifyOnlineFailure(error: PlaybackException): OnlineFailureKind {
         val chain = generateSequence<Throwable>(error) { it.cause }.toList()
         return when {
+            chain.any { it is KugouNotLoggedInException } -> OnlineFailureKind.NOT_LOGGED_IN
             chain.any { it is KugouAuthInvalidException } -> OnlineFailureKind.AUTH_INVALID
             chain.any { it is KugouVerificationRequiredException } -> OnlineFailureKind.VERIFICATION_REQUIRED
             chain.any { it is KugouSignatureRejectedException } -> OnlineFailureKind.SIGNATURE_REJECTED
@@ -2716,6 +2781,7 @@ class YosPlaybackService : MediaSessionService() {
      * （如 "Timed out waiting for 10000 ms"）漏给用户；确凿拒播用上游给的字段级原因。
      */
     private fun userReasonOf(error: PlaybackException, kind: OnlineFailureKind): String = when (kind) {
+        OnlineFailureKind.NOT_LOGGED_IN -> "未登录账号，请先登录后播放"
         OnlineFailureKind.AUTH_INVALID -> "登录凭据已失效，请重新登录账号"
         // 20028 可能是"登录凭据被拒"的包装（/login/token 同时回 20018）。若冷启动刷新
         // 已经确证过凭据被拒，就别再说"稍后自动重试"——那句话会让用户一直等。
@@ -2723,7 +2789,7 @@ class YosPlaybackService : MediaSessionService() {
             if (yos.music.player.data.objects.KugouAccountState.credentialsRejected)
                 "登录凭据已失效，请重新登录账号"
             else "播放请求需要验证，暂时无法获取播放地址"
-        OnlineFailureKind.SIGNATURE_REJECTED -> "播放鉴权异常，稍后重试"
+        OnlineFailureKind.SIGNATURE_REJECTED -> "播放验证异常，稍后重试"
         OnlineFailureKind.TOKEN_REJECTED -> "播放凭据暂未被接受，稍后重试"
         OnlineFailureKind.TIMEOUT -> "网络超时"
         OnlineFailureKind.NETWORK -> "网络异常"
@@ -2800,6 +2866,11 @@ class YosPlaybackService : MediaSessionService() {
     private fun holdForRetry(reason: String) {
         runCatching { YosControllerObject.stopSleepEndWatcher() }
         Toast.makeText(this, "连续无法播放：$reason，稍后自动重试", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 未登录时直接提示登录并停住，不走"连续多首无法播放/自动跳过"文案。 */
+    private fun stopNotLoggedIn(reason: String) {
+        Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
     }
 
     /**
