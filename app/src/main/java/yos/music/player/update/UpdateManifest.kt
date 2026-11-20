@@ -223,10 +223,14 @@ internal object UpdateUrls {
     fun manifest(url: HttpUrl) {
         https(url)
         val trustedGithub = url.host == "raw.githubusercontent.com" &&
-            url.encodedPath.matches(Regex("$GITHUB_REPOSITORY/(master|main)/updates/(latest|preview)\\.json"))
+            url.encodedPath.matches(Regex("$GITHUB_REPOSITORY/(master|main)/updates/(latest|preview)\\.json")) &&
+            url.query == null
         val trustedGitee = url.host == "gitee.com" &&
+            url.encodedPath.matches(Regex("$GITEE_REPOSITORY/raw/(master|main)/updates/(latest|preview)\\.json")) &&
+            url.query == null
+        val trustedGiteeRawCdn = url.host == "raw.giteeusercontent.com" &&
             url.encodedPath.matches(Regex("$GITEE_REPOSITORY/raw/(master|main)/updates/(latest|preview)\\.json"))
-        require((trustedGithub || trustedGitee) && url.query == null) { "Untrusted manifest URL" }
+        require(trustedGithub || trustedGitee || trustedGiteeRawCdn) { "Untrusted manifest URL" }
     }
 
     fun apk(url: HttpUrl) {
@@ -256,7 +260,11 @@ internal object UpdateUrls {
         else if (url.host == "github.com" || url.host == "gitee.com") apk(url)
         else {
             https(url)
-            require(url.host in CDN_HOSTS || url.host.endsWith(".gitee.com")) { "Untrusted update CDN" }
+            require(
+                url.host in CDN_HOSTS ||
+                    url.host.endsWith(".gitee.com") ||
+                    url.host.endsWith(".giteeusercontent.com")
+            ) { "Untrusted update CDN" }
         }
     }
 }

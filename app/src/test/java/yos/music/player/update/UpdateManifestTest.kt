@@ -68,6 +68,7 @@ class UpdateManifestTest {
         UpdateUrls.redirect("https://release-assets.githubusercontent.com/file.apk?token=example".toHttpUrl(), false)
         UpdateUrls.manifest("https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json".toHttpUrl())
         UpdateUrls.manifest("https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/preview.json".toHttpUrl())
+        UpdateUrls.manifest("https://raw.giteeusercontent.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json?signature=example".toHttpUrl())
         UpdateUrls.manifest("https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/preview.json".toHttpUrl())
         UpdateUrls.apk("https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.0/Sonify.apk".toHttpUrl())
         UpdateUrls.redirect("https://foruda.gitee.com/attach_file/example.apk".toHttpUrl(), false)
