@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "applicationId": "com.sonify.music",
+  "versionCode": 11,
+  "versionName": "0.2.5-v2",
+  "publishedAt": "2026-11-20T13:41:55Z",
+  "minSdk": 23,
+  "abis": [
+    "arm64-v8a",
+    "armeabi-v7a"
+  ],
+  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.2.5-v2/Sonify-v0.2.5-v2.apk",
+  "mirrorApkUrls": [
+    "https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.5-v2/Sonify-v0.2.5-v2.apk"
+  ],
+  "apkSize": 25409022,
+  "sha256": "faeefff97ec803094548b51ce991429d3537c0b13bfb9357c37cd25fcb49f622",
+  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.2.5-v2",
+  "releaseNotes": {
+    "en": [
+      "Preview v0.2.5-v2: add Gitee mirror fallback, preview update channel, and UI/playback refinements."
+    ],
+    "zh-CN": [
+      "预览版 0.2.5-v2：新增 Gitee 云更新加速与自动兜底、预览版更新通道开关及界面与播放体验优化。"
+    ],
+    "zh-TW": [
+      "預覽版 0.2.5-v2：新增 Gitee 雲端更新加速與自動備援、預覽版更新通道開關及介面與播放體驗優化。"
+    ],
+    "ja": [
+      "プレビュー版 0.2.5-v2：Gitee ミラーフォールバック、プレビュー更新チャンネル、UI・再生体験の改善を追加しました。"
+    ]
+  }
+}
