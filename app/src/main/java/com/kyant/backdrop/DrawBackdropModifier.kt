@@ -459,8 +459,8 @@ private class DrawBackdropNode(
         drawContent()
         onDrawFront?.invoke(this)
 
-        exportedBackdrop?.graphicsLayer?.let { exportedLayer ->
-            recordLayer(this@DrawBackdropNode, exportedLayer) {
+        exportedBackdrop?.let { exported ->
+            val recorded = recordLayer(this@DrawBackdropNode, exported.graphicsLayer) {
                 onDrawBehind?.invoke(this)
                 val layer = graphicsLayer
                 if (layer != null && (padding != 0f || layer.renderEffect != null)) {
@@ -470,6 +470,9 @@ private class DrawBackdropNode(
                 }
                 onDrawSurface?.invoke(this)
                 onDrawFront?.invoke(this)
+            }
+            if (recorded) {
+                exported.contentVersion++
             }
         }
     }

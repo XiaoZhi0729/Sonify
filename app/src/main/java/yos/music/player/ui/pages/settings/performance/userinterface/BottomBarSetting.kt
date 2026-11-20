@@ -1,5 +1,6 @@
 package yos.music.player.ui.pages.settings.performance.userinterface
 
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FiniteAnimationSpec
@@ -20,10 +21,14 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -62,21 +68,32 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
+import com.kyant.shapes.Capsule
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.BottomBarLayoutLogic
 import yos.music.player.data.libraries.BottomBarLayoutStore
 import yos.music.player.data.libraries.BottomBarTabConfig
 import yos.music.player.data.libraries.BottomBarTabId
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.navigation.popBackStackSafely
 import yos.music.player.ui.pages.discovery.HomeDragMath
 import yos.music.player.ui.pages.settings.DefaultItem
@@ -88,12 +105,14 @@ import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
-import yos.music.player.ui.widgets.basic.BottomNavigator
-import yos.music.player.ui.widgets.basic.NavItem
+import yos.music.player.ui.theme.primary
+import yos.music.player.ui.theme.primaryDark
 import yos.music.player.ui.widgets.basic.RoundColumn
+import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
 
 private val PreviewCorner = 20.dp
+private val PreviewCapsuleShape = Capsule()
 private val CardCorner = 16.dp
 private val CardHeight = 60.dp
 private val CardGap = 10.dp
@@ -145,6 +164,25 @@ private fun BottomBarSettingContent() {
     val launchTabKey = BottomBarLayoutStore.launchTabKey.value
     val visibleTabIds = remember(tabs) { BottomBarLayoutStore.visibleTabIds() }
     val isDefault = BottomBarLayoutLogic.isDefault(tabs, launchTabKey)
+    var showResetConfirm by remember { mutableStateOf(false) }
+
+    if (showResetConfirm) {
+        SonifyDialog(
+            title = stringResource(id = R.string.bottom_bar_setting_reset_confirm_title),
+            message = stringResource(id = R.string.bottom_bar_setting_reset_confirm_message),
+            onDismissRequest = { showResetConfirm = false },
+            positiveContent = stringResource(id = R.string.bottom_bar_setting_reset_confirm_yes),
+            onPositive = {
+                showResetConfirm = false
+                Vibrator.click(context)
+                BottomBarLayoutStore.reset()
+            },
+            negativeContent = stringResource(id = R.string.bottom_bar_setting_reset_confirm_no),
+            onNegative = { showResetConfirm = false },
+            dismissOnClickOutside = true,
+            dismissOnBackPress = true
+        )
+    }
 
     Column(Modifier.fillMaxSize()) {
         GroupSpacerMedium()
@@ -167,7 +205,6 @@ private fun BottomBarSettingContent() {
                 BottomBarLayoutStore.dragCommit(from, to)
             }
         )
-        ListHeader(content = stringResource(id = R.string.bottom_bar_setting_hint))
 
         GroupSpacer()
 
@@ -192,7 +229,7 @@ private fun BottomBarSettingContent() {
                 enabled = !isDefault
             ) {
                 Vibrator.click(context)
-                BottomBarLayoutStore.reset()
+                showResetConfirm = true
             }
         }
 
@@ -204,6 +241,10 @@ private fun BottomBarSettingContent() {
 private fun BottomBarPreviewCard(visibleTabIds: List<BottomBarTabId>) {
     val previewBackdrop = rememberLayerBackdrop(onDraw = PreviewBackdropOnDraw)
     val isDark = isFlamingoInDarkMode()
+    val liquid = SettingsLibrary.BarBlurEffect
+    val liquidScaleState = rememberUpdatedState(SettingsLibrary.GlassBlurScale.coerceIn(0f, 2f))
+    val frostedScaleState = rememberUpdatedState(SettingsLibrary.FrostedBlurScale.coerceIn(0f, 2f))
+    val isDarkState = rememberUpdatedState(isDark)
 
     var selectedPreviewTab by rememberSaveable {
         mutableStateOf(BottomBarLayoutStore.resolveLaunchTab())
@@ -214,18 +255,14 @@ private fun BottomBarPreviewCard(visibleTabIds: List<BottomBarTabId>) {
         }
     }
 
-    val previewItems = visibleTabIds.map { id ->
-        NavItem(label = tabTitle(id), iconResId = tabIconRes(id))
-    }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
-            .height(114.dp)
+            .height(132.dp)
             .clip(RoundedCornerShape(PreviewCorner))
     ) {
-        // 兄弟节点 ①：仅录制背景图，绝不把 BottomNavigator 放进 layerBackdrop 子树
+        // 兄弟节点 ①：仅录制背景图，绝不把预览底栏放进 layerBackdrop 子树
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -241,23 +278,164 @@ private fun BottomBarPreviewCard(visibleTabIds: List<BottomBarTabId>) {
             )
         }
 
-        // 兄弟节点 ②：真实 BottomNavigator（实时跟随顺序、数量与液态玻璃/磨砂开关）
-        val externalIndex: () -> Int = {
-            visibleTabIds.indexOf(selectedPreviewTab).coerceAtLeast(0)
+        // 兄弟节点 ②：key(liquid) 强制材质切换时整棵重建 RenderEffect 管线，与 GlassPreviewCard 同机制
+        key(liquid) {
+            PreviewBottomBar(
+                visibleTabIds = visibleTabIds,
+                selectedTab = selectedPreviewTab,
+                onSelectTab = { selectedPreviewTab = it },
+                backdrop = previewBackdrop,
+                liquid = liquid,
+                liquidScaleState = liquidScaleState,
+                frostedScaleState = frostedScaleState,
+                isDarkState = isDarkState,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+            )
         }
-        BottomNavigator(
-            initialIndex = externalIndex(),
-            externalIndex = externalIndex,
-            onIndexChange = { index ->
-                visibleTabIds.getOrNull(index)?.let { selectedPreviewTab = it }
+    }
+}
+
+@Composable
+private fun PreviewBottomBar(
+    visibleTabIds: List<BottomBarTabId>,
+    selectedTab: BottomBarTabId,
+    onSelectTab: (BottomBarTabId) -> Unit,
+    backdrop: Backdrop,
+    liquid: Boolean,
+    liquidScaleState: State<Float>,
+    frostedScaleState: State<Float>,
+    isDarkState: State<Boolean>,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isDark = isDarkState.value
+    val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    val contentColor = if (isDark) Color.White else Color(0xFF1B1B1D)
+    val accentColor = if (isDark) primaryDark else primary
+
+    val tabCount = visibleTabIds.size.coerceAtLeast(1)
+    val selectedIndex = visibleTabIds.indexOf(selectedTab).coerceAtLeast(0)
+    val animatedIndex by animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 500f),
+        label = "previewTabIndex"
+    )
+
+    val containerModifier = if (liquid) {
+        Modifier.drawBackdrop(
+            backdrop = backdrop,
+            shape = { PreviewCapsuleShape },
+            effects = {
+                vibrancy()
+                blur((8f * liquidScaleState.value).dp.toPx())
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    lens(
+                        refractionHeight = 14.dp.toPx(),
+                        refractionAmount = 32.dp.toPx(),
+                        chromaticAberration = true
+                    )
+                }
             },
-            items = previewItems,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp),
-            backdrop = previewBackdrop
+            highlight = {
+                Highlight.Default.copy(
+                    alpha = if (isDarkState.value) 0.55f else 0.90f
+                )
+            },
+            shadow = { Shadow.Default },
+            onDrawSurface = {
+                drawRect(
+                    Color.White.copy(
+                        alpha = if (isDarkState.value) 0.10f else 0.18f
+                    )
+                )
+            }
         )
+    } else {
+        val borderColor = if (isDark) Color.White.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.08f)
+        Modifier
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { PreviewCapsuleShape },
+                effects = {
+                    blur((18f * frostedScaleState.value).dp.toPx())
+                },
+                highlight = { null },
+                shadow = { Shadow.Default },
+                onDrawSurface = {
+                    drawRect(
+                        if (isDarkState.value) Color(0xFF1E1E24).copy(alpha = 0.52f)
+                        else Color.White.copy(alpha = 0.60f)
+                    )
+                }
+            )
+            .border(0.75.dp, borderColor, PreviewCapsuleShape)
+    }
+
+    Box(
+        modifier = modifier
+            .height(58.dp)
+            .then(containerModifier)
+            .padding(4.dp)
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val tabWidthPx = constraints.maxWidth.toFloat() / tabCount
+            val pillColor = if (isDark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.10f)
+
+            // 选中态滑动胶囊
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(1f / tabCount)
+                    .graphicsLayer {
+                        translationX = if (isLtr) animatedIndex * tabWidthPx else -animatedIndex * tabWidthPx
+                    }
+                    .clip(PreviewCapsuleShape)
+                    .background(pillColor)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                visibleTabIds.forEachIndexed { index, tabId ->
+                    val selected = index == selectedIndex
+                    val tint = if (!liquid && selected) accentColor else contentColor
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(PreviewCapsuleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                Vibrator.click(context)
+                                onSelectTab(tabId)
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = tabIconRes(tabId)),
+                            contentDescription = tabTitle(tabId),
+                            tint = tint,
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Text(
+                            text = tabTitle(tabId),
+                            color = tint,
+                            fontSize = 11.5.sp,
+                            lineHeight = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -730,7 +908,7 @@ private fun LaunchTabCheckmark(selected: Boolean) {
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier
-                .size(16.dp)
+                .size(24.dp)
                 .alpha(alpha)
         )
     }
