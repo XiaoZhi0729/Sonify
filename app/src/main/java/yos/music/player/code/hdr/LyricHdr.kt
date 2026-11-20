@@ -6,8 +6,10 @@ import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.view.Display
+import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,19 +38,21 @@ object LyricHdr {
     var supported: Boolean by mutableStateOf(false)
         private set
 
+    /** Display HDR 能力探测是否已完成；未完成前不提前把冷启设好的 HDR 窗口冲回默认 */
+    var displayProbed: Boolean by mutableStateOf(false)
+        private set
+
     /** 窗口是否真的切到了 HDR 颜色模式 */
     var windowActive: Boolean by mutableStateOf(false)
         private set
 
     /**
-     * Activity 建窗时是否已把 colorMode 设成 HDR（见 MainActivity.onCreate）。
-     * 缓冲格式在那一刻就定了，所以这是「HDR 到底可不可能生效」的真实判据；
-     * [windowActive] 只反映歌词页此刻有没有把余量申请打开。
+     * 当前窗口 colorMode 是否处于 HDR（建窗由 MainActivity.onCreate 预置，运行期由 LyricHdrWindowEffect 同步）。
      */
     var windowColorModeHdr: Boolean by mutableStateOf(false)
         private set
 
-    /** 只给建窗路径写（MainActivity.onCreate） */
+    /** 只给建窗/窗口模式路径写 */
     fun markWindowColorModeHdr(value: Boolean) {
         windowColorModeHdr = value
     }
@@ -57,25 +61,24 @@ object LyricHdr {
     const val MaxBoost = 3f
 
     /**
-     * 是否让「正在唱的那一句」用超过 SDR 白的扩展亮度绘制。
-     *
-     * **当前为 false**，原因是库侧的取舍：HDR 行必须绕开 8 位离屏图层才能保住扩展亮度，
-     * 而离屏图层同时承载着逐字扫色遮罩。绕开的结果是焦点行整行常亮——
-     * 逐字歌词退化成逐行，这是每句都看得见的损失。
-     *
-     * 反过来的代价小得多：扩展亮度经过离屏层被钳回 SDR 白（等于这条链路不起作用），
-     * 但逐字扫色、加色泛光、上下渐隐全部正常。
-     *
-     * 所以在「扩展亮度在这台设备上肉眼只差约 10%」的前提下，选后者。
-     * 打开这个开关之前，先解决「扩展亮度 + 逐字扫色」共存的问题。
-     */
-    private const val EnableExtendedBoost = false
-
-    /**
      * 已向系统申请到的余量（API 35+ 的 `setDesiredHdrHeadroom` 生效时才有值）。
      * 0 表示还没申请 / 该版本没有这个 API。
      */
     private var requestedHeadroom: Float by mutableFloatStateOf(0f)
+
+    /**
+     * 按 0..1 强度映射目标 HDR 峰值倍率（1 = SDR 白，MaxBoost = 3× SDR 白）。
+     */
+    fun targetBoostFor(strength: Float): Float {
+        val s = strength.coerceIn(0f, 1f)
+        return if (s <= 0.001f) 1f else 1f + (MaxBoost - 1f) * s
+    }
+
+    /**
+     * 当前是否应走真 HDR 扩展亮度直绘（此时必须绕开 8 位离屏 saveLayer 与 BlendMode.Plus）。
+     */
+    fun isExtendedHdrActive(enabled: Boolean, strength: Float): Boolean =
+        enabled && boost(strength) > 1.001f
 
     /**
      * HDR 光效的峰值亮度（SDR 白 = 1，线性光）；未生效时恰好是 1。
@@ -83,32 +86,18 @@ object LyricHdr {
      * 所有 HDR 画法都保证每个通道都不超过它，不会因为某个通道顶到屏幕上限被截断而发白。
      */
     fun boost(strength: Float): Float {
-        // **扩展亮度直绘目前关闭**（见下方 EnableExtendedBoost 的说明）。
-        // 这个设置项现在只控制加色泛光（BlendMode.Plus），不再改变文字本身的亮度。
-        if (!EnableExtendedBoost) return 1f
-        if (!windowActive || !supported) return 1f
-        // 乘数必须来自「向系统申请到的余量」，不能来自 headroom 读数。
-        //
-        // headroom 是显示器**正在呈现**的 HDR/SDR 比，只有画面上真的画出超过 SDR 白的像素
-        // 之后才会涨上去。拿它当乘数就是先有鸡还是先有蛋：第一帧恒为 1 → boost=1 →
-        // 不画 HDR → 余量永不涨（真机实测：窗口已是 COLOR_MODE_HDR + desiredHdrHeadroom=3.0，
-        // dumpsys display 仍恒为 hdrSdrRatio 1.0、mIsHdrLayerPresent=false）。
-        //
-        // 反过来「测到 >1 就跟随它」也不行：实测只升到 1.0458，跟随之后高光立刻变暗，
-        // 余量又掉回 1.0——向下自激，观感是闪一下就没了。
-        //
-        // 目标取申请值；只有在没申请过（API 34 没有该 API）时才退回实测余量。
-        val target = when {
-            requestedHeadroom > 1f -> requestedHeadroom.coerceAtMost(MaxBoost)
-            headroom > 1.001f -> headroom.coerceAtMost(MaxBoost)
-            // API 34 上无法申请、也测不到余量：保持 SDR，至少不做超出屏幕的过驱动。
-            else -> 1f
-        }
-        if (target <= 1f) return 1f
-        return 1f + (target - 1f) * strength.coerceIn(0f, 1f)
+        val s = strength.coerceIn(0f, 1f)
+        if (!windowActive || !supported || s <= 0.001f) return 1f
+        // API 35+ 与 window.setDesiredHdrHeadroom(targetBoostFor(s)) 1:1 匹配：
+        // 不再依赖滞后且存在「先有鸡还是先有蛋」死锁的 hdrSdrRatio 读数，也不重复乘强度。
+        if (Build.VERSION.SDK_INT >= 35) return targetBoostFor(s)
+        // API 34 无 setDesiredHdrHeadroom：若系统已报告有效余量则按余量封顶，否则按 MaxBoost
+        // 兜底唤醒部分 OEM 惰性 HDR 管线，避免始终输出 1.0 导致无法激活 HDR 图层。
+        val ceiling = if (headroom > 1.05f) minOf(headroom, MaxBoost) else MaxBoost
+        return 1f + (ceiling - 1f) * s
     }
 
-    /** 只给 [LyricHdrWindowEffect] 写 */
+    /** 只给建窗/窗口模式路径写 */
     internal fun markRequestedHeadroom(value: Float) {
         requestedHeadroom = value
     }
@@ -122,25 +111,32 @@ object LyricHdr {
         supported = value
     }
 
+    internal fun markDisplayProbed(value: Boolean) {
+        displayProbed = value
+    }
+
     internal fun markWindowActive(value: Boolean) {
         windowActive = value
     }
 }
 
 /**
- * 跟踪屏幕亮度余量，并在 [active] 时把窗口切到 HDR 模式。
+ * 跟踪屏幕亮度余量，并在 [active] 时把窗口切到 HDR 模式；API 35+ 下随 [strength] 同步余量请求。
  *
  * [active] 由调用方决定（本项目直接跟随「HDR 高光」设置开关）；关闭或离开时恢复默认颜色模式。
  * 必须挂在 Activity 内容的根组合上，且全程只应有一处调用。
  */
 @Composable
-fun LyricHdrWindowEffect(active: Boolean) {
+fun LyricHdrWindowEffect(active: Boolean, strength: Float = 0.6f) {
     if (Build.VERSION.SDK_INT < 34) {
         // 低版本没有 COLOR_MODE_HDR：全部按 SDR 画。状态更新放在 effect 里，
         // 组合期写快照状态会触发反复重组。
         DisposableEffect(Unit) {
+            LyricHdr.markDisplayProbed(true)
             LyricHdr.markSupported(false)
             LyricHdr.markWindowActive(false)
+            LyricHdr.markWindowColorModeHdr(false)
+            LyricHdr.markRequestedHeadroom(0f)
             onDispose { }
         }
         return
@@ -150,44 +146,95 @@ fun LyricHdrWindowEffect(active: Boolean) {
     if (view.isInEditMode) return
 
     DisposableEffect(view) {
-        val display: Display? = view.display
-        if (display == null || !display.isHdrSdrRatioAvailable) {
-            LyricHdr.markSupported(false)
-            return@DisposableEffect onDispose { }
+        var unregister: (() -> Unit)? = null
+        var attachListener: View.OnAttachStateChangeListener? = null
+
+        fun probe(display: Display) {
+            unregister?.invoke()
+            unregister = null
+            LyricHdr.markDisplayProbed(true)
+            if (!display.isHdrSdrRatioAvailable) {
+                LyricHdr.markSupported(false)
+                LyricHdr.updateDisplay(1f)
+                return
+            }
+            LyricHdr.markSupported(true)
+            LyricHdr.updateDisplay(display.hdrSdrRatio)
+            val listener = Consumer<Display> { LyricHdr.updateDisplay(it.hdrSdrRatio) }
+            display.registerHdrSdrRatioChangedListener(context.mainExecutor, listener)
+            unregister = { display.unregisterHdrSdrRatioChangedListener(listener) }
         }
-        LyricHdr.markSupported(true)
-        LyricHdr.updateDisplay(display.hdrSdrRatio)
-        val listener = Consumer<Display> { LyricHdr.updateDisplay(it.hdrSdrRatio) }
-        display.registerHdrSdrRatioChangedListener(context.mainExecutor, listener)
-        onDispose { display.unregisterHdrSdrRatioChangedListener(listener) }
+
+        val initialDisplay = view.display ?: context.display
+        if (initialDisplay != null) {
+            probe(initialDisplay)
+        } else {
+            val listener = object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    val d = v.display ?: v.context.display ?: return
+                    probe(d)
+                    v.removeOnAttachStateChangeListener(this)
+                    attachListener = null
+                }
+
+                override fun onViewDetachedFromWindow(v: View) = Unit
+            }
+            attachListener = listener
+            view.addOnAttachStateChangeListener(listener)
+        }
+
+        onDispose {
+            attachListener?.let { view.removeOnAttachStateChangeListener(it) }
+            attachListener = null
+            unregister?.invoke()
+            unregister = null
+        }
     }
 
+    val probed = LyricHdr.displayProbed
     val on = active && LyricHdr.supported
-    DisposableEffect(view, on) {
+
+    // 1. 窗口颜色模式 effect：开关或探测状态变更时切换 colorMode 并立即触发视图重绘。
+    DisposableEffect(view, on, probed) {
+        if (!probed) {
+            return@DisposableEffect onDispose { }
+        }
         val window = view.context.findActivity()?.window
         if (on && window != null) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
-            // 只有 35+ 能主动申请余量；34 上只能等系统按内容自己升。
-            if (Build.VERSION.SDK_INT >= 35) {
-                window.setDesiredHdrHeadroom(LyricHdr.MaxBoost)
-                LyricHdr.markRequestedHeadroom(LyricHdr.MaxBoost)
-            }
+            LyricHdr.markWindowColorModeHdr(true)
             LyricHdr.markWindowActive(true)
+            view.invalidate()
         } else {
             if (window != null) {
                 if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(0f)
                 window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
+                view.invalidate()
             }
+            LyricHdr.markWindowColorModeHdr(false)
             LyricHdr.markRequestedHeadroom(0f)
             LyricHdr.markWindowActive(false)
         }
         onDispose {
-            if (window != null) {
+            if (on && window != null) {
                 if (Build.VERSION.SDK_INT >= 35) window.setDesiredHdrHeadroom(0f)
                 window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
+                view.invalidate()
+                LyricHdr.markWindowColorModeHdr(false)
+                LyricHdr.markRequestedHeadroom(0f)
+                LyricHdr.markWindowActive(false)
             }
-            LyricHdr.markRequestedHeadroom(0f)
-            LyricHdr.markWindowActive(false)
+        }
+    }
+
+    // 2. API 35+ 强度联动 effect：仅调节 desiredHdrHeadroom，不碰 window.colorMode 避免重建 Surface。
+    LaunchedEffect(view, on, strength) {
+        if (on && Build.VERSION.SDK_INT >= 35) {
+            val window = view.context.findActivity()?.window ?: return@LaunchedEffect
+            val desired = LyricHdr.targetBoostFor(strength)
+            window.setDesiredHdrHeadroom(desired)
+            LyricHdr.markRequestedHeadroom(desired)
+            view.invalidate()
         }
     }
 }
@@ -199,14 +246,16 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 /**
- * HDR 窗口门禁：把 [LyricHdrWindowEffect] 的开关收到一个小节点里。
+ * HDR 窗口门禁：把 [LyricHdrWindowEffect] 的开关与强度收到一个小节点里。
  *
- * 直接跟随 [SettingsLibrary.LyricHdrEffect]，保证开启时底栏跟手高光与播放页歌词
- * 全程保持 HDR，关闭时立即切回默认颜色模式。单独成 composable 是为了让设置项变化
- * 只重组这里，不拖累 MainActivity 的大作用域。
+ * 直接跟随 [SettingsLibrary.LyricHdrEffect] 与 [SettingsLibrary.LyricHdrStrength]，
+ * 保证开启时底栏跟手高光、预览卡片与播放页歌词全程保持 HDR，关闭时立即切回默认颜色模式。
+ * 单独成 composable 是为了让设置项变化只重组这里，不拖累 MainActivity 的大作用域。
  */
 @Composable
 fun LyricHdrWindowGate(@Suppress("UNUSED_PARAMETER") progress: () -> Float) {
-    LyricHdrWindowEffect(active = SettingsLibrary.LyricHdrEffect)
+    LyricHdrWindowEffect(
+        active = SettingsLibrary.LyricHdrEffect,
+        strength = SettingsLibrary.LyricHdrStrength,
+    )
 }
-

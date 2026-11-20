@@ -40,8 +40,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -61,6 +64,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.code.hdr.LyricHdr
+import yos.music.player.code.hdr.hdrSolidBrush
 import yos.music.player.code.utils.lrc.LyricCustomFontManager
 import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.code.utils.lrc.lyricMainTextStyle
@@ -546,6 +551,12 @@ private fun LyricStylePreviewArea(
         )
     }
     val cardShape = ContinuousRoundedRectangle(22.dp)
+    val hdrEffect = SettingsLibrary.LyricHdrEffect
+    val hdrStrength = SettingsLibrary.LyricHdrStrength
+    val hdrBoost = if (hdrEffect) LyricHdr.boost(hdrStrength) else 1f
+    val hdrBrush = remember(hdrBoost) {
+        if (hdrBoost > 1.001f) hdrSolidBrush(Color.White, hdrBoost) else null
+    }
 
     Box(
         modifier = Modifier
@@ -574,6 +585,8 @@ private fun LyricStylePreviewArea(
                 translationStyle = translationStyle,
                 mainColor = Color.White,
                 translationColor = Color.White.copy(alpha = 0.62f),
+                hdrBrush = hdrBrush,
+                plusGlowFallback = hdrEffect && hdrBrush == null,
             )
             PreviewLyricPair(
                 lyric = "I've been a fool to myself",
@@ -632,12 +645,22 @@ private fun PreviewLyricPair(
     translationStyle: TextStyle,
     mainColor: Color,
     translationColor: Color,
+    hdrBrush: Brush? = null,
+    plusGlowFallback: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(
             text = lyric,
-            style = mainStyle,
-            color = mainColor,
+            style = if (hdrBrush != null) mainStyle.copy(brush = hdrBrush) else mainStyle,
+            color = if (hdrBrush != null) Color.Unspecified else mainColor,
+            modifier = if (plusGlowFallback) {
+                Modifier.graphicsLayer {
+                    blendMode = BlendMode.Plus
+                    compositingStrategy = CompositingStrategy.Offscreen
+                }
+            } else {
+                Modifier
+            },
         )
         Text(
             text = translation,

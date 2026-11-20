@@ -414,14 +414,18 @@ class MainActivity : BaseActivity() {
         // 必须在 super.onCreate 之前换主题：窗口/闪屏在 super.onCreate 里就已按主题建好了。
         // MMKV 在 Application.onCreate 已初始化，这里读设置是安全的。
         applySplashThemeForCurrentSetting()
-        // HDR 窗口颜色模式必须在**窗口建立之前**定下来：HWUI 在 super.onCreate 里创建渲染
-        // 上下文时就按当时的 colorMode 决定要不要给扩展范围（FP16）的绘制缓冲；之后再改
-        // colorMode 只改窗口请求，已经分配的 8 位缓冲不会重建。
-        //
-        // 门槛取设置项：关着的时候不该让整个应用常驻 HDR 缓冲（显存翻倍、背光更高）。
+        // 建窗前同步一次已保存的 HDR 偏好，避免首帧闪一下 SDR 再切 HDR。
+        // 运行期的开/关与余量调节由根组合的 LyricHdrWindowGate 实时同步。
         if (SettingsLibrary.LyricHdrEffect && Build.VERSION.SDK_INT >= 34) {
             window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_HDR
             yos.music.player.code.hdr.LyricHdr.markWindowColorModeHdr(true)
+            if (Build.VERSION.SDK_INT >= 35) {
+                val desired = yos.music.player.code.hdr.LyricHdr.targetBoostFor(
+                    SettingsLibrary.LyricHdrStrength
+                )
+                window.setDesiredHdrHeadroom(desired)
+                yos.music.player.code.hdr.LyricHdr.markRequestedHeadroom(desired)
+            }
         }
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
@@ -1015,13 +1019,15 @@ class MainActivity : BaseActivity() {
                                             ((screen - bottomBarWidthPx.intValue) / 2f).coerceAtLeast(0f)
                                         return@with collapsedHorizontal * (1f - insetProgress)
                                     }
-                                    // split：shell 右边 = splitRegionEnd - bottomBarWidth - 15dp
+                                    // split：shell 右边 = splitRegionEnd - (bottomBarWidth + gap) * bottomBarVisibility
+                                    // 进入「自定义底栏」页时，底栏向右侧退场，迷你条右缘平滑延伸至 splitRegionEnd。
                                     val splitRegion = screen * 0.93f
                                     val splitRegionStart = (screen - splitRegion) / 2f
                                     val splitRegionEnd = splitRegionStart + splitRegion
                                     val bottomBarWidth = splitRegion * 0.30f
                                     val gap = 15.dp.toPx()
-                                    val collapsedRight = bottomBarWidth + gap + (screen - splitRegionEnd)
+                                    val collapsedRight =
+                                        (bottomBarWidth + gap) * bottomBarVisibilityState.value + (screen - splitRegionEnd)
                                     collapsedRight * (1f - insetProgress)
                                 }
                             val shellHorizontalInsetPx: Float
@@ -1609,8 +1615,10 @@ class MainActivity : BaseActivity() {
                                     // NavPageVisual 之下——画廊全屏内容在上，底栏（含
                                     // appChromePointerGate）退出命中路径，不再吞掉底部药丸的
                                     // 指针事件；非隐藏时 zIndex=0，组合顺序原样，层叠不变。
-                                    // 自定义底栏页：退场动画期间保持 zIndex=0f 使向下淡出可见，
+                                    // 自定义底栏页：退场动画期间保持 zIndex=0f 使退场可见，
                                     // 彻底淡出（<= 0.01f）后再沉到下方并停止绘制。
+                                    // 方向性位移淡出层按实际几何（竖屏向下 / 横屏向右）紧贴在 BottomNavigator 节点上，
+                                    // 避免把整屏 NavBottomVisual Box 包进离屏 graphicsLayer。
                                     chromeGate = Modifier
                                         .zIndex(
                                             if (hideAppChrome || (hideBottomBarOnly && bottomBarVisibilityState.value <= 0.01f)) -1f
@@ -1618,16 +1626,13 @@ class MainActivity : BaseActivity() {
                                         )
                                         .appChromeGate(
                                             hideAppChrome || (hideBottomBarOnly && bottomBarVisibilityState.value <= 0.01f)
-                                        )
-                                        .graphicsLayer {
-                                            val vis = bottomBarVisibilityState.value
-                                            alpha = vis
-                                            translationY = (1f - vis) *
-                                                (height.intValue + navBarBottomInsetPx + with(density) { 12.dp.toPx() })
-                                        },
+                                        ),
                                     chromePointerGate = Modifier.appChromePointerGate(hideAppChrome || hideBottomBarOnly),
                                     navBackdrop = navBackdrop,
                                     visibleHouses = visibleHouses,
+                                    bottomBarVisibility = bottomBarVisibilityState,
+                                    hideBottomBarOnly = hideBottomBarOnly,
+                                    navBarBottomInsetPx = navBarBottomInsetPx.toFloat(),
                                     selectedHouse = { selectedHouse.value },
                                     onHouseSelected = { house -> appNavigator.switchHouse(house) },
                                     onHouseReselected = { house ->
@@ -2961,6 +2966,16 @@ class MainActivity : BaseActivity() {
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .height(bottomScrimHeight)
+                            .pointerInput(Unit) {
+                                // 拦截底栏/迷你条区域缝隙（左右边距、手势栏、胶囊间距等）的触摸事件，
+                                // 防止误触穿透到下方的页面内容产生点击反馈。
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                }
+                            }
                             .drawBehind {
                                 // Read the registered animated State in draw, not composition:
                                 // the artist's existing color animation directly drives each frame.
@@ -2987,6 +3002,9 @@ class MainActivity : BaseActivity() {
         chromePointerGate: Modifier = Modifier,
         navBackdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
         visibleHouses: List<HouseId>,
+        bottomBarVisibility: State<Float>,
+        hideBottomBarOnly: Boolean,
+        navBarBottomInsetPx: Float,
         selectedHouse: () -> HouseId,
         onHouseSelected: (HouseId) -> Unit,
         onHouseReselected: (HouseId) -> Unit,
@@ -3008,13 +3026,15 @@ YosWrapper {
     // 进入 LiquidBottomTabs 的 BoxWithConstraints，触发 coerceIn(0f, -px) 崩溃。
     // 首帧走非 split 几何，等 onSizeChanged 写入后再切回 split。
     val effectiveSplitMode = isSplitMode && parentWidth.intValue > 0
+    val splitRegionSideInsetPx = (parentWidth.intValue * (1f - 0.93f)) / 2f
     val splitRegionSideInset = with(density) {
-        ((parentWidth.intValue * (1f - 0.93f)) / 2f).toDp()
+        splitRegionSideInsetPx.toDp()
     }
     val splitBarWidthDp = with(density) {
         // 防御：保底 1.dp，避免 constraints.maxWidth=0 让 LiquidBottomTabs 内部 coerceIn 抛错。
         maxOf(1.dp, (parentWidth.intValue * 0.93f * 0.30f).toDp())
     }
+    val applyExitLayer = hideBottomBarOnly || bottomBarVisibility.value < 0.999f
     Box(
         Modifier
             .fillMaxSize()
@@ -3076,6 +3096,25 @@ YosWrapper {
                 tabGlassEnabled = glassProbe.navTabGlass,
                 containerTintProvider = containerTintProvider,
                 modifier = (
+                        if (applyExitLayer) {
+                            Modifier.graphicsLayer {
+                                val vis = bottomBarVisibility.value
+                                alpha = vis
+                                if (effectiveSplitMode) {
+                                    val exitDistanceX =
+                                        bottomBarWidthPx.intValue.toFloat().coerceAtLeast(1f) +
+                                            splitRegionSideInsetPx +
+                                            24.dp.toPx()
+                                    translationX = (1f - vis) * exitDistanceX
+                                    translationY = 0f
+                                } else {
+                                    translationX = 0f
+                                    translationY = (1f - vis) *
+                                        (height.intValue + navBarBottomInsetPx + 12.dp.toPx())
+                                }
+                            }
+                        } else Modifier
+                        ).then(
                         if (effectiveSplitMode) {
                             Modifier
                                 .width(splitBarWidthDp)

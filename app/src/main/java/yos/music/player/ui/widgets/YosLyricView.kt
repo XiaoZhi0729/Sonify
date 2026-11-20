@@ -492,10 +492,15 @@ fun YosLyricViewLib(
                     accompanimentLineTextStyle = style.copy(fontSize = 22.sp),
                     phoneticTextStyle = style.copy(fontSize = 18.sp),
                     textColor = textColor,
-                    // 加色混合：让歌词在封面上泛光。真 HDR 生效时（hdrBrush != null）
-                    // 库里会给当前焦点行单独退回 SrcOver——扩展亮度已经超过 SDR 白，
-                    // 再叠一层加色会把整行推过屏幕上限变成死白。
-                    blendMode = if (SettingsLibrary.LyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver,
+                    // 混合模式：真 HDR 生效时（hdrBrush != null）直接绘制且使用 SrcOver，
+                    // 由 KaraokeLyricsView 绕开 Offscreen 图层，并经逐行 ModulateAlpha 应用
+                    // bottomFade（LyricsFade.Range）以免截断扩展亮度；关闭 HDR 高光时退回 SrcOver，
+                    // 不支持 HDR 但开启开关时保留 Plus 泛光。
+                    blendMode = when {
+                        hdrBrush != null -> BlendMode.SrcOver
+                        SettingsLibrary.LyricHdrEffect -> BlendMode.Plus
+                        else -> BlendMode.SrcOver
+                    },
                     hdrBrush = hdrBrush,
                     hdrBoost = hdrBoost,
                     useBlurEffect = blurLambda(),
@@ -503,7 +508,11 @@ fun YosLyricViewLib(
                     showPhonetic = false,
                     anchor = LyricsAnchor.Fraction(LYRIC_ACTIVE_ANCHOR_FRACTION),
                     topFade = LyricsFade.ToAnchor(topFadeInset),
-                    bottomFade = LyricsFade.Fraction(0.5f),
+                    bottomFade = if (weightLambda()) {
+                        LyricsFade.Range(7f / 17f, 10f / 17f)
+                    } else {
+                        LyricsFade.Range(15f / 19f, 1f)
+                    },
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
                         if (firstFollow) snap() else tween(650, easing = FastOutSlowInEasing),

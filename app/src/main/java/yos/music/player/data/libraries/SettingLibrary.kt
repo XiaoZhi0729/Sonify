@@ -11,7 +11,6 @@ object SettingsLibrary {
     /**
      * 是否显示音量条
      */
-    @Stable
     var NowPlayingShowVolumeBar by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_show_volume_bar",
@@ -21,7 +20,6 @@ object SettingsLibrary {
     /**
      * 是否显示播放页评论入口按钮
      */
-    @Stable
     var NowPlayingShowCommentsEntry by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_show_comments_entry",
@@ -33,7 +31,6 @@ object SettingsLibrary {
      *
      * 关闭时不发 `/song/climax` 请求——不只是不画，还省掉一次网络往返。
      */
-    @Stable
     var NowPlayingShowClimaxMark by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_show_climax_mark",
@@ -47,7 +44,6 @@ object SettingsLibrary {
      * （见 code/systemui/AutoHideStatusBar.kt）。默认关闭：这是明显的界面风格改变，
      * 与「背景动态效果」「封面取色背景」同惯例，由用户主动选择。
      */
-    @Stable
     var NowPlayingAutoHideStatusBar by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_auto_hide_status_bar",
@@ -57,7 +53,6 @@ object SettingsLibrary {
     /**
      * 应用主题
      */
-    @Stable
     var CustomTheme by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_theme",
@@ -67,7 +62,6 @@ object SettingsLibrary {
     /**
      * 是否已设置过屏幕圆角大小
      */
-    @Stable
     var ScreenCornerSet by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_corner_set",
@@ -77,7 +71,6 @@ object SettingsLibrary {
     /**
      * 屏幕圆角大小
      */
-    @Stable
     var ScreenCorner by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_corner",
@@ -221,7 +214,6 @@ object SettingsLibrary {
     /**
      * 歌词界面 - 翻译
      */
-    @Stable
     var NowPlayingTranslation by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "now_playing_translation",
@@ -231,7 +223,6 @@ object SettingsLibrary {
     /**
      * 资料库页是否显示本地音乐分区（关掉后只保留在线音乐相关内容，本地内容入口全部隐藏）
      */
-    @Stable
     var ShowLocalLibrary by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_library_show_local_library",
@@ -241,7 +232,6 @@ object SettingsLibrary {
     /**
      * 每次启动时刷新媒体库
      */
-    @Stable
     var RefreshEveryTime by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_library_refresh_everytime",
@@ -251,7 +241,6 @@ object SettingsLibrary {
     /**
      * 歌词字体字重（支持 100..900 无极调节，默认 "800"；向后兼容旧版 "Thin".."Black" 枚举名）
      */
-    @Stable
     var LyricFontWeight by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_font_weight",
@@ -261,7 +250,6 @@ object SettingsLibrary {
     /**
      * 歌词平衡行模式
      */
-    @Stable
     var LyricLineBalance by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_line_balance",
@@ -271,7 +259,6 @@ object SettingsLibrary {
     /**
      * 歌词模糊效果
      */
-    @Stable
     var LyricBlurEffect by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_blur_effect",
@@ -282,7 +269,6 @@ object SettingsLibrary {
      * HDR 高光：歌词层改用加色混合（BlendMode.Plus），在封面上产生泛光；
      * 设备支持时，正在唱的那一句还会用超过 SDR 白的亮度真 HDR 发光。
      */
-    @Stable
     var LyricHdrEffect by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_hdr_effect",
@@ -293,7 +279,6 @@ object SettingsLibrary {
      * HDR 高光强度 0..1：用掉屏幕可用亮度余量的多少。
      * 只在 [LyricHdrEffect] 打开、且系统支持 HDR 时生效。
      */
-    @Stable
     var LyricHdrStrength by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_hdr_strength",
@@ -308,7 +293,6 @@ object SettingsLibrary {
      * 与音频走不走蓝牙无关（早期只在蓝牙输出时生效，故 key 里留着 bluetooth）。
      * 默认开：这是本 App 通知栏呈现歌词的方式。
      */
-    @Stable
     var NotificationLyricEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_bluetooth_lyric",
@@ -318,7 +302,6 @@ object SettingsLibrary {
     /**
      * 歌词字号缩放（对齐 Flamingo 新版，全局钳制 0.8~1.2）
      */
-    @Stable
     var LyricFontScale by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_font_scale",
@@ -328,7 +311,6 @@ object SettingsLibrary {
     /**
      * 是否独立配置横屏歌词字体大小
      */
-    @Stable
     var LyricLandscapeFontScaleIndependent by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_landscape_font_scale_independent",
@@ -338,7 +320,6 @@ object SettingsLibrary {
     /**
      * 横屏歌词字号缩放（0.8f..1.2f，仅在 [LyricLandscapeFontScaleIndependent] 为 true 时独立生效）
      */
-    @Stable
     var LyricLandscapeFontScale by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_landscape_font_scale",
@@ -348,7 +329,6 @@ object SettingsLibrary {
     /**
      * 自定义歌词字体在应用私有目录下的本地文件路径（空字符串表示系统默认）
      */
-    @Stable
     var LyricCustomFontPath by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_custom_font_path",
@@ -358,7 +338,6 @@ object SettingsLibrary {
     /**
      * 自定义歌词字体的显示文件名（空字符串表示系统默认）
      */
-    @Stable
     var LyricCustomFontName by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_custom_font_name",
@@ -368,7 +347,6 @@ object SettingsLibrary {
     /**
      * 智能逐字歌词：非逐字歌词按字符数线性分摊行时长模拟逐字扫色
      */
-    @Stable
     var SmartWordByWordLyric by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_smart_wbw_lyric",
@@ -378,7 +356,6 @@ object SettingsLibrary {
     /**
      * 歌词时间偏移（毫秒）：正值让歌词提前，负值让歌词延后
      */
-    @Stable
     var LyricTimingOffset by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_lyric_timing_offset",
@@ -388,7 +365,6 @@ object SettingsLibrary {
     /**
      * 播放界面背景动态效果
      */
-    @Stable
     var NowplayingBackgroundEffect by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_effect",
@@ -402,7 +378,6 @@ object SettingsLibrary {
      * - [BACKGROUND_MODE_MESH]：Pear Wall 流体网格（三份封面副本反向慢旋 + 网格形变），
      *   需要 OpenGL ES 3.0，不支持的设备自动退回漂移样式。
      */
-    @Stable
     var NowplayingBackgroundMode by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_mode",
@@ -416,7 +391,6 @@ object SettingsLibrary {
      * 桌面壁纸定的，放在会盯着看的播放页上几乎等于静止。档位换算见
      * `PearMeshState.flowSpeedMultiplier`：0 = 流动 1×（原版）、1 = 标准 3×、2 = 强烈 5×。
      */
-    @Stable
     var NowplayingBackgroundFlowSpeed by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         // key 带 v2：档位从 5 档改成 3 档，旧键里存的 2/3/4 映射会错位。
@@ -430,7 +404,6 @@ object SettingsLibrary {
      *
      * 关掉后 `ProbingAudioSink` 里的分析整段短路，不产生任何每帧开销。
      */
-    @Stable
     var NowplayingBackgroundPulse by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_pulse",
@@ -441,7 +414,6 @@ object SettingsLibrary {
      * 律动强度：柔和 / 标准 / 强烈（0..2，默认 1 = 上游原值 0.33）。
      * 换算见 `PearMeshState.pulseIntensityFor`：0.22 / **0.33** / 0.45。
      */
-    @Stable
     var NowplayingBackgroundPulseStrength by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         // key 带 v4：档位从 5 档收成 3 档，且默认基准变了，旧键值会错位。
@@ -456,7 +428,6 @@ object SettingsLibrary {
      * 换算见 `PearMeshState.blurMultiplierFor`：0.75 / **1.0** / 1.4（原版四档 0.75/1/1.4/2
      * 里去掉了最高的 2.0，那一档在播放页上会把颜色糊成一片）。
      */
-    @Stable
     var NowplayingBackgroundBlurStrength by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_blur_strength",
@@ -471,7 +442,6 @@ object SettingsLibrary {
      *
      * ★ 注意 renderScale 同时乘进模糊 sigma，所以「省电」档画面会明显更糊 —— 这是原版同款行为。
      */
-    @Stable
     var NowplayingBackgroundRenderQuality by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_render_quality",
@@ -485,7 +455,6 @@ object SettingsLibrary {
      * 而 `PearMeshState` 自带的 DefaultPortraitPresetIndex 是 2 —— 两者不一致是上游遗留，
      * 以设置层为准，因为运行时总是用设置值覆盖 State。
      */
-    @Stable
     var NowplayingBackgroundPortraitPreset by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_portrait_preset",
@@ -495,7 +464,6 @@ object SettingsLibrary {
     /**
      * 流体网格的横屏网格样式（0..4，对应界面上的 1..5）。默认 3，同上游设置层。
      */
-    @Stable
     var NowplayingBackgroundLandscapePreset by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_landscape_preset",
@@ -508,7 +476,6 @@ object SettingsLibrary {
      * 原版默认开启，但那是**壁纸**语义（息屏再亮屏时换个样子）。播放页没有对应时机，
      * 固定一套反而更稳，所以默认关。
      */
-    @Stable
     var NowplayingBackgroundRandomPreset by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_background_random_preset",
@@ -521,7 +488,6 @@ object SettingsLibrary {
      * 默认关闭——开启后整屏底色会随歌曲变化，属于明显的视觉风格改变，
      * 由用户主动选择（与「背景动态效果」同一惯例）。
      */
-    @Stable
     var TrackBackdropGradient by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_track_backdrop_gradient",
@@ -532,7 +498,6 @@ object SettingsLibrary {
      * 全屏静态封面：封面铺满播放页作为背景（高清方图贴边裁切 + 同图放大模糊副本打底），
      * 且不再随播放/暂停缩放。键名与 Flamingo 同项逐字一致。
      */
-    @Stable
     var NowplayingStaticFullScreenAlbum by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_static_fullscreen_album",
@@ -542,7 +507,6 @@ object SettingsLibrary {
     /**
      * 专辑动态封面：在线歌曲存在官方 MP4 动态封面时，在播放页大封面上静音循环播放。
      */
-    @Stable
     var NowPlayingDynamicCover by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_dynamic_cover",
@@ -552,7 +516,6 @@ object SettingsLibrary {
     /**
      * 允许在移动网络下加载动态封面；关闭时仅 Wi-Fi 发起请求（已缓存视频仍可播放）。
      */
-    @Stable
     var NowPlayingDynamicCoverMobile by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_nowplaying_dynamic_cover_mobile",
@@ -574,7 +537,6 @@ object SettingsLibrary {
      * 只乘在**玻璃控件**的模糊半径上（顶栏圆钮 / 底栏容器 / 迷你播放器外壳 / 玻璃开关 /
      * 下拉面板 / 对话框），顶部渐进模糊等背景类效果不受影响 —— 见 GlassBlurStrength.kt。
      */
-    @Stable
     var GlassBlurScale by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_glass_blur_scale",
@@ -584,7 +546,6 @@ object SettingsLibrary {
     /**
      * 混色模糊（磨砂）强度倍率（0f..2f，1f = 原样），与 [GlassBlurScale] 相互独立。
      */
-    @Stable
     var FrostedBlurScale by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_ui_frosted_blur_scale",
@@ -594,7 +555,6 @@ object SettingsLibrary {
     /**
      * 媒体通知-额外的媒体图标
      */
-    @Stable
     var NotificationEnableIcon by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_notification_enable_icon",
@@ -604,7 +564,6 @@ object SettingsLibrary {
     /**
      * 媒体通知-小一号图标
      */
-    @Stable
     var NotificationSmallerIcon by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_performance_notification_smaller_icon",
@@ -614,7 +573,6 @@ object SettingsLibrary {
     /**
      * 播放历史
      */
-    @Stable
     var ListenHistory by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_history",
@@ -626,7 +584,6 @@ object SettingsLibrary {
      * （/user/grade/info 按 diff_sec 记账），并在在线歌曲开播时上报播放历史
      * （/playhistory/upload）。关闭后两者都停。
      */
-    @Stable
     var UploadListeningDuration by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_upload_listening_duration",
@@ -636,7 +593,6 @@ object SettingsLibrary {
     /**
      * 状态栏歌词
      */
-    @Stable
     var StatusBarLyricEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "statusBarLyricEnabled",
@@ -646,7 +602,6 @@ object SettingsLibrary {
     /**
      * 状态栏歌词 Hook 状态
      */
-    @Stable
     var StatusBarLyricHooked by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "statusBarLyricHooked",
@@ -656,7 +611,6 @@ object SettingsLibrary {
     /**
      * ExoPlayer行为 - 音频属性
      */
-    @Stable
     var AudioAttributes by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_exoplayer_audio_attributes",
@@ -666,7 +620,6 @@ object SettingsLibrary {
     /**
      * ExoPlayer解码 - 编解码器
      */
-    @Stable
     var Codec by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_exoplayer_codec",
@@ -676,7 +629,6 @@ object SettingsLibrary {
     /**
      * ExoPlayer解码 - 硬件音频轨道播放参数
      */
-    @Stable
     var HardwareAudioTrackPlayBackParams by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_exoplayer_hardware_audio_track_playback_params",
@@ -691,7 +643,6 @@ object SettingsLibrary {
      * 处理器，而本工程解码输出日常是 16-bit、该分支本就不触发：收益为零、触发即破坏。
      * 设置页对应开关也已停用。留着这个字段只为旧安装的已存值能被安全读回，不做迁移。
      */
-    @Stable
     var AudioFloatOutput by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_exoplayer_audio_float_output",
@@ -707,7 +658,6 @@ object SettingsLibrary {
      *
      * 默认 0.5 而不是 1：1 在新语义下等于"没开"，会让点开按钮看起来毫无反应。
      */
-    @Stable
     var VocalSeparationDefaultRatio by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_vocal_separation_default_ratio",
@@ -725,7 +675,6 @@ object SettingsLibrary {
      * 用户在播放页只改"这一首"却永久抹掉了设置页的分设且不可撤销。
      * 现在只有 [updateOnlineQuality] 能写（设置页专用），其余入口只能走本曲覆盖。
      */
-    @Stable
     var OnlineQualityWifi by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_online_quality_wifi",
@@ -736,7 +685,6 @@ object SettingsLibrary {
     /**
      * 在线音质 - 流量环境下请求的音质档位（128/320/flac/high）；写入口同上。
      */
-    @Stable
     var OnlineQualityMobile by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_online_quality_mobile",
@@ -758,7 +706,6 @@ object SettingsLibrary {
      * 体验，不给任何告知说不过去。实现上只在verdict=DOWNGRADED 时发声（不把
      * 用户主动降档、沿用更高音源误报成故障），且10 分钟内同一首同一降级路径只弹一次。
      */
-    @Stable
     var ShowQualityDowngradeToast by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_audio_online_quality_downgrade_toast",
@@ -768,7 +715,6 @@ object SettingsLibrary {
     /**
      * 排除一分钟以内的歌曲
      */
-    @Stable
     var EnableExcludeSongsUnderOneMinute by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_library_enable_exclude_songs_under_one_minute",
@@ -778,7 +724,6 @@ object SettingsLibrary {
     /**
      * 倍速播放（0.25–4.0，1.0 为常速）；服务创建时应用，随设置持久化
      */
-    @Stable
     var PlaybackSpeed by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_playback_speed",
@@ -788,7 +733,6 @@ object SettingsLibrary {
     /**
      * 睡眠定时器到点行为：true=等当前曲自然播完再暂停；false=立即淡出暂停（默认，保持原行为）
      */
-    @Stable
     var EnableFinishCurrentSongBeforePause by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_sleep_timer_finish_current_song",
@@ -802,7 +746,6 @@ object SettingsLibrary {
      *
      * 手动切歌不受本开关影响，始终是硬切（判据在 CrossfadeExo，不在这里）。
      */
-    @Stable
     var CrossfadeEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_crossfade_enabled",
@@ -814,7 +757,6 @@ object SettingsLibrary {
      * 使设置页的 SelectItem 可以直接拿它当选中值比对。可选档位与默认值在
      * [yos.music.player.code.utils.player.CrossfadePolicy]（引擎与设置页共用一张表）。
      */
-    @Stable
     var CrossfadeDuration by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_play_crossfade_duration",
@@ -828,7 +770,6 @@ object SettingsLibrary {
      * 关掉只是不再产生新行，已落盘的历史仍可导出（否则自断取证）。成本：播放中 5s 一行、
      * 停播 60s 一行，单文件 2MB 轮转、只留最近 8 个，量级在几 MB 内。
      */
-    @Stable
     var DiagLogEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_others_diag_log_enabled",
@@ -840,7 +781,6 @@ object SettingsLibrary {
      * 但独立于 [DiagLogEnabled] 生效：开着它即整体落盘，供外部用户排查"锁屏不出歌词"）。
      * 默认关：只有反馈歌词问题的用户才需要打开。
      */
-    @Stable
     var ColorOsLyricDiagEnabled by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_others_coloros_lyric_diag_enabled",
@@ -851,7 +791,6 @@ object SettingsLibrary {
      * 音频字节缓存上限（MB）。在 SimpleCache 首次构造时读取，故改动于下次启动生效
      * （LRU 初始化时会 trim 到新上限）。默认 1024MB（原硬编码值）。
      */
-    @Stable
     var AudioCacheCapMb by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_storage_audio_cache_cap_mb",
@@ -862,7 +801,6 @@ object SettingsLibrary {
      * 图片磁盘缓存上限（MB）。Coil 的 DiskCache.maxSize 只读，只能在 newImageLoader()
      * 建缓存时定，故改动于下次启动生效。默认 512MB（原硬编码值）。
      */
-    @Stable
     var ImageCacheCapMb by mutableDataSaverStateOf(
         dataSaverInterface = SettingsSaver,
         key = "settings_storage_image_cache_cap_mb",
