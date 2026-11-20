@@ -548,6 +548,8 @@
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">Check for updates</string>
     <string name="update_auto_check">Check for updates automatically</string>
+    <string name="update_preview_channel">Receive preview updates</string>
+    <string name="update_preview_channel_desc">Receive intermediate preview builds between stable releases; turn off for stable releases only</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_up_to_date">You’re up to date</string>
     <string name="update_available">Update available</string>
@@ -830,6 +832,10 @@
     <string name="bottom_bar_setting_launch_first">First Bottom Bar Tab</string>
     <string name="bottom_bar_setting_launch_first_desc">Currently: %1$s</string>
     <string name="bottom_bar_setting_reset">Restore Defaults</string>
+    <string name="bottom_bar_setting_reset_confirm_title">Restore Defaults</string>
+    <string name="bottom_bar_setting_reset_confirm_message">Are you sure you want to restore default bottom bar settings?</string>
+    <string name="bottom_bar_setting_reset_confirm_yes">Yes</string>
+    <string name="bottom_bar_setting_reset_confirm_no">No</string>
     <string name="bottom_bar_setting_hide_tab">Hide %1$s</string>
     <string name="bottom_bar_setting_show_tab">Show %1$s</string>
 </resources>

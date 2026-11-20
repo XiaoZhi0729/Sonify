@@ -1,0 +1,113 @@
+name: Sync to Gitee
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push branch and tags to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "GITEE_TOKEN secret is not configured; skipping Gitee sync."
+            exit 0
+          fi
+          git remote add gitee "https://XiaoZhi114514:${GITEE_TOKEN}@gitee.com/XiaoZhi114514/Sonify.git"
+          git push gitee HEAD:refs/heads/master --force
+          git push gitee --tags --force
+
+      - name: Sync GitHub Release APK assets to Gitee Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "GITEE_TOKEN secret is not configured; skipping Gitee release sync."
+            exit 0
+          fi
+
+          mkdir -p release-apks
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir release-apks || true
+          if [ -z "$(ls -A release-apks)" ]; then
+            echo "No APK assets found in GitHub release $TAG_NAME."
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          owner = "XiaoZhi114514"
+          repo = "Sonify"
+          token = os.environ["GITEE_TOKEN"]
+          tag = os.environ["TAG_NAME"]
+          name = os.environ.get("RELEASE_NAME") or tag
+          body = os.environ.get("RELEASE_BODY") or ""
+          prerelease = os.environ.get("IS_PRERELEASE", "false").lower() == "true"
+
+          base = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
+          headers = {
+              "Authorization": f"token {token}",
+              "Content-Type": "application/json",
+          }
+
+          release_id = None
+          try:
+              req = urllib.request.Request(f"{base}/tags/{urllib.parse.quote(tag)}", headers=headers)
+              with urllib.request.urlopen(req) as resp:
+                  release_id = json.loads(resp.read().decode("utf-8")).get("id")
+          except urllib.error.HTTPError as e:
+              if e.code != 404:
+                  raise
+
+          if release_id is None:
+              payload = json.dumps({
+                  "tag_name": tag,
+                  "name": name,
+                  "body": body,
+                  "target_commitish": "master",
+                  "prerelease": prerelease,
+              }).encode("utf-8")
+              req = urllib.request.Request(base, data=payload, headers=headers, method="POST")
+              with urllib.request.urlopen(req) as resp:
+                  release_id = json.loads(resp.read().decode("utf-8"))["id"]
+
+          print(f"GITEE_RELEASE_ID={release_id}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"GITEE_RELEASE_ID={release_id}\n")
+          PY
+
+          for apk in release-apks/*.apk; do
+            echo "Uploading $apk to Gitee release $GITEE_RELEASE_ID..."
+            curl --fail-with-body -X POST \
+              -H "Authorization: token ${GITEE_TOKEN}" \
+              -F "file=@${apk}" \
+              "https://gitee.com/api/v5/repos/XiaoZhi114514/Sonify/releases/${GITEE_RELEASE_ID}/attach_files"
+          done

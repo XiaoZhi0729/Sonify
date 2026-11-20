@@ -547,6 +547,8 @@
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">检查更新</string>
     <string name="update_auto_check">自动检查更新</string>
+    <string name="update_preview_channel">接收预览版更新</string>
+    <string name="update_preview_channel_desc">开启后可接收正式版之间发布的 V1、V2 等预览更新；关闭则仅接收正式版更新</string>
     <string name="update_checking">正在检查更新…</string>
     <string name="update_up_to_date">已是最新版本</string>
     <string name="update_available">发现新版本</string>
@@ -829,6 +831,10 @@
     <string name="bottom_bar_setting_launch_first">底栏第一项</string>
     <string name="bottom_bar_setting_launch_first_desc">当前：%1$s</string>
     <string name="bottom_bar_setting_reset">恢复默认设置</string>
+    <string name="bottom_bar_setting_reset_confirm_title">恢复默认设置</string>
+    <string name="bottom_bar_setting_reset_confirm_message">是否恢复默认设置？</string>
+    <string name="bottom_bar_setting_reset_confirm_yes">是</string>
+    <string name="bottom_bar_setting_reset_confirm_no">否</string>
     <string name="bottom_bar_setting_hide_tab">隐藏%1$s</string>
     <string name="bottom_bar_setting_show_tab">显示%1$s</string>
 </resources>

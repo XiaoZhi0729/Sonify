@@ -54,34 +54,52 @@ class UpdateDownloader(context: Context, client: OkHttpClient = UpdateTransport.
                                 record.delete()
                             }
                         }
-                        partial.delete()
-                        transport.read(manifest.apkUrl.toHttpUrl(), manifest = false) { response, networkActive ->
-                            val body = response.body ?: throw IOException("Empty update APK")
-                            require(body.contentLength() == -1L || body.contentLength() == manifest.apkSize) {
-                                "Unexpected APK content length"
-                            }
-                            body.byteStream().use { input ->
-                                partial.outputStream().use { output ->
-                                    val buffer = ByteArray(64 * 1024)
-                                    var received = 0L
-                                    onProgress(0L, manifest.apkSize)
-                                    while (true) {
-                                        networkActive()
-                                        val count = input.read(buffer)
-                                        if (count == -1) break
-                                        received += count
-                                        require(received <= manifest.apkSize && received <= UpdateManifest.MAX_APK_BYTES) {
-                                            "APK exceeds declared size"
-                                        }
-                                        output.write(buffer, 0, count)
-                                        onProgress(received, manifest.apkSize)
+                        val candidates = manifest.candidateApkUrls()
+                        var lastFailure: Exception? = null
+                        var downloadedFromMirror = false
+                        for (candidateUrl in candidates) {
+                            partial.delete()
+                            try {
+                                transport.read(candidateUrl.toHttpUrl(), manifest = false) { response, networkActive ->
+                                    val body = response.body ?: throw IOException("Empty update APK")
+                                    require(body.contentLength() == -1L || body.contentLength() == manifest.apkSize) {
+                                        "Unexpected APK content length"
                                     }
-                                    require(received == manifest.apkSize) { "Incomplete update APK" }
-                                    output.fd.sync()
+                                    body.byteStream().use { input ->
+                                        partial.outputStream().use { output ->
+                                            val buffer = ByteArray(64 * 1024)
+                                            var received = 0L
+                                            onProgress(0L, manifest.apkSize)
+                                            while (true) {
+                                                networkActive()
+                                                val count = input.read(buffer)
+                                                if (count == -1) break
+                                                received += count
+                                                require(received <= manifest.apkSize && received <= UpdateManifest.MAX_APK_BYTES) {
+                                                    "APK exceeds declared size"
+                                                }
+                                                output.write(buffer, 0, count)
+                                                onProgress(received, manifest.apkSize)
+                                            }
+                                            require(received == manifest.apkSize) { "Incomplete update APK" }
+                                            output.fd.sync()
+                                        }
+                                    }
                                 }
+                                verifyBlocking(partial, manifest, checkActive)
+                                downloadedFromMirror = true
+                                break
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (failure: Exception) {
+                                checkActive()
+                                partial.delete()
+                                lastFailure = failure
                             }
                         }
-                        verifyBlocking(partial, manifest, checkActive)
+                        if (!downloadedFromMirror) {
+                            throw (lastFailure ?: IOException("All update download sources failed"))
+                        }
                         recordPartial.writeText(manifest.toJson(), Charsets.UTF_8)
                         checkActive()
                         if (!partial.renameTo(complete)) throw IOException("Cannot commit update APK")

@@ -33,6 +33,8 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var autoCheck by mutableStateOf(UpdateSettings.autoCheck)
         private set
+    var includePreviewUpdates by mutableStateOf(UpdateSettings.includePreviewUpdates)
+        private set
     private val repository = UpdateRepository()
     private val downloader = UpdateDownloader(application)
     private var apk: File? = null
@@ -54,6 +56,16 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         autoCheck = enabled
         UpdateSettings.autoCheck = enabled
         if (!enabled) pendingAutomaticPrompt = false
+    }
+
+    fun changeIncludePreviewUpdates(enabled: Boolean) {
+        includePreviewUpdates = enabled
+        UpdateSettings.includePreviewUpdates = enabled
+        pendingAutomaticPrompt = false
+        if (stage in listOf(UpdateStage.Current, UpdateStage.Available, UpdateStage.Error)) {
+            manifest = null
+            stage = UpdateStage.Idle
+        }
     }
 
     fun check(manual: Boolean) {
@@ -78,7 +90,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         operation = viewModelScope.launch {
             try {
                 initialization.join()
-                val result = repository.check(currentVersion)
+                val result = repository.check(currentVersion, includePreview = includePreviewUpdates)
                 UpdateSettings.lastSuccessAt = System.currentTimeMillis()
                 UpdateSettings.lastFailureAt = 0L
                 manifest = result

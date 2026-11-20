@@ -45,10 +45,24 @@ class UpdateTransportIntegrationTest {
             fixture.server.enqueue(MockResponse().setBody(manifestJson()))
             assertEquals(2L, UpdateRepository(fixture.client).check(1)?.versionCode)
             val request = fixture.request()
-            assertEquals("raw.githubusercontent.com", request.getHeader("Host"))
-            assertEquals("/XiaoZhi0729/Sonify/master/updates/latest.json", request.path)
+            assertEquals("gitee.com", request.getHeader("Host"))
+            assertEquals("/XiaoZhi114514/Sonify/raw/master/updates/latest.json", request.path)
             assertEquals("identity", request.getHeader("Accept-Encoding"))
             assertNotNull(request.handshake)
+        }
+    }
+
+    @Test(timeout = 15_000L)
+    fun giteeManifestFallsBackToGithubOnHttpError() = runBlocking {
+        TlsServer().use { fixture ->
+            fixture.server.enqueue(MockResponse().setResponseCode(503).setBody("Unavailable"))
+            fixture.server.enqueue(MockResponse().setBody(manifestJson()))
+            assertEquals(2L, UpdateRepository(fixture.client).check(1)?.versionCode)
+            val first = fixture.request()
+            val second = fixture.request()
+            assertEquals("gitee.com", first.getHeader("Host"))
+            assertEquals("raw.githubusercontent.com", second.getHeader("Host"))
+            assertEquals("/XiaoZhi0729/Sonify/master/updates/latest.json", second.path)
         }
     }
 
@@ -57,7 +71,7 @@ class UpdateTransportIntegrationTest {
         TlsServer().use { fixture ->
             fixture.server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val started = System.nanoTime()
-            val failure = failure { UpdateRepository(fixture.client).check(1) }
+            val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
             val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
             assertTrue("Expected an ordinary check failure, got $failure", failure is IOException)
             assertFalse(failure is CancellationException)
@@ -91,7 +105,7 @@ class UpdateTransportIntegrationTest {
         TlsServer().use { fixture ->
             for (status in listOf(503, 404)) {
                 fixture.server.enqueue(MockResponse().setResponseCode(status).setBody("Unavailable"))
-                val failure = failure { UpdateRepository(fixture.client).check(1) }
+                val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
                 assertTrue(failure is IOException)
                 assertTrue(failure.message.orEmpty().contains(status.toString()))
             }
@@ -104,7 +118,7 @@ class UpdateTransportIntegrationTest {
         TlsServer().use { fixture ->
             fixture.server.enqueue(MockResponse().setResponseCode(302)
                 .setHeader("Location", "https://evil.example/updates/latest.json"))
-            val failure = failure { UpdateRepository(fixture.client).check(1) }
+            val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
             assertTrue(failure is IllegalArgumentException)
             assertEquals(1, fixture.server.requestCount)
             assertEquals(1, fixture.calls.size)
@@ -115,7 +129,7 @@ class UpdateTransportIntegrationTest {
     fun trustedCdnIsOnlyAcceptedForApkNotManifest() = runBlocking {
         TlsServer().use { fixture ->
             fixture.server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", cdnUrl))
-            val failure = failure { UpdateRepository(fixture.client).check(1) }
+            val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
             assertTrue(failure is IllegalArgumentException)
             assertEquals(1, fixture.server.requestCount)
         }
@@ -170,7 +184,7 @@ class UpdateTransportIntegrationTest {
             fixture.server.enqueue(MockResponse().setBody(json)
                 .setHeader("Content-Length", json.toByteArray(Charsets.UTF_8).size + 100)
                 .setSocketPolicy(SocketPolicy.DISCONNECT_AT_END))
-            val failure = failure { UpdateRepository(fixture.client).check(1) }
+            val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
             assertTrue("Truncated network response must fail: $failure", failure is IOException)
             assertEquals(1, fixture.server.requestCount)
         }
@@ -181,7 +195,7 @@ class UpdateTransportIntegrationTest {
         TlsServer().use { fixture ->
             fixture.server.enqueue(MockResponse().setChunkedBody(
                 " ".repeat(UpdateManifest.MAX_MANIFEST_BYTES.toInt() + 1), 8192))
-            val failure = failure { UpdateRepository(fixture.client).check(1) }
+            val failure = failure { UpdateRepository(fixture.client, UpdateRepository.GITHUB_MANIFEST_URL).check(1) }
             assertTrue("Chunked body must enforce the manifest limit: $failure", failure is IllegalArgumentException)
             assertEquals(1, fixture.server.requestCount)
         }
@@ -199,11 +213,19 @@ class UpdateTransportIntegrationTest {
         val client: OkHttpClient
 
         init {
-            val hosts = setOf("raw.githubusercontent.com", "release-assets.githubusercontent.com", "github.com")
+            val hosts = setOf(
+                "raw.githubusercontent.com",
+                "release-assets.githubusercontent.com",
+                "github.com",
+                "gitee.com",
+                "foruda.gitee.com"
+            )
             val certificate = HeldCertificate.Builder().commonName("Sonify update integration test")
                 .addSubjectAlternativeName("raw.githubusercontent.com")
                 .addSubjectAlternativeName("release-assets.githubusercontent.com")
-                .addSubjectAlternativeName("github.com").build()
+                .addSubjectAlternativeName("github.com")
+                .addSubjectAlternativeName("gitee.com")
+                .addSubjectAlternativeName("foruda.gitee.com").build()
             val serverTls = HandshakeCertificates.Builder().heldCertificate(certificate).build()
             val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
             server.useHttps(serverTls.sslSocketFactory(), false)

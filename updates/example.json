@@ -7,6 +7,9 @@
   "minSdk": 23,
   "abis": ["armeabi-v7a", "arm64-v8a"],
   "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v1.2.3-example/Sonify-v1.2.3-example.apk",
+  "mirrorApkUrls": [
+    "https://gitee.com/XiaoZhi114514/Sonify/releases/download/v1.2.3-example/Sonify-v1.2.3-example.apk"
+  ],
   "apkSize": 1,
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v1.2.3-example",

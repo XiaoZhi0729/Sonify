@@ -83,8 +83,9 @@ try {
     $notesFile = Get-Item -LiteralPath $NotesJsonPath
     if ($notesFile.PSIsContainer) { throw 'NotesJsonPath must be a JSON file.' }
     $outputFullPath = [IO.Path]::GetFullPath($OutputPath)
-    if ([IO.Path]::GetFileName($outputFullPath) -ieq 'latest.json') {
-        throw 'OutputPath cannot be latest.json. Activation is a separate manual release step.'
+    $outputFileName = [IO.Path]::GetFileName($outputFullPath)
+    if ($outputFileName -ieq 'latest.json' -or $outputFileName -ieq 'preview.json') {
+        throw 'OutputPath cannot be latest.json or preview.json. Activation is a separate manual release step.'
     }
     if ($outputFullPath -ieq $apk.FullName -or $outputFullPath -ieq $notesFile.FullName) {
         throw 'OutputPath must not overwrite the APK or release notes input.'

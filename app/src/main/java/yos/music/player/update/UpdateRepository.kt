@@ -1,5 +1,6 @@
 package yos.music.player.update
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -25,32 +26,100 @@ import java.util.concurrent.atomic.AtomicReference
 
 class UpdateRepository(
     client: OkHttpClient = UpdateTransport.defaultClient(),
-    manifestUrl: String = DEFAULT_MANIFEST_URL
+    manifestUrls: List<String> = DEFAULT_MANIFEST_URLS,
+    previewManifestUrls: List<String> = DEFAULT_PREVIEW_MANIFEST_URLS
 ) {
-    private val url = manifestUrl.toHttpUrl().also(UpdateUrls::manifest)
+    constructor(
+        client: OkHttpClient = UpdateTransport.defaultClient(),
+        manifestUrl: String
+    ) : this(client, listOf(manifestUrl), emptyList())
+
+    private val stableUrls = manifestUrls.also { require(it.isNotEmpty()) { "At least one manifest URL is required" } }
+        .map { it.toHttpUrl().also(UpdateUrls::manifest) }
+    private val previewUrls = previewManifestUrls.map { it.toHttpUrl().also(UpdateUrls::manifest) }
     private val transport = UpdateTransport(client)
 
-    suspend fun check(currentVersion: Long): UpdateManifest? {
+    suspend fun check(currentVersion: Long, includePreview: Boolean = false): UpdateManifest? {
         require(currentVersion >= 0)
         val manifest = withTimeoutOrNull(30_000L) {
-            transport.read(url, manifest = true) { response, checkActive ->
-                val body = response.body ?: throw IOException("Empty update manifest")
-                require(body.contentLength() <= UpdateManifest.MAX_MANIFEST_BYTES) { "Update manifest too large" }
-                val bytes = body.byteStream().use {
-                    readBounded(it, UpdateManifest.MAX_MANIFEST_BYTES, checkActive)
-                }
-                val json = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
-                UpdateManifest.parse(json)
+            if (!includePreview || previewUrls.isEmpty()) {
+                return@withTimeoutOrNull fetchFirstAvailable(stableUrls)
+            }
+            var stableFailure: Exception? = null
+            val stable = try {
+                fetchFirstAvailable(stableUrls)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                stableFailure = failure
+                null
+            }
+            var previewFailure: Exception? = null
+            val preview = try {
+                fetchFirstAvailable(previewUrls)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                previewFailure = failure
+                null
+            }
+            when {
+                stable != null && preview != null ->
+                    if (preview.versionCode > stable.versionCode) preview else stable
+                stable != null -> stable
+                preview != null -> preview
+                else -> throw (stableFailure ?: previewFailure ?: IOException("Update check failed"))
             }
         } ?: throw IOException("Update check timed out")
         return manifest.takeIf { it.versionCode > currentVersion }
     }
 
+    private suspend fun fetchFirstAvailable(urls: List<HttpUrl>): UpdateManifest {
+        var lastFailure: Exception? = null
+        for (index in urls.indices) {
+            val targetUrl = urls[index]
+            val attemptTimeoutMs = if (urls.size > 1 && index < urls.lastIndex) 12_000L else 30_000L
+            try {
+                val parsed = withTimeoutOrNull(attemptTimeoutMs) {
+                    transport.read(targetUrl, manifest = true) { response, checkActive ->
+                        val body = response.body ?: throw IOException("Empty update manifest")
+                        require(body.contentLength() <= UpdateManifest.MAX_MANIFEST_BYTES) {
+                            "Update manifest too large"
+                        }
+                        val bytes = body.byteStream().use {
+                            readBounded(it, UpdateManifest.MAX_MANIFEST_BYTES, checkActive)
+                        }
+                        val json = Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                            .decode(ByteBuffer.wrap(bytes))
+                            .toString()
+                        UpdateManifest.parse(json)
+                    }
+                } ?: throw IOException("Update check timed out")
+                return parsed
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                lastFailure = failure
+            }
+        }
+        throw (lastFailure ?: IOException("Update check failed"))
+    }
+
     companion object {
-        const val DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/latest.json"
+        const val GITEE_MANIFEST_URL = "https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json"
+        const val GITHUB_MANIFEST_URL = "https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/latest.json"
+        val DEFAULT_MANIFEST_URLS = listOf(GITEE_MANIFEST_URL, GITHUB_MANIFEST_URL)
+        const val DEFAULT_MANIFEST_URL = GITEE_MANIFEST_URL
+
+        const val GITEE_PREVIEW_MANIFEST_URL = "https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/preview.json"
+        const val GITHUB_PREVIEW_MANIFEST_URL = "https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/preview.json"
+        val DEFAULT_PREVIEW_MANIFEST_URLS = listOf(GITEE_PREVIEW_MANIFEST_URL, GITHUB_PREVIEW_MANIFEST_URL)
     }
 }
+
+private enum class UpdateRequestKind { MANIFEST, APK }
 
 internal class UpdateTransport(client: OkHttpClient) {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false)
@@ -58,7 +127,8 @@ internal class UpdateTransport(client: OkHttpClient) {
         .proxyAuthenticator(Authenticator.NONE)
         .addNetworkInterceptor { chain ->
             val request = chain.request()
-            UpdateUrls.redirect(request.url, request.url.host == "raw.githubusercontent.com")
+            val isManifest = request.tag(UpdateRequestKind::class.java) == UpdateRequestKind.MANIFEST
+            UpdateUrls.redirect(request.url, isManifest)
             chain.proceed(request.newBuilder().removeHeader("Authorization")
                 .removeHeader("Proxy-Authorization").removeHeader("Cookie").build())
         }.build()
@@ -84,6 +154,10 @@ internal class UpdateTransport(client: OkHttpClient) {
                 while (true) {
                     coroutineContext.ensureActive()
                     val request = Request.Builder().url(url)
+                        .tag(
+                            UpdateRequestKind::class.java,
+                            if (manifest) UpdateRequestKind.MANIFEST else UpdateRequestKind.APK
+                        )
                         .header("Accept", if (manifest) "application/json" else "application/octet-stream")
                         .header("Accept-Encoding", "identity").build()
                     val nextCall = client.newCall(request)

@@ -1,7 +1,16 @@
 # Sonify 云更新发布
 
-默认检查地址：`https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/latest.json`。
-APK 地址：`https://github.com/XiaoZhi0729/Sonify/releases/download/<tag>/<name>.apk`。
+默认检查地址（按优先级）：
+1. 正式版通道（默认）：
+   - Gitee 主源（大陆加速）：`https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json`
+   - GitHub 兜底：`https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/latest.json`
+2. 预览版通道（设置中开启「接收预览版更新」后同时检查，并与正式版取 `versionCode` 更高者）：
+   - Gitee 主源：`https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/preview.json`
+   - GitHub 兜底：`https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/preview.json`
+
+APK 地址：`https://github.com/XiaoZhi0729/Sonify/releases/download/<tag>/<name>.apk`（可配合可选字段 `mirrorApkUrls` 优先走 `https://gitee.com/XiaoZhi114514/Sonify/releases/download/<tag>/<name>.apk`，失败自动回退 GitHub）。
+
+仓库已配置 `.github/workflows/sync-gitee.yml`：推送 `master`/`main` 分支、`v*` 标签或发布 GitHub Release（`published`）时，GitHub Actions 会使用 `GITEE_TOKEN` 自动将代码、标签及 Release `.apk` 附件同步到 Gitee `XiaoZhi114514/Sonify`。
 
 这里只提供本地生成工具、资源和示例。`updates/example.json` 是不可发布的格式示例，APK 大小和 SHA-256 为占位值；`updates/generated.json` 是待审核产物。`latest.json` 只能在对应 APK 已上传并完成线上校验后手动发布，不能把示例或本地生成产物直接当作线上清单。
 
@@ -17,7 +26,8 @@ APK 地址：`https://github.com/XiaoZhi0729/Sonify/releases/download/<tag>/<nam
 | `publishedAt` | ISO 8601 时间，生成工具使用 UTC；延迟发布时重新生成 |
 | `minSdk` | 正整数，从 APK 提取，设备必须满足 |
 | `abis` | 非空字符串数组，从 APK 内 `lib/<abi>/*.so` 提取；只接受 `armeabi-v7a`、`arm64-v8a`、`x86`、`x86_64`，最多四项。当前客户端不接受无 native 库的空数组 |
-| `apkUrl` | 对应 Tag 的公开 GitHub Release APK 附件 HTTPS 地址 |
+| `apkUrl` | 对应 Tag 的公开 GitHub Release APK 附件 HTTPS 地址（作为兼容与兜底地址） |
+| `mirrorApkUrls` | 可选字符串数组，优先尝试的镜像 APK 下载地址（如 Gitee Release 地址），最多 8 项 |
 | `apkSize` | APK 的准确字节数，JSON 整数，不是格式化大小字符串 |
 | `sha256` | APK 文件 SHA-256，64 位小写十六进制字符串，不是签名证书摘要 |
 | `releasePageUrl` | 同一 Tag 的 GitHub Release 页面 HTTPS 地址 |

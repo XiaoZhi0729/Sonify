@@ -65,6 +65,12 @@ fun UpdateSettingsItems(developerModeEnabled: Boolean = false) {
         checkedLambda = { model.autoCheck },
         onClick = { model.changeAutoCheck(!model.autoCheck) }
     )
+    SwitchItem(
+        title = stringResource(R.string.update_preview_channel),
+        desc = stringResource(R.string.update_preview_channel_desc),
+        checkedLambda = { model.includePreviewUpdates },
+        onClick = { model.changeIncludePreviewUpdates(!model.includePreviewUpdates) }
+    )
     if (showFakeUpdate) {
         FakeUpdateDialog(onDismiss = { showFakeUpdate = false })
     }

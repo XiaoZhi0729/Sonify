@@ -415,6 +415,8 @@
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
     <string name="update_check">更新を確認</string>
     <string name="update_auto_check">更新を自動確認</string>
+    <string name="update_preview_channel">プレビュー版アップデートを受け取る</string>
+    <string name="update_preview_channel_desc">正式版の間に公開されるプレビュービルドを受け取ります。オフにすると正式版のみ受信します</string>
     <string name="update_checking">更新を確認中…</string>
     <string name="update_up_to_date">最新バージョンです</string>
     <string name="update_available">新しいバージョンがあります</string>
@@ -705,6 +707,10 @@
     <string name="bottom_bar_setting_launch_first">ボトムバーの最初のタブ</string>
     <string name="bottom_bar_setting_launch_first_desc">現在：%1$s</string>
     <string name="bottom_bar_setting_reset">初期設定に戻す</string>
+    <string name="bottom_bar_setting_reset_confirm_title">初期設定に戻す</string>
+    <string name="bottom_bar_setting_reset_confirm_message">初期設定に戻しますか？</string>
+    <string name="bottom_bar_setting_reset_confirm_yes">はい</string>
+    <string name="bottom_bar_setting_reset_confirm_no">いいえ</string>
     <string name="bottom_bar_setting_hide_tab">%1$s を非表示</string>
     <string name="bottom_bar_setting_show_tab">%1$s を表示</string>
 </resources>

@@ -8,6 +8,9 @@ object UpdateSettings {
     var autoCheck: Boolean
         get() = store.decodeBool("auto_check", true)
         set(value) { check(store.encode("auto_check", value)) }
+    var includePreviewUpdates: Boolean
+        get() = store.decodeBool("include_preview_updates", false)
+        set(value) { check(store.encode("include_preview_updates", value)) }
     var lastSuccessAt: Long
         get() = store.decodeLong("last_success_at", 0L)
         set(value) { check(store.encode("last_success_at", value)) }

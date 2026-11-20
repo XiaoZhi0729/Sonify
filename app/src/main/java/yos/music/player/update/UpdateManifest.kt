@@ -23,8 +23,10 @@ data class UpdateManifest(
     val apkSize: Long,
     val sha256: String,
     val releasePageUrl: String,
-    val releaseNotes: Map<String, List<String>>
+    val releaseNotes: Map<String, List<String>>,
+    val mirrorApkUrls: List<String> = emptyList()
 ) {
+    fun candidateApkUrls(): List<String> = (mirrorApkUrls + apkUrl).distinct()
     fun notesFor(locale: Locale): List<String> {
         val normalized = releaseNotes.mapKeys { it.key.lowercase(Locale.ROOT) }
         val tag = locale.toLanguageTag().lowercase(Locale.ROOT)
@@ -54,6 +56,10 @@ data class UpdateManifest(
         require(apkSize in 1..MAX_APK_BYTES) { "Invalid APK size" }
         require(sha256.matches(Regex("[a-fA-F0-9]{64}"))) { "Invalid SHA-256" }
         UpdateUrls.apk(apkUrl.toHttpUrl())
+        require(mirrorApkUrls.size <= 8 && mirrorApkUrls.distinct().size == mirrorApkUrls.size) {
+            "Invalid mirror APK URLs"
+        }
+        mirrorApkUrls.forEach { UpdateUrls.apk(it.toHttpUrl()) }
         UpdateUrls.releasePage(releasePageUrl.toHttpUrl())
         require(releaseNotes.isNotEmpty() && releaseNotes.size <= 32) { "Invalid release notes" }
         require(releaseNotes.keys.map { it.lowercase(Locale.ROOT) }.distinct().size == releaseNotes.size)
@@ -78,6 +84,11 @@ data class UpdateManifest(
             abis.forEach { writer.value(it) }
             writer.endArray()
             writer.name("apkUrl").value(apkUrl)
+            if (mirrorApkUrls.isNotEmpty()) {
+                writer.name("mirrorApkUrls").beginArray()
+                mirrorApkUrls.forEach { writer.value(it) }
+                writer.endArray()
+            }
             writer.name("apkSize").value(apkSize)
             writer.name("sha256").value(sha256)
             writer.name("releasePageUrl").value(releasePageUrl)
@@ -119,6 +130,7 @@ data class UpdateManifest(
                         "applicationId", "versionName", "publishedAt", "apkUrl", "sha256", "releasePageUrl" ->
                             fields[name] = reader.strictString()
                         "abis" -> fields[name] = reader.stringList(4)
+                        "mirrorApkUrls" -> fields[name] = reader.stringList(8)
                         "releaseNotes" -> {
                             require(reader.peek() == JsonToken.BEGIN_OBJECT)
                             reader.beginObject()
@@ -142,13 +154,15 @@ data class UpdateManifest(
                 fun int(name: String): Int = number(name).also { require(it <= Int.MAX_VALUE) }.toInt()
                 fun string(name: String): String = fields[name] as? String
                     ?: throw IllegalArgumentException("Missing update field: $name")
+                @Suppress("UNCHECKED_CAST")
                 return UpdateManifest(
                     int("schemaVersion"), string("applicationId"), number("versionCode"),
                     string("versionName"), string("publishedAt"), int("minSdk"),
                     fields["abis"] as? List<String> ?: throw IllegalArgumentException("Missing ABI list"),
                     string("apkUrl"), number("apkSize"), string("sha256"), string("releasePageUrl"),
                     fields["releaseNotes"] as? Map<String, List<String>>
-                        ?: throw IllegalArgumentException("Missing release notes")
+                        ?: throw IllegalArgumentException("Missing release notes"),
+                    fields["mirrorApkUrls"] as? List<String> ?: emptyList()
                 ).validate()
             }
         }
@@ -189,8 +203,13 @@ data class UpdateManifest(
 }
 
 internal object UpdateUrls {
-    private const val REPOSITORY = "/XiaoZhi0729/Sonify"
-    private val CDN_HOSTS = setOf("release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com")
+    private const val GITHUB_REPOSITORY = "/XiaoZhi0729/Sonify"
+    private const val GITEE_REPOSITORY = "/XiaoZhi114514/Sonify"
+    private val CDN_HOSTS = setOf(
+        "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "github-releases.githubusercontent.com"
+    )
 
     private fun https(url: HttpUrl) {
         require(url.isHttps && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) {
@@ -203,32 +222,41 @@ internal object UpdateUrls {
 
     fun manifest(url: HttpUrl) {
         https(url)
-        require(url.host == "raw.githubusercontent.com" && url.encodedPath.matches(
-            Regex("$REPOSITORY/(master|main)/updates/latest\\.json")
-        ) && url.query == null) { "Untrusted manifest URL" }
+        val trustedGithub = url.host == "raw.githubusercontent.com" &&
+            url.encodedPath.matches(Regex("$GITHUB_REPOSITORY/(master|main)/updates/(latest|preview)\\.json"))
+        val trustedGitee = url.host == "gitee.com" &&
+            url.encodedPath.matches(Regex("$GITEE_REPOSITORY/raw/(master|main)/updates/(latest|preview)\\.json"))
+        require((trustedGithub || trustedGitee) && url.query == null) { "Untrusted manifest URL" }
     }
 
     fun apk(url: HttpUrl) {
         https(url)
-        require(url.host == "github.com" && url.encodedPath.matches(
-            Regex("$REPOSITORY/releases/download/[^/]+/[^/]+\\.apk")
-        ) && url.query == null) { "Untrusted APK URL" }
+        val trustedGithub = url.host == "github.com" &&
+            url.encodedPath.matches(Regex("$GITHUB_REPOSITORY/releases/download/[^/]+/[^/]+\\.apk"))
+        val trustedGitee = url.host == "gitee.com" &&
+            url.encodedPath.matches(Regex("$GITEE_REPOSITORY/releases/download/[^/]+/[^/]+\\.apk"))
+        require((trustedGithub || trustedGitee) && url.query == null) { "Untrusted APK URL" }
     }
 
     fun releasePage(url: HttpUrl) {
         https(url)
-        require(url.host == "github.com" && (url.encodedPath == "$REPOSITORY/releases" ||
-            url.encodedPath.matches(Regex("$REPOSITORY/releases/tag/[^/]+"))) && url.query == null) {
+        val trustedGithub = url.host == "github.com" &&
+            (url.encodedPath == "$GITHUB_REPOSITORY/releases" ||
+                url.encodedPath.matches(Regex("$GITHUB_REPOSITORY/releases/tag/[^/]+")))
+        val trustedGitee = url.host == "gitee.com" &&
+            (url.encodedPath == "$GITEE_REPOSITORY/releases" ||
+                url.encodedPath.matches(Regex("$GITEE_REPOSITORY/releases/tag/[^/]+")))
+        require((trustedGithub || trustedGitee) && url.query == null) {
             "Untrusted release page URL"
         }
     }
 
     fun redirect(url: HttpUrl, manifest: Boolean) {
         if (manifest) manifest(url)
-        else if (url.host == "github.com") apk(url)
+        else if (url.host == "github.com" || url.host == "gitee.com") apk(url)
         else {
             https(url)
-            require(url.host in CDN_HOSTS) { "Untrusted update CDN" }
+            require(url.host in CDN_HOSTS || url.host.endsWith(".gitee.com")) { "Untrusted update CDN" }
         }
     }
 }

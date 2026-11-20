@@ -66,6 +66,24 @@ class UpdateManifestTest {
         rejects { UpdateUrls.redirect("http://release-assets.githubusercontent.com/file.apk".toHttpUrl(), false) }
         rejects { UpdateUrls.redirect("https://release-assets.githubusercontent.com.evil.test/file.apk".toHttpUrl(), false) }
         UpdateUrls.redirect("https://release-assets.githubusercontent.com/file.apk?token=example".toHttpUrl(), false)
+        UpdateUrls.manifest("https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json".toHttpUrl())
+        UpdateUrls.manifest("https://gitee.com/XiaoZhi114514/Sonify/raw/master/updates/preview.json".toHttpUrl())
+        UpdateUrls.manifest("https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/preview.json".toHttpUrl())
+        UpdateUrls.apk("https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.0/Sonify.apk".toHttpUrl())
+        UpdateUrls.redirect("https://foruda.gitee.com/attach_file/example.apk".toHttpUrl(), false)
+        rejects { UpdateRepository(manifestUrl = "https://gitee.com/Other/Sonify/raw/master/updates/latest.json") }
+        rejects { UpdateUrls.redirect("https://gitee.com.evil.test/file.apk".toHttpUrl(), false) }
+        val withMirrors = manifest().copy(
+            mirrorApkUrls = listOf("https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.0/Sonify.apk")
+        )
+        assertEquals(withMirrors, UpdateManifest.parse(withMirrors.toJson()))
+        assertEquals(
+            listOf(
+                "https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.0/Sonify.apk",
+                "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.2.0/Sonify.apk"
+            ),
+            withMirrors.candidateApkUrls()
+        )
     }
 
     private fun rejects(action: () -> Unit) {

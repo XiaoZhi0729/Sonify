@@ -25,9 +25,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class UpdateRepositoryTest {
-    private fun json() = UpdateManifest(1, "com.sonify.music", 2, "0.2", "2026-10-04T00:00:00Z", 23,
+    private fun json(versionCode: Long = 2, versionName: String = "0.2") = UpdateManifest(
+        1, "com.sonify.music", versionCode, versionName, "2026-10-04T00:00:00Z", 23,
         listOf("arm64-v8a"), "https://github.com/XiaoZhi0729/Sonify/releases/download/v2/app.apk",
-        3, "a".repeat(64), "https://github.com/XiaoZhi0729/Sonify/releases/tag/v2", mapOf("en" to listOf("Update"))).toJson()
+        3, "a".repeat(64), "https://github.com/XiaoZhi0729/Sonify/releases/tag/v2", mapOf("en" to listOf("Update"))
+    ).toJson()
 
     private fun client(handler: (Interceptor.Chain) -> Response): OkHttpClient =
         OkHttpClient.Builder().addInterceptor { handler(it) }.build()
@@ -49,13 +51,59 @@ class UpdateRepositoryTest {
         } catch (_: IOException) { }
     }
 
+    @Test fun fallsBackToSecondManifestSourceWhenFirstFails() = runBlocking {
+        val hosts = mutableListOf<String>()
+        val repository = UpdateRepository(client { chain ->
+            val req = chain.request()
+            hosts += req.url.host
+            if (req.url.host == "gitee.com") response(chain, 503).build()
+            else response(chain).build()
+        })
+        assertEquals(2L, repository.check(1)?.versionCode)
+        assertEquals(listOf("gitee.com", "raw.githubusercontent.com"), hosts)
+    }
+
+    @Test fun previewChannelIsIgnoredWhenDisabledAndPickedWhenNewer() = runBlocking {
+        val paths = mutableListOf<String>()
+        val repository = UpdateRepository(client { chain ->
+            val path = chain.request().url.encodedPath
+            paths += path
+            if (path.endsWith("/preview.json")) {
+                response(chain, body = json(versionCode = 5, versionName = "0.2.6-v1").toResponseBody("application/json".toMediaType())).build()
+            } else {
+                response(chain, body = json(versionCode = 4, versionName = "0.2.5").toResponseBody("application/json".toMediaType())).build()
+            }
+        })
+        assertEquals(4L, repository.check(1, includePreview = false)?.versionCode)
+        assertTrue(paths.none { it.endsWith("/preview.json") })
+
+        paths.clear()
+        val preview = repository.check(4, includePreview = true)
+        assertEquals(5L, preview?.versionCode)
+        assertEquals("0.2.6-v1", preview?.versionName)
+        assertTrue(paths.any { it.endsWith("/preview.json") })
+    }
+
+    @Test fun previewChannel404DoesNotBreakStableUpdates() = runBlocking {
+        val repository = UpdateRepository(client { chain ->
+            if (chain.request().url.encodedPath.endsWith("/preview.json")) {
+                response(chain, 404, "Not Found".toResponseBody()).build()
+            } else {
+                response(chain, body = json(versionCode = 4, versionName = "0.2.6").toResponseBody("application/json".toMediaType())).build()
+            }
+        })
+        val result = repository.check(3, includePreview = true)
+        assertEquals(4L, result?.versionCode)
+        assertEquals("0.2.6", result?.versionName)
+    }
+
     @Test fun unsafeRedirectIsRejectedBeforeSecondRequest() = runBlocking {
         val calls = AtomicInteger()
         try {
             UpdateRepository(client {
                 calls.incrementAndGet()
                 response(it, 302).header("Location", "http://localhost/latest.json").build()
-            }).check(1)
+            }, UpdateRepository.GITHUB_MANIFEST_URL).check(1)
             fail("Expected redirect validation")
         } catch (_: IllegalArgumentException) { }
         assertEquals(1, calls.get())
