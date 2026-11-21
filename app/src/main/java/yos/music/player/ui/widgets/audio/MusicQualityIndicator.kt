@@ -2,6 +2,7 @@ package yos.music.player.ui.widgets.audio
 
 import android.graphics.BlurMaskFilter
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.Shader
@@ -656,6 +657,14 @@ private fun TransitionWaveGlowText(
         intArrayOf(0x6EFFFFFF, 0x8AFFFFFF.toInt(), 0xFFFFFFFF.toInt(), 0x8AFFFFFF.toInt(), 0x6EFFFFFF)
     }
     val fillStops = remember { floatArrayOf(0f, 0.22f, 0.5f, 0.78f, 1f) }
+    val bandHalfPx = max(layout.totalWidthPx.coerceAtLeast(1f) * 0.48f, minBandHalfPx)
+    val glowGradient = remember(bandHalfPx) {
+        LinearGradient(-bandHalfPx, 0f, bandHalfPx, 0f, glowColors, glowStops, Shader.TileMode.CLAMP)
+    }
+    val fillGradient = remember(bandHalfPx) {
+        LinearGradient(-bandHalfPx, 0f, bandHalfPx, 0f, fillColors, fillStops, Shader.TileMode.CLAMP)
+    }
+    val shaderMatrix = remember { Matrix() }
 
     val widthDp = with(density) { layout.totalWidthPx.toDp() }.coerceAtLeast(1.dp)
     Canvas(modifier = modifier.size(width = widthDp, height = 20.dp)) {
@@ -682,18 +691,12 @@ private fun TransitionWaveGlowText(
 
         val crestU = -0.70f + progress * 2.40f
         val localCenterX = crestU * totalW
-        val bandHalf = max(totalW * 0.48f, minBandHalfPx)
+        shaderMatrix.setTranslate(localCenterX, 0f)
+        glowGradient.setLocalMatrix(shaderMatrix)
+        fillGradient.setLocalMatrix(shaderMatrix)
 
         // Pass 1：仅在光带中心附着字形外沿柔和辉光
-        glowPaint.shader = LinearGradient(
-            localCenterX - bandHalf,
-            0f,
-            localCenterX + bandHalf,
-            0f,
-            glowColors,
-            glowStops,
-            Shader.TileMode.CLAMP,
-        )
+        glowPaint.shader = glowGradient
         drawWaveGlyphPass(
             canvas = nativeCanvas,
             layout = layout,
@@ -705,15 +708,7 @@ private fun TransitionWaveGlowText(
         )
 
         // Pass 2：高光带顺滑扫过清晰矢量笔画本身
-        fillPaint.shader = LinearGradient(
-            localCenterX - bandHalf,
-            0f,
-            localCenterX + bandHalf,
-            0f,
-            fillColors,
-            fillStops,
-            Shader.TileMode.CLAMP,
-        )
+        fillPaint.shader = fillGradient
         drawWaveGlyphPass(
             canvas = nativeCanvas,
             layout = layout,

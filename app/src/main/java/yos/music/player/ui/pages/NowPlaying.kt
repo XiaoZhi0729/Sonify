@@ -111,6 +111,7 @@ import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -119,10 +120,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.zIndex
@@ -152,6 +156,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onSizeChanged
@@ -176,6 +181,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -1687,7 +1693,7 @@ private fun ColumnScope.Album(
         TweenSpec(durationMillis = 350, easing = EaseOutQuart)
     }
 
-    val scale = animateFloatAsState(
+    val scaleState = animateFloatAsState(
         targetValue = if (isPlaying()) 0f else 1f,
         animationSpec = when {
             phonePortraitBouncyScale && isPlaying() -> bouncySpringSpec
@@ -1701,8 +1707,6 @@ private fun ColumnScope.Album(
     val context = LocalContext.current
 
     YosWrapper {
-        // 播放态 scale→0 内缩 7dp，暂停态 scale→1 内缩 34dp；手机竖屏再叠加额外内缩。
-        val dp = (7 + (27 * scale.value)).dp + phonePortraitExtraInset
         // 平板竖屏适配：封面限宽居中（手机屏宽不足 460dp，no-op）
         Box(
             Modifier.fillMaxWidth(),
@@ -1712,25 +1716,42 @@ private fun ColumnScope.Album(
                 Modifier.widthIn(max = 460.dp),
                 contentAlignment = Alignment.BottomCenter
             ) {
-                // 播放/暂停内缩只作用于外层；内层明确锁定为正方形图片内容框。
-                // 坐标回调只挂在这个正方形节点上，不包含外层底部 padding，
-                // 也不受 ShadowImage 内部阴影/描边 coordinator 的边界语义影响。
-                BoxWithConstraints(
+                // 播放/暂停呼吸缩放下沉到 layout 阶段读取 scaleState，并去掉多余 BoxWithConstraints：
+                // 内层固定为 side × side 正方形并只上报该节点坐标。
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = dp, end = dp, bottom = dp),
-                    contentAlignment = Alignment.BottomCenter
+                        .layout { measurable, constraints ->
+                            val insetDp = (7f + 27f * scaleState.value).dp + phonePortraitExtraInset
+                            val insetPx = insetDp.roundToPx().coerceAtLeast(0)
+                            val availW = (constraints.maxWidth - insetPx * 2).coerceAtLeast(0)
+                            val availH = if (constraints.hasBoundedHeight) {
+                                (constraints.maxHeight - insetPx).coerceAtLeast(0)
+                            } else {
+                                availW
+                            }
+                            val side = minOf(availW, availH)
+                            val placeable = measurable.measure(Constraints.fixed(side, side))
+                            val layoutH = if (constraints.hasBoundedHeight) {
+                                (side + insetPx).coerceIn(constraints.minHeight, constraints.maxHeight)
+                            } else {
+                                (side + insetPx).coerceAtLeast(constraints.minHeight)
+                            }
+                            val layoutW = if (constraints.hasBoundedWidth) {
+                                constraints.maxWidth
+                            } else {
+                                (side + insetPx * 2).coerceIn(constraints.minWidth, constraints.maxWidth)
+                            }
+                            val x = ((layoutW - side) / 2).coerceAtLeast(0)
+                            val y = (layoutH - insetPx - side).coerceAtLeast(0)
+                            layout(layoutW, layoutH) {
+                                placeable.placeRelative(x, y)
+                            }
+                        }
                 ) {
-                    // 边长 = min(可用宽, 可用高)。常规竖屏下可用宽恒小于可用高，取到的
-                    // 就是宽度 → 与旧版逐像素一致，播放/暂停的缩放仍是"底边跟着上移"
-                    // 的原观感（缩放由外层 padding 驱动，不是改 size 锚死底边）。
-                    // 只有小窗/分屏这类矮窗口里正方形按宽度算会超过槽位高度时，
-                    // 才由高度收窄——这是"只有封面变小、控件全不动"的唯一让位点。
-                    val coverSide = minOf(maxWidth, maxHeight)
                     Box(
                         modifier = Modifier
-                            .size(coverSide)
-                            .aspectRatio(1f)
+                            .fillMaxSize()
                             .onGloballyPositioned { coordsOnChanged(it) }
                             // 点击面严格等于封面正方形：歌名/歌手/收藏/四周留白都不受影响。
                             // 点击会等按下动效跑满再发（轻点也看得到完整动画），触感见下方 feedback。
@@ -1818,6 +1839,9 @@ private fun ColumnScope.Album(
 }
 
 
+private val QueueRowShape = RoundedCornerShape(12.dp)
+private val QueueCircleShape = RoundedCornerShape(50)
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun PlayingList(
@@ -1830,6 +1854,7 @@ internal fun PlayingList(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
 
     Spacer(modifier = Modifier.height(12.dp))
 
@@ -1839,7 +1864,24 @@ internal fun PlayingList(
 
     // 队列编辑模式：多选删除 / 拖拽重排 / 排序（长按行也可进入编辑）
     var editMode by remember { mutableStateOf(false) }
-    val selectedIds = remember { mutableStateListOf<String>() }
+    val selectedIds = remember { mutableStateSetOf<String>() }
+    var editControlsHold by remember { mutableStateOf(false) }
+    var animateEditEnter by remember { mutableStateOf(false) }
+    LaunchedEffect(editMode) {
+        if (editMode) {
+            editControlsHold = true
+            animateEditEnter = true
+            delay(460)
+            animateEditEnter = false
+        } else {
+            animateEditEnter = false
+            if (editControlsHold) {
+                delay(240)
+                editControlsHold = false
+            }
+        }
+    }
+    val editControlsMounted = editMode || editControlsHold
     var showSortMenu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val queueScope = rememberCoroutineScope()
@@ -2073,14 +2115,25 @@ internal fun PlayingList(
                                     .padding(start = 2.dp, end = 8.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable {
+                                        animateEditEnter = true
+                                        editControlsHold = true
                                         editMode = true
                                         selectedIds.clear()
                                     }
                                     .padding(6.dp)
                             )
 
-                            ShuffleToggleButton(shuffleModeEnabledLambda, shuffleModeOnChanged)
-                            RepeatToggleButton(repeatModeLambda, repeatModeOnChanged, startPadding = 10.dp)
+                            ShuffleToggleButton(
+                                shuffleModeEnabledLambda = shuffleModeEnabledLambda,
+                                onShuffleChanged = shuffleModeOnChanged,
+                                useOverlayEffect = false,
+                            )
+                            RepeatToggleButton(
+                                repeatModeLambda = repeatModeLambda,
+                                onRepeatChanged = repeatModeOnChanged,
+                                startPadding = 10.dp,
+                                useOverlayEffect = false,
+                            )
                         }
                     }
                 }
@@ -2212,6 +2265,34 @@ internal fun PlayingList(
                 YosWrapper {
                     CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
                         var listWidthPx by remember { mutableIntStateOf(0) }
+                        val dragLayoutTargetState = remember(queueKeys, musicList, itemHeightPx) {
+                            derivedStateOf {
+                                val g = if (dragLatched) {
+                                    dragGeometry?.takeIf { dragKey != null && queueKeys.getOrNull(it.fromIndex) == dragKey }
+                                } else {
+                                    null
+                                }
+                                if (g == null || itemHeightPx.intValue <= 0) {
+                                    null
+                                } else {
+                                    val info = state.layoutInfo
+                                    val disp = QueueDragMath.displayedDisplacementPx(
+                                        draggedTopPx = g.draggedTopPx,
+                                        untransformedTopPx = g.untransformedTopPx,
+                                        itemHeightPx = itemHeightPx.intValue,
+                                        viewportStartPx = info.viewportStartOffset,
+                                        viewportEndPx = info.viewportEndOffset
+                                    )
+                                    val target = QueueDragMath.targetIndex(
+                                        fromIndex = g.fromIndex,
+                                        logicalOffsetPx = disp,
+                                        itemHeightPx = itemHeightPx.intValue,
+                                        itemCount = musicList.value?.size ?: 0
+                                    )
+                                    Triple(g.fromIndex, disp, target)
+                                }
+                            }
+                        }
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -2319,61 +2400,41 @@ internal fun PlayingList(
                                 key = { index, _ -> queueKeys.getOrNull(index) ?: "index:$index" },
                                 contentType = { _, _ -> "queue_item" }
                             ) { index, music ->
-                                val currentDragGeometry = displayGeometry?.takeIf { dragLatched }
-                                val currentDragIndex = currentDragGeometry?.fromIndex
-                                // 与落点一致：让位/落定渲染也按浮层实际显示位置计算
-                                val displayedDisplacement = currentDragGeometry?.let {
-                                    QueueDragMath.displayedDisplacementPx(
-                                        draggedTopPx = it.draggedTopPx,
-                                        untransformedTopPx = it.untransformedTopPx,
-                                        itemHeightPx = itemHeightPx.intValue,
-                                        viewportStartPx = state.layoutInfo.viewportStartOffset,
-                                        viewportEndPx = state.layoutInfo.viewportEndOffset
-                                    )
-                                } ?: 0f
-                                val currentTarget = currentDragGeometry?.let {
-                                QueueDragMath.targetIndex(
-                                    fromIndex = it.fromIndex,
-                                    logicalOffsetPx = displayedDisplacement,
-                                    itemHeightPx = itemHeightPx.intValue,
-                                    itemCount = musicList.value?.size ?: 0
-                                )
-                            }
-                            val targetDisplacement = when {
-                                currentDragGeometry == null || itemHeightPx.intValue == 0 -> 0f
-                                index == currentDragIndex -> displayedDisplacement
-                                currentTarget != null && currentDragIndex != null &&
-                                    ((currentTarget > currentDragIndex && index > currentDragIndex && index <= currentTarget) ||
-                                        (currentTarget < currentDragIndex && index >= currentTarget && index < currentDragIndex)) ->
-                                    if (currentTarget > currentDragIndex) -itemHeightPx.intValue.toFloat()
-                                    else itemHeightPx.intValue.toFloat()
-                                else -> 0f
-                            }
-                                
-                                // 让位动画：被拖行跟手不动画，其他行平滑让位
-                                val animatedDisplacement by animateFloatAsState(
-                                    targetValue = targetDisplacement,
-                                    animationSpec = if (index == currentDragIndex) snap()
-                                                   else tween(durationMillis = 120),
-                                    label = "itemDisplacement_$index"
-                                )
-                                
+                                val dragInfo = dragLayoutTargetState.value
+                                val currentDragIndex = dragInfo?.first
+                                val targetDisplacement = if (dragInfo != null && itemHeightPx.intValue > 0) {
+                                    val (fromIdx, displayedDisplacement, currentTarget) = dragInfo
+                                    when {
+                                        index == fromIdx -> displayedDisplacement
+                                        currentTarget != null &&
+                                            ((currentTarget > fromIdx && index > fromIdx && index <= currentTarget) ||
+                                                (currentTarget < fromIdx && index >= currentTarget && index < fromIdx)) ->
+                                            if (currentTarget > fromIdx) -itemHeightPx.intValue.toFloat()
+                                            else itemHeightPx.intValue.toFloat()
+                                        else -> 0f
+                                    }
+                                } else {
+                                    0f
+                                }
+
                                 SmallMusicListItem(
-                                    music,
+                                    music = music,
                                     index = index,
                                     totalCount = musicList.value?.size ?: 0,
                                     editMode = editMode,
-                                    selected = (music.mediaId ?: "index:$index") in selectedIds,
+                                    editControlsMounted = editControlsMounted,
+                                    animateEditEnter = animateEditEnter,
+                                    isSelected = { (music.mediaId ?: "index:$index") in selectedIds },
                                     dragging = index == currentDragIndex,
                                     hideWhenDragging = true,
-                                    displacementPx = animatedDisplacement,
+                                    displacementPx = targetDisplacement,
+                                    density = density,
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = tween(durationMillis = 120),
                                         placementSpec = tween(durationMillis = 120)
                                     ),
                                     onRowMeasured = { if (itemHeightPx.intValue == 0) itemHeightPx.intValue = it },
                                     itemClick = {
-
                                         if (editMode) {
                                             toggleSelect(index, music)
                                         } else {
@@ -2387,6 +2448,8 @@ internal fun PlayingList(
                                     },
                                     onLongClick = {
                                         if (!editMode) {
+                                            animateEditEnter = true
+                                            editControlsHold = true
                                             editMode = true
                                             selectedIds.clear()
                                         }
@@ -2394,7 +2457,7 @@ internal fun PlayingList(
                                     }
                                 )
                             }
-                            item("blank_after") {
+                            item("blank_after", contentType = "queue_spacer") {
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                         }
@@ -2408,10 +2471,13 @@ internal fun PlayingList(
                                 index = floatingIndex,
                                 totalCount = queueItems.size,
                                 editMode = editMode,
-                                selected = (floatingMusic.mediaId ?: "index:$floatingIndex") in selectedIds,
+                                editControlsMounted = editControlsMounted,
+                                animateEditEnter = animateEditEnter,
+                                isSelected = { (floatingMusic.mediaId ?: "index:$floatingIndex") in selectedIds },
                                 dragging = true,
                                 hideWhenDragging = false,
                                 displacementPx = 0f,
+                                density = density,
                                 onRowMeasured = {},
                                 itemClick = {},
                                 onLongClick = {},
@@ -2477,34 +2543,41 @@ private fun SmallMusicListItem(
     index: Int,
     totalCount: Int,
     editMode: Boolean = false,
-    selected: Boolean = false,
+    editControlsMounted: Boolean = editMode,
+    animateEditEnter: Boolean = false,
+    isSelected: () -> Boolean = { false },
     dragging: Boolean = false,
     hideWhenDragging: Boolean = false,
     displacementPx: Float = 0f,
+    density: androidx.compose.ui.unit.Density = LocalDensity.current,
     onRowMeasured: (Int) -> Unit = {},
     itemClick: () -> Unit,
     onLongClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val density = LocalDensity.current
     val floating = dragging && !hideWhenDragging
-    val checkboxVisibility = remember {
-        androidx.compose.animation.core.MutableTransitionState(editMode)
-    }.apply { targetState = editMode }
-    val handleVisibility = remember {
-        androidx.compose.animation.core.MutableTransitionState(editMode)
-    }.apply { targetState = editMode }
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val selectionBgColor = primaryColor.copy(alpha = 0.16f)
 
-    // 拖拽期间保持稳定缩放，避免 spring 追赶手指造成抖动。
-    val dragScale by animateFloatAsState(
-        targetValue = if (dragging) 1.015f else 1f,
-        animationSpec = tween(durationMillis = 100),
-        label = "dragScale"
-    )
+    // 仅在编辑态或拖拽偏移期间激活让位/缩放动画，常规滚动零动画节点分配。
+    val dragAnimationActive = editControlsMounted || dragging || displacementPx != 0f
+    val displacementState = if (dragAnimationActive) {
+        animateFloatAsState(
+            targetValue = displacementPx,
+            animationSpec = if (dragging) snap() else tween(durationMillis = 120),
+            label = "itemDisplacement_$index"
+        )
+    } else null
+    val dragScaleState = if (editControlsMounted || dragging) {
+        animateFloatAsState(
+            targetValue = if (dragging) 1.015f else 1f,
+            animationSpec = tween(durationMillis = 100),
+            label = "dragScale"
+        )
+    } else null
 
     // 修复问题2：逐行延迟出现，上限240ms
     val itemDelay = minOf(index * 20, 240)
-
 
     Row(
         modifier = modifier
@@ -2514,17 +2587,22 @@ private fun SmallMusicListItem(
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer {
                 alpha = if (dragging && hideWhenDragging) 0f else 1f
-                translationY = displacementPx
-                scaleX = dragScale
-                scaleY = dragScale
-                shape = RoundedCornerShape(12.dp)
+                translationY = displacementState?.value ?: displacementPx
+                val scale = dragScaleState?.value ?: 1f
+                scaleX = scale
+                scaleY = scale
+                shape = QueueRowShape
                 clip = false
             }
-            .background(
-                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
+            .drawBehind {
+                if (isSelected()) {
+                    val radiusPx = 12.dp.toPx()
+                    drawRoundRect(
+                        color = selectionBgColor,
+                        cornerRadius = CornerRadius(radiusPx, radiusPx)
+                    )
+                }
+            }
             .combinedClickable(
                 onClick = itemClick,
                 onLongClick = if (editMode) null else onLongClick
@@ -2532,71 +2610,77 @@ private fun SmallMusicListItem(
             .padding(horizontal = 30.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左侧选择区：修复问题2、3、8
-        AnimatedVisibility(
-            visibleState = checkboxVisibility,
-            enter = fadeIn(tween(200, delayMillis = itemDelay)) + 
-                    expandHorizontally(tween(220, delayMillis = itemDelay, easing = FastOutSlowInEasing)),
-            exit = fadeOut(tween(180)) + 
-                   shrinkHorizontally(tween(200, easing = FastOutSlowInEasing))
-        ) {
-            Row {
-                // 选择圆点从封面位置出现（修复问题3：从封面右侧24dp处开始）
-                val checkboxOffsetX by animateFloatAsState(
-                    targetValue = if (editMode) 0f else 24f,
-                    animationSpec = tween(durationMillis = 220, delayMillis = itemDelay, easing = FastOutSlowInEasing),
-                    label = "checkboxOffset_$index"
-                )
-                val checkboxScale by animateFloatAsState(
-                    targetValue = if (editMode) 1f else 0.86f,
-                    animationSpec = tween(durationMillis = 220, delayMillis = itemDelay, easing = FastOutSlowInEasing),
-                    label = "checkboxScale_$index"
-                )
-                val checkboxBlurPx by transition.animateFloat(
-                    transitionSpec = { tween(220, delayMillis = if (targetState == EnterExitState.Visible) itemDelay else 0) },
-                    label = "checkboxBlur"
-                ) { state ->
-                    if (state == EnterExitState.Visible) 0f else with(density) { 6.dp.toPx() }
-                }
-                val checkboxBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && checkboxBlurPx > 0.01f) {
-                    AndroidRenderEffect.createBlurEffect(checkboxBlurPx, checkboxBlurPx, android.graphics.Shader.TileMode.DECAL)
-                        .asComposeRenderEffect()
-                } else null
-                
-                Box(
-                    modifier = Modifier
-                        .size(21.dp)
-                        .graphicsLayer {
-                            translationX = checkboxOffsetX
-                            scaleX = checkboxScale
-                            scaleY = checkboxScale
-                            if (checkboxBlur != null) {
-                                renderEffect = checkboxBlur
-                            }
-                        }
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            shape = RoundedCornerShape(50)
-                        )
-                        .border(
-                            width = 1.5.dp,
-                            color = if (selected) MaterialTheme.colorScheme.primary
-                            else Color.White.copy(alpha = 0.4f),
-                            shape = RoundedCornerShape(50)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (selected) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_checkmark),
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
+        // 左侧选择区：仅在编辑态或退出过渡期间挂载，常规滚动零动画节点分配
+        if (editControlsMounted) {
+            val checkboxVisibility = remember {
+                androidx.compose.animation.core.MutableTransitionState(if (animateEditEnter) false else editMode)
+            }.apply { targetState = editMode }
+            AnimatedVisibility(
+                visibleState = checkboxVisibility,
+                enter = fadeIn(tween(200, delayMillis = itemDelay)) +
+                        expandHorizontally(tween(220, delayMillis = itemDelay, easing = FastOutSlowInEasing)),
+                exit = fadeOut(tween(180)) +
+                        shrinkHorizontally(tween(200, easing = FastOutSlowInEasing))
+            ) {
+                Row {
+                    // 选择圆点从封面位置出现（修复问题3：从封面右侧24dp处开始）
+                    val checkboxOffsetX by animateFloatAsState(
+                        targetValue = if (editMode) 0f else 24f,
+                        animationSpec = tween(durationMillis = 220, delayMillis = itemDelay, easing = FastOutSlowInEasing),
+                        label = "checkboxOffset_$index"
+                    )
+                    val checkboxScale by animateFloatAsState(
+                        targetValue = if (editMode) 1f else 0.86f,
+                        animationSpec = tween(durationMillis = 220, delayMillis = itemDelay, easing = FastOutSlowInEasing),
+                        label = "checkboxScale_$index"
+                    )
+                    val checkboxBlurPx by transition.animateFloat(
+                        transitionSpec = { tween(220, delayMillis = if (targetState == EnterExitState.Visible) itemDelay else 0) },
+                        label = "checkboxBlur"
+                    ) { state ->
+                        if (state == EnterExitState.Visible) 0f else with(density) { 6.dp.toPx() }
                     }
+                    val checkboxBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && checkboxBlurPx > 0.01f) {
+                        AndroidRenderEffect.createBlurEffect(checkboxBlurPx, checkboxBlurPx, android.graphics.Shader.TileMode.DECAL)
+                            .asComposeRenderEffect()
+                    } else null
+
+                    val rowSelected = isSelected()
+                    Box(
+                        modifier = Modifier
+                            .size(21.dp)
+                            .graphicsLayer {
+                                translationX = checkboxOffsetX
+                                scaleX = checkboxScale
+                                scaleY = checkboxScale
+                                if (checkboxBlur != null) {
+                                    renderEffect = checkboxBlur
+                                }
+                            }
+                            .clip(QueueCircleShape)
+                            .background(
+                                color = if (rowSelected) primaryColor else Color.Transparent,
+                                shape = QueueCircleShape
+                            )
+                            .border(
+                                width = 1.5.dp,
+                                color = if (rowSelected) primaryColor
+                                else Color.White.copy(alpha = 0.4f),
+                                shape = QueueCircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (rowSelected) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_checkmark),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
                 }
-                Spacer(modifier = Modifier.width(14.dp))
             }
         }
 
@@ -2643,41 +2727,45 @@ private fun SmallMusicListItem(
             }
         }
 
-        // 右侧拖拽区：修复问题10、11
-        AnimatedVisibility(
-            visibleState = handleVisibility,
-            enter = fadeIn(tween(200, delayMillis = 80)) + 
-                    expandHorizontally(tween(220, delayMillis = 80, easing = FastOutSlowInEasing)),
-            exit = fadeOut(tween(180)) + 
-                   shrinkHorizontally(tween(200, easing = FastOutSlowInEasing))
-        ) {
-            // 修复问题10：把手从屏幕右侧32dp外进入
-            val handleOffsetX by animateFloatAsState(
-                targetValue = if (editMode) 0f else 32f,
-                animationSpec = tween(durationMillis = 220, delayMillis = 80, easing = FastOutSlowInEasing),
-                label = "handleOffset_$index"
-            )
-            val handleBlurPx = if (editMode) 0f else with(density) { 5.dp.toPx() }
-            val handleBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && handleBlurPx > 0f) {
-                AndroidRenderEffect.createBlurEffect(handleBlurPx, handleBlurPx, android.graphics.Shader.TileMode.DECAL)
-                    .asComposeRenderEffect()
-            } else null
-            
-            
-            Text(
-                text = "≡",
-                fontSize = 26.sp,
-                lineHeight = 26.sp,
-                modifier = Modifier
-                    .graphicsLayer {
-                        translationX = handleOffsetX
-                        if (handleBlur != null) {
-                            renderEffect = handleBlur
+        // 右侧拖拽区：仅在编辑态或退出过渡期间挂载
+        if (editControlsMounted) {
+            val handleVisibility = remember {
+                androidx.compose.animation.core.MutableTransitionState(if (animateEditEnter) false else editMode)
+            }.apply { targetState = editMode }
+            AnimatedVisibility(
+                visibleState = handleVisibility,
+                enter = fadeIn(tween(200, delayMillis = 80)) +
+                        expandHorizontally(tween(220, delayMillis = 80, easing = FastOutSlowInEasing)),
+                exit = fadeOut(tween(180)) +
+                        shrinkHorizontally(tween(200, easing = FastOutSlowInEasing))
+            ) {
+                // 修复问题10：把手从屏幕右侧32dp外进入
+                val handleOffsetX by animateFloatAsState(
+                    targetValue = if (editMode) 0f else 32f,
+                    animationSpec = tween(durationMillis = 220, delayMillis = 80, easing = FastOutSlowInEasing),
+                    label = "handleOffset_$index"
+                )
+                val handleBlurPx = if (editMode) 0f else with(density) { 5.dp.toPx() }
+                val handleBlur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && handleBlurPx > 0f) {
+                    AndroidRenderEffect.createBlurEffect(handleBlurPx, handleBlurPx, android.graphics.Shader.TileMode.DECAL)
+                        .asComposeRenderEffect()
+                } else null
+
+                Text(
+                    text = "≡",
+                    fontSize = 26.sp,
+                    lineHeight = 26.sp,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            translationX = handleOffsetX
+                            if (handleBlur != null) {
+                                renderEffect = handleBlur
+                            }
                         }
-                    }
-                    .alpha(0.45f)
-                    .padding(4.dp)
-            )
+                        .alpha(0.45f)
+                        .padding(4.dp)
+                )
+            }
         }
     }
 }
@@ -2942,7 +3030,6 @@ internal fun ActionButtonsRow(
                         painterResource(id = R.drawable.ic_nowplaying_favorite),
                         contentDescription = null,
                         modifier = Modifier
-                            .overlayEffect()
                             .size(dp)
                     )
                 }
@@ -3005,7 +3092,6 @@ internal fun ActionButtonsRow(
                         painterResource(id = R.drawable.ic_nowplaying_more),
                         contentDescription = null,
                         modifier = Modifier
-                            .overlayEffect()
                             .size(dp)
                     )
                 }
@@ -3780,17 +3866,58 @@ private fun PlayingBar(
 
 }
 
+private data class AirPlayBluetoothSnapshot(
+    val showName: Boolean = false,
+    val deviceName: String = "",
+)
+
+private val BluetoothIsConnectedMethod by lazy {
+    runCatching {
+        BluetoothDevice::class.java.getMethod("isConnected").apply { isAccessible = true }
+    }.getOrNull()
+}
+
+private suspend fun resolveConnectedAudioDeviceName(
+    context: Context,
+    bluetoothAdapter: BluetoothAdapter?,
+): String? = withContext(Dispatchers.IO) {
+    if (bluetoothAdapter == null) return@withContext null
+    if (ActivityCompat.checkSelfPermission(
+            context,
+            Manifest.permission.BLUETOOTH_CONNECT
+        ) != PackageManager.PERMISSION_GRANTED
+    ) {
+        return@withContext null
+    }
+    val bonded = runCatching { bluetoothAdapter.bondedDevices?.toList() }.getOrNull()
+        ?: return@withContext null
+    val active = bonded.firstOrNull { device ->
+        device.bluetoothClass?.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO &&
+            device.isConnected()
+    } ?: return@withContext null
+    val rawName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        active.alias ?: active.name
+    } else {
+        active.name
+    }
+    rawName?.trim()?.takeIf { it.isNotEmpty() }
+}
+
 @Composable
 fun RowScope.AirPlay(fill: Boolean = true) {
     val contextCompose = LocalContext.current
-    val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
-    val connectedDevices =
-        remember("AirPlay_connectedDevices") { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
-    val audioDeviceName = remember("AirPlay_audioDeviceName") { mutableStateOf("") }
-    val showName = remember("AirPlay_showName") { mutableStateOf(false) }
+    val appContext = remember(contextCompose) { contextCompose.applicationContext }
+    val bluetoothAdapter: BluetoothAdapter? = remember { BluetoothAdapter.getDefaultAdapter() }
+    val systemMediaControlResolver = remember(contextCompose) {
+        SystemMediaControlResolver(contextCompose)
+    }
+    var btSnapshot by remember("AirPlay_btSnapshot") {
+        mutableStateOf(AirPlayBluetoothSnapshot())
+    }
+    val refreshTrigger = remember("AirPlay_refreshTrigger") { mutableIntStateOf(0) }
 
     YosWrapper {
-        DisposableEffect(Unit) {
+        DisposableEffect(appContext) {
             val filter = IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED).apply {
                 addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
                 addAction("yos.music.player.BLUETOOTH_STATUS_REFRESH")
@@ -3798,66 +3925,39 @@ fun RowScope.AirPlay(fill: Boolean = true) {
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     val action = intent?.action
-                    if (action == BluetoothDevice.ACTION_ACL_CONNECTED || action == BluetoothDevice.ACTION_ACL_DISCONNECTED || action == "yos.music.player.BLUETOOTH_STATUS_REFRESH") {
-                        if (ActivityCompat.checkSelfPermission(
-                                contextCompose,
-                                Manifest.permission.BLUETOOTH_CONNECT
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            return
-                        }
-                        connectedDevices.value =
-                            bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
-
-                        val thisName =
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                connectedDevices.value.firstOrNull { it.bluetoothClass.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO && it.isConnected() }?.alias
-                            } else {
-                                connectedDevices.value.firstOrNull { it.bluetoothClass.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO && it.isConnected() }?.name
-                            }
-                        showName.value = thisName != null
-                        if (thisName != null) {
-                            audioDeviceName.value = thisName.trim()
-                        }
+                    if (action == BluetoothDevice.ACTION_ACL_CONNECTED ||
+                        action == BluetoothDevice.ACTION_ACL_DISCONNECTED ||
+                        action == "yos.music.player.BLUETOOTH_STATUS_REFRESH"
+                    ) {
+                        refreshTrigger.intValue += 1
                     }
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                contextCompose.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             } else {
-                contextCompose.registerReceiver(receiver, filter)
+                appContext.registerReceiver(receiver, filter)
             }
-
-            if (ActivityCompat.checkSelfPermission(
-                    contextCompose,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                connectedDevices.value = bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
-                val thisName =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        connectedDevices.value.firstOrNull { it.bluetoothClass.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO && it.isConnected() }?.alias
-                    } else {
-                        connectedDevices.value.firstOrNull { it.bluetoothClass.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO && it.isConnected() }?.name
-                    }
-                showName.value = thisName != null
-                if (thisName != null) {
-                    audioDeviceName.value = thisName.trim()
-                }
-            }
-
             onDispose {
                 runCatching {
-                    contextCompose.unregisterReceiver(receiver)
+                    appContext.unregisterReceiver(receiver)
                 }
+            }
+        }
+
+        LaunchedEffect(bluetoothAdapter, refreshTrigger.intValue) {
+            val resolvedName = resolveConnectedAudioDeviceName(appContext, bluetoothAdapter)
+            btSnapshot = if (resolvedName != null) {
+                AirPlayBluetoothSnapshot(showName = true, deviceName = resolvedName)
+            } else {
+                AirPlayBluetoothSnapshot(showName = false, deviceName = btSnapshot.deviceName)
             }
         }
     }
 
     YosWrapper {
-        val context = LocalContext.current
-
-        val systemMediaControlResolver = SystemMediaControlResolver(context)
+        val showName = btSnapshot.showName
+        val audioDeviceName = btSnapshot.deviceName
 
         val clickModifier = Modifier
             .clickable(
@@ -3882,7 +3982,7 @@ fun RowScope.AirPlay(fill: Boolean = true) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(modifier = Modifier.height(36.dp), contentAlignment = Alignment.Center) {
-                    AnimatedContent(targetState = showName.value, transitionSpec = {
+                    AnimatedContent(targetState = showName, transitionSpec = {
                         (scaleIn(initialScale = 0.3f) + fadeIn()).togetherWith(
                             scaleOut(
                                 targetScale = 0.3f
@@ -3907,11 +4007,11 @@ fun RowScope.AirPlay(fill: Boolean = true) {
                     }
                 }
 
-                AnimatedVisibility(showName.value, enter = scaleIn(initialScale = 0.3f) + fadeIn(), exit = scaleOut(
+                AnimatedVisibility(showName, enter = scaleIn(initialScale = 0.3f) + fadeIn(), exit = scaleOut(
                     targetScale = 0.3f
                 ) + fadeOut()) {
                     Text(
-                        text = audioDeviceName.value,
+                        text = audioDeviceName,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 11.sp,
                         lineHeight = 11.sp,
@@ -3929,7 +4029,7 @@ fun RowScope.AirPlay(fill: Boolean = true) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(modifier = Modifier.height(36.dp), contentAlignment = Alignment.Center) {
-                    AnimatedContent(targetState = showName.value, transitionSpec = {
+                    AnimatedContent(targetState = showName, transitionSpec = {
                         (scaleIn(initialScale = 0.3f) + fadeIn()).togetherWith(
                             scaleOut(
                                 targetScale = 0.3f
@@ -3954,11 +4054,11 @@ fun RowScope.AirPlay(fill: Boolean = true) {
                     }
                 }
 
-                AnimatedVisibility(showName.value, enter = scaleIn(initialScale = 0.3f) + fadeIn(), exit = scaleOut(
+                AnimatedVisibility(showName, enter = scaleIn(initialScale = 0.3f) + fadeIn(), exit = scaleOut(
                     targetScale = 0.3f
                 ) + fadeOut()) {
                     Text(
-                        text = audioDeviceName.value,
+                        text = audioDeviceName,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 11.sp,
                         lineHeight = 11.sp,
@@ -3974,10 +4074,7 @@ fun RowScope.AirPlay(fill: Boolean = true) {
 
 private fun BluetoothDevice.isConnected(): Boolean {
     return runCatching {
-        val isConnectedMethod =
-            BluetoothDevice::class.java.getMethod("isConnected")
-        isConnectedMethod.isAccessible = true
-        isConnectedMethod.invoke(this) as Boolean
+        BluetoothIsConnectedMethod?.invoke(this) as? Boolean ?: false
     }.getOrDefault(false)
 }
 
@@ -4068,7 +4165,7 @@ internal fun TranslationToggleButton(
     // 底衬浓度跟着开关态过渡。切换要**快**：之前用 spring(stiffness=600) 约 400ms，
     // 点下去半天才亮到位，读起来像卡顿。120ms 的 tween 是"即点即变"的手感，
     // 又保留一点点过渡避免生硬跳变。
-    val scrimAlpha by animateFloatAsState(
+    val scrimAlphaState = animateFloatAsState(
         targetValue = if (translation.value) TranslateScrimOn else TranslateScrimOff,
         animationSpec = tween(durationMillis = 120),
         label = "translateScrimAlpha"
@@ -4081,7 +4178,9 @@ internal fun TranslationToggleButton(
             .overlayEffect()
             .alpha(TranslateContentAlpha)
             .clip(YosRoundedCornerShape(TranslateCornerRadius))
-            .background(Color.White.copy(alpha = scrimAlpha))
+            .drawBehind {
+                drawRect(Color.White.copy(alpha = scrimAlphaState.value))
+            }
             .clickable(
                 enabled = enabled,
                 onClick = onPress,
@@ -4286,13 +4385,14 @@ private fun PlayPauseIcon(isPlayingLambda: () -> Boolean) {
 internal fun ShuffleToggleButton(
     shuffleModeEnabledLambda: () -> Boolean,
     onShuffleChanged: (Boolean) -> Unit,
-    buttonSize: Dp = 36.dp
+    buttonSize: Dp = 36.dp,
+    useOverlayEffect: Boolean = true,
 ) {
     val context = LocalContext.current
     YosWrapper {
         Box(
             modifier = Modifier
-                .overlayEffect()
+                .then(if (useOverlayEffect) Modifier.overlayEffect() else Modifier)
                 .alpha(0.4f)
                 .clickable(
                     onClick = {
@@ -4332,13 +4432,14 @@ internal fun RepeatToggleButton(
     repeatModeLambda: () -> Int,
     onRepeatChanged: (Int) -> Unit,
     startPadding: Dp = 0.dp,
-    buttonSize: Dp = 36.dp
+    buttonSize: Dp = 36.dp,
+    useOverlayEffect: Boolean = true,
 ) {
     val context = LocalContext.current
     YosWrapper {
         Box(
             modifier = Modifier
-                .overlayEffect()
+                .then(if (useOverlayEffect) Modifier.overlayEffect() else Modifier)
                 .alpha(0.4f)
                 .clickable(
                     onClick = {
@@ -4493,17 +4594,17 @@ internal fun PlayerControl(
         dampingRatio = Spring.DampingRatioLowBouncy,
         stiffness = 500f
     )
-    val sliderTrackHeight by animateDpAsState(
+    val sliderTrackHeightState = animateDpAsState(
         targetValue = if (sliderActive) 10.5.dp else 7.dp,
         animationSpec = sliderPressedSpringDp,
         label = "sliderTrackHeight"
     )
-    val sliderTimeFontSize by animateFloatAsState(
-        targetValue = if (sliderActive) 19f else 12f,
+    val sliderTimeScaleState = animateFloatAsState(
+        targetValue = if (sliderActive) 19f / 12f else 1f,
         animationSpec = sliderPressedSpringFloat,
         label = "sliderTimeFontSize"
     )
-    val sliderTimeAlpha by animateFloatAsState(
+    val sliderTimeAlphaState = animateFloatAsState(
         targetValue = if (sliderActive) 1f else 0.3f,
         animationSpec = tween(durationMillis = 160),
         label = "sliderTimeAlpha"
@@ -4679,29 +4780,36 @@ internal fun PlayerControl(
                             }
                             .overlayEffect()
                             .graphicsLayer { alpha = sliderControlAlphaState.value }
-                            .height(sliderTrackHeight + 6.dp),
+                            .layout { measurable, constraints ->
+                                val hPx = (sliderTrackHeightState.value + 6.dp).roundToPx()
+                                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                                val placeable = measurable.measure(
+                                    constraints.copy(minHeight = hPx, maxHeight = hPx)
+                                )
+                                layout(placeable.width, hPx) {
+                                    placeable.placeRelative(0, 0)
+                                }
+                            },
                         thumb = {
                         },
                         track = {
                             Track(
-                                sliderPositions = SliderPositions(
-                                    // duration 为 0（未就绪/流媒体时长未知）时 0f/0L 得 NaN、x/0L 得 Infinity，
-                                    // 一旦流到进度轨道就是整段画不出来；这里兜成 0（还没开始播放）
-                                    initialActiveRange = 0f..(
-                                        if (playingDuration.longValue > 0L) {
-                                            (sliderPosition.floatValue / playingDuration.longValue)
-                                                .coerceIn(0f, 1f)
-                                        } else 0f
+                                progressProvider = {
+                                    val duration = playingDuration.longValue
+                                    if (duration > 0L) {
+                                        (sliderPosition.floatValue / duration).coerceIn(0f, 1f)
+                                    } else 0f
+                                },
+                                heightProvider = { sliderTrackHeightState.value },
+                                // 高潮起点标记：仅在 Draw 阶段读取进度，零 SliderPositions/groupBy 分配
+                                climaxFractionProvider = {
+                                    if (SettingsLibrary.NowPlayingShowClimaxMark) {
+                                        climaxMarkFraction(
+                                            SongClimaxState.startMs,
+                                            playingDuration.longValue
                                         )
-                                ), height = sliderTrackHeight,
-                                // 高潮起点标记：数据由切歌时 SongClimaxState 异步取到，
-                                // 状态变化会重组重绘；时长未知/本地曲/开关关闭时为 null。
-                                climaxFraction = if (SettingsLibrary.NowPlayingShowClimaxMark) {
-                                    climaxMarkFraction(
-                                        SongClimaxState.startMs,
-                                        playingDuration.longValue
-                                    )
-                                } else null
+                                    } else null
+                                }
                             )
                         }
                     )
@@ -4723,19 +4831,35 @@ internal fun PlayerControl(
                         ) {
                             Text(
                                 text = playedTime.value,
-                                fontSize = sliderTimeFontSize.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 letterSpacing = 0.3.sp,
-                                color = Color.White.copy(alpha = sliderTimeAlpha),
-                                modifier = Modifier.overlayEffect()
+                                color = Color.White,
+                                modifier = Modifier
+                                    .overlayEffect()
+                                    .graphicsLayer {
+                                        val s = sliderTimeScaleState.value
+                                        scaleX = s
+                                        scaleY = s
+                                        alpha = sliderTimeAlphaState.value
+                                        transformOrigin = TransformOrigin(0f, 0.5f)
+                                    }
                             )
                             Text(
                                 text = remainingTime.value,
-                                fontSize = sliderTimeFontSize.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 letterSpacing = 0.3.sp,
-                                color = Color.White.copy(alpha = sliderTimeAlpha),
-                                modifier = Modifier.overlayEffect()
+                                color = Color.White,
+                                modifier = Modifier
+                                    .overlayEffect()
+                                    .graphicsLayer {
+                                        val s = sliderTimeScaleState.value
+                                        scaleX = s
+                                        scaleY = s
+                                        alpha = sliderTimeAlphaState.value
+                                        transformOrigin = TransformOrigin(1f, 0.5f)
+                                    }
                             )
                         }
 
@@ -4995,23 +5119,15 @@ private fun VolumeSlider(
     onSlider: () -> Unit,
     onControlGesture: (Boolean) -> Unit = {}
 ) {
-    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    val audioManager = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
     // 车机可能返回 0（音频 HAL 未就绪，或音量交由总线/功放管理）。
-    // 以 0 作除数会得到 NaN，而 NaN 能穿过 Kotlin 的 coerceIn（NaN<min 与 NaN>max 同为 false），
-    // 一路流到 ProgressBarRangeInfo 的 require(!current.isNaN()) 直接崩进程——
-    // 崩溃发生在语义树合并后的测量期，所以栈顶是 onMeasure 而不是本文件。
-    // 钳到 1 让除法恒有定义；maxVolumeKnown 记住原始值是否可信，不可信时宁可显示 0。
-    val rawMaxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-    val maxVolumeKnown = rawMaxVolume > 0
-    val maxVolume = rawMaxVolume.coerceAtLeast(1)
-    val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-    val sliderPosition =
-        remember("VolumeSlider_sliderPosition") {
-            // 上钳 1f：个别 ROM 的 STREAM_MUSIC 索引会超出 max，归一化后必须落在 0..1
-            mutableFloatStateOf(
-                if (maxVolumeKnown) (currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
-            )
-        }
+    // 初始值放进 Dispatchers.IO 异步读取，避免首帧重组同步阻塞主线程 Binder IPC；
+    // 不可信时 maxVolumeKnown 保持 false、界面置 0 且禁用拖动，防止 NaN 进语义树。
+    val maxVolumeState = remember("VolumeSlider_maxVolume") { mutableIntStateOf(15) }
+    val maxVolumeKnownState = remember("VolumeSlider_maxVolumeKnown") { mutableStateOf(false) }
+    val sliderPosition = remember("VolumeSlider_sliderPosition") { mutableFloatStateOf(0f) }
     val sliding = remember("VolumeSlider_sliding") {
         mutableStateOf(false)
     }
@@ -5027,12 +5143,12 @@ private fun VolumeSlider(
         dampingRatio = Spring.DampingRatioLowBouncy,
         stiffness = 500f
     )
-    val volumeTrackHeight by animateDpAsState(
+    val volumeTrackHeightState = animateDpAsState(
         targetValue = if (volumeActive) 10.5.dp else 7.dp,
         animationSpec = volumePressedSpringDp,
         label = "volumeTrackHeight"
     )
-    val volumeIconSize by animateDpAsState(
+    val volumeIconSizeState = animateDpAsState(
         targetValue = if (volumeActive) 28.dp else 20.dp,
         animationSpec = volumePressedSpringDp,
         label = "volumeIconSize"
@@ -5043,11 +5159,28 @@ private fun VolumeSlider(
         label = "volumeAlpha"
     )
 
+    LaunchedEffect(audioManager) {
+        val (rawMax, currentVol) = withContext(Dispatchers.IO) {
+            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) to
+                audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        }
+        val known = rawMax > 0
+        val maxVol = rawMax.coerceAtLeast(1)
+        maxVolumeKnownState.value = known
+        maxVolumeState.intValue = maxVol
+        if (!sliding.value) {
+            sliderPosition.floatValue =
+                if (known) (currentVol.toFloat() / maxVol).coerceIn(0f, 1f) else 0f
+        }
+    }
+
     val volumeChangeReceiver = remember("VolumeSlider_volumeChangeReceiver") {
         VolumeChangeReceiver { newVolume ->
             // 系统广播给的是绝对索引，同样按「已知 max」归一化，避免脏值进 Slider
+            val known = maxVolumeKnownState.value
+            val maxVol = maxVolumeState.intValue
             sliderPosition.floatValue =
-                if (maxVolumeKnown) (newVolume.toFloat() / maxVolume).coerceIn(0f, 1f) else 0f
+                if (known) (newVolume.toFloat() / maxVol).coerceIn(0f, 1f) else 0f
         }
     }
     val intentFilter = remember("VolumeSlider_intentFilter") {
@@ -5063,16 +5196,15 @@ private fun VolumeSlider(
     val volumePressX = remember("VolumeSlider_pressX") { mutableFloatStateOf(0f) }
     // 换算用的宽度在按下瞬间冻结：按下时图标/轨道有"变粗"动画，宽度会逐帧变化
     val volumeDragWidthPx = remember("VolumeSlider_dragWidthPx") { mutableFloatStateOf(0f) }
-    // maxVolume 取自系统，音频服务晚就绪时会变（车机尤其常见），
-    // 所以必须进 remember 的键，否则这套会话会一直沿用首次读到的旧值。
-    val volumeSetter = remember("VolumeSlider_setter", maxVolume, maxVolumeKnown) {
+    val volumeSetter = remember("VolumeSlider_setter", audioManager) {
         { value: Float ->
             val safe = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
             sliderPosition.floatValue = safe
-            if (maxVolumeKnown) {
+            if (maxVolumeKnownState.value) {
+                val maxVol = maxVolumeState.intValue
                 audioManager.setStreamVolume(
                     AudioManager.STREAM_MUSIC,
-                    (safe * maxVolume).toInt().coerceIn(0, maxVolume),
+                    (safe * maxVol).toInt().coerceIn(0, maxVol),
                     0
                 )
             }
@@ -5110,7 +5242,13 @@ private fun VolumeSlider(
         Icon(
             painter = painterResource(id = R.drawable.ic_nowplaying_volume),
             contentDescription = "Mute",
-            modifier = Modifier.size(volumeIconSize)
+            modifier = Modifier.layout { measurable, _ ->
+                val iconPx = volumeIconSizeState.value.roundToPx().coerceAtLeast(0)
+                val placeable = measurable.measure(Constraints.fixed(iconPx, iconPx))
+                layout(iconPx, iconPx) {
+                    placeable.place(0, 0)
+                }
+            }
         )
 
         YosWrapper {
@@ -5124,30 +5262,32 @@ private fun VolumeSlider(
                 )
             }
 
+            val currentMaxVolume = maxVolumeState.intValue
+            val currentMaxKnown = maxVolumeKnownState.value
             Slider(
                 // 最后一道防线：任何路径漏进来的 NaN/Infinity 都在这里清成 0。
                 // ProgressBarRangeInfo 对 current 做 require(!isNaN)，一旦放进去就是进程级崩溃。
-                value = (animatedProgress.value * maxVolume).let { if (it.isFinite()) it else 0f },
+                value = (animatedProgress.value * currentMaxVolume).let { if (it.isFinite()) it else 0f },
                 onValueChange = { newValue ->
                     // 按下期间数值由本控件独占（相对拖动/点按自算），
                     // 忽略 M3 内建绝对拖拽的写入，否则会闪到手指坐标并污染基准。
                     if (!volumePressActive.value) {
                         sliding.value = true
-                        sliderPosition.floatValue = (newValue / maxVolume).coerceIn(0f, 1f)
-                        if (maxVolumeKnown) {
+                        sliderPosition.floatValue = (newValue / currentMaxVolume).coerceIn(0f, 1f)
+                        if (currentMaxKnown) {
                             audioManager.setStreamVolume(
                                 AudioManager.STREAM_MUSIC,
-                                newValue.toInt().coerceIn(0, maxVolume),
+                                newValue.toInt().coerceIn(0, currentMaxVolume),
                                 0
                             )
                         }
                         onSlider()
                     }
                 },
-                valueRange = 0f..maxVolume.toFloat(),
+                valueRange = 0f..currentMaxVolume.toFloat(),
                 // 拿不到 max（车机返回 0）时不让人拖：拖动只会算出假的绝对位置，
                 // 却完全无法改变真实音量，比禁用更误导。
-                enabled = maxVolumeKnown,
+                enabled = currentMaxKnown,
                 colors = SliderDefaults.colors(
                     activeTrackColor = Color.White,
                     inactiveTrackColor = Color(0x0DFFFFFF)
@@ -5228,9 +5368,8 @@ private fun VolumeSlider(
                 },
                 track = {
                     Track(
-                        sliderPositions = SliderPositions(
-                            initialActiveRange = 0f..animatedProgress.value
-                        ), height = volumeTrackHeight
+                        progressProvider = { animatedProgress.value },
+                        heightProvider = { volumeTrackHeightState.value },
                     )
                 },
                 onValueChangeFinished = {
@@ -5246,7 +5385,13 @@ private fun VolumeSlider(
         Icon(
             painter = painterResource(id = R.drawable.ic_nowplaying_volume_full),
             contentDescription = "Max Volume",
-            modifier = Modifier.size(volumeIconSize)
+            modifier = Modifier.layout { measurable, _ ->
+                val iconPx = volumeIconSizeState.value.roundToPx().coerceAtLeast(0)
+                val placeable = measurable.measure(Constraints.fixed(iconPx, iconPx))
+                layout(iconPx, iconPx) {
+                    placeable.place(0, 0)
+                }
+            }
         )
     }
 }
@@ -5270,100 +5415,82 @@ private const val ClimaxMarkHeightRatio = 0.7f
  */
 private val ClimaxMarkFadeLength = 5.dp
 
+private val InactiveTrackColor = Color.White.copy(alpha = 0.5f)
+private val ActiveTrackColor = Color.White
+
 @Composable
 private fun Track(
-    sliderPositions: SliderPositions,
+    progressProvider: () -> Float,
     modifier: Modifier = Modifier,
-    height: Dp,
+    heightProvider: () -> Dp,
     // 高潮起点在轨道上的归一化位置（0..1）。null = 不画（本地曲/无数据/开关关闭）。
-    climaxFraction: Float? = null
-) = YosWrapper {
-    val inactiveTrackColor = Color.White.copy(alpha = 0.5f)
-    val activeTrackColor = Color.White
-    val inactiveTickColor = Color.White.copy(alpha = 0.5f)
-    val activeTickColor = Color.White
-    Canvas(
+    climaxFractionProvider: () -> Float? = { null },
+) {
+    Box(
         modifier
             .fillMaxWidth()
-            .height(height)
-    ) {
-        val isRtl = layoutDirection == LayoutDirection.Rtl
-        // 端点内缩一个圆头半径 + 1dp：墨迹完全落在轨道画布内部，
-        // 不依赖外层裁剪行为（M3 Slider 会内缩轨道并可能裁掉越界绘制）
-        val capInset = height.toPx() / 2f + 1.dp.toPx()
-        val sliderLeft = Offset(capInset, center.y)
-        val sliderRight = Offset(size.width - capInset, center.y)
-        val sliderStart = if (isRtl) sliderRight else sliderLeft
-        val sliderEnd = if (isRtl) sliderLeft else sliderRight
-        val tickSize = 2.0.dp.toPx()
-        val trackStrokeWidth = height.toPx()
-        drawLine(
-            inactiveTrackColor,
-            sliderStart,
-            sliderEnd,
-            trackStrokeWidth,
-            StrokeCap.Round
-        )
-        val sliderValueEnd = Offset(
-            sliderStart.x +
-                    (sliderEnd.x - sliderStart.x) * sliderPositions.activeRange.endInclusive,
-            center.y
-        )
-
-        val sliderValueStart = Offset(
-            sliderStart.x +
-                    (sliderEnd.x - sliderStart.x) * sliderPositions.activeRange.start,
-            center.y
-        )
-
-        drawLine(
-            activeTrackColor,
-            sliderValueStart,
-            sliderValueEnd,
-            trackStrokeWidth,
-            StrokeCap.Round
-        )
-        // 高潮起点标记：只在播放头**之后**（未播放段）出现，并在被追上之前淡出。
-        //
-        // 画在已播放段之后，是因为已播放段是纯白不透明圆头——先画标记会被它整块盖掉。
-        //
-        // 淡出的必要性：已播放段圆头与标记同为纯白，两者墨迹在中心距小于
-        // 「圆头半径 + 标记半宽」时必然相碰，粘成一坨白块（像轨道断了一截）；
-        // 越过之后标记又瞬间消失（跳变）。按到播放头的距离淡出，保证接触前已经淡干净。
-        if (climaxFraction != null) {
-            val markX = lerp(sliderStart, sliderEnd, climaxFraction).x
-            // RTL 下"播放头之后"是 x 更小的一侧
-            val gapPx = if (isRtl) sliderValueEnd.x - markX else markX - sliderValueEnd.x
-            if (gapPx > 0f) {
-                val fade = (gapPx / ClimaxMarkFadeLength.toPx()).coerceIn(0f, 1f)
-                if (fade > 0f) {
-                    val markHalf = ClimaxMarkWidth.toPx() / 2f
-                    // 矮一档：同高会被读成已播放段的延伸，矮一档才一眼是标记
-                    val markHalfHeight = height.toPx() * ClimaxMarkHeightRatio / 2f
-                    drawRoundRect(
-                        color = Color.White.copy(alpha = fade),
-                        topLeft = Offset(markX - markHalf, center.y - markHalfHeight),
-                        size = Size(ClimaxMarkWidth.toPx(), markHalfHeight * 2f),
-                        cornerRadius = CornerRadius(markHalf)
-                    )
+            .layout { measurable, constraints ->
+                val heightPx = heightProvider().roundToPx()
+                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                val placeable = measurable.measure(
+                    constraints.copy(minHeight = heightPx, maxHeight = heightPx)
+                )
+                layout(placeable.width, heightPx) {
+                    placeable.placeRelative(0, 0)
                 }
             }
-        }
-        sliderPositions.tickFractions.groupBy {
-            it > sliderPositions.activeRange.endInclusive ||
-                    it < sliderPositions.activeRange.start
-        }.forEach { (outsideFraction, list) ->
-            drawPoints(
-                list.fastMap {
-                    Offset(lerp(sliderStart, sliderEnd, it).x, center.y)
-                },
-                PointMode.Points,
-                (if (outsideFraction) inactiveTickColor else activeTickColor),
-                tickSize,
-                StrokeCap.Round
-            )
-        }
-    }
+            .drawBehind {
+                val trackStrokeWidth = heightProvider().toPx()
+                val isRtl = layoutDirection == LayoutDirection.Rtl
+                // 端点内缩一个圆头半径 + 1dp：墨迹完全落在轨道画布内部，
+                // 不依赖外层裁剪行为（M3 Slider 会内缩轨道并可能裁掉越界绘制）
+                val capInset = trackStrokeWidth / 2f + 1.dp.toPx()
+                val sliderLeft = Offset(capInset, center.y)
+                val sliderRight = Offset(size.width - capInset, center.y)
+                val sliderStart = if (isRtl) sliderRight else sliderLeft
+                val sliderEnd = if (isRtl) sliderLeft else sliderRight
+                drawLine(
+                    InactiveTrackColor,
+                    sliderStart,
+                    sliderEnd,
+                    trackStrokeWidth,
+                    StrokeCap.Round
+                )
+                val progress = progressProvider().coerceIn(0f, 1f)
+                val sliderValueEnd = Offset(
+                    sliderStart.x + (sliderEnd.x - sliderStart.x) * progress,
+                    center.y
+                )
+                drawLine(
+                    ActiveTrackColor,
+                    sliderStart,
+                    sliderValueEnd,
+                    trackStrokeWidth,
+                    StrokeCap.Round
+                )
+                // 高潮起点标记：只在播放头**之后**（未播放段）出现，并在被追上之前淡出。
+                val climaxFraction = climaxFractionProvider()
+                if (climaxFraction != null) {
+                    val markX = lerp(sliderStart, sliderEnd, climaxFraction).x
+                    // RTL 下"播放头之后"是 x 更小的一侧
+                    val gapPx = if (isRtl) sliderValueEnd.x - markX else markX - sliderValueEnd.x
+                    if (gapPx > 0f) {
+                        val fade = (gapPx / ClimaxMarkFadeLength.toPx()).coerceIn(0f, 1f)
+                        if (fade > 0f) {
+                            val markHalf = ClimaxMarkWidth.toPx() / 2f
+                            // 矮一档：同高会被读成已播放段的延伸，矮一档才一眼是标记
+                            val markHalfHeight = trackStrokeWidth * ClimaxMarkHeightRatio / 2f
+                            drawRoundRect(
+                                color = Color.White.copy(alpha = fade),
+                                topLeft = Offset(markX - markHalf, center.y - markHalfHeight),
+                                size = Size(ClimaxMarkWidth.toPx(), markHalfHeight * 2f),
+                                cornerRadius = CornerRadius(markHalf)
+                            )
+                        }
+                    }
+                }
+            }
+    )
 }
 
 fun formatTime(seconds: Long): String {

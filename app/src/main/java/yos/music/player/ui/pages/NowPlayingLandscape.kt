@@ -41,6 +41,7 @@ import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,11 +53,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -228,7 +231,7 @@ internal fun NowPlayingLandscape(
         //   设备块停在 20dp，肉眼就是「设备那块比上面的组件偏左」。
         // - Album 态：封面与控件带整屏居中，底部行仍是铺满整屏的悬浮条，
         //   设备块贴屏幕左下角（20dp），保持原设计，不跟着居中跑。
-        val bottomRowStartPadding by animateDpAsState(
+        val bottomRowStartPaddingState = animateDpAsState(
             targetValue = if (outerPanesOpen) {
                 ((outerMediaPaneWidth - outerContentWidth) / 2).coerceAtLeast(0.dp) + 25.dp
             } else {
@@ -291,7 +294,7 @@ internal fun NowPlayingLandscape(
             // 右栏打开后，再以 contentWidth 为基准在左媒体栏内居中。
             // 底部行的左缘（bottomRowStartPadding）就是在这个值上加 25dp 得来的，
             // 两者共用同一份分栏几何。
-            val mediaStartPadding by animateDpAsState(
+            val mediaStartPaddingState = animateDpAsState(
                 targetValue = if (paneOpen) {
                     ((mediaPaneWidth - contentWidth) / 2).coerceAtLeast(0.dp)
                 } else {
@@ -306,7 +309,7 @@ internal fun NowPlayingLandscape(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .padding(start = mediaStartPadding)
+                    .dynamicStartPadding(mediaStartPaddingState)
                     // 封面/标题/控件带整体上抬；封面 morph 上报的坐标随之同步。
                     .offset { androidx.compose.ui.unit.IntOffset(0, -contentLift.roundToPx()) }
             ) {
@@ -448,7 +451,8 @@ internal fun NowPlayingLandscape(
                 .fillMaxWidth()
                 .alpha(0.4f)
                 .navigationBarsPadding()
-                .padding(start = bottomRowStartPadding, end = 20.dp, bottom = 4.dp),
+                .padding(end = 20.dp, bottom = 4.dp)
+                .dynamicStartPadding(bottomRowStartPaddingState),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AirPlay(fill = false)
@@ -478,6 +482,31 @@ internal fun NowPlayingLandscape(
                 nowPage = nowPageLambda
             )
         }
+    }
+}
+
+private fun Modifier.dynamicStartPadding(paddingState: State<Dp>): Modifier = layout { measurable, constraints ->
+    val startPx = paddingState.value.roundToPx().coerceAtLeast(0)
+    val innerMaxW = if (constraints.hasBoundedWidth) {
+        (constraints.maxWidth - startPx).coerceAtLeast(0)
+    } else {
+        constraints.maxWidth
+    }
+    val innerMinW = if (constraints.hasBoundedWidth) {
+        (constraints.minWidth - startPx).coerceIn(0, innerMaxW)
+    } else {
+        constraints.minWidth
+    }
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = innerMinW, maxWidth = innerMaxW)
+    )
+    val width = if (constraints.hasBoundedWidth) {
+        constraints.maxWidth
+    } else {
+        (placeable.width + startPx).coerceAtLeast(constraints.minWidth)
+    }
+    layout(width, placeable.height) {
+        placeable.placeRelative(startPx, 0)
     }
 }
 
@@ -632,7 +661,7 @@ private fun LandscapeAlbumCover(
             TweenSpec(durationMillis = 350, easing = EaseOutQuart)
         }
 
-        val scale = animateFloatAsState(
+        val scaleState = animateFloatAsState(
             targetValue = if (isPlayingStatusLambda()) 0f else 1f,
             animationSpec = if (isPlayingStatusLambda()) springSpec else tweenSpec,
             visibilityThreshold = 0.001f
@@ -646,18 +675,24 @@ private fun LandscapeAlbumCover(
         // 整段挡掉；此刻真封面虽透明，但把动效挡掉只会让"点了没反应"，不做这件事）。
         val coverEnabled: () -> Boolean = { true }
 
-        // 播放态收到 breathInsetMin，暂停态线性放大到 breathInsetMax
-        val dp = breathInsetMin + (breathInsetMax - breathInsetMin) * scale.value
-
         Box(
             modifier = Modifier.padding(top = topPadding),
             contentAlignment = Alignment.BottomCenter
         ) {
-            // 外层：size(coverSize) 为布局占位；padding 为播放/暂停呼吸动效
+            // 外层：size(coverSize) 为布局占位；layout 内读取 scaleState 做呼吸内缩（零重组）。
             Box(
                 modifier = Modifier
                     .size(coverSize)
-                    .padding(start = dp, end = dp, bottom = dp),
+                    .layout { measurable, constraints ->
+                        val insetDp = breathInsetMin + (breathInsetMax - breathInsetMin) * scaleState.value
+                        val insetPx = insetDp.roundToPx().coerceAtLeast(0)
+                        val innerW = (constraints.maxWidth - insetPx * 2).coerceAtLeast(0)
+                        val innerH = (constraints.maxHeight - insetPx).coerceAtLeast(0)
+                        val placeable = measurable.measure(Constraints.fixed(innerW, innerH))
+                        layout(constraints.maxWidth, constraints.maxHeight) {
+                            placeable.placeRelative(insetPx, 0)
+                        }
+                    },
                 contentAlignment = Alignment.BottomCenter
             ) {
                 // 内层：fillMaxWidth().aspectRatio(1f) 为实际视觉正方形，

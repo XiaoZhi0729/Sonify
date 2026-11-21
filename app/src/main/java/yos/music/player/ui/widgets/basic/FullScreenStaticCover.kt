@@ -17,7 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
@@ -179,15 +179,21 @@ internal fun FullScreenStaticCover(
                         cornerRadius = 0.dp,
                         rimHighlight = false
                     )
-                    .drawWithContent {
+                    .drawWithCache {
                         // 交叉淡化必须**先画完旧图、再画新图**，并且底边淡出只在最后画一次：
                         // 若把 DstIn 也画两遍，渐变会被平方（末端 alpha 0.09 → 0.008），
                         // 观感是"切歌时封面底边突然变硬"。
-                        //
-                        // 每层都是一个独立子节点（见下方 CoverLayerNodes），所以这里只负责
-                        // 一次性收尾，不参与图层循环——可变数量的 remember 不能写在本块里。
-                        drawContent()
-                        drawFullScreenCoverBottomFade()
+                        val fadeBrush = createFullScreenCoverBottomFadeBrush(
+                            coverSide = size.width,
+                            nodeHeight = size.height,
+                            fraction = FullScreenCoverCoverFadeFraction
+                        )
+                        onDrawWithContent {
+                            drawContent()
+                            if (fadeBrush != null) {
+                                drawRect(brush = fadeBrush, blendMode = BlendMode.DstIn)
+                            }
+                        }
                     }
             ) {
                 // 图层子节点：末位淡入、前位淡出，alpha / 缩放只在图层块里读进度。
@@ -375,25 +381,25 @@ private fun DrawScope.drawCroppedCover(
  * 必须挂在 `compositingStrategy = Offscreen` 的节点上（DstIn 需要一个图层作用域，
  * 否则会擦到整页画布上）。
  */
-private fun DrawScope.drawFullScreenCoverBottomFade() {
-    val nodeHeight = size.height
+private fun createFullScreenCoverBottomFadeBrush(
+    coverSide: Float,
+    nodeHeight: Float,
+    fraction: Float,
+): Brush? {
     val startY = fullScreenCoverBottomFadeStartY(
-        coverSide = size.width,
+        coverSide = coverSide,
         nodeHeight = nodeHeight,
-        fraction = FullScreenCoverCoverFadeFraction
+        fraction = fraction
     )
-    if (startY >= nodeHeight) return
-    drawRect(
-        brush = Brush.verticalGradient(
-            colorStops = arrayOf(
-                0f to Color.Black,
-                (startY / nodeHeight) to Color.Black,
-                1f to Color.Transparent
-            ),
-            startY = 0f,
-            endY = nodeHeight
+    if (startY >= nodeHeight) return null
+    return Brush.verticalGradient(
+        colorStops = arrayOf(
+            0f to Color.Black,
+            (startY / nodeHeight) to Color.Black,
+            1f to Color.Transparent
         ),
-        blendMode = BlendMode.DstIn
+        startY = 0f,
+        endY = nodeHeight
     )
 }
 

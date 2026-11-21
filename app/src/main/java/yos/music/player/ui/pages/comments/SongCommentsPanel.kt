@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -658,7 +659,7 @@ private class SongCommentsState(
         private set
 
     val floors = mutableStateMapOf<String, FloorState>()
-    val expandedContents = mutableStateListOf<String>().apply { addAll(session.expanded) }
+    val expandedContents = mutableStateSetOf<String>().apply { addAll(session.expanded) }
 
     private var loadJob: Job? = null
 
@@ -1224,6 +1225,7 @@ private fun CommentsList(
     // 渐隐就被输入框盖在下面，输入框正上方是一截没有过渡的实体文字＝文字压着输入框。
     bottomFadeInsetPx: () -> Float = { 0f }
 ) {
+    val context = LocalContext.current
     val list = state.activeList
     val singerFromActive = remember(list) { list.filter { it.isStar } }
     val singer = remember(state.singerComments, singerFromActive) {
@@ -1285,7 +1287,8 @@ private fun CommentsList(
                     state = state,
                     onReply = onReply,
                     onDelete = onDelete,
-                    onMore = onMore
+                    onMore = onMore,
+                    context = context,
                 )
             }
             // 有歌手区时才需要分隔标题；没有歌手区时头部已有排序胶囊，标题是重复信息
@@ -1299,10 +1302,11 @@ private fun CommentsList(
                 state = state,
                 onReply = onReply,
                 onDelete = onDelete,
-                onMore = onMore
+                onMore = onMore,
+                context = context,
             )
         }
-        item("footer") {
+        item("footer", contentType = "comment_footer") {
             ListFooter(state = state)
         }
     }
@@ -1384,9 +1388,9 @@ private fun CommentItem(
     state: SongCommentsState,
     onReply: (KugouComment, KugouComment?) -> Unit,
     onDelete: (KugouComment, String?) -> Unit,
-    onMore: (KugouComment, String?) -> Unit
+    onMore: (KugouComment, String?) -> Unit,
+    context: Context = LocalContext.current,
 ) {
-    val context = LocalContext.current
     val own = KugouCommentRepository.isOwnComment(comment, KugouAccountState.userid)
     val floor = state.floors[comment.id]
     val expanded = state.expandedContents.contains(comment.id)
@@ -1416,7 +1420,7 @@ private fun CommentItem(
             .padding(top = 10.dp, bottom = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.Top) {
-            CommentAvatar(url = comment.avatar, size = 34.dp)
+            CommentAvatar(url = comment.avatar, size = 34.dp, context = context)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1574,7 +1578,8 @@ private fun CommentItem(
                 state = state,
                 onReply = onReply,
                 onDelete = onDelete,
-                onMore = onMore
+                onMore = onMore,
+                context = context,
             )
         }
     }
@@ -1587,7 +1592,8 @@ private fun FloorReplies(
     state: SongCommentsState,
     onReply: (KugouComment, KugouComment?) -> Unit,
     onDelete: (KugouComment, String?) -> Unit,
-    onMore: (KugouComment, String?) -> Unit
+    onMore: (KugouComment, String?) -> Unit,
+    context: Context = LocalContext.current,
 ) {
     val nodes = remember(floor.replies) { KugouCommentRepository.buildReplyTree(floor.replies) }
     // pid → 昵称：剥掉「//@某人:原文」后仍要能看出在回谁
@@ -1609,7 +1615,8 @@ private fun FloorReplies(
                 replyTo = node.reply.parentId?.let { namesById[it] },
                 onReply = onReply,
                 onDelete = onDelete,
-                onMore = onMore
+                onMore = onMore,
+                context = context,
             )
         }
         when {
@@ -1669,9 +1676,9 @@ private fun FloorReplyItem(
     replyTo: String?,
     onReply: (KugouComment, KugouComment?) -> Unit,
     onDelete: (KugouComment, String?) -> Unit,
-    onMore: (KugouComment, String?) -> Unit
+    onMore: (KugouComment, String?) -> Unit,
+    context: Context = LocalContext.current,
 ) {
-    val context = LocalContext.current
     val reply = node.reply
     val own = KugouCommentRepository.isOwnComment(reply, KugouAccountState.userid)
     // 缩进封顶 2 层：再深就靠「回复 @xxx」表达关系，否则正文被挤成窄柱
@@ -1706,7 +1713,7 @@ private fun FloorReplyItem(
             .padding(vertical = 5.dp),
         verticalAlignment = Alignment.Top
     ) {
-        CommentAvatar(url = reply.avatar, size = 24.dp)
+        CommentAvatar(url = reply.avatar, size = 24.dp, context = context)
         Spacer(Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1799,7 +1806,11 @@ private fun CommentBadge(text: String, singer: Boolean = false) {
 }
 
 @Composable
-private fun CommentAvatar(url: String?, size: Dp) {
+private fun CommentAvatar(
+    url: String?,
+    size: Dp,
+    context: Context = LocalContext.current,
+) {
     val shape = CircleShape
     Box(
         modifier = Modifier
@@ -1809,20 +1820,19 @@ private fun CommentAvatar(url: String?, size: Dp) {
         contentAlignment = Alignment.Center
     ) {
         if (!url.isNullOrBlank()) {
-                val imgContext = LocalContext.current
             AsyncImage(
                 model = remember(url) {
-        ImageRequest.Builder(imgContext)
-                            .data(url)
-                            .crossfade(true)
-                            .error(R.drawable.songcredits_monogram_person)
-                            .placeholder(R.drawable.songcredits_monogram_person)
-                            .fallback(R.drawable.songcredits_monogram_person)
-                            .allowHardware(true)
-                            .precision(Precision.INEXACT)
-                            .size(if (size >= 32.dp) 128 else 72)
-                            .build()
-        },
+                    ImageRequest.Builder(context)
+                        .data(url)
+                        .crossfade(true)
+                        .error(R.drawable.songcredits_monogram_person)
+                        .placeholder(R.drawable.songcredits_monogram_person)
+                        .fallback(R.drawable.songcredits_monogram_person)
+                        .allowHardware(true)
+                        .precision(Precision.INEXACT)
+                        .size(if (size >= 32.dp) 128 else 72)
+                        .build()
+                },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

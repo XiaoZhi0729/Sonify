@@ -26,10 +26,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -38,10 +40,12 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import yos.music.player.R
 import yos.music.player.code.MediaController
@@ -206,20 +210,20 @@ fun VocalSeparationPill(
         }
     }
 
-    val pillHeight by animateDpAsState(
+    val pillHeightState = animateDpAsState(
         targetValue = if (isOn) PillHeightOn else PillHeightOff,
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f),
         label = "vocalSepPillHeight"
     )
     // 拖动期间不再叠加按压缩放：1.08 与果冻 6% 叠在一起会过冲成"被捏扁"
-    val pressScale by animateFloatAsState(
+    val pressScaleState = animateFloatAsState(
         targetValue = if (pressed && !dragging) 1.08f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = 700f),
         label = "vocalSepPillScale"
     )
     // 拖动中快速跟随（临界阻尼，只带一点点滞后 = 平滑），
     // 松手用欠阻尼弹簧回 0 —— 那一下过冲就是果冻的"抖回来"
-    val jelly by animateFloatAsState(
+    val jellyState = animateFloatAsState(
         targetValue = jellyTarget,
         animationSpec = if (dragging) {
             spring(dampingRatio = 1f, stiffness = 900f)
@@ -234,7 +238,7 @@ fun VocalSeparationPill(
     // 状态里存的 [VocalSeparationState.ratio] 仍是「原声含量」（0=纯伴奏、1=原声），
     // 音频侧按它混音；UI 这边取补数，于是「水位拉满 = 人声全没」「水位归零 = 完全原声」。
     // 后者正好等价于关闭，所以归零即关闭（见 onEnd）。
-    val fillFraction by animateFloatAsState(
+    val fillFractionState = animateFloatAsState(
         targetValue = 1f - VocalSeparationState.ratio,
         animationSpec = if (dragging) snap() else spring(dampingRatio = 0.7f, stiffness = 700f),
         label = "vocalSepPillFill"
@@ -251,7 +255,7 @@ fun VocalSeparationPill(
     // 在深色播放页上直接看不见（已实测）。
     val iconTint = if (isOn) Color.White else LocalContentColor.current
     // 底衬透明度跟着开关态过渡：收起 24%（与翻译按钮同值）、展开 12%（别淹掉水位线）
-    val scrimAlpha by animateFloatAsState(
+    val scrimAlphaState = animateFloatAsState(
         targetValue = if (isOn) ScrimAlphaExpanded else ScrimAlphaCollapsed,
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
         label = "vocalSepPillScrim"
@@ -264,40 +268,29 @@ fun VocalSeparationPill(
         animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
         label = "vocalSepPillAlpha"
     )
+    val dstOutPaint = remember { Paint().apply { blendMode = BlendMode.DstOut } }
 
     // 展开体高度与图标几何：都是绘制期要用的 px 值。
-    // 直接由 pillHeight 换算，不用 onSizeChanged —— 高度动画每帧都在变，
-    // 回调写 State 会在布局期触发逐帧重组。
+    // 直接在 layout/draw 块内由 State 换算，不引起整组件逐帧重组。
     val iconTopPadPx = with(density) { PillIconBottomPad.toPx() }
     val iconSizePx = with(density) { PillIconSize.toPx() }
     val jellySpanPx = with(density) { JellySpan.toPx() }
     val dragSpanPx = with(density) { PillHeightOn.toPx() }
 
-    // 白色水位线在图标局部坐标里的位置（图标节点高 = iconSizePx）。
-    // <= 0 表示水位线在图标上方（整块图标都在白里 → 全镂空）；
-    // >= iconSizePx 表示水位线在图标下方（整块图标都在深底上 → 全白）。
-    // **不要**给 fillDp 加 coerceAtLeast 之类的最小值：拖到底就该完全没有白色，
-    // 留一条 2dp 的线会让"拉到 0%"永远拖不干净（用户实测反馈过）。
-    val fillDp = pillHeight * fillFraction.coerceIn(0f, 1f)
-    val fillPx = with(density) { fillDp.toPx() }
-    val invertClipTop = (iconTopPadPx + iconSizePx) - fillPx
-
     Box(
         modifier = modifier
             .width(PillWidth)
-            // ## 布局节点高度必须跟随展开态
-            //
-            // 这里是**命中区域的主因**。Compose 的 pointerInput 只覆盖它挂的那个节点的
-            // 测量矩形，而节点之外的部分（哪怕子节点绘制出来了）收不到任何指针。
-            //
-            // 曾经写成 `.height(PillHeightOff)` 恒定 36dp、让展开体用
-            // `wrapContentHeight(unbounded) + requiredHeight(88dp)` 纯绘制上溢 52dp：
-            // 视觉上完全正常，但手指按在展开体上半部分时连本节点都进不去，
-            // 指针直接穿透到下面的滚动歌词（用户实测：只有从底部图标那 36dp 起手才正常）。
-            //
-            // 祖先撑高是无效的：先把 Row 撑到 88dp、后来又把祖先 Box 撑到 88dp 都没用，
-            // 因为最内层的这个 36dp 节点自己就把指针挡在外面了。
-            .height(pillHeight)
+            // ## 布局节点高度必须跟随展开态（下沉至 layout 阶段读取，避免逐帧重组）
+            .layout { measurable, constraints ->
+                val hPx = pillHeightState.value.roundToPx()
+                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                val placeable = measurable.measure(
+                    constraints.copy(minHeight = hPx, maxHeight = hPx)
+                )
+                layout(placeable.width, hPx) {
+                    placeable.placeRelative(0, 0)
+                }
+            }
             .pointerInput(available, enabled) {
                 if (!enabled) return@pointerInput
                 // key 只能是 available：isOn / 高度会在手势进行中变化
@@ -453,6 +446,8 @@ fun VocalSeparationPill(
                 // 加性效果整个丢失。
                 .overlayEffect()
                 .graphicsLayer {
+                    val pressScale = pressScaleState.value
+                    val jelly = jellyState.value
                     alpha = contentAlphaState.value
                     scaleX = pressScale * (1f - JellySqueeze * jelly)
                     scaleY = pressScale * (1f + JellyStretch * jelly)
@@ -463,21 +458,22 @@ fun VocalSeparationPill(
                     compositingStrategy = CompositingStrategy.Offscreen
                 }
                 .clip(shape)
-                // 收起/展开都有这一层圆角矩形底（收起态与旁边的翻译按钮同配方）
-                .background(Color.White.copy(alpha = scrimAlpha)),
+                // 底衬与白色计量区都在绘制期直接绘制，零额外布局/重组。
+                .drawBehind {
+                    drawRect(Color.White.copy(alpha = scrimAlphaState.value))
+                    if (isOn) {
+                        val fillPx = size.height * fillFractionState.value.coerceIn(0f, 1f)
+                        if (fillPx > 0f) {
+                            drawRect(
+                                color = Color.White,
+                                topLeft = Offset(0f, size.height - fillPx),
+                                size = Size(size.width, fillPx)
+                            )
+                        }
+                    }
+                },
             contentAlignment = Alignment.BottomCenter
         ) {
-            // 计量区：从底边向上生长，占满整个展开体高度（图标也在其中）。
-            if (isOn) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(fillDp)
-                        .background(Color.White)
-                )
-            }
-
             // 图标：钉在展开体底部 = 节点底部，收起/展开都在同一位置
             Box(
                 modifier = Modifier
@@ -491,26 +487,16 @@ fun VocalSeparationPill(
                     tint = iconTint
                 )
                 if (isOn) {
-                    // 「反色」= 镂空：水位线以下的图标**挖成透明**，让页面背景直接透出来，
-                    // 而不是把图标画成深色。
-                    //
-                    // 做法：把图标画进一个 saveLayer，再用 BlendMode.DstOut 合成回去。
-                    // DstOut 是 `dst * (1 - srcAlpha)`——只在图标笔画覆盖到的地方把下层
-                    // 擦掉，笔画之外（srcAlpha=0）原样保留。于是白色计量区和底衬上被挖出
-                    // 一个图标形状的洞，透出的是页面背景（模糊封面），不是黑洞。
-                    //
-                    // 不能改用 BlendMode.Clear 直接 drawRect：Clear 无视 src 内容，
-                    // 会把整块裁剪区（含图标周围的白色）一起清成方形缺口。
-                    //
-                    // 前提：必须处在离屏层里（外层 graphicsLayer 已设
-                    // CompositingStrategy.Offscreen），否则擦的是窗口内容。
+                    // 「反色」= 镂空：水位线以下的图标**挖成透明**，让页面背景直接透出来。
                     Icon(
                         painter = painterResource(id = R.drawable.ic_vocal_separation),
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxSize()
                             .drawWithContent {
-                                val top = invertClipTop
+                                val fillPx = pillHeightState.value.toPx() *
+                                    fillFractionState.value.coerceIn(0f, 1f)
+                                val top = (iconTopPadPx + iconSizePx) - fillPx
                                 // 水位线已在图标上方（整块图标都浸在白色里）→ 全挖
                                 // 水位线在图标下方 → 图标完整保留，不挖
                                 if (top < size.height) {
@@ -523,7 +509,7 @@ fun VocalSeparationPill(
                                     ) {
                                         drawContext.canvas.saveLayer(
                                             Rect(0f, holeTop, size.width, size.height),
-                                            Paint().apply { blendMode = BlendMode.DstOut }
+                                            dstOutPaint
                                         )
                                         this@drawWithContent.drawContent()
                                         drawContext.canvas.restore()
