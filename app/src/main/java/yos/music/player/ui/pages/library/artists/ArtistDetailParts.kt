@@ -172,7 +172,8 @@ internal fun ArtistSongSection(
     shimmer: SkeletonShimmer,
     onRetry: () -> Unit,
     onPlayAt: (Int) -> Unit,
-    probeName: String = ""
+    probeName: String = "",
+    columnsPerViewport: Int = 1
 ) {
     // 整个区块装在**一个** lazy item 内部，没有 LazyColumn 的"item 不重叠"限制，
     // 所以骨架可以直接叠在内容上淡出（与主页 DiscoverySectionSlot 同款）。
@@ -186,12 +187,12 @@ internal fun ArtistSongSection(
             hasData = songs.isNotEmpty(),
             skeleton = {
                 when {
-                    loading -> ArtistSongsSkeleton(shimmer)
+                    loading -> ArtistSongsSkeleton(shimmer, columnsPerViewport)
                     error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_empty))
                 }
             }
         ) {
-            SongsPagerSection(songs, pagerState, onPlayAt)
+            SongsPagerSection(songs, pagerState, onPlayAt, columnsPerViewport)
         }
         // Appended-page failures remain visible without hiding already loaded songs.
         if (error != null) ArtistSectionError(error, loading, onRetry)
@@ -208,7 +209,8 @@ internal fun ArtistSongSection(
 internal fun SongsPagerSection(
     songs: List<KugouNewSong>,
     pagerState: PagerState,
-    onPlayAt: (Int) -> Unit
+    onPlayAt: (Int) -> Unit,
+    columnsPerViewport: Int = 1
 ) {
     val displaySongs = remember(songs) {
         val t0 = System.nanoTime()
@@ -225,9 +227,11 @@ internal fun SongsPagerSection(
         r
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val safeColumns = columnsPerViewport.coerceAtLeast(1)
         val startInset = 20.dp
         val endInset = 39.dp
-        val pageWidth = (maxWidth - startInset - endInset).coerceAtLeast(1.dp)
+        val pageWidth = ((maxWidth - startInset - endInset) / safeColumns).coerceAtLeast(1.dp)
+        val columnEndGap = if (safeColumns > 1) 14.dp else 0.dp
         HorizontalPager(
             state = pagerState,
             flingBehavior = PagerDefaults.flingBehavior(
@@ -244,7 +248,13 @@ internal fun SongsPagerSection(
             // 处理，预组合只为「翻页瞬间不空」，代价远大于收益。
             beyondViewportPageCount = 0
         ) { page ->
-            Column(Modifier.fillMaxWidth().measureProbe("Page$page").drawProbe("Page$page")) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(end = columnEndGap)
+                    .measureProbe("Page$page")
+                    .drawProbe("Page$page")
+            ) {
                 repeat(4) { row ->
                     val index = page * 4 + row
                     val item = displaySongs.getOrNull(index) ?: return@repeat
@@ -268,15 +278,26 @@ internal fun SongsPagerSection(
  * [shimmer] 为 null 时退化为静态灰块（历史行为）；传了扫光则整页共用同一道光。
  */
 @Composable
-internal fun ArtistSongsSkeleton(shimmer: SkeletonShimmer? = null) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        repeat(4) {
-            Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-                ArtistSkeletonBlock(Modifier.size(52.dp), shimmer)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.65f).height(13.dp), shimmer)
-                    ArtistSkeletonBlock(Modifier.fillMaxWidth(0.42f).height(11.dp), shimmer)
+internal fun ArtistSongsSkeleton(
+    shimmer: SkeletonShimmer? = null,
+    columnsPerViewport: Int = 1
+) {
+    val safeColumns = columnsPerViewport.coerceAtLeast(1)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        repeat(safeColumns) {
+            Column(Modifier.weight(1f)) {
+                repeat(4) {
+                    Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ArtistSkeletonBlock(Modifier.size(52.dp), shimmer)
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ArtistSkeletonBlock(Modifier.fillMaxWidth(0.65f).height(13.dp), shimmer)
+                            ArtistSkeletonBlock(Modifier.fillMaxWidth(0.42f).height(11.dp), shimmer)
+                        }
+                    }
                 }
             }
         }
@@ -439,6 +460,8 @@ internal fun ArtistLatestAlbumCard(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     probeName: String = "",
+    modifier: Modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+    titleMaxLines: Int = 1,
     onOpen: (KugouNewAlbum) -> Unit
 ) {
     val isDark = isFlamingoInDarkMode()
@@ -466,11 +489,10 @@ internal fun ArtistLatestAlbumCard(
         }
     }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .measureProbe(probeName)
             .drawProbe(probeName)
-            .padding(horizontal = 20.dp, vertical = 6.dp)
             .dropShadow(shape, 0.16f, ShadowType.Small)
             .clip(shape)
             // 不透明垫底：卡片悬在纯色页面上，垫上同色后视觉与半透明完全一致，
@@ -535,7 +557,7 @@ internal fun ArtistLatestAlbumCard(
                 fontSize = 17.sp,
                 lineHeight = 22.sp,
                 fontWeight = FontWeight.Bold,
-                maxLines = 1,
+                maxLines = titleMaxLines,
                 overflow = TextOverflow.Ellipsis
             )
             if (songCount > 0) {
@@ -547,6 +569,31 @@ internal fun ArtistLatestAlbumCard(
                     modifier = secondaryGlow
                 )
             }
+        }
+    }
+}
+
+@Composable
+internal fun ArtistLatestAlbumSkeleton(
+    shimmer: SkeletonShimmer? = null,
+    modifier: Modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+) {
+    val shape = YosRoundedCornerShape(22.dp)
+    val cardBase = LocalContentColor.current.copy(alpha = 0.08f)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(cardBase)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ArtistSkeletonBlock(Modifier.size(92.dp), shimmer)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ArtistSkeletonBlock(Modifier.fillMaxWidth(0.45f).height(11.dp), shimmer)
+            ArtistSkeletonBlock(Modifier.fillMaxWidth(0.8f).height(15.dp), shimmer)
+            ArtistSkeletonBlock(Modifier.fillMaxWidth(0.35f).height(11.dp), shimmer)
         }
     }
 }

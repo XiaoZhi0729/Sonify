@@ -454,6 +454,7 @@
     <string name="update_notes_empty">暫無發行說明。</string>
     <string name="update_release_notes">更新內容</string>
     <string name="artist_detail_hot_songs">熱門歌曲</string>
+    <string name="artist_detail_latest_release">最新發行</string>
     <string name="artist_detail_all_songs">全部歌曲</string>
     <string name="artist_detail_albums_section">專輯</string>
     <string name="artist_detail_albums_empty">暫無專輯</string>

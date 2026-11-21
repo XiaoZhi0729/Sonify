@@ -88,6 +88,80 @@ const val ArtistReflectionBlurStartPhotoFraction = 0.70f
 internal fun artistReflectionBlurStartPx(photoHeightPx: Int): Float =
     photoHeightPx * ArtistReflectionBlurStartPhotoFraction
 
+/**
+ * 横屏左右镜像延伸截取的源宽度占居中主图宽度的比例：取左右外侧各 35% 翻转拉伸铺满两侧翼，
+ * 避免把艺人正中五官完整镜像出「第二张脸」，同时保证接缝处像素 C0 连续。
+ */
+const val ArtistSideReflectionSourceFraction = 0.35f
+
+/**
+ * 横屏左右渐进模糊起点向居中主图内部延伸的比例（占居中主图宽度的 22%）：
+ * 让镜像接缝落在已起雾区域内（接缝处约有 ~24% 模糊进度），彻底消去镜像折痕，
+ * 同时保留主图中央 56% 区域的锐利主体。
+ */
+const val ArtistSideBlurInwardFraction = 0.22f
+
+internal data class ArtistHeroHorizontalLayout(
+    val centerLeftPx: Int,
+    val centerWidthPx: Int,
+    val centerRightPx: Int,
+    val leftBlurStartPx: Float,
+    val rightBlurStartPx: Float,
+)
+
+internal fun resolveArtistHeroHorizontalLayout(
+    widthPx: Int,
+    photoHeightPx: Int,
+    extendSides: Boolean = false
+): ArtistHeroHorizontalLayout {
+    val safeW = widthPx.coerceAtLeast(1)
+    val safeH = photoHeightPx.coerceAtLeast(1)
+    if (!extendSides || safeW <= safeH) {
+        return ArtistHeroHorizontalLayout(
+            centerLeftPx = 0,
+            centerWidthPx = safeW,
+            centerRightPx = safeW,
+            leftBlurStartPx = 0f,
+            rightBlurStartPx = safeW.toFloat()
+        )
+    }
+    val centerW = safeH
+    val centerLeft = (safeW - centerW) / 2
+    val centerRight = centerLeft + centerW
+    val inward = centerW * ArtistSideBlurInwardFraction
+    return ArtistHeroHorizontalLayout(
+        centerLeftPx = centerLeft,
+        centerWidthPx = centerW,
+        centerRightPx = centerRight,
+        leftBlurStartPx = (centerLeft + inward).coerceIn(0f, safeW.toFloat()),
+        rightBlurStartPx = (centerRight - inward).coerceIn(0f, safeW.toFloat())
+    )
+}
+
+internal fun artistHeroBlurProgression2D(
+    x: Float,
+    y: Float,
+    widthPx: Int,
+    photoHeightPx: Int,
+    bandHeightPx: Int,
+    extendSides: Boolean = false
+): Float {
+    val layout = resolveArtistHeroHorizontalLayout(widthPx, photoHeightPx, extendSides)
+    val blurStartY = artistReflectionBlurStartPx(photoHeightPx)
+    val bandBottom = (photoHeightPx + bandHeightPx).toFloat()
+    val spanY = (bandBottom - blurStartY).coerceAtLeast(1f)
+    val ty = ((y - blurStartY) / spanY).coerceIn(0f, 1f)
+    val txLeft = if (layout.leftBlurStartPx > 0.5f) {
+        ((layout.leftBlurStartPx - x) / layout.leftBlurStartPx).coerceIn(0f, 1f)
+    } else 0f
+    val rightSpan = widthPx.toFloat() - layout.rightBlurStartPx
+    val txRight = if (rightSpan > 0.5f) {
+        ((x - layout.rightBlurStartPx) / rightSpan).coerceIn(0f, 1f)
+    } else 0f
+    val tx = maxOf(txLeft, txRight)
+    return 1f - (1f - tx) * (1f - ty)
+}
+
 
 /**
  * 渐隐上边界（100% 不透明处）：在照片底边**之上**、占倒影带高的比例。
@@ -157,15 +231,17 @@ const val ArtistReflectionBlurPower = 1.1f
  *      与 CLEAR（无 AA）在 end 的小数边界上覆盖不一致，留下一条残留行（缝隙）。
  * v15：渐进模糊整体加长加大——起点按照片高抬到 0.70（照片下 30% 起雾）、带高 0.5→0.7、
  *      maxBlur 96→120dp、半径幂次 1.35→1.1（路径变长后补回中段浓度）。
+ * v16：横屏适配——居中 1:1 主图 + 左右 35% 镜像延伸铺满屏宽 + 2D 渐进模糊（左右自内缩 22% 向边缘起雾）。
  */
-const val ArtistHeroBakeRecipeVersion = 15
+const val ArtistHeroBakeRecipeVersion = 16
 
 /** 金字塔降级模糊的分条数（仅 API < 33 回退分支使用）。 */
 private const val FallbackStrips = 32
 
 /**
  * 32 点黄金角抖动多重采样渐进模糊（移植自 TitleBarProgressiveBlur，去掉
- * tint/presence）。半径自 blurStart（照片下缘附近）向带底以 t² 递增：接缝处近似 0。
+ * tint/presence）。半径自 blurStart（照片下缘附近）与左右内缩起点向边缘以 2D 合成
+ * 进度递增：接缝处已进入起雾区且像素 C0 连续。
  * 采样坐标 clamp 在图层内：输入出界是透明像素，不 clamp 会在边缘出现黑边。
  *
  * 带内内容由 [drawPhotoAndStretchedReflection] 预绘进图层：照片关于底边翻转后纵向
@@ -182,6 +258,8 @@ uniform float2 layerSize;
 uniform float photoBottom;
 uniform float bandBottom;
 uniform float blurStart;
+uniform float leftBlurStart;
+uniform float rightBlurStart;
 uniform float maxRadius;
 uniform float blurPower;
 
@@ -193,8 +271,17 @@ float hash12(float2 p) {
 
 half4 main(float2 coord) {
     float2 bounds = max(layerSize - 1.0, float2(0.0));
-    float span = max(bandBottom - blurStart, 1.0);
-    float t = clamp((coord.y - blurStart) / span, 0.0, 1.0);
+    float spanY = max(bandBottom - blurStart, 1.0);
+    float ty = clamp((coord.y - blurStart) / spanY, 0.0, 1.0);
+    float txLeft = leftBlurStart > 0.5
+        ? clamp((leftBlurStart - coord.x) / leftBlurStart, 0.0, 1.0)
+        : 0.0;
+    float rightSpan = layerSize.x - rightBlurStart;
+    float txRight = rightSpan > 0.5
+        ? clamp((coord.x - rightBlurStart) / rightSpan, 0.0, 1.0)
+        : 0.0;
+    float tx = max(txLeft, txRight);
+    float t = 1.0 - (1.0 - tx) * (1.0 - ty);
     float radius = maxRadius * pow(t, blurPower);
     half4 color;
     if (radius < 0.5) {
@@ -232,14 +319,25 @@ uniform shader content;
 uniform float2 layerSize;
 uniform float photoBottom;
 uniform float blurStart;
+uniform float leftBlurStart;
+uniform float rightBlurStart;
 uniform float bandBottom;
 uniform float maxRadius;
 uniform float blurPower;
 
 half4 main(float2 coord) {
     float2 bounds = max(layerSize - 1.0, float2(0.0));
-    float span = max(bandBottom - blurStart, 1.0);
-    float t = clamp((coord.y - blurStart) / span, 0.0, 1.0);
+    float spanY = max(bandBottom - blurStart, 1.0);
+    float ty = clamp((coord.y - blurStart) / spanY, 0.0, 1.0);
+    float txLeft = leftBlurStart > 0.5
+        ? clamp((leftBlurStart - coord.x) / leftBlurStart, 0.0, 1.0)
+        : 0.0;
+    float rightSpan = layerSize.x - rightBlurStart;
+    float txRight = rightSpan > 0.5
+        ? clamp((coord.x - rightBlurStart) / rightSpan, 0.0, 1.0)
+        : 0.0;
+    float tx = max(txLeft, txRight);
+    float t = 1.0 - (1.0 - tx) * (1.0 - ty);
     float r = maxRadius * pow(t, blurPower) * 0.18;
     float2 c0 = clamp(coord, float2(0.0), bounds);
     if (r < 0.4) {
@@ -260,66 +358,104 @@ half4 main(float2 coord) {
 """
 
 /**
- * 画照片 + 拉伸倒影。
+ * 画照片 + 拉伸倒影（横屏时居中 1:1 主图 + 左右外侧 35% 镜像拉伸铺满两侧翼）。
  *
- * 照片按 Crop 等比铺满 [photoHeightPx]，并裁剪在照片区内（dst 矩形可能比盒子高，
- * 不裁会溢出到倒影带里）。
+ * 主图按 Crop 等比铺满居中框（竖屏为全宽，横屏为 1:1 正方），两侧翼取主图左右各 35%
+ * 水平翻转拉伸至屏幕边缘，接缝处像素 C0 连续。
  *
- * 倒影：取照片**最底部 [ArtistReflectionSourceFraction]（1/4）**那一条，关于照片底边
- * 翻转后纵向拉伸铺满整条带（带高 = 照片高 × [ArtistReflectionFraction]，即 2:1）。
- * 接缝处两侧同为照片底边那一行像素，无缝；统一倍率下一次 canvas 变换即可画完，
- * 不做分条——分条会在条界留下量化台阶（观感即锯齿）。
+ * 倒影：取可见照片**最底部 [ArtistReflectionSourceFraction]（1/4）**那一条，关于照片底边
+ * 翻转后纵向拉伸铺满整条带（竖屏 2.8:1）。中区与两侧翼均用同一源纵向边界翻转绘制，
+ * 横向与纵向接缝同步对齐。
  */
 private fun drawPhotoAndStretchedReflection(
     canvas: Canvas,
     src: Bitmap,
     widthPx: Int,
     photoHeightPx: Int,
-    bandHeightPx: Int
+    bandHeightPx: Int,
+    extendSides: Boolean
 ) {
     val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    val scale = maxOf(widthPx.toFloat() / src.width, photoHeightPx.toFloat() / src.height)
+    val layout = resolveArtistHeroHorizontalLayout(widthPx, photoHeightPx, extendSides)
+    val centerW = layout.centerWidthPx.toFloat()
+    val photoH = photoHeightPx.toFloat()
+    val scale = maxOf(centerW / src.width, photoH / src.height)
     val dw = src.width * scale
     val dh = src.height * scale
-    val left = (widthPx - dw) / 2f
-    val top = (photoHeightPx - dh) / 2f
-    val dst = android.graphics.RectF(left, top, left + dw, top + dh)
-    // 照片只画在自己的区域内：Crop 后 dst 高可能超过照片区，不裁会溢出到倒影带里
+    val cropOffsetX = (centerW - dw) / 2f
+    val cropOffsetY = (photoH - dh) / 2f
+    val srcLeft = ceil(((-cropOffsetX) / dw * src.width).coerceIn(0f, src.width.toFloat())).toInt()
+        .coerceIn(0, src.width - 1)
+    val srcRight = floor(((centerW - cropOffsetX) / dw * src.width).coerceIn(0f, src.width.toFloat())).toInt()
+        .coerceIn(srcLeft + 1, src.width)
+    val srcTop = ceil(((-cropOffsetY) / dh * src.height).coerceIn(0f, src.height.toFloat())).toInt()
+        .coerceIn(0, src.height - 1)
+    val srcBottom = floor(((photoH - cropOffsetY) / dh * src.height).coerceIn(0f, src.height.toFloat())).toInt()
+        .coerceIn(srcTop + 1, src.height)
+    val srcSpanW = (srcRight - srcLeft).coerceAtLeast(1)
+    val sideSliceW = (srcSpanW * ArtistSideReflectionSourceFraction).roundToInt().coerceAtLeast(1)
+    val srcLeftSliceRight = (srcLeft + sideSliceW).coerceIn(srcLeft + 1, srcRight)
+    val srcRightSliceLeft = (srcRight - sideSliceW).coerceIn(srcLeft, srcRight - 1)
+
+    fun drawHorizontalTriplet(sTop: Int, sBottom: Int, dTop: Float, dBottom: Float) {
+        canvas.drawBitmap(
+            src,
+            Rect(srcLeft, sTop, srcRight, sBottom),
+            android.graphics.RectF(
+                layout.centerLeftPx.toFloat(), dTop,
+                layout.centerRightPx.toFloat(), dBottom
+            ),
+            paint
+        )
+        if (layout.centerLeftPx > 0) {
+            canvas.save()
+            canvas.translate(2f * layout.centerLeftPx, 0f)
+            canvas.scale(-1f, 1f)
+            canvas.drawBitmap(
+                src,
+                Rect(srcLeft, sTop, srcLeftSliceRight, sBottom),
+                android.graphics.RectF(
+                    layout.centerLeftPx.toFloat(), dTop,
+                    (2 * layout.centerLeftPx).toFloat(), dBottom
+                ),
+                paint
+            )
+            canvas.restore()
+        }
+        if (layout.centerRightPx < widthPx) {
+            canvas.save()
+            canvas.translate(2f * layout.centerRightPx, 0f)
+            canvas.scale(-1f, 1f)
+            canvas.drawBitmap(
+                src,
+                Rect(srcRightSliceLeft, sTop, srcRight, sBottom),
+                android.graphics.RectF(
+                    (2 * layout.centerRightPx - widthPx).toFloat(), dTop,
+                    layout.centerRightPx.toFloat(), dBottom
+                ),
+                paint
+            )
+            canvas.restore()
+        }
+    }
+
     canvas.save()
-    canvas.clipRect(0f, 0f, widthPx.toFloat(), photoHeightPx.toFloat())
-    canvas.drawBitmap(src, null, dst, paint)
+    canvas.clipRect(0f, 0f, widthPx.toFloat(), photoH)
+    drawHorizontalTriplet(srcTop, srcBottom, 0f, photoH)
     canvas.restore()
     if (bandHeightPx <= 0) return
 
-    // 倒影切片必须取自**照片实际可见的底边**。照片按 Crop 等比铺满，故可见底边恒为
-    // photoHeightPx（clipRect 已保证画面被裁到那里）。源区间用「向外取整」会多带入
-    // 约 1px 照片区之外的源内容，这 1px 被纵向拉伸 2 倍后正好在接缝下方形成一条
-    // 颜色不同的窄带（用户实锤的「缝隙」）。故改用「向内取整」：下界 floor、上界 ceil，
-    // 宁可少 1px 也不能多——少的那点由相邻条像素自然衔接，不会显色差。
-    val sliceH = photoHeightPx * ArtistReflectionSourceFraction
-    val sliceTopY = photoHeightPx - sliceH
-    val srcTopF = ((sliceTopY - top) / dh * src.height).coerceIn(0f, src.height.toFloat())
-    val srcBottomF = ((photoHeightPx - top) / dh * src.height).coerceIn(0f, src.height.toFloat())
-    val srcRect = android.graphics.Rect(
-        0, ceil(srcTopF).toInt().coerceIn(0, src.height - 1),
-        src.width, floor(srcBottomF).toInt().coerceIn(1, src.height)
-    )
-    if (srcRect.height() <= 0) return
-    // 单次绘制：源切片 → 带区。关于接缝翻转（y' = 2·photoH − y），故翻转前的目标矩形
-    // 取 [photoH−band, photoH]，翻转后正好落在 [photoH, photoH+band]。
-    // 横向仍按 dst 宽度铺满，故是「横向 1:1、纵向 band/slice = 2:1」的非等比拉伸。
-    // 目标矩形横向用整幅宽度（0..widthPx）而不是 dst 宽度：dst 比盒子窄时，
-    // 用 dst 宽度会在两侧留出未绘制的竖条，与照片区的裁切边缘不一致。
+    val srcReflTop = (srcBottom - ((srcBottom - srcTop) * ArtistReflectionSourceFraction).roundToInt())
+        .coerceIn(srcTop, srcBottom - 1)
+    if (srcBottom <= srcReflTop) return
     canvas.save()
     canvas.translate(0f, 2f * photoHeightPx)
     canvas.scale(1f, -1f)
-    canvas.drawBitmap(
-        src, srcRect,
-        android.graphics.RectF(
-            0f, (photoHeightPx - bandHeightPx).toFloat(),
-            widthPx.toFloat(), photoHeightPx.toFloat()
-        ),
-        paint
+    drawHorizontalTriplet(
+        sTop = srcReflTop,
+        sBottom = srcBottom,
+        dTop = (photoHeightPx - bandHeightPx).toFloat(),
+        dBottom = photoH
     )
     canvas.restore()
 }
@@ -339,18 +475,23 @@ fun bakeHeroReflection(
     photoHeightPx: Int,
     bandHeightPx: Int,
     maxBlurRadiusPx: Float,
-    shader: RuntimeShader?
+    shader: RuntimeShader?,
+    extendSides: Boolean = false
 ): Bitmap {
     if (shader != null && Build.VERSION.SDK_INT >= 33) {
         // 渐隐失败（硬件位图无法复制）时整条硬件结果作废，回落到能保留 alpha 的软件路径
         val faded = runCatching {
-            val hardware = bakeWithHardwareRenderer(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, shader)
+            val hardware = bakeWithHardwareRenderer(
+                src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, shader, extendSides
+            )
             applyReflectionFade(hardware, photoHeightPx, bandHeightPx)
         }.getOrNull()
         if (faded != null) return faded
         android.util.Log.w("ArtistDetail", "hero reflection: hardware bake/fade failed, falling back to pyramid blur")
     }
-    val pyramid = bakeWithPyramidBlur(src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx)
+    val pyramid = bakeWithPyramidBlur(
+        src, widthPx, photoHeightPx, bandHeightPx, maxBlurRadiusPx, extendSides
+    )
     return applyReflectionFade(pyramid, photoHeightPx, bandHeightPx) ?: pyramid
 }
 
@@ -420,16 +561,20 @@ fun newArtistHeroReflectionShader(
     widthPx: Int,
     photoHeightPx: Int,
     bandHeightPx: Int,
-    maxBlurRadiusPx: Float
+    maxBlurRadiusPx: Float,
+    extendSides: Boolean = false
 ): RuntimeShader? {
     if (Build.VERSION.SDK_INT < 33) return null
     return runCatching {
         val blurStart = artistReflectionBlurStartPx(photoHeightPx)
+        val layout = resolveArtistHeroHorizontalLayout(widthPx, photoHeightPx, extendSides)
         RuntimeShader(ArtistHeroReflectionShader).apply {
             setFloatUniform("layerSize", widthPx.toFloat(), (photoHeightPx + bandHeightPx).toFloat())
             setFloatUniform("photoBottom", photoHeightPx.toFloat())
             setFloatUniform("bandBottom", (photoHeightPx + bandHeightPx).toFloat())
             setFloatUniform("blurStart", blurStart)
+            setFloatUniform("leftBlurStart", layout.leftBlurStartPx)
+            setFloatUniform("rightBlurStart", layout.rightBlurStartPx)
             setFloatUniform("maxRadius", maxBlurRadiusPx)
             setFloatUniform("blurPower", ArtistReflectionBlurPower)
         }
@@ -450,12 +595,14 @@ private fun bakeWithHardwareRenderer(
     photoHeightPx: Int,
     bandHeightPx: Int,
     maxBlurRadiusPx: Float,
-    shader: RuntimeShader
+    shader: RuntimeShader,
+    extendSides: Boolean
 ): Bitmap {
     val total = photoHeightPx + bandHeightPx
+    val layout = resolveArtistHeroHorizontalLayout(widthPx, photoHeightPx, extendSides)
     val node = RenderNode("artistHeroBake").apply { setPosition(0, 0, widthPx, total) }
     val canvas = node.beginRecording(widthPx, total)
-    drawPhotoAndStretchedReflection(canvas, src, widthPx, photoHeightPx, bandHeightPx)
+    drawPhotoAndStretchedReflection(canvas, src, widthPx, photoHeightPx, bandHeightPx, extendSides)
     node.endRecording()
     // 两道链式效果：32 采样渐进散焦 → 8 点去噪（大半径下抖动细噪必须压，
     // 与 TitleBarProgressiveBlur 的双 shader 管线同构）
@@ -464,6 +611,8 @@ private fun bakeWithHardwareRenderer(
         setFloatUniform("layerSize", widthPx.toFloat(), total.toFloat())
         setFloatUniform("photoBottom", photoHeightPx.toFloat())
         setFloatUniform("blurStart", artistReflectionBlurStartPx(photoHeightPx))
+        setFloatUniform("leftBlurStart", layout.leftBlurStartPx)
+        setFloatUniform("rightBlurStart", layout.rightBlurStartPx)
         setFloatUniform("bandBottom", total.toFloat())
         setFloatUniform("maxRadius", maxBlurRadiusPx)
         setFloatUniform("blurPower", ArtistReflectionBlurPower)
@@ -515,29 +664,28 @@ private fun bakeWithPyramidBlur(
     widthPx: Int,
     photoHeightPx: Int,
     bandHeightPx: Int,
-    maxBlurRadiusPx: Float
+    maxBlurRadiusPx: Float,
+    extendSides: Boolean
 ): Bitmap {
     val total = photoHeightPx + bandHeightPx
     val out = Bitmap.createBitmap(widthPx, total, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(out)
-    drawPhotoAndStretchedReflection(canvas, src, widthPx, photoHeightPx, bandHeightPx)
+    drawPhotoAndStretchedReflection(canvas, src, widthPx, photoHeightPx, bandHeightPx, extendSides)
 
+    val layout = resolveArtistHeroHorizontalLayout(widthPx, photoHeightPx, extendSides)
     val blurStart = artistReflectionBlurStartPx(photoHeightPx)
-    val span = total - blurStart
+    val span = (total - blurStart).coerceAtLeast(1f)
     val base = out.copy(Bitmap.Config.ARGB_8888, false)
     val maxLevel = 6
     // 折半链：downChain[k] 与旧实现「每级从 base 重新 createScaledBitmap 折半 k 次」逐像素相同
     // （同一条 w/2f→roundToInt 递推、同一 filter=true、同样的起点），故放大回全尺寸的结果不变，
     // 因此**不需要** bump ArtistHeroBakeRecipeVersion（否则所有用户缓存集体失效、重烘一次）。
-    // 前提是条带循环里 level 单调不减（BlurPower > 0 保证 t 递增）；若改为负 power 或倒序条带，
-    // downTo 会因回退到已回收的级而崩（不会静默出错），那时须保留全部折半级。
     val downChain = arrayOfNulls<Bitmap>(maxLevel + 1)
     downChain[0] = base
     var builtLevel = 0
     var bw = widthPx
     var bh = total
     fun downTo(level: Int): Bitmap {
-        // 按需构建：条带半径随 y 单调递增，实际只会逐级向上推进，不会回退
         while (builtLevel < level) {
             bw = (bw / 2f).roundToInt().coerceAtLeast(1)
             bh = (bh / 2f).roundToInt().coerceAtLeast(1)
@@ -560,34 +708,110 @@ private fun bakeWithPyramidBlur(
         val current = replay
         if (current != null && replayLevel == level) return current
         if (current != null && replayOwned) current.recycle()
-        val src = downTo(level)
-        val next = Bitmap.createScaledBitmap(src, widthPx, total, true)
+        val downSrc = downTo(level)
+        val next = Bitmap.createScaledBitmap(downSrc, widthPx, total, true)
         replay = next
         replayLevel = level
-        replayOwned = next !== src
+        replayOwned = next !== downSrc
         return next
     }
 
-    val copyPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    for (i in 0 until FallbackStrips) {
-        val y0 = blurStart + span * i / FallbackStrips
-        val y1 = blurStart + span * (i + 1) / FallbackStrips
-        val t = (((y0 + y1) / 2f - blurStart) / span).coerceIn(0f, 1f)
-        val r = maxBlurRadiusPx * t.pow(ArtistReflectionBlurPower)
-        val level = if (r < 1f) 0 else ceil(ln(r.toDouble()) / ln(2.0))
+    fun levelForT(t: Float): Int {
+        val r = maxBlurRadiusPx * t.coerceIn(0f, 1f).pow(ArtistReflectionBlurPower)
+        return if (r < 1f) 0 else ceil(ln(r.toDouble()) / ln(2.0))
             .roundToInt().coerceIn(0, maxLevel)
+    }
+
+    val copyPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    fun blitRegion(x0: Float, y0: Float, x1: Float, y1: Float, level: Int, skipZero: Boolean = true) {
+        if ((skipZero && level <= 0) || x1 <= x0 || y1 <= y0) return
         val pad = (1 shl level) * 2f
+        val sx0 = (x0 - pad).coerceAtLeast(0f)
         val sy0 = (y0 - pad).coerceAtLeast(0f)
+        val sx1 = (x1 + pad).coerceAtMost(widthPx.toFloat())
         val sy1 = (y1 + pad).coerceAtMost(total.toFloat())
         canvas.save()
-        canvas.clipRect(0f, y0, widthPx.toFloat(), y1 + 1f)
+        canvas.clipRect(x0, y0, (x1 + 1f).coerceAtMost(widthPx.toFloat()), (y1 + 1f).coerceAtMost(total.toFloat()))
         canvas.drawBitmap(
             replayFor(level),
-            Rect(0, sy0.roundToInt(), widthPx, sy1.roundToInt()),
-            android.graphics.RectF(0f, sy0, widthPx.toFloat(), sy1),
+            Rect(sx0.roundToInt(), sy0.roundToInt(), sx1.roundToInt(), sy1.roundToInt()),
+            android.graphics.RectF(sx0, sy0, sx1, sy1),
             copyPaint
         )
         canvas.restore()
+    }
+
+    if (layout.centerLeftPx <= 0) {
+        for (i in 0 until FallbackStrips) {
+            val y0 = blurStart + span * i / FallbackStrips
+            val y1 = blurStart + span * (i + 1) / FallbackStrips
+            val t = (((y0 + y1) / 2f - blurStart) / span).coerceIn(0f, 1f)
+            blitRegion(0f, y0, widthPx.toFloat(), y1, levelForT(t), skipZero = false)
+        }
+    } else {
+        // 1) 左侧上半渐进模糊条带 [0 .. leftBlurStartPx] × [0 .. blurStart]（从内向外，tx 单调递增）
+        if (layout.leftBlurStartPx > 0.5f) {
+            for (i in 0 until FallbackStrips) {
+                val x1 = layout.leftBlurStartPx * (FallbackStrips - i) / FallbackStrips
+                val x0 = layout.leftBlurStartPx * (FallbackStrips - i - 1) / FallbackStrips
+                val xm = (x0 + x1) / 2f
+                val tx = ((layout.leftBlurStartPx - xm) / layout.leftBlurStartPx).coerceIn(0f, 1f)
+                blitRegion(x0, 0f, x1, blurStart, levelForT(tx))
+            }
+        }
+        // 2) 右侧上半渐进模糊条带 [rightBlurStartPx .. widthPx] × [0 .. blurStart]（从内向外，tx 单调递增）
+        val rightSpan = widthPx.toFloat() - layout.rightBlurStartPx
+        if (rightSpan > 0.5f) {
+            for (i in 0 until FallbackStrips) {
+                val x0 = layout.rightBlurStartPx + rightSpan * i / FallbackStrips
+                val x1 = layout.rightBlurStartPx + rightSpan * (i + 1) / FallbackStrips
+                val xm = (x0 + x1) / 2f
+                val tx = ((xm - layout.rightBlurStartPx) / rightSpan).coerceIn(0f, 1f)
+                blitRegion(x0, 0f, x1, blurStart, levelForT(tx))
+            }
+        }
+        // 3) 中央下半倒影带 [leftBlurStartPx .. rightBlurStartPx] × [blurStart .. total]（tx=0，t=ty）
+        for (i in 0 until FallbackStrips) {
+            val y0 = blurStart + span * i / FallbackStrips
+            val y1 = blurStart + span * (i + 1) / FallbackStrips
+            val ty = (((y0 + y1) / 2f - blurStart) / span).coerceIn(0f, 1f)
+            blitRegion(layout.leftBlurStartPx, y0, layout.rightBlurStartPx, y1, levelForT(ty))
+        }
+        // 4) 左右下角 2D 合成模糊区：按 level 分组绘制，避免 replayFor 在层级间往返重建
+        val wingCols = 12
+        for (targetLevel in 1..maxLevel) {
+            for (row in 0 until FallbackStrips) {
+                val y0 = blurStart + span * row / FallbackStrips
+                val y1 = blurStart + span * (row + 1) / FallbackStrips
+                val ym = (y0 + y1) / 2f
+                if (layout.leftBlurStartPx > 0.5f) {
+                    for (col in 0 until wingCols) {
+                        val x0 = layout.leftBlurStartPx * col / wingCols
+                        val x1 = layout.leftBlurStartPx * (col + 1) / wingCols
+                        val xm = (x0 + x1) / 2f
+                        val t = artistHeroBlurProgression2D(
+                            xm, ym, widthPx, photoHeightPx, bandHeightPx, extendSides
+                        )
+                        if (levelForT(t) == targetLevel) {
+                            blitRegion(x0, y0, x1, y1, targetLevel)
+                        }
+                    }
+                }
+                if (rightSpan > 0.5f) {
+                    for (col in 0 until wingCols) {
+                        val x0 = layout.rightBlurStartPx + rightSpan * col / wingCols
+                        val x1 = layout.rightBlurStartPx + rightSpan * (col + 1) / wingCols
+                        val xm = (x0 + x1) / 2f
+                        val t = artistHeroBlurProgression2D(
+                            xm, ym, widthPx, photoHeightPx, bandHeightPx, extendSides
+                        )
+                        if (levelForT(t) == targetLevel) {
+                            blitRegion(x0, y0, x1, y1, targetLevel)
+                        }
+                    }
+                }
+            }
+        }
     }
     // ★回收红线：createScaledBitmap 在目标尺寸与源相同时**返回源对象本身**（不复制），
     // 极端 / 退化几何（宽或高先折到 1px 后不再变化）会让 downChain 相邻级、乃至 replay

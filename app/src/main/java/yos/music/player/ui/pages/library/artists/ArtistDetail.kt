@@ -191,6 +191,8 @@ import yos.music.player.ui.navigation.popBackStackSafely
 private const val HeroPhoneHeightFraction = 0.45f
 /** 平板竖屏 hero 高度上限占屏比例（典型平板竖屏不触发，保证「按宽度取方形」）。 */
 private const val HeroTabletMaxHeightFraction = 0.75f
+/** 横屏（平板/手机）hero 高度占屏比例：留出下方三圆钮行及首屏置顶专辑+热门歌曲并排区。 */
+private const val HeroLandscapeHeightFraction = 0.55f
 /** 平板倒影带绝对高度上限：方形 hero 会让 bandHeight=0.7*heroHeight 过大，需限幅。 */
 private const val HeroTabletReflectionBandMaxDp = 260f
 /** 平板竖屏把内容列表整体上抬的高度：方形 hero 让内容起始过低，直接落在 hero 高度上补偿。 */
@@ -203,6 +205,8 @@ private const val HeroTabletContentRaiseDp = 40f
  * 超出取图死线 → 烘焙概率性失败 → 倒影缺失硬衔接。封顶到源图分辨率，绘制时再放大回整盒。
  */
 private const val HeroBakeMaxWidthPx = 1024f
+/** 横屏倒影烘焙最大宽度（像素）：居中主图只占中间方形，放宽总宽以保证居中主图清晰度，总像素仍低于竖屏。 */
+private const val HeroBakeMaxWidthLandscapePx = 1536f
 
 /**
  * 烘焙串行化闸门。烘焙在 `Dispatchers.Default` 上阻塞执行（GPU 同步 + 最长 3s 忙等，
@@ -261,7 +265,6 @@ fun ArtistDetail(
     val screenWidthDp = configuration.screenWidthDp.toFloat()
     val screenHeightDp = configuration.screenHeightDp.toFloat()
     val isTablet = configuration.smallestScreenWidthDp >= 600
-    val landscapeTablet = isTablet && screenWidthDp > screenHeightDp
     val portraitTablet = isTablet && screenWidthDp <= screenHeightDp
     val isLandscape = screenWidthDp > screenHeightDp
     // 头像 hero 定形：手机竖屏沿用旧版「屏高 45% × 整宽」（逐字不变）；平板竖屏改为「按宽度取方形
@@ -537,8 +540,9 @@ fun ArtistDetail(
         heroRevealed.value = true
     }
 
-    LaunchedEffect(pagerState, songsState) {
+    LaunchedEffect(pagerState, songsState, isLandscape) {
         val state = songsState ?: return@LaunchedEffect
+        val visibleCols = if (isLandscape) 2 else 1
         snapshotFlow {
             ArtistPagingSnapshot(
                 pagerState.currentPage, state.songs.value.size, state.page.value,
@@ -546,7 +550,7 @@ fun ArtistDetail(
             )
         }.distinctUntilChanged().collect { snapshot ->
             if (snapshot.count > 0 && !snapshot.loading && snapshot.error == null &&
-                !snapshot.endReached && snapshot.current >= (snapshot.count + 3) / 4 - 2
+                !snapshot.endReached && snapshot.current >= (snapshot.count + 3) / 4 - 1 - visibleCols
             ) state.requestNextPage()
         }
     }
@@ -664,10 +668,11 @@ fun ArtistDetail(
     ) {
         // 平板竖屏内容整体上抬 40dp：方形 hero 让列表起始过低，直接减在 hero 高度上
         // （其余比例与此前的 SquareFullBleed 方案一致，hero 略小于正方，裁切可忽略）。
-        // 横屏（手机+平板）统一方形头像：取短边（maxHeight）作为方形边长，确保头像完整可见。
+        // 横屏（手机+平板）与竖屏采用同一沉浸式 Hero：高度取屏高 55%，居中摆正 1:1 头像、
+        // 左右镜像延伸铺满屏宽并做横向渐进模糊，留出下方三圆钮与并排内容区。
         val heroHeight = when {
             portraitTablet -> minOf(maxWidth, maxHeight * HeroTabletMaxHeightFraction) - HeroTabletContentRaiseDp.dp
-            isLandscape -> maxHeight  // 横屏方形：高度 = 短边（屏高）
+            isLandscape -> maxHeight * HeroLandscapeHeightFraction
             else -> maxHeight * HeroPhoneHeightFraction
         }.coerceAtLeast(200.dp)
     // BoxWithConstraints 作用域内捕获：item lambda 有自己的接收者，禁止隐式访问外层 maxWidth
@@ -681,7 +686,7 @@ fun ArtistDetail(
         // 平板方形 hero 会让 0.7*heroHeight 的倒影带胀到约 2/5 屏高（首屏被压没），故限幅；
         // 手机不带限幅（hero≈0.45 屏高 → 带高≈0.315 屏高，如 853dp 高的机器上约 269dp），
         // 260dp 上限只作用于平板。
-        val bandHeight = if (portraitTablet)
+        val bandHeight = if (isTablet)
             minOf(heroHeight * ArtistReflectionFraction, HeroTabletReflectionBandMaxDp.dp)
         else heroHeight * ArtistReflectionFraction
         val density = LocalDensity.current
@@ -692,40 +697,39 @@ fun ArtistDetail(
         // 烘焙几何与缓存键提到组合期（原先在烘焙 effect 内算）：只有这样首帧才能同步探
         // 内存缓存 [HeroBakeCache.memoryGet]，命中即首帧落位（回访「倒影秒出」）。几何只依赖
         // 盒尺寸，不依赖源位图，故组合期可算；计算逐字与旧 effect 内一致。
-        val bakeScale = (HeroBakeMaxWidthPx / bakeWidthPx).coerceAtMost(1f)
+        val maxBakeWidthPx = if (isLandscape) HeroBakeMaxWidthLandscapePx else HeroBakeMaxWidthPx
+        val bakeScale = (maxBakeWidthPx / bakeWidthPx).coerceAtMost(1f)
         val bakeW = (bakeWidthPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakePhotoH = (heroHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakeBandH = (bandHeightPx * bakeScale).roundToInt().coerceAtLeast(1)
         val bakeBlurPx = maxBlurPx * bakeScale
-        val bakeCacheKey = remember(avatarUrl, heroAspect, bakeW, bakePhotoH, bakeBandH) {
+        val bakeCacheKey = remember(avatarUrl, heroAspect, isLandscape, bakeW, bakePhotoH, bakeBandH) {
             // 配方版本进键：着色器/渐隐算法变了必须换键，否则磁盘里的旧烘焙图永远复用。
-            // 拉伸倍率单独入键：它只改几何不改配方版本，不写进来会导致调参后回访仍读旧图。
+            // 拉伸倍率与横屏扩展开关单独入键：避免转屏或尺寸相近时误读旧缓存图。
             avatarUrl?.let {
                 "v$ArtistHeroBakeRecipeVersion|$it|$heroAspect|" +
-                    "s$ArtistReflectionStretch|${bakeW}x${bakePhotoH}x${bakeBandH}"
+                    "s$ArtistReflectionStretch|ext$isLandscape|${bakeW}x${bakePhotoH}x${bakeBandH}"
             }
         }
-        // 烘焙位图按头像 URL 记忆（不含几何尺寸）：旋转等尺寸变化触发重烘焙期间保留旧图
-        // 继续显示——回到同方向后旧图与新盒子几何一致，交换逐像素相同完全无感；烘焙失败也
-        // 不丢图。此前按尺寸做 remember key 且 effect 开头先置空，旋转后合成图立刻消失、
-        // 只剩 item 里一张无倒影的锐利 1:1 原图，直到重烘焙落地（有几率长达数秒甚至永久）。
+        // 烘焙位图按头像 URL + 横竖屏朝向记忆（不含几何尺寸）：自由窗口微调尺寸触发重烘焙期间
+        // 保留旧图继续显示，同时横竖屏切换（单面板 ↔ 左右镜像扩展）各自独立，避免跨朝向拉伸。
         // 初值同步探内存缓存（主线程安全）：命中则首帧即非空，揭示门首帧即开、不加渐入。
-        var bakedHero by remember(avatarUrl) {
+        var bakedHero by remember(avatarUrl, isLandscape) {
             mutableStateOf(bakeCacheKey?.let(HeroBakeCache::memoryGet))
         }
-        var pendingHeroBake by remember(avatarUrl) {
+        var pendingHeroBake by remember(avatarUrl, isLandscape) {
             mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
         }
         // 烘焙「落地」兜底：成功时只在 [pendingHeroBake] 提升门（视口静止）放行后才算落地，
         // 故成功分支不置此位；仅烘焙失败（或解码失败）时置真，避免揭示门干等一个永不到来的
         // 倒影——退化为「锐利照片 + 提取色」硬衔接（与旧行为一致）。
-        var backdropBakeSettled by remember(avatarUrl) { mutableStateOf(false) }
+        var backdropBakeSettled by remember(avatarUrl, isLandscape) { mutableStateOf(false) }
         // 背景「整体揭示」门：hero 照片 + 提取色底 + 倒影/渐变模糊三者加载时序不同，
         // 各自就绪各自上屏 → 冷启动「空白底→照片→取色渐变→倒影突现」四段式。这里把它们
         // 绑到同一条 [backdropAlpha] 上：门未开前英雄区不显示背景（透出导航底衬），门开后
         // 三者同帧渐入。文字/圆钮/列表不参与，照常先出。判据收敛到可单测的纯函数。
         val backdropReady = artistBackdropReady(
-            immersiveBackdrop = !isLandscape,
+            immersiveBackdrop = true,
             // 必须「详情已定且无头像」：冷启动首帧详情未返回，裸判 avatarUrl==null 会让门
             // 先开后关（alpha 1→0→1 闪一下）。无头像即无背景元素可等，直接放行。
             // 加载/解码失败同样无照片可等（回落到身份派生色 + monogram），一并放行。
@@ -821,9 +825,7 @@ fun ArtistDetail(
         // 滚动时照片/倒影比列表"跟不上"地抖动。Compose 先测量全部子项再统一放置，而
         // LazyColumn 在测量阶段就写好了 layoutInfo，故背景层在自己的放置块里读到的是
         // 同帧值，零延迟、无需重组。
-        LaunchedEffect(avatarUrl, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
-            // 横屏（平板+手机）走横向头部（照片在左、无「照片底边向下」区域），不烘焙倒影。
-            if (isLandscape) return@LaunchedEffect
+        LaunchedEffect(avatarUrl, isLandscape, bakeWidthPx, heroHeightPx, bandHeightPx, originalRgb, heroBitmap.value) {
             // 加载/解码失败：无源位图可烘，直接返回（否则会拿 url 键做无意义磁盘查询）。
             if (avatarUrl == null || heroImageFailed || heroDecodeFailed.value) return@LaunchedEffect
             // 延展模式（方形 hero：平板竖屏）的带内要随深度溶入提取色——照片底部区域常是
@@ -845,7 +847,7 @@ fun ArtistDetail(
             // 与上屏/取色共用同一张软件位图（单次解码），不再各自解码。
             val src = heroBitmap.value ?: return@LaunchedEffect
             val shader = newArtistHeroReflectionShader(
-                bakeW, bakePhotoH, bakeBandH, bakeBlurPx
+                bakeW, bakePhotoH, bakeBandH, bakeBlurPx, extendSides = isLandscape
             )
             // 串行化 + 过时放弃：withLock 在协程取消时自动释放不会漏解锁。
             // 锁只包住真正阻塞的 GPU 烘焙段（最长 3s 忙等）；拿到锁后再 ensureActive 一次，
@@ -856,7 +858,10 @@ fun ArtistDetail(
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.Default) {
                     try {
-                        bakeHeroReflection(src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader)
+                        bakeHeroReflection(
+                            src, bakeW, bakePhotoH, bakeBandH, bakeBlurPx, shader,
+                            extendSides = isLandscape
+                        )
                     } catch (e: CancellationException) {
                         throw e
                     } catch (t: Throwable) {
@@ -874,7 +879,12 @@ fun ArtistDetail(
             // 落盘放到闸门外：内存插入同步生效（同进程回访立刻命中），PNG 编码自行切 IO，
             // 不再占着烘焙闸门让后续几何变化的烘焙排队。
             HeroBakeCache.put(context, cacheKey, bakedBitmap)
-            pendingHeroBake = bakedBitmap.asImageBitmap()
+            val imageBitmap = bakedBitmap.asImageBitmap()
+            if (bakedHero == null) {
+                bakedHero = imageBitmap
+            } else {
+                pendingHeroBake = imageBitmap
+            }
             android.util.Log.d(
                 "HeroTrack",
                 "bake done ${bakeW}x${bakePhotoH + bakeBandH} stretch=$ArtistReflectionStretch " +
@@ -946,11 +956,10 @@ fun ArtistDetail(
                 .fillMaxSize()
                 .layerBackdrop(pageBackdrop)
         ) {
-            // 平板横屏无倒影背景层（bakedHero 恒为 null，这里也不再挂空绘制层）；
             // Hero 滚出视口（heroScrolledOut，组合期读取）时整层从组合中移除——即便
             // 采集/绘制链再出任何异常，也不可能残留「合成图钉在背景上」的僵尸层。
             // 烘焙未完成时（平板竖屏调色板未就绪提前退出）也不挂空层，防止半透明空 graphicsLayer 显示为白色渐变。
-            if (!isLandscape && !heroScrolledOut.value && bakedHero != null) {
+            if (!heroScrolledOut.value && bakedHero != null) {
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -986,85 +995,56 @@ fun ArtistDetail(
                 modifier = Modifier
                     .fillMaxSize()
                     .overScrollVertical(allowTopOverscroll = false),
-                // 横屏（平板+手机）改用横向头部（非沉浸式）：列表加 54dp 顶 padding，
-                // 与 RankDetail/OnlineAlbumDetail 等既有的平板详情页约定一致，
-                // 头部不至于被固定的半透明顶栏遮挡。竖屏（手机/平板）保持沉浸式。
-                contentPadding = if (isLandscape) PaddingValues(top = 54.dp) else PaddingValues(0.dp),
+                contentPadding = PaddingValues(0.dp),
                 overscrollEffect = null,
                 flingBehavior = rememberOverscrollFlingBehavior { listState }
             ) {
                 item("Hero") {
-                    if (isLandscape) {
-                        // 横屏（平板+手机）：左方形头像 + 右名字/操作/数量/简介
-                        ArtistTabletLandscapeHeader(
-                            name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                            // 传已升级的高清 URL（不是 detail.value?.avatarUrl 的 400 档）：
-                            // 横屏这枚头像最大 300dp（≈975 物理像素），400 源要放大 2.4 倍。
-                            avatarUrl = avatarUrl,
-                            avatarRevealed = heroRevealed.value,
-                            hasIntro = !detail.value?.intro.isNullOrBlank(),
-                            introOpen = introOpen.value,
-                            onIntro = { introOpen.value = !introOpen.value },
-                            songsEnabled = songs.isNotEmpty(),
-                            onPlay = { playAt(songs, 0) },
-                            showFollow = resolvedId.value.isNotBlank(),
-                            isFollowed = isFollowed.value,
-                            followEnabled = !followBusy.value && !headerLoading.value,
-                            onFollow = { toggleFollow() },
-                            countsLine = if (hasHeaderDetail.value) detail.value?.let {
-                                stringResource(R.string.artist_detail_songs, it.songCount) +
-                                    " · " + stringResource(R.string.artist_detail_albums, it.albumCount)
-                            } else null,
-                            loading = headerLoading.value,
-                            error = resolveError.value,
-                            onRetry = { retry.value += 1 }
-                        )
-                    } else {
-                        // 英雄区（照片 + 名字）随背景揭示门整体渐入：门未开前全透明，透出底衬；
-                        // 门开后照片、提取色、倒影同帧落位——不再「照片先出、颜色后到」。
-                        // 名字一并被 alpha 覆盖：它硬编码白色 + 黑投影，本就画在 hero 图上，
-                        // 底衬为浅色时不可读，随图淡入与现状等价且避免「照片没来名字先飘着」。
-                        Box(
-                            Modifier.fillMaxWidth().height(heroHeight)
-                                .measureProbe("HeroPortrait")
-                                .drawProbe("HeroPortrait")
-                                .graphicsLayer { alpha = backdropAlpha }
-                        ) {
-                            // 优先：无可用头像（无 url / 加载失败 / 解码失败）→ 身份派生色 + 首字母。
-                            // 其次：烘焙完成（bakedHero != null）由背景层接管照片区——渐进模糊的路径
-                            // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
-                            if (noUsableAvatar) {
-                                ArtistMonogramHero(
-                                    name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                                    // 无头像分支才会走到：这里读动画色只影响本 item，不波及整页
-                                    background = bgColorState.value,
-                                    content = contentColor
-                                )
-                            } else if (bakedHero == null) {
-                                HeroPhoto(Modifier.fillMaxSize())
-                            }
-                            Text(
-                                text = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                                fontSize = 30.sp,
-                                fontWeight = FontWeight.Bold,
-                                // 照片 hero：白名 + 黑投影（画在照片上）。无照片 hero：背景已是
-                                // 派生实色，改用与整页一致的 contentColor，避免白名在浅色派生底上隐形。
-                                color = if (noUsableAvatar) contentColor else Color.White,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                style = TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.45f), blurRadius = 32f)),
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(horizontal = 24.dp)
-                                    .padding(bottom = 8.dp)
+                    // 英雄区（照片 + 名字）随背景揭示门整体渐入：门未开前全透明，透出底衬；
+                    // 门开后照片、提取色、倒影同帧落位——不再「照片先出、颜色后到」。
+                    // 名字一并被 alpha 覆盖：它硬编码白色 + 黑投影，本就画在 hero 图上，
+                    // 底衬为浅色时不可读，随图淡入与现状等价且避免「照片没来名字先飘着」。
+                    Box(
+                        Modifier.fillMaxWidth().height(heroHeight)
+                            .measureProbe(if (isLandscape) "HeroLandscape" else "HeroPortrait")
+                            .drawProbe(if (isLandscape) "HeroLandscape" else "HeroPortrait")
+                            .graphicsLayer { alpha = backdropAlpha }
+                    ) {
+                        // 优先：无可用头像（无 url / 加载失败 / 解码失败）→ 身份派生色 + 首字母。
+                        // 其次：烘焙完成（bakedHero != null）由背景层接管照片区——渐进模糊的路径
+                        // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
+                        if (noUsableAvatar) {
+                            ArtistMonogramHero(
+                                name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
+                                // 无头像分支才会走到：这里读动画色只影响本 item，不波及整页
+                                background = bgColorState.value,
+                                content = contentColor
+                            )
+                        } else if (bakedHero == null) {
+                            HeroPhoto(
+                                if (isLandscape) Modifier.size(heroHeight).align(Alignment.TopCenter)
+                                else Modifier.fillMaxSize()
                             )
                         }
+                        Text(
+                            text = detail.value?.name?.ifEmpty { artistName } ?: artistName,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            // 照片 hero：白名 + 黑投影（画在照片上）。无照片 hero：背景已是
+                            // 派生实色，改用与整页一致的 contentColor，避免白名在浅色派生底上隐形。
+                            color = if (noUsableAvatar) contentColor else Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            style = TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.45f), blurRadius = 32f)),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 24.dp)
+                                .padding(bottom = 8.dp)
+                        )
                     }
                 }
 
-                // 三圆钮行与数量行只在竖屏（手机 / 平板竖屏）出现；横屏已并入横向头部。
-                if (!isLandscape) {
                 // 三圆钮行：i（简介弹窗）｜▶ 播放｜☆ 收藏（静态圆钮，收藏后实心红）
                 item("Actions") {
                     Row(
@@ -1161,7 +1141,6 @@ fun ArtistDetail(
                         }
                     }
                 }
-                }
                 // 简介内联展开项：位于头部信息（Hero/Actions/HeaderStatus）与内容区之间，
                 // 与参考排版一致。点击「i」切换显隐，展/收走 expand/shrink + 淡入淡出。
                 item("Intro") {
@@ -1194,49 +1173,119 @@ fun ArtistDetail(
                         }
                     }
                 }
+                val landscapeSongColumns = if (isLandscape && screenWidthDp >= 640f) 2 else 1
                 if (songsState != null) {
-                    latestAlbum?.let { album ->
-                        item("LatestAlbum") {
-                            // 组合期同步兜底缓存：从列表重新进入时，卡片与数量同帧出现；
-                            // LaunchedEffect 只负责命不中时的网络解析与写回。
-                            val count = if (latestAlbumCount.value > 0) latestAlbumCount.value
-                            else ArtistPresentationCache.albumSongCount(album.albumId) ?: -1
-                            ArtistLatestAlbumCard(
-                                album = album,
-                                songCount = count,
-                                underlayColor = bgColorState.value,
-                                sharedTransitionScope = sharedTransitionScope,
-                                animatedVisibilityScope = animatedVisibilityScope,
-                                probeName = "LatestAlbum"
-                            ) { selected ->
-                                // 防抖：转场窗口内忽略第二下误触（见 NavGuard）
-                                NavGuard.run {
-                                    OnlineAlbumObject.setSelected(selected)
-                                    // 带 albumId + 来源歌手 id：多层堆叠各自解析、背景取本歌手色
-                                    navController.navigate(
-                                        UI.onlineAlbumRoute(selected.albumId, resolvedId.value)
+                    val showLandscapeSideBySide = isLandscape &&
+                        (latestAlbum != null || (albumsLoading.value && albumsError.value == null))
+                    if (showLandscapeSideBySide) {
+                        item("LandscapeFeaturedAndHot") {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Column(Modifier.weight(0.34f)) {
+                                    ArtistSectionHeader(stringResource(R.string.artist_detail_latest_release))
+                                    FadeInContent(
+                                        hasData = latestAlbum != null,
+                                        skeleton = {
+                                            if (albumsLoading.value) {
+                                                ArtistLatestAlbumSkeleton(
+                                                    shimmer = skeletonShimmer,
+                                                    modifier = Modifier.padding(
+                                                        start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    ) {
+                                        latestAlbum?.let { album ->
+                                            val count = if (latestAlbumCount.value > 0) latestAlbumCount.value
+                                            else ArtistPresentationCache.albumSongCount(album.albumId) ?: -1
+                                            ArtistLatestAlbumCard(
+                                                album = album,
+                                                songCount = count,
+                                                underlayColor = bgColorState.value,
+                                                sharedTransitionScope = sharedTransitionScope,
+                                                animatedVisibilityScope = animatedVisibilityScope,
+                                                probeName = "LatestAlbum",
+                                                modifier = Modifier.padding(
+                                                    start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp
+                                                ),
+                                                titleMaxLines = 2
+                                            ) { selected ->
+                                                NavGuard.run {
+                                                    OnlineAlbumObject.setSelected(selected)
+                                                    navController.navigate(
+                                                        UI.onlineAlbumRoute(selected.albumId, resolvedId.value)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Column(Modifier.weight(0.66f)) {
+                                    ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
+                                        navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
+                                    }
+                                    ArtistSongSection(
+                                        songs = hotSongs.value,
+                                        loading = hotLoading.value,
+                                        error = hotError.value,
+                                        pagerState = hotPagerState,
+                                        shimmer = skeletonShimmer,
+                                        onRetry = { hotRetry.value += 1 },
+                                        onPlayAt = { playAt(hotSongs.value, it) },
+                                        probeName = "HotSongs",
+                                        columnsPerViewport = landscapeSongColumns
                                     )
                                 }
                             }
                         }
-                    }
-                    item("HotHeader") {
-                        // 标题整行可点 → 热门歌曲大全页（与「全部歌曲」同款）
-                        ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
-                            navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
+                    } else {
+                        latestAlbum?.let { album ->
+                            item("LatestAlbum") {
+                                // 组合期同步兜底缓存：从列表重新进入时，卡片与数量同帧出现；
+                                // LaunchedEffect 只负责命不中时的网络解析与写回。
+                                val count = if (latestAlbumCount.value > 0) latestAlbumCount.value
+                                else ArtistPresentationCache.albumSongCount(album.albumId) ?: -1
+                                ArtistLatestAlbumCard(
+                                    album = album,
+                                    songCount = count,
+                                    underlayColor = bgColorState.value,
+                                    sharedTransitionScope = sharedTransitionScope,
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                    probeName = "LatestAlbum"
+                                ) { selected ->
+                                    // 防抖：转场窗口内忽略第二下误触（见 NavGuard）
+                                    NavGuard.run {
+                                        OnlineAlbumObject.setSelected(selected)
+                                        // 带 albumId + 来源歌手 id：多层堆叠各自解析、背景取本歌手色
+                                        navController.navigate(
+                                            UI.onlineAlbumRoute(selected.albumId, resolvedId.value)
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    }
-                    item("HotSongs") {
-                        ArtistSongSection(
-                            songs = hotSongs.value,
-                            loading = hotLoading.value,
-                            error = hotError.value,
-                            pagerState = hotPagerState,
-                            shimmer = skeletonShimmer,
-                            onRetry = { hotRetry.value += 1 },
-                            onPlayAt = { playAt(hotSongs.value, it) },
-                            probeName = "HotSongs"
-                        )
+                        item("HotHeader") {
+                            // 标题整行可点 → 热门歌曲大全页（与「全部歌曲」同款）
+                            ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
+                                navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
+                            }
+                        }
+                        item("HotSongs") {
+                            ArtistSongSection(
+                                songs = hotSongs.value,
+                                loading = hotLoading.value,
+                                error = hotError.value,
+                                pagerState = hotPagerState,
+                                shimmer = skeletonShimmer,
+                                onRetry = { hotRetry.value += 1 },
+                                onPlayAt = { playAt(hotSongs.value, it) },
+                                probeName = "HotSongs",
+                                columnsPerViewport = landscapeSongColumns
+                            )
+                        }
                     }
                     item("AlbumsHeader") {
                         // 标题整行可点 → 专辑大全页（与「全部歌曲」同款）
@@ -1279,11 +1328,12 @@ fun ArtistDetail(
                             shimmer = skeletonShimmer,
                             onRetry = { songsState.requestNextPage() },
                             onPlayAt = { playAt(songs, it) },
-                            probeName = "AllSongs"
+                            probeName = "AllSongs",
+                            columnsPerViewport = landscapeSongColumns
                         )
                     }
                 } else if (headerLoading.value) {
-                    item("ResolvingSongs") { ArtistSongsSkeleton(skeletonShimmer) }
+                    item("ResolvingSongs") { ArtistSongsSkeleton(skeletonShimmer, landscapeSongColumns) }
                 }
 
                 item("navbar") {
@@ -1403,152 +1453,6 @@ fun ArtistDetail(
             TitleOverlayHostSlot(overlayHost)
         }
     }
-    }
-}
-
-/**
- * 平板横屏头部：左方形头像 + 右「名字 / 三圆钮 / 数量 / 简介」信息列，
- * 复用其它平板详情页（DetailPageHeader）的横向头部几何与 Apple Music 观感。
- * 本页横屏为非沉浸式（外层 LazyColumn 已加 54dp 顶 padding），故这里再 statusBarsPadding()
- * 让内容落到固定顶栏之下。注意：本组件处于 pageBackdrop 录制层内部，禁止使用任何
- * drawBackdrop 消费者（采样源含自身 → RenderNode 自引用递归 → RenderThread 原生栈溢出秒崩），
- * 故操作钮只用实色半透明圆钮（ArtistRoundActionButton）。
- */
-@Composable
-private fun ArtistTabletLandscapeHeader(
-    name: String,
-    avatarUrl: String?,
-    avatarRevealed: Boolean,
-    hasIntro: Boolean,
-    introOpen: Boolean,
-    onIntro: () -> Unit,
-    songsEnabled: Boolean,
-    onPlay: () -> Unit,
-    showFollow: Boolean,
-    isFollowed: Boolean,
-    followEnabled: Boolean,
-    onFollow: () -> Unit,
-    countsLine: String?,
-    loading: Boolean,
-    error: String?,
-    onRetry: () -> Unit
-) {
-    val context = LocalContext.current
-    val isDark = isFlamingoInDarkMode()
-    // 页面主文字色由外层 CompositionLocalProvider 注入，这里直接继承；
-    // 操作行三个按钮全部由它派生，浅色取色底上翻成深色。
-    val contentColor = LocalContentColor.current
-    val roundContainer = contentColor.copy(alpha = 0.18f)
-    BoxWithConstraints(
-        Modifier
-            .fillMaxWidth()
-            .measureProbe("HeroLandscape")
-            .drawProbe("HeroLandscape")
-            .statusBarsPadding()
-            .padding(top = 14.dp, bottom = 8.dp)
-            .padding(horizontal = 18.dp)
-    ) {
-        // 方形封面随窗宽自适应；窄窗钳到下限 130dp，宽窗钳到上限 300dp（与 DetailPageHeader 同）
-        val coverSize = (maxWidth * 0.28f).coerceIn(130.dp, 300.dp)
-        Row(
-            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-            verticalAlignment = Alignment.Top
-        ) {
-            AsyncImage(
-                model = remember(avatarUrl, avatarRevealed) {
-                    ImageRequest.Builder(context)
-                        .data(if (avatarRevealed) avatarUrl else null)
-                        .error(R.drawable.songcredits_monogram_person)
-                        .placeholder(R.drawable.songcredits_monogram_person)
-                        .fallback(R.drawable.songcredits_monogram_person)
-                        .allowHardware(false)
-                        .size(1024)
-                        // 与竖向 Hero 同键，命中内存缓存即刻显示
-                        .memoryCacheKey("artist-hero:$avatarUrl")
-                        .diskCacheKey(avatarUrl)
-                        .build()
-                },
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(coverSize).clip(YosRoundedCornerShape(7.dp))
-            )
-            Spacer(Modifier.width(15.dp))
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(top = 4.dp)
-            ) {
-                Text(
-                    text = name,
-                    fontSize = 26.sp,
-                    lineHeight = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                // 弹性空隙：把操作行推到信息列底部（与封面下缘对齐，同 DetailPageHeader）
-                Spacer(Modifier.weight(1f))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (hasIntro) {
-                        ArtistRoundActionButton(
-                            icon = R.drawable.ic_mini_info,
-                            contentDescription = stringResource(id = R.string.artist_detail_intro_title),
-                            // 展开态圆底是主题红的 55%，图标保持纯白（红底上深色图标不可读）
-                            iconTint = if (introOpen) Color.White else contentColor,
-                            highlighted = introOpen,
-                            iconSize = 24.dp,
-                            containerColor = roundContainer,
-                            onClick = onIntro
-                        )
-                        Spacer(Modifier.width(20.dp))
-                    }
-                    ArtistPlayButton(
-                        enabled = songsEnabled,
-                        contentColor = contentColor,
-                        onClick = onPlay
-                    )
-                    if (showFollow) {
-                        Spacer(Modifier.width(20.dp))
-                        ArtistRoundActionButton(
-                            icon = if (isFollowed) R.drawable.ic_artist_star_fill else R.drawable.ic_artist_star,
-                            contentDescription = stringResource(
-                                id = if (isFollowed) R.string.artist_detail_unfollow
-                                else R.string.artist_detail_follow
-                            ),
-                            iconTint = if (isFollowed) {
-                                MaterialTheme.colorScheme.primary
-                            } else contentColor,
-                            highlighted = false,
-                            iconSize = 28.dp,
-                            motionEffects = false,
-                            dimWhenDisabled = false,
-                            containerColor = roundContainer,
-                            enabled = followEnabled,
-                            onClick = onFollow
-                        )
-                    }
-                }
-                if (countsLine != null) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = countsLine,
-                        fontSize = 14.sp,
-                        color = LocalContentColor.current.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (loading) {
-                    Spacer(Modifier.height(10.dp))
-                    ArtistHeaderSkeleton()
-                }
-                if (error != null) {
-                    Spacer(Modifier.height(6.dp))
-                    ArtistSectionError(error, loading, onRetry)
-                }
-            }
-        }
     }
 }
 

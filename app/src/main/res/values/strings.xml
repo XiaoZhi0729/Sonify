@@ -587,6 +587,7 @@
     <string name="update_notes_empty">No release notes.</string>
     <string name="update_release_notes">What’s new</string>
     <string name="artist_detail_hot_songs">Top Songs</string>
+    <string name="artist_detail_latest_release">Latest Release</string>
     <string name="artist_detail_all_songs">All Songs</string>
     <string name="artist_detail_albums_section">Albums</string>
     <string name="artist_detail_albums_empty">No albums available</string>

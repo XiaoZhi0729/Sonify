@@ -586,6 +586,7 @@
     <string name="update_notes_empty">暂无发行说明。</string>
     <string name="update_release_notes">更新内容</string>
     <string name="artist_detail_hot_songs">热门歌曲</string>
+    <string name="artist_detail_latest_release">最新发行</string>
     <string name="artist_detail_all_songs">全部歌曲</string>
     <string name="artist_detail_albums_section">专辑</string>
     <string name="artist_detail_albums_empty">暂无专辑</string>

@@ -454,6 +454,7 @@
     <string name="update_notes_empty">リリースノートはありません。</string>
     <string name="update_release_notes">更新内容</string>
     <string name="artist_detail_hot_songs">人気の曲</string>
+    <string name="artist_detail_latest_release">最新リリース</string>
     <string name="artist_detail_all_songs">すべての曲</string>
     <string name="artist_detail_albums_section">アルバム</string>
     <string name="artist_detail_albums_empty">アルバムはありません</string>
