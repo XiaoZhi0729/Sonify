@@ -80,6 +80,7 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberBarBackgroundVisible
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -189,6 +190,7 @@ fun RankDetail(
     // 录制层可直接上屏，省掉整页内容的第二遍绘制。
     val titleBackdrop = rememberTitleBackdrop(blit = true)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    val barBackgroundVisible = rememberBarBackgroundVisible(state)
     val overlayHost = remember { TitleOverlayHost() }
 
     CompositionLocalProvider(
@@ -433,7 +435,8 @@ fun RankDetail(
                 title = rank.name,
                 onBack = { navController.popBackStackSafely() },
                 showSmallTitle = showSmallTitle,
-                backdrop = titleBackdrop
+                backdrop = titleBackdrop,
+                barBackgroundVisible = barBackgroundVisible
             )
             TitleOverlayHostSlot(overlayHost)
         }

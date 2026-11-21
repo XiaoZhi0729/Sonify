@@ -60,6 +60,24 @@ object SettingsLibrary {
     )
 
     /**
+     * 主题强调色（预设 ID 如 "red" / "blue"，或 "custom:#RRGGBB"）
+     */
+    var AccentColor by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_accent_color",
+        initialValue = yos.music.player.ui.theme.AppAccentColors.DefaultId
+    )
+
+    /**
+     * 最近使用过的自定义主题色（逗号分隔的 #RRGGBB 列表，最多 8 个）
+     */
+    var AccentColorRecents by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_ui_accent_color_recents",
+        initialValue = ""
+    )
+
+    /**
      * 是否已设置过屏幕圆角大小
      */
     var ScreenCornerSet by mutableDataSaverStateOf(
@@ -764,6 +782,28 @@ object SettingsLibrary {
     )
 
     /**
+     * 歌曲过渡模式：
+     * - [CROSSFADE_MODE_SMOOTH]：经典等功率平滑过渡（按 [CrossfadeDuration] 固定秒数淡入淡出）
+     * - [CROSSFADE_MODE_SMART]：LiveSort 智能无感过渡（首尾特征分析 + 自适应切入时机 + 呼吸留白 + 动态响度平衡 + 下潜滤波 EQ + 空间混响）
+     */
+    var CrossfadeMode by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_play_crossfade_mode",
+        initialValue = CROSSFADE_MODE_SMOOTH
+    )
+
+    fun isSmartCrossfade(): Boolean = CrossfadeMode == CROSSFADE_MODE_SMART
+
+    /**
+     * 智能过渡的「音色与空间混响强度」：0 = 柔和，1 = 标准（默认），2 = 浓郁。
+     */
+    var SmartTransitionFxIntensity by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_play_smart_transition_fx_intensity",
+        initialValue = 1
+    )
+
+    /**
      * 诊断日志落盘开关（[yos.music.player.code.utils.others.YosDiagnostics]）。
      *
      * 默认开：要抓的恰恰是"熄屏后无人旁观时"的无声事件——日志只在事发前就在写才有用。
@@ -821,6 +861,8 @@ object SettingsLibrary {
         NowPlayingShowVolumeBar = true
         NowPlayingShowCommentsEntry = true
         CustomTheme = "Auto"
+        AccentColor = yos.music.player.ui.theme.AppAccentColors.DefaultId
+        AccentColorRecents = ""
         ScreenCornerSet = false
         ScreenCorner = "30"
         SongSort = SongSortEnum.MUSIC_TITLE.ordinal
@@ -892,6 +934,8 @@ object SettingsLibrary {
         CrossfadeEnabled = false
         CrossfadeDuration =
             yos.music.player.code.utils.player.CrossfadePolicy.DEFAULT_DURATION_SEC.toString()
+        CrossfadeMode = CROSSFADE_MODE_SMOOTH
+        SmartTransitionFxIntensity = 1
         DiagLogEnabled = true
         ColorOsLyricDiagEnabled = false
         AudioCacheCapMb = 1024
@@ -900,4 +944,7 @@ object SettingsLibrary {
 
     const val BACKGROUND_MODE_DRIFT = 0
     const val BACKGROUND_MODE_MESH = 1
+
+    const val CROSSFADE_MODE_SMOOTH = "Smooth"
+    const val CROSSFADE_MODE_SMART = "Smart"
 }

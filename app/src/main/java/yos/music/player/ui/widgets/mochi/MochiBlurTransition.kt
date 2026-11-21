@@ -103,9 +103,19 @@ data class MochiBlurTransition(
 internal val ContentSpring: AnimationSpec<Float> =
     MochiSprings.snappy(300, visibilityThreshold = 0.001f)
 
+internal val CounterSpring: AnimationSpec<Float> =
+    spring(dampingRatio = 0.58f, stiffness = 380f, visibilityThreshold = 0.001f)
+
 object MochiBlurTransitions {
     val Replace: MochiBlurTransition = MochiBlurTransition()
     val Appear: MochiBlurTransition = MochiBlurTransition(blur = 10.dp, scale = 0.8f)
+    val Counter: MochiBlurTransition = MochiBlurTransition(
+        blur = 5.dp,
+        scale = 1f,
+        slide = 0.55f,
+        enter = CounterSpring,
+        exit = ContentSpring,
+    )
 }
 
 private class BlurSlot<T>(val key: T, initial: Float) {

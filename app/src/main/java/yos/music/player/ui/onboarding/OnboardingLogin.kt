@@ -44,7 +44,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.material3.CircularProgressIndicator
+import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -660,11 +660,7 @@ internal fun OnboardingQrSheet(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        phase == QrPhase.LOADING -> CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = Color(0xFF8E8E93),
-                            strokeWidth = 2.dp,
-                        )
+                        phase == QrPhase.LOADING -> MochiActivityIndicator(size = 22.dp, color = Color(0xFF8E8E93))
 
                         else -> Text(
                             text = stringResource(id = R.string.kugou_qr_regenerate),

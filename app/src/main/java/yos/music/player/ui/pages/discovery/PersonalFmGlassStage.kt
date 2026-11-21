@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -18,6 +19,8 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.highlight.Highlight
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import yos.music.player.ui.widgets.liquid.classyabaBlackRim
+import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 
 /**
  * 板块私有玻璃舞台。
@@ -69,7 +72,16 @@ internal fun PersonalFmGlassStage(
     backdropContent: @Composable BoxScope.() -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val edgeAlpha = if (isFlamingoInDarkMode()) 0.32f else 0.65f
+    val isDark = isFlamingoInDarkMode()
+    val edgeAlpha = if (isDark) 0.32f else 0.65f
+    val darkRimHighlight = remember(edgeAlpha) {
+        { Highlight.Ambient.copy(alpha = edgeAlpha) }
+    }
+    val glassHighlight: (() -> Highlight?)? = when {
+        !glassOn -> null
+        !isDark -> classyabaBlackRim
+        else -> darkRimHighlight
+    }
 
     Box(modifier) {
         // ---- 1. 采样源 ----
@@ -104,15 +116,15 @@ internal fun PersonalFmGlassStage(
                         backdrop = backdrop,
                         shape = { shape },
                         effects = if (glassOn) glassEffects else frostedEffects,
-                        // Ambient：沿 SDF 边缘一圈的柔光，是"液态玻璃"的身份特征。
-                        // 磨砂态不该有——那是玻璃的边缘光，不是磨砂的一部分。
-                        highlight = if (glassOn) {
-                            {
-                                Highlight.Ambient.copy(alpha = edgeAlpha)
-                            }
-                        } else null,
+                        // 液态玻璃边缘：浅色模式采用与按钮一致的「左右暗、上下亮」ClassYaba 描边
+                        // （classyabaBlackRim + classyabaWhiteEdge）；深色模式保持 Ambient 柔光。
+                        // 磨砂态不加边缘高光。
+                        highlight = glassHighlight,
                         shadow = null,
                         onDrawSurface = if (glassOn) glassSurface else frostedSurface
+                    )
+                    .then(
+                        if (glassOn && !isDark) Modifier.classyabaWhiteEdge(shape) else Modifier
                     ),
                 content = content
             )

@@ -43,12 +43,15 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -58,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.kyant.backdrop.BackdropEffectScope
+import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -73,7 +77,10 @@ import yos.music.player.data.objects.PersonalFmObject
 import yos.music.player.data.objects.KugouAccountState
 import yos.music.player.data.repositories.KugouNewSong
 import yos.music.player.data.repositories.KugouRepository
+import yos.music.player.ui.navigation.LocalPageGradient
+import yos.music.player.ui.navigation.TrackBackdropGradient
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.coverCacheKey
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.liquid.glassBlurScale
@@ -440,13 +447,46 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
      * 必须 `remember` 稳定：`onDraw` 是 `rememberLayerBackdrop` 的 key，
      * 每次重组换实例会新建 LayerBackdrop（玻璃瞬间脱层）。
      */
-    val stageOnDraw = remember<androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit>(isDark) {
+    // 采样层底色必须与真实页面背景一致：开启「封面取色背景」时走 LocalPageGradient
+    // （按本板块在窗口内的纵向坐标对齐整屏渐变），关闭或无渐变时回退到页面底色。
+    // 全程在绘制期读取，不把渐变放进 remember 键，避免开关/切歌时重建 LayerBackdrop。
+    val pageGradient = LocalPageGradient.current
+    val pageColor = LocalTitlePageColor.current ?: (if (isDark) Color.Black else Color.White)
+    val pageColorState = rememberUpdatedState(pageColor)
+    val rootView = LocalView.current
+    val backdropRef = remember { arrayOfNulls<LayerBackdrop>(1) }
+    val recordedGradientRef = remember { arrayOfNulls<TrackBackdropGradient>(1) }
+    val recordedYRef = remember { floatArrayOf(Float.NaN) }
+
+    val stageOnDraw = remember<ContentDrawScope.() -> Unit>(pageGradient) {
         {
-            drawRect(if (isDark) Color.Black else Color.White)
+            val active = pageGradient?.current()
+            recordedGradientRef[0] = active
+            if (active != null) {
+                val coords = backdropRef[0]?.layerCoordinates
+                val rootH = rootView.height.toFloat()
+                if (coords != null && coords.isAttached && rootH > 0f) {
+                    val yInWindow = coords.positionInWindow().y
+                    recordedYRef[0] = yInWindow
+                    val brush = Brush.verticalGradient(
+                        colorStops = Array(active.stops.size) { active.positions[it] to active.stops[it] },
+                        startY = -yInWindow,
+                        endY = rootH - yInWindow
+                    )
+                    drawRect(brush)
+                } else {
+                    recordedYRef[0] = Float.NaN
+                    drawRect(active.average)
+                }
+            } else {
+                recordedYRef[0] = Float.NaN
+                drawRect(pageColorState.value)
+            }
             drawContent()
         }
     }
     val stageBackdrop = rememberLayerBackdrop(onDraw = stageOnDraw)
+    backdropRef[0] = stageBackdrop
     val glassScale = glassBlurScale
     val glassEffects = remember<BackdropEffectScope.() -> Unit>(glassScale) {
         {
@@ -560,9 +600,21 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
         val fadeStartXPx = with(density) { (FmRailStart + FmGlassWidth).toPx() }
         val fadeEndXPx = with(density) { FmRailStart.toPx() }
         var imageLoadTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
-        val fmRecordKey = Triple(focusedSong?.hash, smearBrush, imageLoadTick)
-        val fmMustRecord = remember(pagerState, spinningKey) {
-            { spinningKey != null || pagerState.isScrollInProgress }
+        val fmRecordKey = remember(focusedSong?.hash, smearBrush, imageLoadTick, pageColor) {
+            listOf(focusedSong?.hash, smearBrush, imageLoadTick, pageColor)
+        }
+        val fmMustRecord = remember(pagerState, spinningKey, pageGradient) {
+            {
+                val active = pageGradient?.current()
+                val yNow = if (active != null) {
+                    val coords = stageBackdrop.layerCoordinates
+                    if (coords != null && coords.isAttached) coords.positionInWindow().y else Float.NaN
+                } else Float.NaN
+                spinningKey != null ||
+                    pagerState.isScrollInProgress ||
+                    active != recordedGradientRef[0] ||
+                    (active != null && yNow != recordedYRef[0] && !(yNow.isNaN() && recordedYRef[0].isNaN()))
+            }
         }
 
         PersonalFmGlassStage(

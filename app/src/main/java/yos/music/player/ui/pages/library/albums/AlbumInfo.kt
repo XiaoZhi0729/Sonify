@@ -87,6 +87,7 @@ import yos.music.player.ui.widgets.basic.LocalTitleOverlayHost
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberBarBackgroundVisible
 import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
@@ -168,6 +169,7 @@ fun AlbumInfo(
             val overlayHost = remember { TitleOverlayHost() }
             val menuOpen = remember { mutableStateOf(false) }
             val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+            val barBackgroundVisible = rememberBarBackgroundVisible(state)
 
             val mainArtists = rememberSaveable(key = "AlbumInfo_mainArtists") {
                 mutableStateOf(rawSongs.first().artistsList ?: defaultArtists)
@@ -450,6 +452,7 @@ fun AlbumInfo(
                         onBack = { navController.popBackStackSafely() },
                         showSmallTitle = showSmallTitle,
                         backdrop = titleBackdrop,
+                        barBackgroundVisible = barBackgroundVisible,
                         rightBarIcon = {
                             TitleBarGlassMenu(
                                 expanded = menuOpen.value,

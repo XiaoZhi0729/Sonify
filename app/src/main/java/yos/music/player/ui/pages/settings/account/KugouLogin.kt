@@ -338,7 +338,7 @@ private fun LoginMethodSegment(selected: Int, onSelect: (Int) -> Unit) {
                     text = label,
                     fontSize = 15.sp,
                     fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-                    color = if (active) Color.White
+                    color = if (active) MaterialTheme.colorScheme.onPrimary
                     else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
                 )
             }
@@ -772,7 +772,7 @@ private fun LoginCapsuleButton(enabled: Boolean, loggingIn: Boolean, onClick: ()
             text = if (loggingIn) stringResource(id = R.string.kugou_phone_logging_in)
             else stringResource(id = R.string.kugou_phone_login),
             fontSize = 16.5.sp,
-            color = Color.White.copy(alpha = if (enabled) 1f else 0.7f)
+            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = if (enabled) 1f else 0.7f)
         )
     }
 }

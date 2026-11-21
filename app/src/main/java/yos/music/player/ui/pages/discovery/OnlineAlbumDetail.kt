@@ -125,6 +125,7 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberBarBackgroundVisible
 import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
 import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
@@ -428,6 +429,7 @@ fun OnlineAlbumDetail(
     // 从而让顶栏渐进模糊的采样底色与页面背景/底栏遮罩严格同帧同步。
     val titleBackdrop = rememberTitleBackdrop(backdrop)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    val barBackgroundVisible = rememberBarBackgroundVisible(state)
     // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出）。进度由 state 的滚动量驱动，
     // 与顶栏折叠共用同一个 LazyListState，两者严格同帧。
     val coverMotion = rememberCoverScrollMotion(state)
@@ -837,6 +839,7 @@ fun OnlineAlbumDetail(
                 },
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
+                barBackgroundVisible = barBackgroundVisible,
                 backIconTint = contentColor,
                 rightBarIcon = {
                     // 本体化玻璃菜单（NexioSchedule 1.6.5）：顶栏槽只放 42dp 占位，

@@ -37,15 +37,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.DrawStyle
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.capsule.Continuity
 import com.kyant.capsule.continuities.G1Continuity
@@ -174,6 +178,21 @@ internal class MochiHaptics(private val view: View, private val profile: MochiHa
         }
     }
 
+    /** 越过阈值（下拉刷新触发）：一下轻 click */
+    fun threshold() {
+        if (profile == MochiHapticProfile.Off) return
+        if (!primitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.6f, clickOk)) {
+            perform(
+                when {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+                        HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> HapticFeedbackConstants.CONFIRM
+                    else -> HapticFeedbackConstants.VIRTUAL_KEY
+                },
+            )
+        }
+    }
+
     private fun primitive(id: Int, scale: Float, supported: Boolean): Boolean {
         if (!supported || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
         val v = vibrator ?: return false
@@ -220,6 +239,73 @@ internal fun Path.addG2RoundRect(rect: Rect, radius: Float, smoothing: Float) {
         .createRoundedRectanglePathSegments(rect.width.toDouble(), rect.height.toDouble(), r, r, r, r)
         .toPath()
     addPath(p, rect.topLeft)
+}
+
+internal fun Path.addG2RoundRect(
+    rect: Rect,
+    topLeft: Float,
+    topRight: Float,
+    bottomRight: Float,
+    bottomLeft: Float,
+) {
+    if (rect.width <= 0f || rect.height <= 0f) return
+    val half = min(rect.width, rect.height) / 2f
+    val p = Continuity.Default
+        .createRoundedRectanglePathSegments(
+            rect.width.toDouble(),
+            rect.height.toDouble(),
+            topLeft.coerceIn(0f, half).toDouble(),
+            topRight.coerceIn(0f, half).toDouble(),
+            bottomRight.coerceIn(0f, half).toDouble(),
+            bottomLeft.coerceIn(0f, half).toDouble(),
+        )
+        .toPath()
+    addPath(p, rect.topLeft)
+}
+
+internal fun DrawScope.drawG2RoundRect(
+    scratch: Path,
+    rect: Rect,
+    radius: Float,
+    color: Color,
+    alpha: Float = 1f,
+    style: DrawStyle = Fill,
+) {
+    if (rect.width <= 0f || rect.height <= 0f) return
+    scratch.reset()
+    scratch.addG2RoundRect(rect, radius, 1f)
+    drawPath(scratch, color, alpha = alpha, style = style)
+}
+
+internal class G2RectClipShape4(
+    private val rect: Rect,
+    private val topLeft: Float,
+    private val topRight: Float,
+    private val bottomRight: Float,
+    private val bottomLeft: Float,
+) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline = Outline.Generic(
+        Path().apply { addG2RoundRect(rect, topLeft, topRight, bottomRight, bottomLeft) },
+    )
+
+    override fun equals(other: Any?): Boolean = other is G2RectClipShape4 &&
+        other.rect == rect &&
+        other.topLeft == topLeft &&
+        other.topRight == topRight &&
+        other.bottomRight == bottomRight &&
+        other.bottomLeft == bottomLeft
+
+    override fun hashCode(): Int {
+        var h = rect.hashCode()
+        h = h * 31 + topLeft.hashCode()
+        h = h * 31 + topRight.hashCode()
+        h = h * 31 + bottomRight.hashCode()
+        return h * 31 + bottomLeft.hashCode()
+    }
 }
 
 internal class G2PathCache {

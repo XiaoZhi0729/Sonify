@@ -2,6 +2,9 @@ package yos.music.player.ui.theme
 
 import android.app.Activity
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
@@ -12,11 +15,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.SonifyDialogHost
 
@@ -41,8 +46,8 @@ private val LightColorScheme = lightColorScheme(
 )
 
 // 光标/选择手柄由 Compose 画在独立 Popup 窗口里，层级永远压过页面内容，
-// 而 MaterialTheme 默认把 handleColor 设为 colorScheme.primary（本工程的红色），
-// 导致输入框里出现一块盖住一切的红色水滴。这里统一改成透明，手柄不再绘制；
+// 而 MaterialTheme 默认把 handleColor 设为 colorScheme.primary（主题强调色），
+// 导致输入框里出现一块盖住一切的彩色水滴。这里统一改成透明，手柄不再绘制；
 // 拖拽选择手势本身不受影响。选中文字的高亮底色也一并去掉 primary 的染色。
 private val TransparentSelectionColors = TextSelectionColors(
     handleColor = Color.Transparent,
@@ -53,16 +58,25 @@ private val TransparentSelectionColors = TextSelectionColors(
 fun YosMusicTheme(
     darkTheme: Boolean = isFlamingoInDarkMode(),
     dynamicColor: Boolean = false,
+    accentColor: Color? = null,
     content: @Composable () -> Unit
 ) {
+    val targetPrimary = accentColor ?: AppAccentColors.resolve(SettingsLibrary.AccentColor, darkTheme)
+    val animatedPrimary by animateColorAsState(
+        targetValue = targetPrimary,
+        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+        label = "yosThemePrimary",
+    )
+    val animatedOnPrimary = AppAccentColors.onPrimaryFor(animatedPrimary)
+
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
 
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> DarkColorScheme.copy(primary = animatedPrimary, onPrimary = animatedOnPrimary)
+        else -> LightColorScheme.copy(primary = animatedPrimary, onPrimary = animatedOnPrimary)
     }
     val view = LocalView.current
     if (!view.isInEditMode) {

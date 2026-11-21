@@ -20,6 +20,7 @@ import yos.music.player.ui.pages.settings.LabelItem
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.pages.settings.SwitchItem
+import yos.music.player.ui.theme.AppAccentColors
 import yos.music.player.ui.theme.SystemScreenCornerSample
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.Title
@@ -64,6 +65,24 @@ fun UserInterfaceSetting(navController: NavController) =
                                         }
                                 },
                                 checkedLambda = { SettingsLibrary.CustomTheme == "Auto" }
+                            )
+                        }
+
+                        GroupSpacer()
+
+                        // ---------------- 主题色 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_accent_color_title))
+
+                        RoundColumn {
+                            ThemeColorCard(
+                                selectedSpecProvider = { SettingsLibrary.AccentColor },
+                                recentsProvider = { SettingsLibrary.AccentColorRecents },
+                                onSelectPreset = { SettingsLibrary.AccentColor = it },
+                                onSelectCustom = { color ->
+                                    SettingsLibrary.AccentColor = AppAccentColors.encodeCustomColor(color)
+                                    SettingsLibrary.AccentColorRecents =
+                                        AppAccentColors.recordRecent(SettingsLibrary.AccentColorRecents, color)
+                                },
                             )
                         }
 

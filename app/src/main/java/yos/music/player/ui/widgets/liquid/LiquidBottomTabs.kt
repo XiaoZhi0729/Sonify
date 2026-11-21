@@ -46,13 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
+import androidx.compose.material3.MaterialTheme
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import yos.music.player.ui.theme.isFlamingoInDarkMode
-import yos.music.player.ui.theme.primary
-import yos.music.player.ui.theme.primaryDark
 import yos.music.player.ui.widgets.basic.LocalGlassContentColor
 import yos.music.player.ui.widgets.liquid.DampedDragAnimation
 import com.kyant.backdrop.drawBackdrop
@@ -114,9 +113,7 @@ fun LiquidBottomTabs(
     // 应用内选深色而系统是浅色时，底栏会走浅色分支画出白纱（灰条），
     // 与迷你播放器（withNight，同源判定）出现黑灰两张皮。
     val isLightTheme = !isFlamingoInDarkMode()
-    val accentColor =
-        if (isLightTheme) primary
-        else primaryDark
+    val accentColor = MaterialTheme.colorScheme.primary
     // 与迷你播放器玻璃面同色同透明度（MainActivity: White withNight 0xFF1C1C1E，收起态 alpha 0.5）
     val containerColor =
         if (isLightTheme) Color.White.copy(0.5f)

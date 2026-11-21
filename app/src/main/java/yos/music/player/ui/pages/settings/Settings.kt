@@ -29,6 +29,7 @@ import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.code.utils.others.BatteryOptimization
 import yos.music.player.code.utils.others.YosDiagnostics
+import yos.music.player.code.utils.player.CrossfadeExo
 import yos.music.player.code.utils.player.CrossfadePolicy
 import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.SettingsLibrary
@@ -202,22 +203,85 @@ fun Settings(navController: NavController) =
 
                             Divider()
 
+                            val smoothModeLabel =
+                                stringResource(id = R.string.settings_play_crossfade_mode_smooth)
+                            val smartModeLabel =
+                                stringResource(id = R.string.settings_play_crossfade_mode_smart)
+                            val modeOptions = listOf(smoothModeLabel, smartModeLabel)
+                            SelectItem(
+                                enabledProvider = { SettingsLibrary.CrossfadeEnabled },
+                                title = stringResource(id = R.string.settings_play_crossfade_mode),
+                                desc = stringResource(id = R.string.settings_play_crossfade_mode_desc),
+                                items = modeOptions,
+                                value = {
+                                    if (SettingsLibrary.isSmartCrossfade()) smartModeLabel
+                                    else smoothModeLabel
+                                },
+                                onValueChange = { selected ->
+                                    val nextMode = if (selected == smartModeLabel) {
+                                        SettingsLibrary.CROSSFADE_MODE_SMART
+                                    } else {
+                                        SettingsLibrary.CROSSFADE_MODE_SMOOTH
+                                    }
+                                    if (SettingsLibrary.CrossfadeMode != nextMode) {
+                                        SettingsLibrary.CrossfadeMode = nextMode
+                                        CrossfadeExo.abort("mode_changed")
+                                    }
+                                }
+                            )
+
+                            if (SettingsLibrary.isSmartCrossfade()) {
+                                Divider()
+                                val fxLabels = listOf(
+                                    stringResource(id = R.string.settings_playback_tier_soft),
+                                    stringResource(id = R.string.settings_playback_tier_standard),
+                                    stringResource(id = R.string.settings_playback_blur_rich),
+                                )
+                                SelectItem(
+                                    enabledProvider = {
+                                        SettingsLibrary.CrossfadeEnabled && SettingsLibrary.isSmartCrossfade()
+                                    },
+                                    title = stringResource(id = R.string.settings_play_smart_fx_intensity),
+                                    items = fxLabels,
+                                    value = {
+                                        fxLabels[
+                                            SettingsLibrary.SmartTransitionFxIntensity
+                                                .coerceIn(0, fxLabels.lastIndex)
+                                        ]
+                                    },
+                                    onValueChange = { selected ->
+                                        val index = fxLabels.indexOf(selected)
+                                        if (index >= 0) {
+                                            SettingsLibrary.SmartTransitionFxIntensity = index
+                                        }
+                                    }
+                                )
+                            }
+
+                            Divider()
+
                             // 时长档位表取 CrossfadePolicy 里同一张：避免"UI 能选、引擎不认"；
-                            // 开关关掉时整行置灰不可点，不让用户改一个当前无效的参数
+                            // 开关关掉或处于智能过渡模式时整行置灰不可点，不让用户改一个当前无效的参数
                             val crossfadeSeconds = CrossfadePolicy.DurationOptionsSec
                             val crossfadeLabels = crossfadeSeconds.map {
                                 stringResource(id = R.string.settings_play_crossfade_sec, it)
                             }
                             SelectItem(
-                                enabledProvider = { SettingsLibrary.CrossfadeEnabled },
+                                enabledProvider = {
+                                    SettingsLibrary.CrossfadeEnabled && !SettingsLibrary.isSmartCrossfade()
+                                },
                                 title = stringResource(id = R.string.settings_play_crossfade_duration),
                                 items = crossfadeLabels,
                                 value = {
-                                    stringResource(
-                                        id = R.string.settings_play_crossfade_sec,
-                                        SettingsLibrary.CrossfadeDuration.toIntOrNull()
-                                            ?: CrossfadePolicy.DEFAULT_DURATION_SEC
-                                    )
+                                    if (SettingsLibrary.isSmartCrossfade()) {
+                                        stringResource(id = R.string.settings_play_crossfade_duration_auto)
+                                    } else {
+                                        stringResource(
+                                            id = R.string.settings_play_crossfade_sec,
+                                            SettingsLibrary.CrossfadeDuration.toIntOrNull()
+                                                ?: CrossfadePolicy.DEFAULT_DURATION_SEC
+                                        )
+                                    }
                                 },
                                 onValueChange = { label ->
                                     crossfadeSeconds.getOrNull(crossfadeLabels.indexOf(label))

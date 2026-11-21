@@ -113,14 +113,32 @@ fun YosFloatingLight(
      * 不该因为用户此刻的设置恰好是"慢速漂移"就展示一个平铺糊图。
      * 它不改用户设置（纯展示），且仍需设备支持 GLES3。
      */
-    forceMesh: Boolean = false
+    forceMesh: Boolean = false,
+    /**
+     * 可选的背景模式覆写（只读展示，不修改 [SettingsLibrary]）：
+     * - `null`：沿用系统设置（默认行为）；
+     * - `0`：关闭动态效果；
+     * - `1`：强制慢速漂移（Ken Burns）；
+     * - `2`：强制流体网格（PearMesh，需设备支持 GLES3，不支持时自动退回慢速漂移）。
+     */
+    overrideBackgroundMode: Int? = null
 ) {
     val context = LocalContext.current
     val meshSupported = remember { isPearMeshSupported(context) }
+    val effectiveBgEffect = when (overrideBackgroundMode) {
+        null -> NowplayingBackgroundEffect
+        0 -> false
+        else -> true
+    }
+    val effectiveMeshMode = when (overrideBackgroundMode) {
+        null -> forceMesh || SettingsLibrary.NowplayingBackgroundMode == SettingsLibrary.BACKGROUND_MODE_MESH
+        2 -> true
+        else -> false
+    }
     // 流体网格模式接管背景时，糊图这条管线整个不跑（网格自己在 GL 里调色 + 模糊）
     val meshActive = enableMesh &&
-            NowplayingBackgroundEffect &&
-            (forceMesh || SettingsLibrary.NowplayingBackgroundMode == SettingsLibrary.BACKGROUND_MODE_MESH) &&
+            effectiveBgEffect &&
+            effectiveMeshMode &&
             meshSupported
 
     var meshReady by remember { mutableStateOf(false) }
@@ -155,6 +173,7 @@ fun YosFloatingLight(
                             // 不会出现"旧图先淡掉、新图还没到"的透底变暗。
                             backgroundLayerAlpha(index, layers.size, crossfade.progress.value)
                         },
+                        useKenBurns = effectiveBgEffect,
                         animateAlways = animateAlways
                     )
                 }
@@ -168,16 +187,19 @@ fun YosFloatingLight(
     val albumUri = album()
 
     YosWrapper {
-        LaunchedEffect(albumUri) {
+        LaunchedEffect(albumUri, effectiveBgEffect) {
             if (albumUri == null) return@LaunchedEffect
             // 缓存命中：糊好的位图直接挂载，跳过整条管线（重进页背景即时出图）
-            val hit = FloatingLightBitmapCache.get(FloatingLightBitmapCache.key(albumUri, targetPx()))
+            val hit = FloatingLightBitmapCache.get(
+                FloatingLightBitmapCache.key(albumUri, targetPx(effectiveBgEffect))
+            )
             if (hit != null) {
                 drawable.value = hit.toDrawable(context.resources)
                 return@LaunchedEffect
             }
             withContext(Dispatchers.IO) {
-                val nextDrawable = loadFloatingLightDrawable(context, albumUri) ?: return@withContext
+                val nextDrawable = loadFloatingLightDrawable(context, albumUri, effectiveBgEffect)
+                    ?: return@withContext
                 // 仅在结果完整生成后替换，切歌期间保留上一张背景。
                 withContext(Dispatchers.Main) {
                     if (album() == albumUri) {
@@ -219,7 +241,7 @@ fun YosFloatingLight(
             // 原第三层全屏 OVERLAY ImageView 已烘焙进 imageResolve（bakeDarkOverlay），层序少一层全屏合成。
             BackgroundLayer(
                 drawable = currentDrawable,
-                useKenBurns = NowplayingBackgroundEffect,
+                useKenBurns = effectiveBgEffect,
                 isPlaying = isPlaying,
                 nowPage = nowPage,
                 showMiniPlayer = showMiniPlayer,
@@ -260,7 +282,8 @@ internal fun backgroundLayerAlpha(index: Int, count: Int, progress: Float): Floa
 }
 
 /** 背景源图的目标解码档：动态效果要 96px 才够 Ken Burns 的 1.26 倍放大。 */
-private fun targetPx(): Int = if (NowplayingBackgroundEffect) 96 else 32
+private fun targetPx(useKenBurns: Boolean = NowplayingBackgroundEffect): Int =
+    if (useKenBurns) 96 else 32
 
 /**
  * 糊图管线的唯一入口（load）：命中进程级缓存直接返回，否则解码 → 烘焙 → 模糊 → 入缓存。
@@ -268,8 +291,12 @@ private fun targetPx(): Int = if (NowplayingBackgroundEffect) 96 else 32
  * 就绪闸门（`rememberTrackArtworkTransition` 的 prepare）与绘制层共用这一个函数，
  * 所以"闸门等到的"就是"绘制层马上要画的"那一份，不存在重复解码。
  */
-private suspend fun loadFloatingLightDrawable(context: Context, uri: Uri): Drawable? {
-    val targetPx = targetPx()
+private suspend fun loadFloatingLightDrawable(
+    context: Context,
+    uri: Uri,
+    useKenBurns: Boolean = NowplayingBackgroundEffect
+): Drawable? {
+    val targetPx = targetPx(useKenBurns)
     val cacheKey = FloatingLightBitmapCache.key(uri, targetPx)
     FloatingLightBitmapCache.get(cacheKey)?.let { return it.toDrawable(context.resources) }
     return withContext(Dispatchers.IO) {
@@ -314,18 +341,19 @@ private fun FloatingLightLayer(
     nowPage: () -> String,
     showMiniPlayer: Boolean,
     alpha: () -> Float,
+    useKenBurns: Boolean = NowplayingBackgroundEffect,
     animateAlways: Boolean = false
 ) {
     val context = LocalContext.current
-    var drawable by remember(uri) { mutableStateOf<Drawable?>(null) }
-    LaunchedEffect(uri) {
+    var drawable by remember(uri, useKenBurns) { mutableStateOf<Drawable?>(null) }
+    LaunchedEffect(uri, useKenBurns) {
         if (uri == null) return@LaunchedEffect
-        val loaded = loadFloatingLightDrawable(context, uri)
+        val loaded = loadFloatingLightDrawable(context, uri, useKenBurns)
         if (loaded != null) drawable = loaded
     }
     BackgroundLayer(
         drawable = drawable,
-        useKenBurns = NowplayingBackgroundEffect,
+        useKenBurns = useKenBurns,
         isPlaying = isPlaying,
         nowPage = nowPage,
         showMiniPlayer = showMiniPlayer,

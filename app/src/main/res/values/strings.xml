@@ -217,6 +217,12 @@
     <string name="settings_play_crossfade_desc">When a song plays to its end and the next one starts on its own, the two overlap for the duration below. Skipping by hand stays an instant cut.</string>
     <string name="settings_play_crossfade_duration">Transition duration</string>
     <string name="settings_play_crossfade_sec">%1$d s</string>
+    <string name="settings_play_crossfade_mode">Transition mode</string>
+    <string name="settings_play_crossfade_mode_smooth">Smooth Transition</string>
+    <string name="settings_play_crossfade_mode_smart">Smart Transition</string>
+    <string name="settings_play_crossfade_mode_desc">Smooth uses a fixed equal-power fade; Smart analyzes intro/outro energy, tempo and trailing silence to adapt entry timing, loudness balance, underwater tone EQ and spatial reverb.</string>
+    <string name="settings_play_crossfade_duration_auto">Auto (Smart)</string>
+    <string name="settings_play_smart_fx_intensity">Tone &amp; Spatial Reverb</string>
     <string name="settings_extend_statusbarlyric">Status Bar Lyrics</string>
     <string name="settings_others">Others</string>
     <string name="settings_others_about">About</string>
@@ -546,6 +552,8 @@
     <string name="search_no_result">No results</string>
     <string name="settings_others_about_developer_mode">Developer Mode</string>
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
+    <string name="settings_dev_progressive_blur_demo">Progressive Blur Lyrics Demo</string>
+    <string name="settings_dev_progressive_blur_demo_desc">Preview mirrored dynamic cover video + multi-level progressive blur lyrics in landscape and portrait</string>
     <string name="update_check">Check for updates</string>
     <string name="update_auto_check">Check for updates automatically</string>
     <string name="update_preview_channel">Receive preview updates</string>
@@ -838,4 +846,31 @@
     <string name="bottom_bar_setting_reset_confirm_no">No</string>
     <string name="bottom_bar_setting_hide_tab">Hide %1$s</string>
     <string name="bottom_bar_setting_show_tab">Show %1$s</string>
+
+    <!-- Custom Theme Color -->
+    <string name="settings_performance_ui_accent_color_title">Theme Color</string>
+    <string name="settings_performance_ui_accent_color_custom">Custom</string>
+    <string name="settings_performance_ui_accent_color_picker_title">Custom Theme Color</string>
+    <string name="accent_color_red">Red</string>
+    <string name="accent_color_pink">Pink</string>
+    <string name="accent_color_orange">Orange</string>
+    <string name="accent_color_yellow">Yellow</string>
+    <string name="accent_color_green">Green</string>
+    <string name="accent_color_mint">Mint</string>
+    <string name="accent_color_teal">Teal</string>
+    <string name="accent_color_cyan">Cyan</string>
+    <string name="accent_color_blue">Blue</string>
+    <string name="accent_color_indigo">Indigo</string>
+    <string name="accent_color_purple">Purple</string>
+    <string name="color_picker_mode_grid">Grid</string>
+    <string name="color_picker_mode_spectrum">Spectrum</string>
+    <string name="color_picker_mode_sliders">Sliders</string>
+    <string name="color_picker_channel_red">Red</string>
+    <string name="color_picker_channel_green">Green</string>
+    <string name="color_picker_channel_blue">Blue</string>
+    <string name="color_picker_axis_saturation">Saturation</string>
+    <string name="color_picker_axis_chroma">Chroma</string>
+    <string name="color_picker_axis_lightness">Lightness</string>
+    <string name="color_picker_opacity">Opacity</string>
+    <string name="color_picker_close">Close</string>
 </resources>

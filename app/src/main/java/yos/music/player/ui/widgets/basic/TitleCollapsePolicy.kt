@@ -23,3 +23,9 @@ internal fun calculateTitleCollapse(
         }
     }
 }
+
+internal fun shouldShowBarBackground(
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+    thresholdPx: Int
+): Boolean = firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > thresholdPx

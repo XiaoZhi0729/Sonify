@@ -29,7 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1021,7 +1021,7 @@ fun MusicGalleryPage(navController: NavController) {
         // ---------- 加载 / 空态 ----------
         if (loading && songCount == 0) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color.White)
+                MochiActivityIndicator(size = 32.dp, color = Color.White)
             }
         } else if (songCount == 0 && !loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

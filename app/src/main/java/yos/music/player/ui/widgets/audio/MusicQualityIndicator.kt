@@ -1,11 +1,25 @@
 package yos.music.player.ui.widgets.audio
 
+import android.graphics.BlurMaskFilter
+import android.graphics.LinearGradient
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Path as AndroidPath
+import android.graphics.Shader
+import android.graphics.Typeface
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,14 +28,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,12 +48,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontSynthesis
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +69,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.exp
+import kotlin.math.max
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.code.MediaController.musicPlaying
@@ -53,6 +78,7 @@ import yos.music.player.code.OnlineAudioCache
 import yos.music.player.code.qualityLabelResOf
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MediaViewModelObject
+import yos.music.player.data.objects.TransitionDisplayMode
 import yos.music.player.data.repositories.KugouRepository
 import yos.music.player.data.repositories.NetworkObserver
 import yos.music.player.data.repositories.PerSongQualityIntent
@@ -93,6 +119,8 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     val bitrate = MediaViewModelObject.bitrate.intValue
     val samplingRate = MediaViewModelObject.samplingRate.intValue
     val isDolby = MediaViewModelObject.isDolby.value
+    val transitionMode = MediaViewModelObject.activeTransitionMode.value
+    val isTransitioning = transitionMode != null
 
     // 订阅四个变化源：解析完成 / 本曲覆盖变更 / 网络形态变更 / 能力表新结论
     //（最后一项让"播放即探测"的结果一到就反映到面板上，不等下一次解析）
@@ -133,6 +161,13 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
 
     var menuOpen by remember { mutableStateOf(false) }
 
+    // 过渡态开始时自动收起已展开的音质面板
+    LaunchedEffect(isTransitioning) {
+        if (isTransitioning && menuOpen) {
+            menuOpen = false
+        }
+    }
+
     // 面板展开态回传宿主：播放页据此暂停"2.5s 自动隐藏控件"，避免面板还开着、
     // 下方控件却先淡出，只剩一个孤零零的下拉悬在屏上。内部各条关闭路径
     // （选中/点外部 onDismissRequest）都会汇到这里。
@@ -159,7 +194,11 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     // 跟手滑选：胶囊与面板共享同一份状态 —— 长按胶囊展开后不停手就能直接滑选档位
     val qualityDragSelect = remember { DropdownPanelDragSelectState() }
     val qualityTriggerGesture = rememberDropdownTriggerGestureState(qualityDragSelect)
-    val openQualityMenu: () -> Unit = { menuOpen = true }
+    val openQualityMenu: () -> Unit = {
+        if (!isTransitioning) {
+            menuOpen = true
+        }
+    }
 
     fun captureAnchor(coords: androidx.compose.ui.layout.LayoutCoordinates) {
         val pos = coords.positionInWindow()
@@ -186,10 +225,10 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
                 .onGloballyPositioned(::captureAnchor)
                 .testTag(QUALITY_CAPSULE_TEST_TAG)
                 .then(
-                    if (music.value != null) {
+                    if (music.value != null && !isTransitioning) {
                         // 点按与长按由同一个手势仲裁（长按 0.5s 展开后可不停手直接滑选档位）。
                         // 不能再叠 clickable：它会无条件消费 down，且在 up 时先 consume 再
-                        // 无条件 onClick，长按抬手会被二次触发一次点击。
+                        // 无条件 onClick，长按抬手会被二次触发一次点击；过渡期间屏蔽触发音质弹窗。
                         Modifier
                             .dropdownTriggerGesture(
                                 state = qualityTriggerGesture,
@@ -209,11 +248,25 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
                     }
                 )
         ) {
+            val glowProgressState: State<Float>? = if (isTransitioning) {
+                rememberInfiniteTransition(label = "transitionGlowSweep").animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 2400, easing = LinearEasing),
+                        repeatMode = RepeatMode.Restart,
+                    ),
+                    label = "transitionGlowProgress",
+                )
+            } else {
+                null
+            }
+
             // 无曲目时不画胶囊（外壳 22dp 行高固定，不会引起布局跳动）；
             // 但有曲目而读数未知时**照旧画胶囊**，只把文字换成兜底文案——
             // 旧版在 labelText == null 时把节点整块从组合树抽走，解析完成又弹回来（断言 A6）
             Crossfade(
-                targetState = isDolby,
+                targetState = isDolby && !isTransitioning,
                 modifier = Modifier.liquidDropdownAnchorFollow(capsuleFollow)
             ) { dolby ->
                 if (dolby) {
@@ -226,50 +279,73 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
                             .alpha(0.45f)
                     )
                 } else if (music.value != null) {
-                    // 档位文本变化只做文字层 crossfade，胶囊尺寸恒定（"无损 FLAC" 与
-                    // "Hi-Res" 宽度不同，不锁最小宽度就会把左右时间数字推着走）
-                    val label = ui.capsule.tier?.let { stringResource(id = qualityLabelResOf(it)) }
-                        ?: stringResource(id = ui.capsule.fallbackRes)
+                    // 过渡态只保留无底座纯文字并逐字柔波浮起与扫光辉光；非过渡态恢复标准音质胶囊底框
+                    val label = when (transitionMode) {
+                        TransitionDisplayMode.SMART ->
+                            stringResource(id = R.string.settings_play_crossfade_mode_smart)
+                        TransitionDisplayMode.SMOOTH ->
+                            stringResource(id = R.string.settings_play_crossfade_mode_smooth)
+                        null -> ui.capsule.tier?.let { stringResource(id = qualityLabelResOf(it)) }
+                            ?: stringResource(id = ui.capsule.fallbackRes)
+                    }
+                    val showLosslessBadge = ui.capsule.losslessBadge && !isTransitioning
                     Box(
                         modifier = Modifier
-                            .overlayEffect()
-                            .background(
-                                color = Color(0x14FFFFFF),
-                                shape = YosRoundedCornerShape(5.dp)
-                            )
                             .height(20.dp)
-                            .widthIn(min = 62.dp)
-                            .padding(horizontal = 7.dp),
+                            .widthIn(min = 62.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.alpha(if (ui.capsule.dimmed) 0.3f else 0.45f)
-                        ) {
-                            if (ui.capsule.losslessBadge) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_quality_lossless),
-                                    contentDescription = "quality_lossless",
-                                    modifier = Modifier
-                                        .height(9.dp)
-                                        .alpha(0.45f)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                            }
-
-                            YosWrapper {
-                                AnimatedContent(
-                                    targetState = label,
-                                    transitionSpec = {
-                                        fadeIn(tween(160)) togetherWith fadeOut(tween(120))
-                                    }
-                                ) { thisText ->
-                                    Text(
-                                        text = thisText,
-                                        fontSize = 11.sp,
-                                        lineHeight = 11.sp
+                        YosWrapper {
+                            AnimatedContent(
+                                targetState = Triple(label, showLosslessBadge, isTransitioning),
+                                transitionSpec = {
+                                    (fadeIn(tween(240, easing = FastOutSlowInEasing)) togetherWith
+                                        fadeOut(tween(180))) using SizeTransform(clip = false)
+                                },
+                                label = "QualityCapsuleContent",
+                            ) { (stateLabel, stateLosslessBadge, stateIsTransitioning) ->
+                                if (stateIsTransitioning) {
+                                    TransitionWaveGlowText(
+                                        text = stateLabel,
+                                        sweepProgress = glowProgressState,
+                                        modifier = Modifier.overlayEffect(),
                                     )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .overlayEffect()
+                                            .background(
+                                                color = Color(0x14FFFFFF),
+                                                shape = YosRoundedCornerShape(5.dp)
+                                            )
+                                            .height(20.dp)
+                                            .widthIn(min = 62.dp)
+                                            .padding(horizontal = 7.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.alpha(if (ui.capsule.dimmed) 0.3f else 0.45f)
+                                        ) {
+                                            if (stateLosslessBadge) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_quality_lossless),
+                                                    contentDescription = "quality_lossless",
+                                                    modifier = Modifier
+                                                        .height(9.dp)
+                                                        .alpha(0.45f)
+                                                )
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                            }
+
+                                            Text(
+                                                text = stateLabel,
+                                                fontSize = 11.sp,
+                                                lineHeight = 11.sp
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -280,7 +356,7 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
 
         QualitySheet(
             uiModel = ui,
-            expanded = menuOpen,
+            expanded = menuOpen && !isTransitioning,
             anchorBounds = anchorBounds,
             onFractionProgress = capsuleFollow::onProgress,
             onDismiss = { menuOpen = false },
@@ -327,8 +403,6 @@ private fun QualitySheet(
         expanded = expanded,
         anchorBounds = anchorBounds,
         alignCenterHorizontally = true,
-        // 播放页专属透明度：深浅色统一 0.6（与「更多」菜单同值；设置页保持 0.72/0.8 不变）
-        surfaceAlpha = 0.6f,
         onDismissRequest = onDismiss,
         backdrop = LocalTitlePageBackdrop.current,
         onFractionProgress = onFractionProgress,
@@ -445,4 +519,224 @@ private fun LocalSpecSection(uiModel: QualityUiState) {
             .padding(top = 4.dp, bottom = 10.dp)
             .alpha(0.55f)
     )
+}
+
+private class TransitionCharGlyph(
+    val text: String,
+    val startX: Float,
+    val centerU: Float,
+    val path: AndroidPath,
+)
+
+private class TransitionGlyphLayout(
+    val glyphs: List<TransitionCharGlyph>,
+    val totalWidthPx: Float,
+    val baselineOffsetPx: Float,
+    val hasVectorPaths: Boolean,
+)
+
+/**
+ * 亚像素矢量路径柔波与字形限定扫光组件：
+ * 1. 通过 [AndroidPaint.getTextPath] 提取矢量字形轮廓与真实字形步进位置（字距与普通文案 100% 一致）；
+ * 2. 在单层 `Canvas` 中直接以浮点坐标驱动高斯海浪起伏，彻底消除 Compose Text 整数像素基线吸附带来的卡顿；
+ * 3. 利用 `LinearGradient` Shader 仅着色文字路径本身（配合微小 `BlurMaskFilter` 字形外沿柔和光晕），光带绝不外溢背景。
+ */
+@Composable
+private fun TransitionWaveGlowText(
+    text: String,
+    sweepProgress: State<Float>?,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val fontFamilyResolver = LocalFontFamilyResolver.current
+    val localStyle = LocalTextStyle.current
+    val resolvedTypefaceState = remember(fontFamilyResolver, localStyle) {
+        fontFamilyResolver.resolve(
+            fontFamily = localStyle.fontFamily,
+            fontWeight = localStyle.fontWeight ?: FontWeight.Normal,
+            fontStyle = localStyle.fontStyle ?: FontStyle.Normal,
+            fontSynthesis = localStyle.fontSynthesis ?: FontSynthesis.All,
+        )
+    }
+    val typeface = (resolvedTypefaceState.value as? Typeface) ?: Typeface.DEFAULT
+
+    val textSizePx = with(density) { 11.sp.toPx() }
+    val waveAmpPx = with(density) { 1.35.dp.toPx() }
+    val glowBlurPx = with(density) { 3.5.dp.toPx() }
+    val minBandHalfPx = with(density) { 20.dp.toPx() }
+
+    val layout = remember(text, textSizePx, typeface) {
+        val measurePaint = AndroidPaint(
+            AndroidPaint.ANTI_ALIAS_FLAG or
+                AndroidPaint.SUBPIXEL_TEXT_FLAG or
+                AndroidPaint.LINEAR_TEXT_FLAG,
+        ).apply {
+            this.textSize = textSizePx
+            this.typeface = typeface
+            hinting = AndroidPaint.HINTING_OFF
+        }
+        val totalWidth = measurePaint.measureText(text).coerceAtLeast(1f)
+        val fm = measurePaint.fontMetrics
+        val baselineOffset = -(fm.ascent + fm.descent) * 0.5f
+
+        val glyphs = ArrayList<TransitionCharGlyph>(text.length)
+        var i = 0
+        while (i < text.length) {
+            val end = if (Character.isHighSurrogate(text[i]) && i + 1 < text.length) i + 2 else i + 1
+            val startX = measurePaint.measureText(text, 0, i)
+            val advance = measurePaint.measureText(text, i, end)
+            val path = AndroidPath()
+            measurePaint.getTextPath(text, i, end, startX, 0f, path)
+            val centerU = (startX + advance * 0.5f) / totalWidth
+            glyphs.add(
+                TransitionCharGlyph(
+                    text = text.substring(i, end),
+                    startX = startX,
+                    centerU = centerU,
+                    path = path,
+                ),
+            )
+            i = end
+        }
+        TransitionGlyphLayout(
+            glyphs = glyphs,
+            totalWidthPx = totalWidth,
+            baselineOffsetPx = baselineOffset,
+            hasVectorPaths = glyphs.any { !it.path.isEmpty },
+        )
+    }
+
+    val fillPaint = remember(textSizePx, typeface) {
+        AndroidPaint(
+            AndroidPaint.ANTI_ALIAS_FLAG or
+                AndroidPaint.SUBPIXEL_TEXT_FLAG or
+                AndroidPaint.LINEAR_TEXT_FLAG,
+        ).apply {
+            style = AndroidPaint.Style.FILL
+            textSize = textSizePx
+            this.typeface = typeface
+            hinting = AndroidPaint.HINTING_OFF
+        }
+    }
+    val glowPaint = remember(textSizePx, typeface, glowBlurPx) {
+        AndroidPaint(
+            AndroidPaint.ANTI_ALIAS_FLAG or
+                AndroidPaint.SUBPIXEL_TEXT_FLAG or
+                AndroidPaint.LINEAR_TEXT_FLAG,
+        ).apply {
+            style = AndroidPaint.Style.FILL
+            textSize = textSizePx
+            this.typeface = typeface
+            hinting = AndroidPaint.HINTING_OFF
+            maskFilter = BlurMaskFilter(glowBlurPx, BlurMaskFilter.Blur.NORMAL)
+        }
+    }
+
+    val glowColors = remember {
+        intArrayOf(0x00FFFFFF, 0x00FFFFFF, 0x6EFFFFFF, 0x00FFFFFF, 0x00FFFFFF)
+    }
+    val glowStops = remember { floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f) }
+    val fillColors = remember {
+        intArrayOf(0x6EFFFFFF, 0x8AFFFFFF.toInt(), 0xFFFFFFFF.toInt(), 0x8AFFFFFF.toInt(), 0x6EFFFFFF)
+    }
+    val fillStops = remember { floatArrayOf(0f, 0.22f, 0.5f, 0.78f, 1f) }
+
+    val widthDp = with(density) { layout.totalWidthPx.toDp() }.coerceAtLeast(1.dp)
+    Canvas(modifier = modifier.size(width = widthDp, height = 20.dp)) {
+        val nativeCanvas = drawContext.canvas.nativeCanvas
+        val totalW = layout.totalWidthPx.coerceAtLeast(1f)
+        val startX = (size.width - totalW) * 0.5f
+        val baselineY = size.height * 0.5f + layout.baselineOffsetPx
+        val progress = sweepProgress?.value
+
+        if (progress == null) {
+            fillPaint.shader = null
+            fillPaint.color = 0x70FFFFFF
+            drawWaveGlyphPass(
+                canvas = nativeCanvas,
+                layout = layout,
+                paint = fillPaint,
+                startX = startX,
+                baselineY = baselineY,
+                crestU = null,
+                waveAmpPx = 0f,
+            )
+            return@Canvas
+        }
+
+        val crestU = -0.70f + progress * 2.40f
+        val localCenterX = crestU * totalW
+        val bandHalf = max(totalW * 0.48f, minBandHalfPx)
+
+        // Pass 1：仅在光带中心附着字形外沿柔和辉光
+        glowPaint.shader = LinearGradient(
+            localCenterX - bandHalf,
+            0f,
+            localCenterX + bandHalf,
+            0f,
+            glowColors,
+            glowStops,
+            Shader.TileMode.CLAMP,
+        )
+        drawWaveGlyphPass(
+            canvas = nativeCanvas,
+            layout = layout,
+            paint = glowPaint,
+            startX = startX,
+            baselineY = baselineY,
+            crestU = crestU,
+            waveAmpPx = waveAmpPx,
+        )
+
+        // Pass 2：高光带顺滑扫过清晰矢量笔画本身
+        fillPaint.shader = LinearGradient(
+            localCenterX - bandHalf,
+            0f,
+            localCenterX + bandHalf,
+            0f,
+            fillColors,
+            fillStops,
+            Shader.TileMode.CLAMP,
+        )
+        drawWaveGlyphPass(
+            canvas = nativeCanvas,
+            layout = layout,
+            paint = fillPaint,
+            startX = startX,
+            baselineY = baselineY,
+            crestU = crestU,
+            waveAmpPx = waveAmpPx,
+        )
+    }
+}
+
+private fun drawWaveGlyphPass(
+    canvas: android.graphics.Canvas,
+    layout: TransitionGlyphLayout,
+    paint: AndroidPaint,
+    startX: Float,
+    baselineY: Float,
+    crestU: Float?,
+    waveAmpPx: Float,
+) {
+    val glyphs = layout.glyphs
+    for (idx in glyphs.indices) {
+        val glyph = glyphs[idx]
+        if (layout.hasVectorPaths && glyph.path.isEmpty) continue
+        val intensity = if (crestU != null) gaussianWaveIntensity(glyph.centerU, crestU) else 0f
+        canvas.save()
+        canvas.translate(startX, baselineY - waveAmpPx * intensity)
+        if (layout.hasVectorPaths) {
+            canvas.drawPath(glyph.path, paint)
+        } else {
+            canvas.drawText(glyph.text, glyph.startX, 0f, paint)
+        }
+        canvas.restore()
+    }
+}
+
+private fun gaussianWaveIntensity(charU: Float, crestU: Float): Float {
+    val d = (crestU - charU) / 0.28f
+    val sq = d * d
+    return if (sq > 9f) 0f else exp(-sq.toDouble()).toFloat()
 }

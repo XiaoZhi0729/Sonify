@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,8 +22,6 @@ import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.theme.isFlamingoInDarkMode
-import yos.music.player.ui.theme.primary
-import yos.music.player.ui.theme.primaryDark
 import yos.music.player.ui.widgets.liquid.LiquidBottomTab
 import yos.music.player.ui.widgets.liquid.LiquidBottomTabs
 
@@ -66,7 +65,7 @@ fun BottomNavigator(
     // 玻璃容器启用自适应亮度时（LocalGlassContentColor 非 null），Tab 图标/文字
     // 跟随背后亮度黑↔白；否则保持主题静态色
     val contentColor = LocalGlassContentColor.current ?: if (dark) Color.White else Color.Black
-    val accentColor = if (dark) primaryDark else primary
+    val accentColor = MaterialTheme.colorScheme.primary
 
     val selectTab: (Int) -> Unit = { index ->
         if (selectedIndex != index) {

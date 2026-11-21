@@ -262,7 +262,6 @@ fun SongAddToPlaylistButton(
             anchorBounds = anchorBounds,
             onDismissRequest = { expanded = false },
             onDismissFinished = { retainedForExit = false },
-            surfaceAlpha = 0.6f,
             backdrop = LocalTitlePageBackdrop.current,
             onFractionProgress = follow::onProgress,
             dragSelectState = if (page == AddToPlaylistPage.Actions) dragSelect else null,

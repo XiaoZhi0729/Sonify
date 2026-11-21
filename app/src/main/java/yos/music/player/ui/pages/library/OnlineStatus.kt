@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
+import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,12 +51,9 @@ fun OnlineStatusItem(
         when {
             status == "loading" -> {
                 if (contentColor != null) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        color = contentColor
-                    )
+                    MochiActivityIndicator(size = 16.dp, color = contentColor)
                 } else {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    MochiActivityIndicator(size = 16.dp)
                 }
                 Spacer(Modifier.size(10.dp))
                 Text(

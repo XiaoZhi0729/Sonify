@@ -20,6 +20,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import yos.music.player.data.objects.ArtistPresentationCache
 import yos.music.player.ui.theme.isFlamingoInDarkMode
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 
 internal class PageDataViewModel : ViewModel() {
@@ -102,8 +103,10 @@ internal fun ArtistChildBackground(
             onDispose { ArtistPageAppearance.unregister(entryId, registration) }
         }
     }
+    val isDark = isFlamingoInDarkMode()
     CompositionLocalProvider(
         LocalTitlePageColor provides background,
+        LocalTitleBarAccentTint provides if (background != null) accentTintOf(background, isDark) else null,
         LocalContentColor provides foreground
     ) {
         Box(

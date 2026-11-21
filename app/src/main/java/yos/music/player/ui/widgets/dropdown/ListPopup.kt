@@ -83,6 +83,7 @@ import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 import yos.music.player.ui.theme.YosRoundedCornerShape
+import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 
@@ -893,8 +894,9 @@ fun ListPopupContent(
     content: @Composable () -> Unit,
 ) {
     val cornerRadius = 25.dp
-    val backgroundColor = dropdownSurfaceContainer()
     val isDark = isDropdownDarkTheme()
+    val backgroundColor = if (isDark) Color(0xFF1C1C1E) else Color.White
+    val accentTint = LocalTitleBarAccentTint.current
 
     val localDensity = LocalDensity.current
     // 未传 collapseSize 时的兜底
@@ -939,6 +941,7 @@ fun ListPopupContent(
         fallbackPivot = localTransformOrigin,
         recedeFraction = recedeFraction,
         surfaceAlpha = surfaceAlpha,
+        accentTint = accentTint,
     )
 
     // 展开进度登记给状态：面板外的驱动方（长按触发区）据此判断何时能开始命中。
@@ -1176,6 +1179,7 @@ private class PopupPanelStyle(
     fallbackPivot: TransformOrigin,
     val recedeFraction: (() -> Float)? = null,
     val surfaceAlpha: Float? = null,
+    val accentTint: Color? = null,
 ) {
     // 锚点角必须**惰性读取**：layout 阶段才写入 anchors，而本对象在 composition 期就建好了。
     private val anchorRight: () -> Boolean =
@@ -1385,9 +1389,13 @@ private fun BoxScope.PopupMaterialLayer(
                         onDrawSurface = {
                             drawRect(
                                 color = style.backgroundColor.copy(
-                                    alpha = style.surfaceAlpha ?: if (style.isDark) 0.8f else 0.72f,
+                                    alpha = style.surfaceAlpha ?: 0.5f,
                                 )
                             )
+                            val tint = style.accentTint
+                            if (tint != null && tint.alpha > 0.005f) {
+                                drawRect(tint)
+                            }
                         }
                     )
                 } else {
@@ -1395,9 +1403,13 @@ private fun BoxScope.PopupMaterialLayer(
                     Modifier.drawBehind {
                         drawRect(
                             color = style.backgroundColor.copy(
-                                alpha = style.surfaceAlpha ?: if (style.isDark) 0.8f else 0.72f,
+                                alpha = style.surfaceAlpha ?: 0.5f,
                             )
                         )
+                        val tint = style.accentTint
+                        if (tint != null && tint.alpha > 0.005f) {
+                            drawRect(tint)
+                        }
                     }
                 }
             )

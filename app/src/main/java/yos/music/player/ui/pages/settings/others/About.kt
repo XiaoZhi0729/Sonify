@@ -45,6 +45,7 @@ import kotlin.time.Duration.Companion.seconds
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.ui.UI
+import yos.music.player.ui.toUI
 import yos.music.player.ui.pages.settings.DefaultItem
 import yos.music.player.ui.pages.settings.Divider
 import yos.music.player.ui.pages.settings.GroupSpacer
@@ -252,6 +253,15 @@ fun About(navController: NavController) {
                                     devMode.value = !devMode.value
                                 }
                             )
+                            if (devMode.value) {
+                                Divider()
+                                LabelItem(
+                                    title = stringResource(id = R.string.settings_dev_progressive_blur_demo),
+                                    desc = stringResource(id = R.string.settings_dev_progressive_blur_demo_desc)
+                                ) {
+                                    navController.toUI(UI.Settings.ProgressiveBlurDemo)
+                                }
+                            }
                         }
 
                         // POC Debug Entry

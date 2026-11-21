@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import yos.music.player.ui.widgets.mochi.MochiIndexBar
+import yos.music.player.ui.widgets.mochi.MochiRefreshIndicator
+import yos.music.player.ui.widgets.mochi.mochiRefreshHold
+import yos.music.player.ui.widgets.mochi.rememberMochiRefreshState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -47,7 +50,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -462,6 +464,7 @@ private fun BaseTitleGrid(
     content: LazyGridScope.() -> Unit
 ) {
     val state = gridState
+    val refresh = rememberMochiRefreshState(refreshing, onRefresh)
     // Nexio 式二态折叠：大标题触及栏缘前不透明、没入后小标题才出现、松手吸附到两端
     val collapse = rememberTitleCollapse(state, extraTopPadding)
     val showIndexBar = indexBarLabels.isNotEmpty() && onIndexSelect != null
@@ -523,7 +526,7 @@ private fun BaseTitleGrid(
                             enabled = titleBackdropEnabled,
                             clipRect = titleBackdropClipRect
                         )
-                        .overScrollVertical(),
+                        .overScrollVertical(offsetObserver = refresh.offsetObserver),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     columns = GridCells.Adaptive(minSize = minItemSize),
                     horizontalArrangement = Arrangement.spacedBy(15.dp),
@@ -535,7 +538,7 @@ private fun BaseTitleGrid(
                     )
                 ) {
                     item(key = "title", span = { GridItemSpan(maxLineSpan) }) {
-                        Column {
+                        Column(Modifier.mochiRefreshHold(refresh)) {
                             Spacer(modifier = Modifier.statusBarsHeight())
                             TitleItem(
                                 title,
@@ -554,14 +557,19 @@ private fun BaseTitleGrid(
                 }
             }
 
+            gridContent()
             if (onRefresh != null) {
-                PullToRefreshBox(
-                    isRefreshing = refreshing,
-                    onRefresh = onRefresh,
-                    modifier = Modifier.fillMaxSize()
-                ) { gridContent() }
-            } else {
-                gridContent()
+                // 锚点 = 列表内容上沿（首项顶边）；刷新中下滚时跟着首项上移淡出
+                MochiRefreshIndicator(
+                    refresh,
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 54.dp + extraTopPadding),
+                    scrollAway = {
+                        if (state.firstVisibleItemIndex == 0) state.firstVisibleItemScrollOffset.toFloat()
+                        else Float.MAX_VALUE
+                    },
+                )
             }
 
             TitleBar(
@@ -617,6 +625,7 @@ private fun BaseTitleList(
     content: LazyListScope.() -> Unit
 ) {
     val state = listState
+    val refresh = rememberMochiRefreshState(refreshing, onRefresh)
     // Nexio 式二态折叠：大标题触及栏缘前不透明、没入后小标题才出现、松手吸附到两端
     val collapse = rememberTitleCollapse(state, extraTopPadding)
     val showIndexBar = indexBarLabels.isNotEmpty() && onIndexSelect != null
@@ -678,7 +687,7 @@ private fun BaseTitleList(
                             enabled = titleBackdropEnabled,
                             clipRect = titleBackdropClipRect
                         )
-                        .overScrollVertical(),
+                        .overScrollVertical(offsetObserver = refresh.offsetObserver),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     contentPadding = PaddingValues(
                         top = 54.dp + extraTopPadding,
@@ -686,9 +695,9 @@ private fun BaseTitleList(
                 ) {
                     item("title") {
                         Column(
-                            if (revealIndex != null)
+                            (if (revealIndex != null)
                                 yos.music.player.ui.launch.launchRevealModifier(revealIndex)
-                            else Modifier
+                            else Modifier).mochiRefreshHold(refresh)
                         ) {
                             Spacer(modifier = Modifier.statusBarsHeight())
                             TitleItem(
@@ -709,14 +718,18 @@ private fun BaseTitleList(
                 }
             }
 
+            listContent()
             if (onRefresh != null) {
-                PullToRefreshBox(
-                    isRefreshing = refreshing,
-                    onRefresh = onRefresh,
-                    modifier = Modifier.fillMaxSize()
-                ) { listContent() }
-            } else {
-                listContent()
+                MochiRefreshIndicator(
+                    refresh,
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 54.dp + extraTopPadding),
+                    scrollAway = {
+                        if (state.firstVisibleItemIndex == 0) state.firstVisibleItemScrollOffset.toFloat()
+                        else Float.MAX_VALUE
+                    },
+                )
             }
 
             TitleBar(
@@ -774,6 +787,27 @@ fun rememberShowSmallTitle(alpha: State<Float>, state: LazyListState): State<Boo
     return remember("BaseTitle_showSmallTitle") {
         derivedStateOf {
             alpha.value <= 0f && state.layoutInfo.visibleItemsInfo.isNotEmpty()
+        }
+    }
+}
+
+/**
+ * 顶栏背景（模糊+渐变）与玻璃圆钮遮罩的可见性：列表向下滚动超过极小阈值（默认 4dp）即显示，
+ * 避免轻触列表微小抖动误触发；与 [rememberShowSmallTitle] 解耦，不影响小标题出现时机。
+ */
+@Composable
+fun rememberBarBackgroundVisible(
+    state: LazyListState,
+    threshold: Dp = 4.dp
+): State<Boolean> {
+    val thresholdPx = with(LocalDensity.current) { threshold.roundToPx() }
+    return remember(state, thresholdPx) {
+        derivedStateOf {
+            shouldShowBarBackground(
+                firstVisibleItemIndex = state.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset,
+                thresholdPx = thresholdPx
+            )
         }
     }
 }

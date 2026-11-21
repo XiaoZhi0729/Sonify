@@ -105,8 +105,6 @@ import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.pages.settings.SettingBackground
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.isFlamingoInDarkMode
-import yos.music.player.ui.theme.primary
-import yos.music.player.ui.theme.primaryDark
 import yos.music.player.ui.widgets.basic.RoundColumn
 import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
@@ -314,7 +312,7 @@ private fun PreviewBottomBar(
     val isDark = isDarkState.value
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val contentColor = if (isDark) Color.White else Color(0xFF1B1B1D)
-    val accentColor = if (isDark) primaryDark else primary
+    val accentColor = MaterialTheme.colorScheme.primary
 
     val tabCount = visibleTabIds.size.coerceAtLeast(1)
     val selectedIndex = visibleTabIds.indexOf(selectedTab).coerceAtLeast(0)

@@ -237,6 +237,7 @@ interface UI {
             const val KugouLogin = "KugouLogin"
             const val KugouVipSignIn = "KugouVipSignIn"
             const val DataStorage = "DataStorage"
+            const val ProgressiveBlurDemo = "ProgressiveBlurDemo"
 
             // 缓存分类详情（按歌曲挑选清理；category = audio / lyric）
             const val CacheDetail = "CacheDetail"

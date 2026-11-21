@@ -62,6 +62,12 @@
     <fields>;
 }
 
+# 渐进模糊调参持久化：Gson 反射反序列化私有 DTO，需保留字段与构造器，避免 R8 full mode 混淆或裁剪。
+-keep class yos.music.player.ui.pages.demo.ProgressiveBlurDemoPrefs$StoredConfig {
+    <fields>;
+    <init>(...);
+}
+
 # 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }
 
@@ -83,6 +89,10 @@
 }
 
 -keep class com.cormor.overscroll.core.OverScrollKt
+
+-keepclassmembers class androidx.compose.foundation.gestures.ScrollableContainerNode {
+    public static *** TraverseKey;
+}
 
 # libkugou_server.so JNI shim：全限定类名/方法名必须与 .so 导出的
 # Java_com_md3music_md3music_KugouApiService_native* 符号精确匹配，

@@ -195,7 +195,12 @@ private fun DialogPanel(
     val backdrop = LocalTitlePageBackdrop.current
     val dark = isFlamingoInDarkMode()
     val liquidGlass = SettingsLibrary.BarBlurEffect
-    val style = CrestoDialogStyle(liquid = liquidGlass, dark = dark)
+    val style = CrestoDialogStyle(
+        liquid = liquidGlass,
+        dark = dark,
+        primaryColor = MaterialTheme.colorScheme.primary,
+        onPrimaryColor = MaterialTheme.colorScheme.onPrimary,
+    )
     val surface = style.surfaceColor
     val foreground = style.contentColor
     // MeiloX IosAlertSurface 同款连续圆角；调用方仍可用 cornerRadius 覆盖。

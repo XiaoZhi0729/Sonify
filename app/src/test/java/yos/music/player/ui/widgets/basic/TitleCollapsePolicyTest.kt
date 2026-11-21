@@ -49,6 +49,18 @@ class TitleCollapsePolicyTest {
         assertEquals(CollapseUi(1f, false, false), collapse(0 to 200, statusPx = 60))
     }
 
+    @Test
+    fun barBackgroundRemainsHiddenWithinJitterThresholdAtTop() {
+        assertEquals(false, shouldShowBarBackground(0, 0, thresholdPx = 12))
+        assertEquals(false, shouldShowBarBackground(0, 12, thresholdPx = 12))
+    }
+
+    @Test
+    fun barBackgroundAppearsOnceScrollExceedsThreshold() {
+        assertEquals(true, shouldShowBarBackground(0, 13, thresholdPx = 12))
+        assertEquals(true, shouldShowBarBackground(1, 0, thresholdPx = 12))
+    }
+
     private fun collapse(
         info: Pair<Int, Int>?,
         layoutReady: Boolean = true,

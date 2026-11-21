@@ -253,7 +253,6 @@ import yos.music.player.ui.widgets.audio.MusicQualityIndicator
 import yos.music.player.ui.widgets.audio.VocalSeparationPill
 import yos.music.player.ui.widgets.audio.VocalSeparationPillHeight
 import yos.music.player.ui.widgets.basic.AddToPlaylistPickerPanel
-import yos.music.player.ui.widgets.basic.FullScreenStaticCover
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.LiquidDropdownColumn
 import yos.music.player.ui.widgets.basic.LiquidDropdownLayout
@@ -327,15 +326,15 @@ private const val ShareActionsKey = "actionButtons"
 // 字号插值、保位淡出、共享元素 morph（下方 BoundsTransform）必须同款才同曲线同拍。
 // 勿改回 tween（硬停生硬）或默认 spring(400)（拖沓）。
 private val MorphFloatSpec = spring<Float>(
-    dampingRatio = 1.2f,
-    stiffness = 800f,
-    visibilityThreshold = 0.001f
+    dampingRatio = 0.96f,
+    stiffness = 400f,
+    visibilityThreshold = 0.0005f
 )
 
 private val MorphBoundsSpec = BoundsTransform { _, _ ->
     // 单位 IntRect 与本项目 Miuix 的 unit.IntRect 导入冲突，故不指定 visibilityThreshold
     // （仅影响收尾判定精度，观感无差）
-    spring(dampingRatio = 1.2f, stiffness = 800f)
+    spring(dampingRatio = 0.96f, stiffness = 400f)
 }
 private const val AnimDurationMillis = 300
 
@@ -889,9 +888,23 @@ internal fun NowPlaying(
                 derivedStateOf { showControl.value && nowPageLambda() == Lyric }
             }
 
-            // 这是小把手
+            // 这是小把手：竖屏且开启全屏封面时，仅大封面页（Album）隐藏，切到歌词/列表/评论
+            // （缩小为 69dp 小封面）时随页面 morph 曲线平滑淡入；关闭全屏封面或横屏时保持常显。
+            val portraitHandleVisible =
+                !SettingsLibrary.NowplayingStaticFullScreenAlbum || page != Album
+            val portraitHandleAlpha = remember {
+                Animatable(if (portraitHandleVisible) 1f else 0f)
+            }
+            LaunchedEffect(portraitHandleVisible, skipPageTransition) {
+                val target = if (portraitHandleVisible) 1f else 0f
+                if (skipPageTransition) {
+                    portraitHandleAlpha.snapTo(target)
+                } else {
+                    portraitHandleAlpha.animateTo(target, MorphFloatSpec)
+                }
+            }
             YosWrapper {
-                NowPlayingHandle()
+                NowPlayingHandle(alphaProvider = { portraitHandleAlpha.value })
             }
 
             // 主 View
@@ -956,21 +969,18 @@ internal fun NowPlaying(
                                 // 封面因此铺到状态栏下；开关关闭时完全走原路径。
                                 val staticFullScreenCover =
                                     SettingsLibrary.NowplayingStaticFullScreenAlbum
-                                // 切歌过渡时间轴（外壳建立）。封面与背景同起同止的关键：
-                                // 本页所有封面渲染面都从这一份取图层与进度。
-                                val artworkTransition = LocalTrackArtworkTransition.current
                                 Box(Modifier.fillMaxSize()) {
                                     if (staticFullScreenCover) {
-                                        FullScreenStaticCover(
-                                            albumUrl = { thisMusicPlaying.value?.thumb },
-                                            suppressed = albumCoverSuppressed,
-                                            coordsOnChanged = albumCoverCoordsOnChanged,
-                                            coverState = coverState,
-                                            coverEnabled = { nowPageLambda() == Album },
-                                            onCoverClick = onLyricsAction,
-                                            artworkTransition = artworkTransition,
-                                            isPlaying = isPlayingStatusLambda,
-                                            dynamicCoverActive = !showMiniPlayer && nowPageLambda() == Album
+                                        Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(1f)
+                                                .onGloballyPositioned { albumCoverCoordsOnChanged(it) }
+                                                .coverArtworkGesture(
+                                                    state = coverState,
+                                                    enabled = { nowPageLambda() == Album },
+                                                    onClick = onLyricsAction
+                                                )
                                         )
                                     }
                                     Column(
@@ -1987,7 +1997,6 @@ internal fun PlayingList(
                                     onDismissRequest = { showSortMenu = false },
                                     onDismissFinished = sortTrigger::onDismissFinished,
                                     backdrop = LocalTitlePageBackdrop.current,
-                                    surfaceAlpha = 0.6f,
                                     collapseSize = sortTrigger.size,
                                     dragSelectState = sortDragSelect,
                                 ) {
@@ -3079,8 +3088,6 @@ private fun NowPlayingMoreMenu(
         expanded = visible,
         anchorBounds = anchorBounds,
         onDismissRequest = onDismiss,
-        // 与音质下拉同材质：播放页专属表面透明度 0.6（设置页保持 0.72/0.8 不变）
-        surfaceAlpha = 0.6f,
         backdrop = LocalTitlePageBackdrop.current,
         recedeFraction = { recede.value },
         // 逐帧进度回传给按钮本体：图标随面板的揭示方向下沉/收缩/淡出（与音质胶囊同一套联动）
@@ -3172,7 +3179,6 @@ private fun NowPlayingMoreMenu(
         // 点外（含点父面板）只收回二级；返回键也先到这一层——本层的 BackHandler 比父面板
         // 更晚注册，OnBackPressedDispatcher 逆序派发
         onDismissRequest = { section = MoreSection.Root },
-        surfaceAlpha = 0.6f,
         backdrop = LocalTitlePageBackdrop.current,
         placement = LiquidDropdownPlacement.StackBelowAnchor,
         // 宿主 slots 是 HashMap 快照、插入序不可控，靠 zIndex 显式压在父面板之上
@@ -3595,41 +3601,40 @@ private fun PlayingBar(
                 // 铺到每个图层会变成两份共享元素、两份坐标上报。
                 .then(modifier)
         ) {
-            // 阴影层：独立于封面图层，只按封面尺寸画一次。
-            // 必须挂在图层之外——dropShadow 是原生 Canvas + BlurMaskFilter 的绘制，
-            // 依赖所在图层 alpha 为 1；交叉淡化时每张封面自己的图层 alpha 在 0..1
-            // 之间，阴影会被一并抹掉（"切歌时阴影消失、淡完才回来"）。
-            // 参数与本条原来的投影逐项一致（0.23f / Small / overlay / 5dp）。
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .dropShadow(
-                        shape = remember("PlayingBar_shadowShape") {
-                            YosRoundedCornerShape(5.dp)
-                        },
-                        shadowAlpha = 0.23f,
-                        shadowType = ShadowType.Small,
-                        overlay = true
-                    )
-            )
-            ArtworkCrossfadeLayers(
-                transition = LocalTrackArtworkTransition.current,
-                artwork = albumUrlLambda,
-                // 69dp 小封面不做缩放：它本身就是"远处的小图"，微缩放会被压缩成抖动。
-                scaleOnTransition = false
-            ) { layerArtwork, layerModifier ->
-                ShadowImageWithCache(
-                    dataLambda = { layerArtwork }, contentDescription = null,
-                    modifier = layerModifier.fillMaxSize(),
-                    cornerRadius = 5.dp,
-                    // 这一层本身就是飞行图层：LOW(128px) 被拉到全屏封面(≈928px) 是 7 倍放大，
-                    // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
-                    imageQuality = ImageQuality.HIGH,
-                    shadowType = ShadowType.Small,
-                    shadowOverlay = true,
-                    // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
-                    drawShadow = false
+            // 投影层与封面图层：开启全屏渐进模糊封面后由 PlayerShell 底层 GLES 统一绘制 69dp 卡片
+            // （此处仍保留外层 69dp Box 的坐标上报与点击返回 Album）。
+            if (!SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .dropShadow(
+                            shape = remember("PlayingBar_shadowShape") {
+                                YosRoundedCornerShape(5.dp)
+                            },
+                            shadowAlpha = 0.23f,
+                            shadowType = ShadowType.Small,
+                            overlay = true
+                        )
                 )
+                ArtworkCrossfadeLayers(
+                    transition = LocalTrackArtworkTransition.current,
+                    artwork = albumUrlLambda,
+                    // 69dp 小封面不做缩放：它本身就是"远处的小图"，微缩放会被压缩成抖动。
+                    scaleOnTransition = false
+                ) { layerArtwork, layerModifier ->
+                    ShadowImageWithCache(
+                        dataLambda = { layerArtwork }, contentDescription = null,
+                        modifier = layerModifier.fillMaxSize(),
+                        cornerRadius = 5.dp,
+                        // 这一层本身就是飞行图层：LOW(128px) 被拉到全屏封面(≈928px) 是 7 倍放大，
+                        // 转场中会有肉眼可见的分辨率断层；取 HIGH(400px)，静止时的 69dp 也更清晰。
+                        imageQuality = ImageQuality.HIGH,
+                        shadowType = ShadowType.Small,
+                        shadowOverlay = true,
+                        // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
+                        drawShadow = false
+                    )
+                }
             }
         }
         Column(
@@ -3880,7 +3885,10 @@ private fun BluetoothDevice.isConnected(): Boolean {
 // 直接距屏顶该距离（手机横屏状态栏在侧边，沿用竖屏的 top 基准会把把手压低）。
 // 竖屏基准：状态栏下 21dp、墨迹 60×4.5dp（长度 40→60dp ×1.5，位置较 26dp 上抬 5dp）。
 @Composable
-private fun NowPlayingHandle(topOverride: Dp? = null) {
+private fun NowPlayingHandle(
+    topOverride: Dp? = null,
+    alphaProvider: () -> Float = { 1f },
+) {
     Column(Modifier.fillMaxWidth()) {
         Box(
             Modifier
@@ -3893,6 +3901,9 @@ private fun NowPlayingHandle(topOverride: Dp? = null) {
             Box(
                 Modifier
                     .overlayEffect()
+                    .graphicsLayer {
+                        alpha = alphaProvider().coerceIn(0f, 1f)
+                    }
                     .size(
                         width = 60.dp,
                         height = 4.5.dp

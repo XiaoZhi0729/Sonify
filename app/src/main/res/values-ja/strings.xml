@@ -140,6 +140,12 @@
     <string name="settings_play_crossfade_desc">曲を最後まで再生して次の曲へ自動的に移るとき、下の時間だけ二つの曲を重ねてフェードします。手動での曲送りはいままですぐ切り替わります。</string>
     <string name="settings_play_crossfade_duration">フェードの時間</string>
     <string name="settings_play_crossfade_sec">%1$d 秒</string>
+    <string name="settings_play_crossfade_mode">フェードモード</string>
+    <string name="settings_play_crossfade_mode_smooth">スムーズ</string>
+    <string name="settings_play_crossfade_mode_smart">スマート</string>
+    <string name="settings_play_crossfade_mode_desc">スムーズは固定秒数でクロスフェードします。スマートは曲の前後のリズム・音量・無音区間を解析し、最適なタイミングと音量バランス、フィルターとリバーブを自動調整します。</string>
+    <string name="settings_play_crossfade_duration_auto">自動（スマート）</string>
+    <string name="settings_play_smart_fx_intensity">音色と空間リバーブ</string>
     <string name="settings_extend_statusbarlyric">ステータスバーの歌詞</string>
     <string name="settings_others">その他</string>
     <string name="settings_others_about">Sonify について</string>
@@ -413,6 +419,8 @@
     <string name="search_no_result">結果が見つかりません</string>
     <string name="settings_others_about_developer_mode">開発者モード</string>
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
+    <string name="settings_dev_progressive_blur_demo">動的プログレッシブブラー歌詞デモ</string>
+    <string name="settings_dev_progressive_blur_demo_desc">再生中楽曲のミラー動的カバー動画＋多段階プログレッシブブラー歌詞を横画面／縦画面でプレビュー</string>
     <string name="update_check">更新を確認</string>
     <string name="update_auto_check">更新を自動確認</string>
     <string name="update_preview_channel">プレビュー版アップデートを受け取る</string>
@@ -713,4 +721,31 @@
     <string name="bottom_bar_setting_reset_confirm_no">いいえ</string>
     <string name="bottom_bar_setting_hide_tab">%1$s を非表示</string>
     <string name="bottom_bar_setting_show_tab">%1$s を表示</string>
+
+    <!-- テーマカラー -->
+    <string name="settings_performance_ui_accent_color_title">テーマカラー</string>
+    <string name="settings_performance_ui_accent_color_custom">カスタム</string>
+    <string name="settings_performance_ui_accent_color_picker_title">カスタムテーマカラー</string>
+    <string name="accent_color_red">レッド</string>
+    <string name="accent_color_pink">ピンク</string>
+    <string name="accent_color_orange">オレンジ</string>
+    <string name="accent_color_yellow">イエロー</string>
+    <string name="accent_color_green">グリーン</string>
+    <string name="accent_color_mint">ミント</string>
+    <string name="accent_color_teal">ティール</string>
+    <string name="accent_color_cyan">シアン</string>
+    <string name="accent_color_blue">ブルー</string>
+    <string name="accent_color_indigo">インディゴ</string>
+    <string name="accent_color_purple">パープル</string>
+    <string name="color_picker_mode_grid">グリッド</string>
+    <string name="color_picker_mode_spectrum">スペクトル</string>
+    <string name="color_picker_mode_sliders">スライダー</string>
+    <string name="color_picker_channel_red">赤</string>
+    <string name="color_picker_channel_green">緑</string>
+    <string name="color_picker_channel_blue">青</string>
+    <string name="color_picker_axis_saturation">彩度</string>
+    <string name="color_picker_axis_chroma">クロマ</string>
+    <string name="color_picker_axis_lightness">明度</string>
+    <string name="color_picker_opacity">不透明度</string>
+    <string name="color_picker_close">閉じる</string>
 </resources>

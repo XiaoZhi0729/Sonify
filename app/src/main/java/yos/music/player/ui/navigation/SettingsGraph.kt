@@ -6,6 +6,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import yos.music.player.ui.UI
+import yos.music.player.ui.pages.demo.ProgressiveBlurDemoPage
 import yos.music.player.ui.pages.settings.Settings
 import yos.music.player.ui.pages.settings.account.KugouLogin
 import yos.music.player.ui.pages.settings.account.KugouVipSignIn
@@ -48,6 +49,7 @@ fun NavGraphBuilder.settingsGraph(
     composable(UI.Settings.KugouLogin) { KugouLogin(navController) }
     composable(UI.Settings.KugouVipSignIn) { KugouVipSignIn(navController) }
     composable(UI.Settings.DataStorage) { DataStorage(navController) }
+    composable(UI.Settings.ProgressiveBlurDemo) { ProgressiveBlurDemoPage(navController) }
     composable(
         route = UI.Settings.CacheDetailPattern,
         arguments = listOf(

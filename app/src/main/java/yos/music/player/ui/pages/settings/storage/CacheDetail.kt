@@ -245,7 +245,7 @@ private fun CacheSongRow(
                 Icon(
                     painter = painterResource(id = R.drawable.ic_checkmark),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(12.dp)
                 )
             }

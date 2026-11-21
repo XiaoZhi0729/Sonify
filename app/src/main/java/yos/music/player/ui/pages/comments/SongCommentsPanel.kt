@@ -38,11 +38,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.CircularProgressIndicator
+import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import yos.music.player.ui.widgets.mochi.smoothstep
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -296,6 +298,7 @@ internal fun SongCommentsPanel(
     val lift = with(density) { liftPx.toDp() }
     val composerHeight = with(density) { composerHeightPx.toDp() }
     val status = state.status
+    val pullState = rememberPullToRefreshState()
     // 评论池 id（childrenid）拿到之前不渲染输入框：只有 mixsongid 时 Rust 还要先反查
     // special_id，反查请求失败就会把「无法解析歌曲评论 special_id」这种内部错误抛给用户。
     val canComment = state.childrenId.isNotBlank()
@@ -355,7 +358,22 @@ internal fun SongCommentsPanel(
                     else -> PullToRefreshBox(
                         isRefreshing = state.refreshing,
                         onRefresh = { state.refresh() },
-                        modifier = Modifier.fillMaxSize()
+                        state = pullState,
+                        modifier = Modifier.fillMaxSize(),
+                        indicator = {
+                            // 保留 MD3 的下拉手势，只把指示器换成 iOS 辐条转圈
+                            MochiActivityIndicator(
+                                Modifier
+                                    .align(Alignment.TopCenter)
+                                    .graphicsLayer {
+                                        val f = pullState.distanceFraction.coerceIn(0f, 1f)
+                                        translationY = f * 28.dp.toPx() - 11.dp.toPx()
+                                        alpha = if (state.refreshing) 1f else smoothstep(0.1f, 0.5f, f)
+                                    },
+                                size = 22.dp,
+                                reveal = if (state.refreshing) null else ({ pullState.distanceFraction }),
+                            )
+                        }
                     ) {
                         CommentsList(
                             state = state,
@@ -1139,11 +1157,7 @@ private fun CommentsHeader(
             }
         )
         if (sortLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                color = Color.White.copy(alpha = 0.6f),
-                strokeWidth = 1.5.dp
-            )
+            MochiActivityIndicator(size = 14.dp, color = Color.White.copy(alpha = 0.6f))
             Spacer(Modifier.width(10.dp))
         }
         if (showSort) {
@@ -1327,11 +1341,7 @@ private fun ListFooter(state: SongCommentsState) {
         contentAlignment = Alignment.Center
     ) {
         when {
-            state.loadingMore -> CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                color = Color.White.copy(alpha = 0.6f),
-                strokeWidth = 1.6.dp
-            )
+            state.loadingMore -> MochiActivityIndicator(size = 16.dp, color = Color.White.copy(alpha = 0.6f))
             state.loadMoreFailed -> Text(
                 text = stringResource(id = R.string.nowplaying_comments_load_more_failed),
                 fontSize = 12.5.sp,
@@ -1607,11 +1617,7 @@ private fun FloorReplies(
                 Modifier.fillMaxWidth().height(28.dp),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    color = Color.White.copy(alpha = 0.5f),
-                    strokeWidth = 1.5.dp
-                )
+                MochiActivityIndicator(size = 14.dp, color = Color.White.copy(alpha = 0.5f))
             }
             floor.initialized && floor.replies.isEmpty() && floor.message.isNotEmpty() -> Text(
                 text = stringResource(id = R.string.nowplaying_comments_load_more_failed),
@@ -1851,11 +1857,7 @@ private fun CommentsStatus(
     ) {
         when {
             loading -> Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    color = Color.White.copy(alpha = 0.7f),
-                    strokeWidth = 1.6.dp
-                )
+                MochiActivityIndicator(size = 16.dp, color = Color.White.copy(alpha = 0.7f))
                 Spacer(Modifier.width(10.dp))
                 Text(
                     text = stringResource(id = R.string.nowplaying_comments_loading),
@@ -2034,11 +2036,7 @@ private fun CommentsComposer(
                 contentAlignment = Alignment.Center
             ) {
                 if (sending) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        color = Color.White.copy(alpha = 0.8f),
-                        strokeWidth = 1.5.dp
-                    )
+                    MochiActivityIndicator(size = 14.dp, color = Color.White.copy(alpha = 0.8f))
                 } else {
                     Text(
                         text = stringResource(id = R.string.nowplaying_comments_send),

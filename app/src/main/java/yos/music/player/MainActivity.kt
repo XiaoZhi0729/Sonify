@@ -271,10 +271,15 @@ import yos.music.player.ui.widgets.effects.coverArtworkEffect
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
 import yos.music.player.ui.widgets.effects.rememberTrackArtworkTransition
+import yos.music.player.data.objects.DynamicCoverState
+import yos.music.player.ui.pages.demo.ProgressiveBlurDemoPrefs
 import yos.music.player.ui.widgets.effects.warmUpFloatingLightArtwork
 import yos.music.player.ui.widgets.effects.warmUpMeshArtwork
 import yos.music.player.ui.widgets.basic.warmUpPlaybackCover
 import yos.music.player.ui.widgets.effects.YosFloatingLight
+import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveBlurConfig
+import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveBlurMath
+import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveVideoBlurBackground
 import yos.music.player.ui.widgets.basic.YosWrapper
 import java.io.File
 import kotlin.math.abs
@@ -736,7 +741,8 @@ class MainActivity : BaseActivity() {
                         // 会在「画廊开着时切到主页 Tab」后仍然生效，把底栏错误地一直藏起来。
                         // 路由判据天然随栈变化，切 Tab / 返回都会立即还原。
                         val hideAppChrome =
-                            activeEntry.value?.destination?.route == UI.MusicGallery
+                            activeEntry.value?.destination?.route == UI.MusicGallery ||
+                                activeEntry.value?.destination?.route == UI.Settings.ProgressiveBlurDemo
                         val bottomBarTabs = BottomBarLayoutStore.tabs.value
                         val visibleHouses = remember(bottomBarTabs) {
                             BottomBarLayoutStore.visibleHouses()
@@ -1422,6 +1428,9 @@ class MainActivity : BaseActivity() {
 
                         val coverLayerActive = remember("MainActivity_coverLayerActive") {
                             derivedStateOf {
+                                if (SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+                                    return@derivedStateOf false
+                                }
                                 val shellBusy = dragActive.value || playerMotionJob.value != null
                                 // 页面切换：动画在跑，或 q 尚未落到目标值。后者专门覆盖
                                 // LaunchedEffect 启动前的那一帧——此时 isRunning 还没翻 true，
@@ -2495,6 +2504,14 @@ class MainActivity : BaseActivity() {
                                                 )
                                         ) {
                                             // Background remains mounted while the shell morphs, so album changes never expose a transparent frame.
+                                            val bgConfigLandscape =
+                                                LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
+                                            val rawBgW = parentWidth.intValue
+                                            val rawBgH = parentHeight.intValue
+                                            val swapBgDims =
+                                                rawBgW > 0 && rawBgH > 0 && (rawBgW > rawBgH) != bgConfigLandscape
+                                            val orientedBgW = if (swapBgDims) rawBgH else rawBgW
+                                            val orientedBgH = if (swapBgDims) rawBgW else rawBgH
                                             Box(
                                                 modifier = Modifier
                                                     // Keep the full-screen page top-aligned while centering it
@@ -2506,14 +2523,27 @@ class MainActivity : BaseActivity() {
                                                         unbounded = true
                                                     )
                                                     .requiredSize(
-                                                        with(density) { parentWidth.intValue.toDp() },
-                                                        with(density) { parentHeight.intValue.toDp() }
+                                                        with(density) { orientedBgW.toDp() },
+                                                        with(density) { orientedBgH.toDp() }
                                                     )
                                                     .graphicsLayer {
                                                         alpha = yosBottomSheetConfig.playerAlpha
                                                     }
                                             ) {
-                                                if (glassProbe.shellBackgroundEffect) {
+                                                if (SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+                                                    ProgressivePlayerShellBackground(
+                                                        parentWidthPx = orientedBgW,
+                                                        parentHeightPx = orientedBgH,
+                                                        nowPage = nowPageNowPlaying.value,
+                                                        coverPageProgress = { coverPageProgress.value },
+                                                        coverGeometry = coverGeometry,
+                                                        artworkUri = { MediaViewModelObject.bitmap.value },
+                                                        isAudioPlaying = { isPlaying.value },
+                                                        showMiniPlayer = miniPlayerVisible.value,
+                                                        shellBackgroundEffect = glassProbe.shellBackgroundEffect,
+                                                        trackArtworkTransition = trackArtworkTransition,
+                                                    )
+                                                } else if (glassProbe.shellBackgroundEffect) {
                                                     YosFloatingLight(
                                                         modifier = Modifier.fillMaxSize(),
                                                         album = { MediaViewModelObject.bitmap.value },
@@ -2557,6 +2587,7 @@ class MainActivity : BaseActivity() {
                                                     .onGloballyPositioned {
                                                         coverGeometry.page = it
                                                         coverGeometry.refreshReady()
+                                                        coverGeometry.updateBarInPageRect()
                                                     }
                                             ) {
                                             NowPlaying(
@@ -2585,6 +2616,7 @@ class MainActivity : BaseActivity() {
                                                 barCoverCoordsOnChanged = { coords ->
                                                     coverGeometry.bar = coords
                                                     coverGeometry.refreshReady()
+                                                    coverGeometry.updateBarInPageRect()
                                                 },
                                                 albumCoverSuppressed = {
                                                     coverLayerActive.value
@@ -3408,10 +3440,18 @@ private class CoverMorphGeometry {
      * 解算（缺 album 时退化为 bar，反之亦然）。
      */
     val ready = mutableStateOf(false)
+    val barInPageRect = mutableStateOf<Rect?>(null)
 
     fun refreshReady() {
         ready.value = shell != null && page != null && mini != null &&
                 (album != null || bar != null)
+    }
+
+    fun updateBarInPageRect() {
+        val computed = localRect(page, bar)
+        if (computed != null && barInPageRect.value != computed) {
+            barInPageRect.value = computed
+        }
     }
 
     // 迷你封面在外壳内容坐标系中的矩形（恒定：始终在壳顶下方 11dp）。
@@ -3468,10 +3508,145 @@ private val morphCornerEndDp = 8f
 // 页面封面进度 q 的动画规格：与 NowPlaying 的标题/按钮共享元素 morph 同款
 // spring(1.2f, 800f, 0.001f)，保证封面与文字同曲线同拍。
 private val coverMorphSpring = spring<Float>(
-    dampingRatio = 1.2f,
-    stiffness = 800f,
-    visibilityThreshold = 0.001f
+    dampingRatio = 0.96f,
+    stiffness = 400f,
+    visibilityThreshold = 0.0005f
 )
+
+@androidx.compose.runtime.Composable
+private fun ProgressivePlayerShellBackground(
+    parentWidthPx: Int,
+    parentHeightPx: Int,
+    nowPage: String,
+    coverPageProgress: () -> Float,
+    coverGeometry: CoverMorphGeometry,
+    artworkUri: () -> android.net.Uri?,
+    isAudioPlaying: () -> Boolean,
+    showMiniPlayer: Boolean,
+    shellBackgroundEffect: Boolean,
+    trackArtworkTransition: yos.music.player.ui.widgets.effects.TrackArtworkTransition?,
+) {
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val isTabletDevice = configuration.smallestScreenWidthDp >= 600
+    val isLandscapeMode = configuration.screenWidthDp > configuration.screenHeightDp
+
+    val (slotKey, defaultForSlot) = when {
+        isLandscapeMode && isTabletDevice ->
+            ProgressiveBlurDemoPrefs.SLOT_TABLET_LANDSCAPE to ProgressiveBlurConfig.defaultTabletLandscape()
+        isLandscapeMode ->
+            ProgressiveBlurDemoPrefs.SLOT_PHONE_LANDSCAPE to ProgressiveBlurConfig.defaultPhoneLandscape()
+        isTabletDevice ->
+            ProgressiveBlurDemoPrefs.SLOT_TABLET_PORTRAIT to ProgressiveBlurConfig.defaultTabletPortrait()
+        else ->
+            ProgressiveBlurDemoPrefs.SLOT_PHONE_PORTRAIT to ProgressiveBlurConfig.defaultPhonePortrait()
+    }
+    val prefsVersion = ProgressiveBlurDemoPrefs.configVersion
+    val blurConfig = remember(slotKey, prefsVersion) {
+        ProgressiveBlurDemoPrefs.load(slotKey, defaultForSlot)
+    }
+
+    val fallbackW = with(density) { configuration.screenWidthDp.dp.toPx() }.coerceAtLeast(1f)
+    val fallbackH = with(density) { configuration.screenHeightDp.dp.toPx() }.coerceAtLeast(1f)
+    val (viewportW, viewportH) = if (parentWidthPx > 0 && parentHeightPx > 0) {
+        if ((parentWidthPx > parentHeightPx) == isLandscapeMode) {
+            parentWidthPx.toFloat() to parentHeightPx.toFloat()
+        } else {
+            parentHeightPx.toFloat() to parentWidthPx.toFloat()
+        }
+    } else {
+        fallbackW to fallbackH
+    }
+    val resolvedSplits = ProgressiveBlurMath.resolveMirrorSplits(
+        viewportWidth = viewportW,
+        viewportHeight = viewportH,
+        config = blurConfig,
+    )
+    val tabletSplitTarget = if (isLandscapeMode && isTabletDevice && nowPage != Album) 1f else 0f
+    val tabletSplitAnim = remember { Animatable(tabletSplitTarget) }
+    val lastTabletLandscapeMode = remember { mutableStateOf(isLandscapeMode) }
+    LaunchedEffect(isLandscapeMode, isTabletDevice, nowPage) {
+        val target = if (isLandscapeMode && isTabletDevice && nowPage != Album) 1f else 0f
+        if (lastTabletLandscapeMode.value != isLandscapeMode) {
+            lastTabletLandscapeMode.value = isLandscapeMode
+            tabletSplitAnim.snapTo(target)
+        } else {
+            tabletSplitAnim.animateTo(
+                targetValue = target,
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            )
+        }
+    }
+    val tabletSplitProgress = if (lastTabletLandscapeMode.value != isLandscapeMode) {
+        tabletSplitTarget
+    } else {
+        tabletSplitAnim.value
+    }
+    val coverOriginX = if (isLandscapeMode && isTabletDevice) {
+        ProgressiveBlurMath.centeredOriginX(resolvedSplits.splitX, tabletSplitProgress)
+    } else {
+        0f
+    }
+    val pageBlurProgress = if (!isLandscapeMode) {
+        (1f - coverPageProgress()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    val bgEffectOn = SettingsLibrary.NowplayingBackgroundEffect
+    if (bgEffectOn && shellBackgroundEffect) {
+        YosFloatingLight(
+            modifier = Modifier.fillMaxSize(),
+            album = artworkUri,
+            isPlaying = isAudioPlaying,
+            nowPage = { nowPage },
+            showMiniPlayer = showMiniPlayer,
+            enableMesh = true,
+            crossfade = trackArtworkTransition,
+        )
+    }
+
+    val statusTopPx = yos.music.player.ui.widgets.basic.rawStatusBarsTopPx().toFloat()
+    val morphTargetRect = if (!isLandscapeMode && parentWidthPx > 0 && parentHeightPx > 0) {
+        val cachedBar = coverGeometry.barInPageRect.value
+        val rawBar = localRect(coverGeometry.page, coverGeometry.bar) ?: cachedBar
+        if (rawBar != null && rawBar.width > 1f && rawBar.height > 1f) {
+            Rect(
+                left = (rawBar.left / viewportW).coerceIn(0f, 1f),
+                top = (rawBar.top / viewportH).coerceIn(0f, 1f),
+                right = (rawBar.right / viewportW).coerceIn(0f, 1f),
+                bottom = (rawBar.bottom / viewportH).coerceIn(0f, 1f),
+            )
+        } else {
+            val leftPx = with(density) { 28.5.dp.toPx() }
+            val topPx = statusTopPx + with(density) { 44.dp.toPx() }
+            val sizePx = with(density) { 69.dp.toPx() }
+            Rect(
+                left = leftPx / viewportW,
+                top = topPx / viewportH,
+                right = (leftPx + sizePx) / viewportW,
+                bottom = (topPx + sizePx) / viewportH,
+            )
+        }
+    } else {
+        null
+    }
+
+    val dynamicCoverEnabled = SettingsLibrary.NowPlayingDynamicCover
+    ProgressiveVideoBlurBackground(
+        videoUri = if (dynamicCoverEnabled) DynamicCoverState.videoUri else null,
+        fallbackArtworkUrl = artworkUri(),
+        config = blurConfig,
+        isPlaying = isAudioPlaying() && !showMiniPlayer,
+        forceStaticCover = !dynamicCoverEnabled,
+        coverOriginX = coverOriginX,
+        pageBlurProgress = pageBlurProgress,
+        alphaFadeMode = bgEffectOn,
+        morphTargetRect = morphTargetRect,
+        morphCornerPx = with(density) { 5.dp.toPx() },
+        modifier = Modifier.fillMaxSize(),
+    )
+}
 
 // 封面 morph 层的布局基准上限：与 NowPlaying 全屏封面的限宽一致。
 // 基准取"不小于两个端点"的尺寸，于是整个 morph 只缩小、不放大，

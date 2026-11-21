@@ -9,6 +9,11 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import yos.music.player.code.utils.lrc.LyricEntry
 
+enum class TransitionDisplayMode {
+    SMOOTH,
+    SMART,
+}
+
 @Stable
 object MediaViewModelObject {
     val lrcEntries: MutableState<List<LyricEntry>> = mutableStateOf(listOf())
@@ -29,6 +34,7 @@ object MediaViewModelObject {
     val bitrate = mutableIntStateOf(0)
     val samplingRate = mutableIntStateOf(0)
     val isDolby = mutableStateOf(false)
+    val activeTransitionMode: MutableState<TransitionDisplayMode?> = mutableStateOf(null)
 
     // val songSort = mutableStateOf(SettingData.getString("yos_player_song_sort", "MUSIC_TITLE"))
     // val enableDescending = mutableStateOf(SettingData.get("yos_player_enable_descending", false))

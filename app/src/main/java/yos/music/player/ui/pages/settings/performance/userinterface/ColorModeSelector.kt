@@ -1,12 +1,13 @@
 package yos.music.player.ui.pages.settings.performance.userinterface
 
-import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,9 +20,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -35,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
+import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.ui.theme.AppAccentColors
 
 private val OptionGap = 72.dp
 
@@ -77,6 +83,7 @@ fun ColorModeOptions(
         ColorModeOption(
             selected = effectiveMode == "Light",
             enabled = !isAuto,
+            isDarkPreview = false,
             imageRes = R.drawable.appearance_light,
             label = stringResource(R.string.settings_performance_ui_theme_light),
             onSelect = {
@@ -88,6 +95,7 @@ fun ColorModeOptions(
         ColorModeOption(
             selected = effectiveMode == "Dark",
             enabled = !isAuto,
+            isDarkPreview = true,
             imageRes = R.drawable.appearance_dark,
             label = stringResource(R.string.settings_performance_ui_theme_dark),
             onSelect = {
@@ -102,10 +110,18 @@ fun ColorModeOptions(
 private fun ColorModeOption(
     selected: Boolean,
     enabled: Boolean,
+    isDarkPreview: Boolean,
     imageRes: Int,
     label: String,
     onSelect: () -> Unit
 ) {
+    val previewAccent by animateColorAsState(
+        targetValue = AppAccentColors.resolve(SettingsLibrary.AccentColor, darkTheme = isDarkPreview),
+        animationSpec = tween(durationMillis = 320),
+        label = "previewAccent",
+    )
+    val arrowPath = remember { Path() }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.clickable(
@@ -114,13 +130,49 @@ private fun ColorModeOption(
             onClick = onSelect
         )
     ) {
-        Image(
-            painter = painterResource(imageRes),
-            contentDescription = label,
+        Box(
             modifier = Modifier
                 .width(64.dp)
                 .height(128.dp)
-        )
+        ) {
+            Image(
+                painter = painterResource(imageRes),
+                contentDescription = label,
+                modifier = Modifier.matchParentSize()
+            )
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val ux = size.width / 64f
+                val uy = size.height / 128f
+
+                arrowPath.rewind()
+                arrowPath.moveTo(18f * ux, 21.4f * uy)
+                arrowPath.lineTo(20.8f * ux, 23f * uy)
+                arrowPath.lineTo(18f * ux, 24.6f * uy)
+                arrowPath.close()
+                drawPath(arrowPath, color = previewAccent)
+
+                arrowPath.rewind()
+                arrowPath.moveTo(18f * ux, 68.4f * uy)
+                arrowPath.lineTo(20.8f * ux, 70f * uy)
+                arrowPath.lineTo(18f * ux, 71.6f * uy)
+                arrowPath.close()
+                drawPath(arrowPath, color = previewAccent)
+
+                drawRoundRect(
+                    color = previewAccent,
+                    topLeft = Offset(6.5f * ux, 98.5f * uy),
+                    size = Size(7f * ux, 7f * uy),
+                    cornerRadius = CornerRadius(1.5f * ux, 1.5f * uy)
+                )
+
+                drawRoundRect(
+                    color = previewAccent,
+                    topLeft = Offset(12.5f * ux, 115f * uy),
+                    size = Size(5f * ux, 4f * uy),
+                    cornerRadius = CornerRadius(1f * ux, 1f * uy)
+                )
+            }
+        }
         Spacer(Modifier.height(10.dp))
         Text(
             text = label,
@@ -134,7 +186,7 @@ private fun ColorModeOption(
 
 /**
  * 单选点：选中/未选中外形尺寸一致（20dp 圆），未选中=灰描边空心圈，
- * 选中=主题色实心+白勾，只做透明度过渡，不发生大小跳动。
+ * 选中=主题色实心+对比色勾，只做透明度过渡，不发生大小跳动。
  */
 @Composable
 private fun ModeRadioDot(selected: Boolean) {
@@ -145,6 +197,7 @@ private fun ModeRadioDot(selected: Boolean) {
     )
     val ringColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
     val fillColor = MaterialTheme.colorScheme.primary
+    val checkColor = MaterialTheme.colorScheme.onPrimary
 
     Canvas(modifier = Modifier.size(24.dp)) {
         val radius = 10.dp.toPx()
@@ -168,7 +221,7 @@ private fun ModeRadioDot(selected: Boolean) {
             }
             drawPath(
                 path = check,
-                color = Color.White.copy(alpha = progress),
+                color = checkColor.copy(alpha = progress),
                 style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
             )
         }

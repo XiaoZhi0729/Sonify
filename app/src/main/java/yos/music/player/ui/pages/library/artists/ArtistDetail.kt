@@ -1085,8 +1085,8 @@ fun ArtistDetail(
                             ArtistRoundActionButton(
                                 icon = R.drawable.ic_mini_info,
                                 contentDescription = stringResource(id = R.string.artist_detail_intro_title),
-                                // 展开态圆底是主题红的 55%，图标保持纯白（红底上深色图标不可读）
-                                iconTint = if (introOpen.value) Color.White else contentColor,
+                                // 展开态圆底是主题强调色的 55%，图标使用对比前景色（onPrimary）
+                                iconTint = if (introOpen.value) MaterialTheme.colorScheme.onPrimary else contentColor,
                                 highlighted = introOpen.value,
                                 iconSize = 32.dp,
                                 containerColor = roundContainer,
@@ -1102,7 +1102,7 @@ fun ArtistDetail(
         if (resolvedId.value.isNotBlank()) {
                             Spacer(Modifier.width(26.dp))
                             // 收藏钮：无任何动效的静态圆钮，背景常驻；
-                            // 收藏后只有星星变红色实心，圆底样式不变，切换瞬时完成。
+                            // 收藏后只有星星变主题强调色实心，圆底样式不变，切换瞬时完成。
                             ArtistRoundActionButton(
                                 icon = if (isFollowed.value) R.drawable.ic_artist_star_fill
                                 else R.drawable.ic_artist_star,
@@ -1111,7 +1111,7 @@ fun ArtistDetail(
                                     else R.string.artist_detail_follow
                                 ),
                                 iconTint = if (isFollowed.value) {
-                                    if (isDark) Color(0xFFFF453A) else Color(0xFFE53935)
+                                    MaterialTheme.colorScheme.primary
                                 } else contentColor,
                                 highlighted = false,
                                 iconSize = 28.dp,
@@ -1517,7 +1517,7 @@ private fun ArtistTabletLandscapeHeader(
                                 else R.string.artist_detail_follow
                             ),
                             iconTint = if (isFollowed) {
-                                if (isDark) Color(0xFFFF453A) else Color(0xFFE53935)
+                                MaterialTheme.colorScheme.primary
                             } else contentColor,
                             highlighted = false,
                             iconSize = 28.dp,

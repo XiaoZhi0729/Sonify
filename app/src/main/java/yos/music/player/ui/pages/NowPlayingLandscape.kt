@@ -668,68 +668,69 @@ private fun LandscapeAlbumCover(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    // 交互动效层套在所有图层之外：交叉淡化期间有两张图，
-                    // 每张各画一份描边会叠出双倍亮度（同竖屏 Album 的做法）。
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                compositingStrategy = CompositingStrategy.ModulateAlpha
-                                // morph 期间由外壳单封面层接管，本节点在图层面隐藏；
-                                // 读 State 只失效图层，不触发重组、不改布局占位。
-                                alpha = if (albumCoverSuppressed()) 0f else 1f
-                            }
-                            // 交互动效层（3D 倾斜/缩放 + 涟漪 + 描边高光）：变换不动上报给外壳
-                            // morph 的那个外层 aspectRatio 节点，几何端点不受影响。
-                            .coverArtworkEffect(state = coverState)
-                    ) {
-                        // 阴影层：独立于封面图层，只按封面尺寸画一次。
-                        // 必须挂在图层之外——dropShadow 是原生 Canvas + BlurMaskFilter
-                        // 的绘制，依赖所在图层 alpha 为 1；交叉淡化时每张封面自己的图层
-                        // alpha 在 0..1 之间，阴影会被一并抹掉（"切歌时阴影消失"）。
-                        // 参数与 ShadowImageWithCache 的默认投影逐项一致
-                        // （0.23f / Large / overlay），交接瞬间不跳。
+                    // 开启全屏渐进模糊封面时由底层 GLES 统一绘制横屏左/居中封面，此处仅保留布局占位、坐标上报与点击交互。
+                    if (!SettingsLibrary.NowplayingStaticFullScreenAlbum) {
                         Box(
-                            Modifier
+                            modifier = Modifier
                                 .fillMaxSize()
-                                .dropShadow(
-                                    shape = remember("LandscapeAlbum_shadowShape") {
-                                        YosRoundedCornerShape(8.dp)
-                                    },
-                                    shadowAlpha = 0.23f,
-                                    shadowType = ShadowType.Large,
-                                    overlay = true
+                                .graphicsLayer {
+                                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                                    // morph 期间由外壳单封面层接管，本节点在图层面隐藏；
+                                    // 读 State 只失效图层，不触发重组、不改布局占位。
+                                    alpha = if (albumCoverSuppressed()) 0f else 1f
+                                }
+                                // 交互动效层（3D 倾斜/缩放 + 涟漪 + 描边高光）：变换不动上报给外壳
+                                // morph 的那个外层 aspectRatio 节点，几何端点不受影响。
+                                .coverArtworkEffect(state = coverState)
+                        ) {
+                            // 阴影层：独立于封面图层，只按封面尺寸画一次。
+                            // 必须挂在图层之外——dropShadow 是原生 Canvas + BlurMaskFilter
+                            // 的绘制，依赖所在图层 alpha 为 1；交叉淡化时每张封面自己的图层
+                            // alpha 在 0..1 之间，阴影会被一并抹掉（"切歌时阴影消失"）。
+                            // 参数与 ShadowImageWithCache 的默认投影逐项一致
+                            // （0.23f / Large / overlay），交接瞬间不跳。
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .dropShadow(
+                                        shape = remember("LandscapeAlbum_shadowShape") {
+                                            YosRoundedCornerShape(8.dp)
+                                        },
+                                        shadowAlpha = 0.23f,
+                                        shadowType = ShadowType.Large,
+                                        overlay = true
+                                    )
+                            )
+                            // 新旧封面交叉淡化：与竖屏大封面、背景共用同一条时间轴。
+                            ArtworkCrossfadeLayers(
+                                transition = LocalTrackArtworkTransition.current,
+                                artwork = { thisMusicPlayingLambda()?.thumb },
+                                scaleOnTransition = true
+                            ) { layerArtwork, layerModifier ->
+                                ShadowImageWithCache(
+                                    dataLambda = { layerArtwork },
+                                    contentDescription = null,
+                                    modifier = layerModifier.fillMaxSize(),
+                                    imageQuality = ImageQuality.RAW,
+                                    // 与竖屏大封面同档位：400 档在横屏同样被放大到发虚。
+                                    hiresCover = true,
+                                    shadowOverlay = true,
+                                    // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
+                                    drawShadow = false
                                 )
-                        )
-                        // 新旧封面交叉淡化：与竖屏大封面、背景共用同一条时间轴。
-                        ArtworkCrossfadeLayers(
-                            transition = LocalTrackArtworkTransition.current,
-                            artwork = { thisMusicPlayingLambda()?.thumb },
-                            scaleOnTransition = true
-                        ) { layerArtwork, layerModifier ->
-                            ShadowImageWithCache(
-                                dataLambda = { layerArtwork },
-                                contentDescription = null,
-                                modifier = layerModifier.fillMaxSize(),
-                                imageQuality = ImageQuality.RAW,
-                                // 与竖屏大封面同档位：400 档在横屏同样被放大到发虚。
-                                hiresCover = true,
-                                shadowOverlay = true,
-                                // 投影由外层容器画过，逐图层再画会被图层 alpha 抹淡。
-                                drawShadow = false
+                            }
+                            yos.music.player.ui.widgets.basic.DynamicCoverVideoOverlay(
+                                videoUri = yos.music.player.data.objects.DynamicCoverState.videoUri,
+                                isPlaying = isPlayingStatusLambda,
+                                active = dynamicCoverActive,
+                                suppressed = albumCoverSuppressed,
+                                modifier = Modifier.clip(
+                                    remember("LandscapeAlbum_dycoverShape") {
+                                        YosRoundedCornerShape(8.dp)
+                                    }
+                                )
                             )
                         }
-                        yos.music.player.ui.widgets.basic.DynamicCoverVideoOverlay(
-                            videoUri = yos.music.player.data.objects.DynamicCoverState.videoUri,
-                            isPlaying = isPlayingStatusLambda,
-                            active = dynamicCoverActive,
-                            suppressed = albumCoverSuppressed,
-                            modifier = Modifier.clip(
-                                remember("LandscapeAlbum_dycoverShape") {
-                                    YosRoundedCornerShape(8.dp)
-                                }
-                            )
-                        )
                     }
                 }
             }

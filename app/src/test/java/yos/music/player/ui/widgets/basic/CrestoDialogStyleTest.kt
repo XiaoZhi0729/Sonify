@@ -56,4 +56,13 @@ class CrestoDialogStyleTest {
         assertEquals(Color.White, normal.surfaceColor)
         assertEquals(Color(0xFF1B1C1D), CrestoDialogStyle(true, true).surfaceColor)
     }
+
+    @Test
+    fun customPrimaryAndOnPrimaryAreAppliedToNormalPrimaryButtonOnly() {
+        val accent = Color(0xFFFFCC00)
+        val ink = Color(0xFF1C1C1E)
+        val style = CrestoDialogStyle(liquid = false, dark = false, primaryColor = accent, onPrimaryColor = ink)
+        assertEquals(accent to ink, style.buttonColors(primary = true, destructive = false, enabled = true))
+        assertEquals(Color(0xFFFB2C36) to Color.White, style.buttonColors(primary = true, destructive = true, enabled = true))
+    }
 }

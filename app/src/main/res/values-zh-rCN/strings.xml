@@ -216,6 +216,12 @@
     <string name="settings_play_crossfade_desc">自然播完、自动进入下一首时，两首歌按下方时长重叠过渡；手动切歌仍是立即切换。</string>
     <string name="settings_play_crossfade_duration">过渡时长</string>
     <string name="settings_play_crossfade_sec">%1$d 秒</string>
+    <string name="settings_play_crossfade_mode">过渡模式</string>
+    <string name="settings_play_crossfade_mode_smooth">平滑过渡</string>
+    <string name="settings_play_crossfade_mode_smart">智能过渡</string>
+    <string name="settings_play_crossfade_mode_desc">平滑过渡按下方时长等功率重叠；智能过渡将分析歌曲首尾节奏、能量与静音尾段，自动决定切入时机、响度平衡与下潜混响融合。</string>
+    <string name="settings_play_crossfade_duration_auto">由智能过渡自动决定</string>
+    <string name="settings_play_smart_fx_intensity">音色与空间混响</string>
     <string name="settings_extend_statusbarlyric">状态栏歌词</string>
     <string name="settings_others">其它</string>
     <string name="settings_others_about">关于</string>
@@ -545,6 +551,8 @@
     <string name="search_no_result">没有找到相关结果</string>
     <string name="settings_others_about_developer_mode">开发者模式</string>
     <string name="settings_others_about_developer_mode_desc">不要碰！这是给f2&amp;fg（*…￥%）用的！</string>
+    <string name="settings_dev_progressive_blur_demo">动态渐进模糊歌词 Demo</string>
+    <string name="settings_dev_progressive_blur_demo_desc">预览当前歌曲动态封面镜像拼接 + 多级渐进模糊歌词效果（支持横竖屏切换调参）</string>
     <string name="update_check">检查更新</string>
     <string name="update_auto_check">自动检查更新</string>
     <string name="update_preview_channel">接收预览版更新</string>
@@ -837,4 +845,31 @@
     <string name="bottom_bar_setting_reset_confirm_no">否</string>
     <string name="bottom_bar_setting_hide_tab">隐藏%1$s</string>
     <string name="bottom_bar_setting_show_tab">显示%1$s</string>
+
+    <!-- 自定义主题色 -->
+    <string name="settings_performance_ui_accent_color_title">主题色</string>
+    <string name="settings_performance_ui_accent_color_custom">自定义</string>
+    <string name="settings_performance_ui_accent_color_picker_title">自定义主题色</string>
+    <string name="accent_color_red">红色</string>
+    <string name="accent_color_pink">粉色</string>
+    <string name="accent_color_orange">橙色</string>
+    <string name="accent_color_yellow">黄色</string>
+    <string name="accent_color_green">绿色</string>
+    <string name="accent_color_mint">薄荷绿</string>
+    <string name="accent_color_teal">青绿色</string>
+    <string name="accent_color_cyan">天青色</string>
+    <string name="accent_color_blue">蓝色</string>
+    <string name="accent_color_indigo">靛蓝色</string>
+    <string name="accent_color_purple">紫色</string>
+    <string name="color_picker_mode_grid">网格</string>
+    <string name="color_picker_mode_spectrum">色谱</string>
+    <string name="color_picker_mode_sliders">滑块</string>
+    <string name="color_picker_channel_red">红</string>
+    <string name="color_picker_channel_green">绿</string>
+    <string name="color_picker_channel_blue">蓝</string>
+    <string name="color_picker_axis_saturation">饱和度</string>
+    <string name="color_picker_axis_chroma">彩度</string>
+    <string name="color_picker_axis_lightness">明度</string>
+    <string name="color_picker_opacity">不透明度</string>
+    <string name="color_picker_close">关闭</string>
 </resources>

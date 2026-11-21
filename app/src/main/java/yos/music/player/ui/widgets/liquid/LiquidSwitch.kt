@@ -2,6 +2,7 @@ package yos.music.player.ui.widgets.liquid
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,7 +68,7 @@ import kotlin.math.abs
  * 页面内容，而不是固定底色画板。播放页弹层槽在记录层之外，不构成循环。
  *
  * 尺寸按 catalog 基准 64×28dp 等比缩放（[switchHeight] 为轨道高度）。
- * 颜色为 iOS 开关绿：浅色 0xFF34C759 / 深色 0xFF30D158。
+ * 激活轨道颜色跟随当前主题强调色（[MaterialTheme.colorScheme.primary]）。
  *
  * 受控组件约定：部分设置行的 onClick 是空实现（展示型开关，如"淡入/淡出"），
  * onCheckedChange 并不会真正改变 [checked]。因此手势结束提交后以 [checkedState]
@@ -85,9 +86,7 @@ fun LiquidSwitch(
 ) {
     val s = switchHeight / 28.dp
     val isDark = isFlamingoInDarkMode()
-    val accentColor =
-        if (!isDark) Color(0xFF34C759)
-        else Color(0xFF30D158)
+    val accentColor = MaterialTheme.colorScheme.primary
     val trackColor =
         if (!isDark) Color(0xFF787878).copy(0.2f)
         else Color(0xFF787880).copy(0.36f)

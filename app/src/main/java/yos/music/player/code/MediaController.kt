@@ -82,7 +82,9 @@ import yos.music.player.code.utils.lrc.LyricRenderWarmup
 import yos.music.player.code.utils.lrc.LyricEntry
 import yos.music.player.code.utils.lrc.LyricInfoSerializer
 import yos.music.player.code.MediaController as YosControllerObject
+import yos.music.player.code.livesort.LiveSortTransitionController
 import yos.music.player.code.utils.player.CrossfadeExo
+import yos.music.player.code.utils.player.LiveSortAudioAnalyzer
 import yos.music.player.code.vocalsep.VocalSeparationController
 import yos.music.player.code.utils.player.SessionLyricTitles
 import yos.music.player.code.utils.player.FadeExo
@@ -2953,7 +2955,9 @@ class YosPlaybackService : MediaSessionService() {
         //    以前写死 true，导致用户关掉「音频焦点」后只要发生一次自动淡入切歌，
         //    焦点控制就悄悄回来了（设置项在下次重启前形同虚设）。
         secondary.setAudioAttributes(attrs, SettingsLibrary.AudioAttributes)
-        secondary.volume = 1f
+        if (!CrossfadeExo.isContinuingSmartRelease()) {
+            secondary.volume = 1f
+        }
         // ③ 重建会话外壳并迁移监听器/诊断心跳
         val newForwarding = makeForwardingPlayer(secondary)
         if (listener != null) newForwarding.addListener(listener)
@@ -2964,9 +2968,10 @@ class YosPlaybackService : MediaSessionService() {
         forwardingPlayer = newForwarding
         currentPlayer = secondary
         setCustomButtons(newForwarding)
-        // ④' 人声分离处理器身份随播放器搬迁（不清引擎状态：正在淡入的新曲必须保持
-        //     分离效果，否则接缝处会漏出一瞬原声）
+        // ④' 人声分离与 LiveSort 智能过渡处理器身份随播放器搬迁（不清引擎状态：正在淡入的
+        //     新曲必须保持分离与过渡滤波释放效果，否则接缝处会突变）
         runCatching { VocalSeparationController.promoteSecondaryToPrimary() }
+        runCatching { LiveSortTransitionController.promoteSecondaryToPrimary() }
         // ⑤ 收尾：释放旧 player；补发换曲事件（副 player 本来就在播，不会再有 transition/tracks
         //    通知，歌词/最近播放/音质探测/封面预载必须手动补跑，且顺序与自然换曲一致）
         runCatching { old.release() }
@@ -3129,6 +3134,27 @@ class YosPlaybackService : MediaSessionService() {
             yos.music.player.code.MediaController.preloadNextCover(it, applicationContext)
             // 下一首歌词预取：切歌后直接打开歌词页也有字（不写 UI 状态，只填缓存）
             yos.music.player.code.MediaController.prefetchNextLyric(it)
+
+            val smartEnabled = SettingsLibrary.CrossfadeEnabled && SettingsLibrary.isSmartCrossfade()
+            val curDuration = it.duration.takeIf { d -> d > 0L } ?: 0L
+            LiveSortTransitionController.bindTrack(
+                LiveSortTransitionController.PLAYER_PRIMARY,
+                mediaItem?.mediaId,
+                curDuration,
+                smartEnabled,
+            )
+            if (smartEnabled) {
+                LiveSortAudioAnalyzer.ensureAnalyzedAsync(applicationContext, mediaItem)
+                if (it.hasNextMediaItem()) {
+                    val nextIdx = it.getNextMediaItemIndex()
+                    if (nextIdx != C.INDEX_UNSET && nextIdx != it.currentMediaItemIndex) {
+                        LiveSortAudioAnalyzer.ensureAnalyzedAsync(
+                            applicationContext,
+                            it.getMediaItemAt(nextIdx),
+                        )
+                    }
+                }
+            }
         }
 
         // 播放即探测：换曲后立刻把这首歌的档位阶梯问一轮（单调阶梯，通常一个
@@ -3306,8 +3332,9 @@ class YosPlaybackService : MediaSessionService() {
         )
         notificationFavoriteScope?.cancel()
         notificationFavoriteScope = null
-        // 人声分离：处理器与引擎随 player 一起释放，这里只清注册表
+        // 人声分离与智能过渡：处理器与引擎随 player 一起释放，这里只清注册表
         runCatching { VocalSeparationController.release() }
+        runCatching { LiveSortTransitionController.release() }
         runCatching { yos.music.player.data.objects.VocalSeparationState.updateAvailability(false) }
         // 先拆跳歌退避：它往主线程 Handler 上挂了重备任务，回调里要碰 player，
         // 放在 session 释放之后执行就会打到已 release 的播放器

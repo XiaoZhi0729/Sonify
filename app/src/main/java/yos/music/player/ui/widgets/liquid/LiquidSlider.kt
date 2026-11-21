@@ -71,9 +71,7 @@ fun LiquidSlider(
     visibilityThreshold: Float = 0.001f
 ) {
     val isLightTheme = !isFlamingoInDarkMode()
-    val accentColor =
-        if (isLightTheme) Color(0xFF0088FF)
-        else Color(0xFF0091FF)
+    val accentColor = MaterialTheme.colorScheme.primary
     val trackColor =
         if (isLightTheme) Color(0xFF787878).copy(0.2f)
         else Color(0xFF787880).copy(0.36f)

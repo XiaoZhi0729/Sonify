@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.material3.CircularProgressIndicator
+import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -184,7 +184,7 @@ internal fun StatusFooter(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (showSpinner) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            MochiActivityIndicator(size = 16.dp)
         }
         Text(
             text = text,

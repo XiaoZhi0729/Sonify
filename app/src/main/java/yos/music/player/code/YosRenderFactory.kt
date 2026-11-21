@@ -16,6 +16,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import yos.music.player.BuildConfig
+import yos.music.player.code.livesort.LiveSortTransitionController
+import yos.music.player.code.livesort.LiveSortTransitionProcessor
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.code.vocalsep.VocalSeparationController
 import yos.music.player.code.vocalsep.VocalSeparationProcessor
@@ -58,6 +60,12 @@ class YosRenderFactory(
         ).also { VocalSeparationController.attach(playerKey, it) }
     }
 
+    private val liveSortTransitionProcessor: LiveSortTransitionProcessor by lazy {
+        LiveSortTransitionProcessor().also {
+            LiveSortTransitionController.attach(playerKey, it)
+        }
+    }
+
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
@@ -82,8 +90,8 @@ class YosRenderFactory(
         val base = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(false)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            // 处理器排在静音跳过与 Sonic(倍速) 之前：倍速不会绕过分离
-            .setAudioProcessors(arrayOf(vocalSeparationProcessor))
+            // 处理器排在静音跳过与 Sonic(倍速) 之前：倍速不会绕过分离与智能过渡 DSP
+            .setAudioProcessors(arrayOf(vocalSeparationProcessor, liveSortTransitionProcessor))
             .build()
         YosDiagnostics.log(
             "VSEP_SINK",

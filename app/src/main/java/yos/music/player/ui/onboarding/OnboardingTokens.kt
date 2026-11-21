@@ -5,14 +5,13 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.ui.theme.isFlamingoInDarkMode
-import yos.music.player.ui.theme.primary
-import yos.music.player.ui.theme.primaryDark
 
 /**
  * 引导页的设计令牌（**唯一数值来源**）。
@@ -317,7 +316,8 @@ internal fun onboardingColors(): OnboardingColors {
     val card = paletteColor(if (dark) CardDark else CardLight, spec)
     val track = paletteColor(if (dark) TrackDark else TrackLight, spec)
     val indicator = paletteColor(if (dark) IndicatorDark else IndicatorLight, spec)
-    val brand = paletteColor(if (dark) primaryDark else primary, spec)
+    val brand = paletteColor(MaterialTheme.colorScheme.primary, spec)
+    val onBrand = paletteColor(MaterialTheme.colorScheme.onPrimary, spec)
 
     return OnboardingColors(
         dark = dark,
@@ -333,7 +333,7 @@ internal fun onboardingColors(): OnboardingColors {
         track = track,
         indicator = indicator,
         brand = brand,
-        onBrand = Color.White,
+        onBrand = onBrand,
         scrim = Color.Black.copy(alpha = if (dark) 0.60f else 0.40f),
         // accent-soft：品牌色 14%（原型 --accent-soft）。
         // 它必须由 brand 派生而不是写死 #FF3B4E，深色下品牌色是另一支，

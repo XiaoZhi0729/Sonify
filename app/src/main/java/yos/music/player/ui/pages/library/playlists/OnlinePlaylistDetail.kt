@@ -38,7 +38,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -151,6 +150,7 @@ import yos.music.player.ui.widgets.basic.TitleOverlayHost
 import yos.music.player.ui.widgets.basic.TitleOverlayHostSlot
 import yos.music.player.ui.widgets.basic.YosWrapper
 import yos.music.player.ui.widgets.basic.rememberAlpha
+import yos.music.player.ui.widgets.basic.rememberBarBackgroundVisible
 import yos.music.player.ui.widgets.basic.rememberContentFadeAlpha
 import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.rememberShowSmallTitle
@@ -164,6 +164,9 @@ import yos.music.player.ui.widgets.dropdown.isDropdownDarkTheme
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 import yos.music.player.ui.widgets.mochi.IndexedListResult
 import yos.music.player.ui.widgets.mochi.MochiIndexBar
+import yos.music.player.ui.widgets.mochi.MochiRefreshIndicator
+import yos.music.player.ui.widgets.mochi.mochiRefreshHold
+import yos.music.player.ui.widgets.mochi.rememberMochiRefreshState
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -734,6 +737,7 @@ fun OnlinePlaylistDetail(
     val topBarHeightPx = rememberIndexScrollOffsetPx()
     val titleBackdrop = rememberTitleBackdrop(backdrop)
     val showSmallTitle = rememberShowSmallTitle(rememberAlpha(state), state)
+    val barBackgroundVisible = rememberBarBackgroundVisible(state)
     // 封面滚动动效（模糊 / 下沉 / 缩放 / 淡出），与顶栏折叠共用同一个 LazyListState
     val coverMotion = rememberCoverScrollMotion(state)
     // 简介底色明暗：用当前底色亮度判定（与专辑页一致）
@@ -803,17 +807,14 @@ fun OnlinePlaylistDetail(
                     } else Modifier
                 )
         ) {
-            PullToRefreshBox(
-                isRefreshing = refreshing.value,
-                onRefresh = { refreshFromPull() },
-                modifier = Modifier.fillMaxSize()
-            ) {
+            val refresh = rememberMochiRefreshState(refreshing.value) { refreshFromPull() }
+            Box(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = state,
                     modifier = Modifier
                         .fillMaxSize()
                         .layerBackdrop(titleBackdrop)
-                        .overScrollVertical(),
+                        .overScrollVertical(offsetObserver = refresh.offsetObserver),
                     flingBehavior = rememberOverscrollFlingBehavior { state },
                     contentPadding = PaddingValues(
                         bottom = 18.dp,
@@ -821,6 +822,8 @@ fun OnlinePlaylistDetail(
                     )
                 ) {
                     item("PlaylistHeader") {
+                        // 刷新中让头部整体下移，给转圈留位置
+                        Box(Modifier.mochiRefreshHold(refresh)) {
                         if (isWideScreen) {
                             // 平板（≥600dp）：与专辑页同款 Apple Music 式头部
                             DetailPageHeader(
@@ -901,6 +904,7 @@ fun OnlinePlaylistDetail(
                                 searchExpanded = searchExpanded.value,
                                 coverMotion = coverMotion
                             )
+                        }
                         }
                     }
 
@@ -1130,6 +1134,18 @@ fun OnlinePlaylistDetail(
                         Spacer(modifier = Modifier.navigationBarsHeight(134.dp))
                     }
                 }
+                // 转圈锚点 = 列表内容上沿（TitleBar 下沿）；颜色跟随封面取色文字色
+                MochiRefreshIndicator(
+                    refresh,
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 54.dp),
+                    color = contentColor.copy(alpha = 0.75f),
+                    scrollAway = {
+                        if (state.firstVisibleItemIndex == 0) state.firstVisibleItemScrollOffset.toFloat()
+                        else Float.MAX_VALUE
+                    },
+                )
             }
 
             // 顶栏：滚动离屏浮现小标题 + 模糊；返回键/右上图标着色跟随页面文字色
@@ -1141,6 +1157,7 @@ fun OnlinePlaylistDetail(
                 } else null,
                 showSmallTitle = showSmallTitle,
                 backdrop = titleBackdrop,
+                barBackgroundVisible = barBackgroundVisible,
                 backIconTint = contentColor,
                 rightBarIcon = {
                     // 本体化玻璃菜单（NexioSchedule 1.6.5）：与专辑页同款接线
