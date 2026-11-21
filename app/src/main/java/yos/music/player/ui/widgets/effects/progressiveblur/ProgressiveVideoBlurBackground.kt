@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +68,9 @@ fun ProgressiveVideoBlurBackground(
     morphCornerPx: Float = 0f,
     onSourceInfoChanged: (usingVideo: Boolean, width: Int, height: Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
+    renderingActive: Boolean = true,
+    coverOriginXProvider: (() -> Float)? = null,
+    pageBlurProgressProvider: (() -> Float)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -81,6 +85,7 @@ fun ProgressiveVideoBlurBackground(
 
     val latestVideoUri by rememberUpdatedState(videoUri)
     val latestOnSourceInfoChanged by rememberUpdatedState(onSourceInfoChanged)
+    val latestRenderingActive by rememberUpdatedState(renderingActive)
 
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val eglThreadRef = remember { AtomicReference<ProgressiveVideoEglThread?>(null) }
@@ -110,18 +115,13 @@ fun ProgressiveVideoBlurBackground(
         coverGeneration += 1L
     }
 
-    val exoPlayer = remember(context) {
-        ExoPlayer.Builder(context).build().apply {
-            volume = 0f
-            repeatMode = Player.REPEAT_MODE_ONE
-            setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ false)
-        }
-    }
+    val needsVideoPlayer = videoUri != null && !forceStaticCover
+    var exoPlayer by remember(context) { mutableStateOf<ExoPlayer?>(null) }
 
     val usingVideo =
         videoUri != null && !forceStaticCover && firstFrameReady && videoWidth > 0 && videoHeight > 0
 
-    val renderState = remember(
+    val baseRenderState = remember(
         config,
         usingVideo,
         videoWidth,
@@ -151,14 +151,43 @@ fun ProgressiveVideoBlurBackground(
             morphCornerPx = morphCornerPx,
         )
     }
-    val latestRenderState by rememberUpdatedState(renderState)
+    val latestBaseRenderState by rememberUpdatedState(baseRenderState)
+    val latestOriginProvider by rememberUpdatedState(coverOriginXProvider)
+    val latestPageBlurProvider by rememberUpdatedState(pageBlurProgressProvider)
 
-    SideEffect {
-        eglThreadRef.get()?.updateState(renderState)
+    fun resolveLiveRenderState(base: ProgressiveRenderState = latestBaseRenderState): ProgressiveRenderState {
+        val originX = latestOriginProvider?.invoke() ?: base.coverOriginX
+        val blurProg = latestPageBlurProvider?.invoke() ?: base.pageBlurProgress
+        return if (originX == base.coverOriginX && blurProg == base.pageBlurProgress) {
+            base
+        } else {
+            base.copy(coverOriginX = originX, pageBlurProgress = blurProg)
+        }
+    }
+
+    LaunchedEffect(baseRenderState) {
+        eglThreadRef.get()?.updateState(resolveLiveRenderState(baseRenderState))
+    }
+
+    val hasAnimatedProviders = coverOriginXProvider != null || pageBlurProgressProvider != null
+    LaunchedEffect(hasAnimatedProviders) {
+        if (!hasAnimatedProviders) return@LaunchedEffect
+        snapshotFlow {
+            val base = latestBaseRenderState
+            val originX = latestOriginProvider?.invoke() ?: base.coverOriginX
+            val blurProg = latestPageBlurProvider?.invoke() ?: base.pageBlurProgress
+            originX to blurProg
+        }.collect { (originX, blurProg) ->
+            val updated = latestBaseRenderState.copy(
+                coverOriginX = originX,
+                pageBlurProgress = blurProg,
+            )
+            eglThreadRef.get()?.updateState(updated)
+        }
     }
 
     LaunchedEffect(config.orientationMode, config.coverSize) {
-        eglThreadRef.get()?.updateState(latestRenderState)
+        eglThreadRef.get()?.updateState(resolveLiveRenderState())
     }
 
     LaunchedEffect(usingVideo, videoWidth, videoHeight, coverBitmap) {
@@ -167,7 +196,27 @@ fun ProgressiveVideoBlurBackground(
         latestOnSourceInfoChanged(usingVideo, sourceW, sourceH)
     }
 
-    DisposableEffect(exoPlayer) {
+    DisposableEffect(Unit) {
+        onDispose {
+            disposed.set(true)
+            boundVideoSurface = null
+            eglThreadRef.getAndSet(null)?.let { thread ->
+                thread.stopAndJoin()
+                thread.releaseOutputSurface()
+            }
+            mainHandler.removeCallbacksAndMessages(null)
+        }
+    }
+
+    DisposableEffect(needsVideoPlayer, context) {
+        if (!needsVideoPlayer) {
+            return@DisposableEffect onDispose {}
+        }
+        val player = ExoPlayer.Builder(context).build().apply {
+            volume = 0f
+            repeatMode = Player.REPEAT_MODE_ONE
+            setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus = */ false)
+        }
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 firstFrameReady = true
@@ -184,31 +233,33 @@ fun ProgressiveVideoBlurBackground(
                 DynamicCoverState.onPlaybackError(latestVideoUri)
             }
         }
-        exoPlayer.addListener(listener)
+        player.addListener(listener)
+        if (lifecycleStarted) {
+            boundVideoSurface?.let { player.setVideoSurface(it) }
+        }
+        exoPlayer = player
         onDispose {
-            disposed.set(true)
-            val videoSurface = boundVideoSurface
-            boundVideoSurface = null
-            exoPlayer.clearVideoSurface(videoSurface)
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
-            eglThreadRef.getAndSet(null)?.let { thread ->
-                thread.stopAndJoin()
-                thread.releaseOutputSurface()
+            if (exoPlayer === player) {
+                exoPlayer = null
             }
-            mainHandler.removeCallbacksAndMessages(null)
+            firstFrameReady = false
+            videoWidth = 0
+            videoHeight = 0
+            player.clearVideoSurface(boundVideoSurface)
+            player.removeListener(listener)
+            player.release()
         }
     }
 
-    DisposableEffect(lifecycleOwner, exoPlayer) {
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     lifecycleStarted = true
-                    boundVideoSurface?.let { exoPlayer.setVideoSurface(it) }
+                    boundVideoSurface?.let { surface -> exoPlayer?.setVideoSurface(surface) }
                 }
                 Lifecycle.Event.ON_RESUME -> {
-                    eglThreadRef.get()?.setRenderingEnabled(true)
+                    eglThreadRef.get()?.setRenderingEnabled(latestRenderingActive)
                 }
                 Lifecycle.Event.ON_PAUSE -> {
                     eglThreadRef.get()?.setRenderingEnabled(false)
@@ -216,8 +267,8 @@ fun ProgressiveVideoBlurBackground(
                 Lifecycle.Event.ON_STOP -> {
                     lifecycleStarted = false
                     firstFrameReady = false
-                    exoPlayer.pause()
-                    exoPlayer.clearVideoSurface(boundVideoSurface)
+                    exoPlayer?.pause()
+                    exoPlayer?.clearVideoSurface(boundVideoSurface)
                 }
                 else -> Unit
             }
@@ -228,26 +279,33 @@ fun ProgressiveVideoBlurBackground(
         }
     }
 
+    LaunchedEffect(renderingActive) {
+        val enabled = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && renderingActive
+        eglThreadRef.get()?.setRenderingEnabled(enabled)
+    }
+
     LaunchedEffect(videoUri, forceStaticCover, exoPlayer) {
+        val player = exoPlayer ?: return@LaunchedEffect
         firstFrameReady = false
         videoWidth = 0
         videoHeight = 0
         if (videoUri != null && !forceStaticCover) {
-            exoPlayer.setMediaItem(MediaItem.fromUri(videoUri))
-            exoPlayer.prepare()
+            player.setMediaItem(MediaItem.fromUri(videoUri))
+            player.prepare()
         } else {
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
+            player.stop()
+            player.clearMediaItems()
         }
     }
 
     val shouldPlay = videoUri != null && !forceStaticCover && isPlaying && lifecycleStarted
     LaunchedEffect(shouldPlay, exoPlayer) {
-        exoPlayer.playWhenReady = shouldPlay
+        val player = exoPlayer ?: return@LaunchedEffect
+        player.playWhenReady = shouldPlay
         if (shouldPlay) {
-            exoPlayer.play()
+            player.play()
         } else {
-            exoPlayer.pause()
+            player.pause()
         }
     }
 
@@ -264,7 +322,7 @@ fun ProgressiveVideoBlurBackground(
                         height = bottom - top,
                         lastSyncedSize = lastSyncedSize,
                         eglThread = eglThreadRef.get(),
-                        renderState = latestRenderState,
+                        renderState = resolveLiveRenderState(),
                     )
                 }
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -284,13 +342,13 @@ fun ProgressiveVideoBlurBackground(
                             outputSurface = outputSurface,
                             initialWidth = width,
                             initialHeight = height,
-                            initialState = latestRenderState,
+                            initialState = resolveLiveRenderState(),
                             onVideoSurfaceReady = { videoSurface ->
                                 mainHandler.post {
                                     if (!disposed.get() && eglThreadRef.get() === createdThread) {
                                         boundVideoSurface = videoSurface
                                         if (lifecycleStarted) {
-                                            exoPlayer.setVideoSurface(videoSurface)
+                                            exoPlayer?.setVideoSurface(videoSurface)
                                         }
                                     }
                                 }
@@ -307,12 +365,13 @@ fun ProgressiveVideoBlurBackground(
                         if (old != null) {
                             val prevSurface = boundVideoSurface
                             boundVideoSurface = null
-                            exoPlayer.clearVideoSurface(prevSurface)
+                            exoPlayer?.clearVideoSurface(prevSurface)
                             old.stopAndJoin()
                             old.releaseOutputSurface()
                         }
                         createdThread.setRenderingEnabled(
-                            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
+                            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                                latestRenderingActive,
                         )
                         createdThread.start()
                     }
@@ -328,7 +387,7 @@ fun ProgressiveVideoBlurBackground(
                             height = height,
                             lastSyncedSize = lastSyncedSize,
                             eglThread = eglThreadRef.get(),
-                            renderState = latestRenderState,
+                            renderState = resolveLiveRenderState(),
                             force = true,
                         )
                     }
@@ -338,7 +397,7 @@ fun ProgressiveVideoBlurBackground(
                     ): Boolean {
                         val videoSurface = boundVideoSurface
                         boundVideoSurface = null
-                        exoPlayer.clearVideoSurface(videoSurface)
+                        exoPlayer?.clearVideoSurface(videoSurface)
                         eglThreadRef.getAndSet(null)?.let { thread ->
                             thread.stopAndJoin()
                             thread.releaseOutputSurface()
@@ -363,7 +422,7 @@ fun ProgressiveVideoBlurBackground(
                 height = textureView.height,
                 lastSyncedSize = lastSyncedSize,
                 eglThread = eglThreadRef.get(),
-                renderState = latestRenderState,
+                renderState = latestBaseRenderState,
             )
         },
     )

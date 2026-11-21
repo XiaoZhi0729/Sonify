@@ -23,6 +23,7 @@ import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
+import yos.music.player.data.waveform.PlaybackLevelBridge
 
 internal class PearMeshGlRenderer(
     context: Context,
@@ -88,6 +89,8 @@ internal class PearMeshGlRenderer(
         GLES30.glClearColor(0f, 0f, 0f, 1f)
     }
 
+    fun hasPendingWork(): Boolean = artworkTransitionStart.isFinite() || pendingArtwork != null
+
     fun render(width: Int, height: Int, state: RendererState, time: Double) {
         currentScrimAlpha = state.scrimAlpha
         ensureSize(width, height, state)
@@ -145,8 +148,9 @@ internal class PearMeshGlRenderer(
      * 观感就是"暂停时突然改了一下"。所以暂停就是保持当前值不动。
      */
     private fun audioPulse(state: RendererState, frameSeconds: Float): Float {
-        if (state.isPlaybackPlaying) {
-            val target = state.audioPower
+        if (state.isPlaybackPlaying && state.pulseIntensity > 0f) {
+            val raw = PlaybackLevelBridge.read()
+            val target = if (raw.isFinite()) raw.coerceIn(0f, 1f) else 0f
             val tau = if (target > smoothedPower) PULSE_ATTACK_S else PULSE_RELEASE_S
             val mix = 1f - exp(-frameSeconds / tau)
             smoothedPower += (target - smoothedPower) * mix

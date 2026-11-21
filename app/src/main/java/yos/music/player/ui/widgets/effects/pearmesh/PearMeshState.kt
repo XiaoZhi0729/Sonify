@@ -61,7 +61,10 @@ internal class PearMeshState(
     private val pulseIntensityTarget = AtomicReference(DefaultPulseIntensity)
 
     fun setPulseIntensity(intensity: Float) {
-        pulseIntensityTarget.set(intensity.coerceIn(0f, MaxPulseIntensity))
+        val next = intensity.coerceIn(0f, MaxPulseIntensity)
+        if (pulseIntensityTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setAudioPower(power: Float) {
@@ -69,44 +72,68 @@ internal class PearMeshState(
         audioPowerBits.set(clamped.toRawBits())
     }
 
+    @Volatile
     var renderInvalidatedListener: (() -> Unit)? = null
 
     fun setPortraitPreset(index: Int) {
-        portraitPreset.set(index.coerceIn(0, PearMeshMesh.PortraitPresetCount - 1))
+        val next = index.coerceIn(0, PearMeshMesh.PortraitPresetCount - 1)
+        if (portraitPreset.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setLandscapePreset(index: Int) {
-        landscapePreset.set(index.coerceIn(0, PearMeshMesh.LandscapePresetCount - 1))
+        val next = index.coerceIn(0, PearMeshMesh.LandscapePresetCount - 1)
+        if (landscapePreset.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setRenderScale(scale: Float) {
-        renderScaleTarget.set(scale.coerceIn(MinRenderScale, MaxRenderScale))
+        val next = scale.coerceIn(MinRenderScale, MaxRenderScale)
+        if (renderScaleTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setTargetFrameRate(frameRate: Int) {
-        targetFrameRateTarget.set(frameRate.coerceIn(MinTargetFrameRate, MaxTargetFrameRate))
+        val next = frameRate.coerceIn(MinTargetFrameRate, MaxTargetFrameRate)
+        if (targetFrameRateTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setScrimAlpha(alpha: Float) {
-        scrimAlphaTarget.set(alpha.coerceIn(0f, 1f))
+        val next = alpha.coerceIn(0f, 1f)
+        if (scrimAlphaTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setBlurMultiplier(multiplier: Float) {
-        blurMultiplierTarget.set(multiplier.coerceAtLeast(0f))
+        val next = multiplier.coerceAtLeast(0f)
+        if (blurMultiplierTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setBlurEnabled(enabled: Boolean) {
-        blurEnabledTarget.set(enabled)
+        if (blurEnabledTarget.getAndSet(enabled) != enabled) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setFlowSpeed(speed: Int) {
-        flowSpeedTarget.set(speed.coerceIn(MinFlowSpeed, MaxFlowSpeed))
-        renderInvalidatedListener?.invoke()
+        val next = speed.coerceIn(MinFlowSpeed, MaxFlowSpeed)
+        if (flowSpeedTarget.getAndSet(next) != next) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setPauseFlowEnabled(enabled: Boolean) {
-        pauseFlow.set(enabled)
-        renderInvalidatedListener?.invoke()
+        if (pauseFlow.getAndSet(enabled) != enabled) {
+            renderInvalidatedListener?.invoke()
+        }
     }
 
     fun setPlaybackPlaying(playing: Boolean) {

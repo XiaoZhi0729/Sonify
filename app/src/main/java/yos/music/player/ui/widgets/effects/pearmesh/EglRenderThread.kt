@@ -43,6 +43,7 @@ internal class EglRenderThread(
     private val idle = AtomicBoolean(false)
     private val size = AtomicLong(packSize(initialWidth, initialHeight))
     private val renderSessionGeneration = AtomicLong(0L)
+    private val invalidationGen = AtomicLong(0L)
     private val renderingLock = ReentrantLock()
     private val renderingCondition = renderingLock.newCondition()
     private var thread: Thread? = null
@@ -54,19 +55,37 @@ internal class EglRenderThread(
 
     fun resize(width: Int, height: Int) {
         size.set(packSize(width, height))
+        wakeFromIdle()
     }
 
     fun setRenderingEnabled(enabled: Boolean) {
         if (renderingEnabled.getAndSet(enabled) == enabled) return
-        if (enabled) idle.set(false)
-        wakeRenderer()
+        if (enabled) {
+            invalidationGen.incrementAndGet()
+            renderingLock.withLock {
+                if (idle.getAndSet(false)) {
+                    renderSessionGeneration.incrementAndGet()
+                }
+                renderingCondition.signalAll()
+            }
+        } else {
+            wakeRenderer()
+        }
     }
 
     fun wakeFromIdle() {
+        invalidationGen.incrementAndGet()
         if (!renderingEnabled.get()) return
-        if (idle.getAndSet(false)) {
-            renderSessionGeneration.incrementAndGet()
-            wakeRenderer()
+        var shouldWake = false
+        renderingLock.withLock {
+            if (idle.getAndSet(false)) {
+                renderSessionGeneration.incrementAndGet()
+                renderingCondition.signalAll()
+                shouldWake = true
+            }
+        }
+        if (shouldWake) {
+            thread?.interrupt()
         }
     }
 
@@ -145,6 +164,7 @@ internal class EglRenderThread(
                 val resumedAfterPause = awaitRenderingEnabled()
                 if (!running.get()) break
 
+                val genBeforeFrame = invalidationGen.get()
                 val frameStart = System.nanoTime()
                 val state = stateProvider()
                 val sessionGeneration = renderSessionGeneration.get()
@@ -185,6 +205,25 @@ internal class EglRenderThread(
                             break
                         }
                         error("eglSwapBuffers failed: 0x${error.toString(16)}")
+                    }
+                }
+
+                // 暂停且无进行中的切歌渐变或状态失效时进入 idle 等待，消除后台 GL/CPU 空转。
+                if (!state.isPlaybackPlaying &&
+                    state.pauseFlowEnabled &&
+                    !renderer.hasPendingWork() &&
+                    invalidationGen.get() == genBeforeFrame
+                ) {
+                    val enteredIdle = renderingLock.withLock {
+                        if (invalidationGen.get() == genBeforeFrame && renderingEnabled.get()) {
+                            idle.set(true)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (enteredIdle) {
+                        continue
                     }
                 }
 

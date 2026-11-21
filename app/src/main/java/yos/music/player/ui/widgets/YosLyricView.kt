@@ -1,7 +1,15 @@
 package yos.music.player.ui.widgets
 
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
+import android.util.LruCache
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.AnimationSpec
@@ -59,6 +67,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -161,6 +170,13 @@ private const val LyricSungCoverMix = 0.3f
 
 private object LyricCoverTint {
     val color = mutableStateOf(Color.White)
+    private val cache = LruCache<Uri, Color>(12)
+
+    fun getCached(uri: Uri): Color? = synchronized(cache) { cache.get(uri) }
+
+    fun putCached(uri: Uri, tint: Color) {
+        synchronized(cache) { cache.put(uri, tint) }
+    }
 }
 
 /**
@@ -264,6 +280,8 @@ fun YosLyricViewLib(
     modifier: Modifier,
     onBackClick: () -> Unit,
     lastLineObstructionFraction: Float = 0f,
+    active: Boolean = true,
+    isPlaying: () -> Boolean = { true },
 ) {
     val entries = lrcEntriesLambda()
     val otherSideForLines = MediaViewModelObject.otherSideForLines
@@ -290,8 +308,15 @@ fun YosLyricViewLib(
     val context = LocalContext.current
     val lyricCoverUri = MediaViewModelObject.bitmap.value
     LaunchedEffect(lyricCoverUri) {
+        if (lyricCoverUri == null) {
+            LyricCoverTint.color.value = Color.White
+            return@LaunchedEffect
+        }
+        LyricCoverTint.getCached(lyricCoverUri)?.let { cached ->
+            LyricCoverTint.color.value = cached
+            return@LaunchedEffect
+        }
         LyricCoverTint.color.value = Color.White
-        if (lyricCoverUri == null) return@LaunchedEffect
 
         val tintArgb = runCatching {
             val result = context.imageLoader.execute(
@@ -313,8 +338,9 @@ fun YosLyricViewLib(
                 ).firstOrNull { it != fallback }
             }
         }.getOrNull()
-        LyricCoverTint.color.value =
-            if (tintArgb != null && tintArgb != 0) Color(tintArgb) else Color.White
+        val resolved = if (tintArgb != null && tintArgb != 0) Color(tintArgb) else Color.White
+        LyricCoverTint.putCached(lyricCoverUri, resolved)
+        LyricCoverTint.color.value = resolved
     }
     val textColor = lerp(Color.White, LyricCoverTint.color.value, LyricSungCoverMix)
 
@@ -332,14 +358,37 @@ fun YosLyricViewLib(
     }
 
     // 库要求 currentPosition 必须来自 Compose 状态，否则 snapshotFlow 收不到变化、歌词不会走。
-    // 播放器位置是普通 getter，这里用一个 60Hz 的镜像状态桥接（只在值变化时写入）。
+    // 仅在歌词面板处于可见激活态、宿主生命周期 STARTED 以上且播放中（或拖动进度条时）更新状态，
+    // 收起或暂停时不空转 withFrameNanos。
+    val latestLiveTime by rememberUpdatedState(liveTimeLambda)
+    val latestIsPlaying by rememberUpdatedState(isPlaying)
+    val lifecycleOwner = LocalLifecycleOwner.current
     val positionState = remember { mutableIntStateOf(liveTimeLambda()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            withFrameNanos {
-                val value = liveTimeLambda()
-                if (value != positionState.intValue) positionState.intValue = value
+    fun syncPositionNow() {
+        val value = latestLiveTime()
+        if (value != positionState.intValue) positionState.intValue = value
+    }
+    LaunchedEffect(active, entries, lyricCoverUri) {
+        if (active) syncPositionNow()
+    }
+    LaunchedEffect(active, lifecycleOwner) {
+        if (!active) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            syncPositionNow()
+            launch {
+                snapshotFlow { MainViewModelObject.scrubPositionMs.value }
+                    .collect { syncPositionNow() }
             }
+            snapshotFlow { latestIsPlaying() }
+                .collectLatest { playing ->
+                    syncPositionNow()
+                    if (!playing) return@collectLatest
+                    while (isActive) {
+                        withFrameNanos {
+                            syncPositionNow()
+                        }
+                    }
+                }
         }
     }
 
@@ -481,6 +530,7 @@ fun YosLyricViewLib(
                             return@KaraokeLyricsView
                         }
                         mediaEvent.onSeek(line.start)
+                        positionState.intValue = line.start
                     },
                     onLinePressed = {},
                     modifier = Modifier.fillMaxSize(),

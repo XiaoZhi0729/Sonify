@@ -145,14 +145,17 @@ fun YosFloatingLight(
     LaunchedEffect(meshActive) {
         if (!meshActive) meshReady = false
     }
-    val meshAlpha by animateFloatAsState(
+    val meshAlphaState = animateFloatAsState(
         targetValue = if (meshActive && meshReady) 1f else 0f,
         animationSpec = tween(durationMillis = 220),
         label = "meshAlpha"
     )
+    val meshOpaque by remember(meshActive) {
+        derivedStateOf { meshActive && meshAlphaState.value >= 0.999f }
+    }
 
     Box(modifier = modifier) {
-        run {
+        if (!meshOpaque) {
             if (crossfade != null) {
                 // 共享时间轴分支：每层各自持有一份 drawable，节点按图层 key 复用，
                 // 过渡结束裁回一张时旧节点离开组合、位图随之释放。
@@ -173,7 +176,7 @@ fun YosFloatingLight(
                             // 不会出现"旧图先淡掉、新图还没到"的透底变暗。
                             backgroundLayerAlpha(index, layers.size, crossfade.progress.value)
                         },
-                        useKenBurns = effectiveBgEffect,
+                        useKenBurns = !meshActive && effectiveBgEffect,
                         animateAlways = animateAlways
                     )
                 }
@@ -241,7 +244,7 @@ fun YosFloatingLight(
             // 原第三层全屏 OVERLAY ImageView 已烘焙进 imageResolve（bakeDarkOverlay），层序少一层全屏合成。
             BackgroundLayer(
                 drawable = currentDrawable,
-                useKenBurns = effectiveBgEffect,
+                useKenBurns = !meshActive && effectiveBgEffect,
                 isPlaying = isPlaying,
                 nowPage = nowPage,
                 showMiniPlayer = showMiniPlayer,
@@ -257,7 +260,7 @@ fun YosFloatingLight(
             PearMeshBackgroundLayer(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = meshAlpha },
+                    .graphicsLayer { alpha = meshAlphaState.value },
                 album = album,
                 isPlaying = isPlaying,
                 showMiniPlayer = showMiniPlayer,
@@ -444,20 +447,6 @@ private fun PearMeshBackgroundLayer(
         if (!pulseEnabled) PlaybackLevelBridge.reset()
     }
 
-    // 能量桥轮询：分析侧在播放线程每 hop（≈23ms）写一次，这里 30fps 取最新值。
-    // 用 withFrameNanos 而不是固定间隔 delay，是为了跟着显示时钟走、不额外制造唤醒。
-    LaunchedEffect(pulseEnabled, playing, active) {
-        if (!pulseEnabled) {
-            state.setAudioPower(0f)
-            return@LaunchedEffect
-        }
-        while (true) {
-            withFrameNanos {
-                state.setAudioPower(PlaybackLevelBridge.read())
-            }
-        }
-    }
-
     LaunchedEffect(albumUri) {
         if (albumUri == null) return@LaunchedEffect
         val bitmap = withContext(Dispatchers.IO) { decodeMeshArtwork(context, albumUri) }
@@ -470,6 +459,7 @@ private fun PearMeshBackgroundLayer(
     PearMeshBackground(
         state = state,
         modifier = modifier.fillMaxSize(),
+        renderingActive = active,
         onFirstFrameRendered = onFirstFrameRendered,
     )
 }

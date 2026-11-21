@@ -186,6 +186,7 @@ import androidx.compose.ui.util.fastMap
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player.REPEAT_MODE_ALL
 import androidx.media3.common.Player.REPEAT_MODE_OFF
 import androidx.media3.common.Player.REPEAT_MODE_ONE
@@ -202,6 +203,7 @@ import yos.music.player.ui.widgets.basic.statusBarsHeight
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
@@ -764,7 +766,8 @@ internal fun NowPlaying(
                     onOpenArtist = onOpenArtist,
                     onOpenAlbum = onOpenAlbum,
                     onOpenLogin = onOpenLogin,
-                    dynamicCoverActive = !showMiniPlayer
+                    dynamicCoverActive = !showMiniPlayer,
+                    showMiniPlayer = showMiniPlayer
                 )
                 return@YosWrapper
             }
@@ -1181,7 +1184,9 @@ internal fun NowPlaying(
                                             },
                                             // 竖屏控件层压在底部：末句固定上抬到控件之上，不随控件显隐移动。
                                             lastLineObstructionFraction =
-                                                lyricObstructionFraction
+                                                lyricObstructionFraction,
+                                            active = !showMiniPlayer && page == Lyric,
+                                            isPlaying = isPlayingStatusLambda
                                         )
                                     }
                                 }
@@ -1557,6 +1562,7 @@ internal fun NowPlaying(
                                         modifier = Modifier
                                             .padding(top = 52.dp)
                                             .padding(bottom = portraitBottomCompensation),
+                                        active = !showMiniPlayer,
                                         onWhile = onWhileAction)
                                 }
 
@@ -2691,7 +2697,9 @@ internal fun Lyric(
     // 歌词内容的入出场滑动机（调用方传 animateEnterExit）。挂在 mask/clip **之内**：
     // 渐隐渐显与裁剪固定在静止后的可视区域坐标上，滑动全程歌词只出现在该区域内。
     viewModifier: Modifier = Modifier,
-    lastLineObstructionFraction: Float = 0f
+    lastLineObstructionFraction: Float = 0f,
+    active: Boolean = true,
+    isPlaying: () -> Boolean = { true },
 ) = YosWrapper {
 
     val context = LocalContext.current
@@ -2781,6 +2789,18 @@ internal fun Lyric(
                     .then(viewModifier)
             }
 
+            val noLrcText = stringResource(id = R.string.tip_no_lyrics)
+            val lyricUiConfig = remember(noLrcText) {
+                YosUIConfig(noLrcText = noLrcText)
+            }
+            val lyricMediaEvent = remember {
+                object : YosMediaEvent {
+                    override fun onSeek(position: Int) {
+                        YosDiagnostics.log("SEEK_SRC", "fn" to "lyric_line", "to" to position)
+                        mediaControl?.seekTo(position.toLong())
+                    }
+                }
+            }
             YosLyricViewLib(
                 //mediaViewModel = mediaViewModel,
                 lyricState = lyricState,
@@ -2790,23 +2810,18 @@ internal fun Lyric(
                     MainViewModelObject.scrubPositionMs.value
                         ?: (mediaControl?.currentPosition ?: 0).toInt()
                 },
-                mediaEvent = object : YosMediaEvent {
-                    override fun onSeek(position: Int) {
-                        YosDiagnostics.log("SEEK_SRC", "fn" to "lyric_line", "to" to position)
-                        mediaControl?.seekTo(position.toLong())
-                    }
-                },
+                mediaEvent = lyricMediaEvent,
                 translationLambda = translationLambda,
                 blurLambda = {
                     SettingsLibrary.LyricBlurEffect
                 },
-                uiConfig = YosUIConfig(
-                    noLrcText = stringResource(id = R.string.tip_no_lyrics)
-                ),
+                uiConfig = lyricUiConfig,
                 weightLambda = weightLambda,
                 modifier = lyricViewModifier,
                 onBackClick = onBackClick,
-                lastLineObstructionFraction = lastLineObstructionFraction
+                lastLineObstructionFraction = lastLineObstructionFraction,
+                active = active,
+                isPlaying = isPlaying,
             )
         }
     }
@@ -3056,7 +3071,6 @@ private fun NowPlayingMoreMenu(
 ) {
     val context = LocalContext.current
     val currentSpeed = SettingsLibrary.PlaybackSpeed
-    val sleepRemaining = MediaController.sleepTimerRemainingSeconds.intValue
     val speedTitle = stringResource(id = R.string.nowplaying_menu_speed)
     val sleepTitle = stringResource(id = R.string.nowplaying_menu_sleep_timer)
     // 当前曲：前往艺人 / 前往专辑 / 添加至歌单 的目标（切歌时跟随重组）
@@ -3071,13 +3085,6 @@ private fun NowPlayingMoreMenu(
 
     // 二级状态与行锚点提在这一层：父面板写锚点、子面板读锚点
     var section by remember { mutableStateOf(MoreSection.Root) }
-    val sleepPanelMinutes = remember(section, sleepRemaining) {
-        if (sleepRemaining > 0) {
-            ((sleepRemaining + 59) / 60).coerceIn(SleepCustomMinMinutes, SleepCustomMaxMinutes)
-        } else {
-            SleepCustomMinMinutes
-        }
-    }
     var speedRowBounds by remember { mutableStateOf(IntRect.Zero) }
     var sleepRowBounds by remember { mutableStateOf(IntRect.Zero) }
     var playlistsRowBounds by remember { mutableStateOf(IntRect.Zero) }
@@ -3194,13 +3201,10 @@ private fun NowPlayingMoreMenu(
                     section = if (speedOpen) MoreSection.Root else MoreSection.Speed
                 }
             )
-            MoreEntryRow(
+            MoreSleepEntryRow(
+                visible = visible,
                 title = sleepTitle,
-                value = if (sleepRemaining > 0)
-                    stringResource(id = R.string.sleep_timer_remaining, formatSleepRemaining(sleepRemaining))
-                else stringResource(id = R.string.sleep_timer_off),
                 expanded = sleepOpen,
-                isLast = true,
                 onBounds = { sleepRowBounds = it },
                 onClick = {
                     Vibrator.click(context)
@@ -3265,39 +3269,97 @@ private fun NowPlayingMoreMenu(
                         )
                     }
                 } else {
-                    LiquidDropdownRow(
-                        text = stringResource(id = R.string.sleep_timer_off),
-                        selected = sleepRemaining <= 0,
-                        isFirst = true,
-                        onClick = {
-                            Vibrator.click(context)
-                            MediaController.cancelSleepTimer()
-                            onDismiss()
-                        }
+                    MoreSleepSectionContent(
+                        visible = visible,
+                        section = section,
+                        onDismiss = onDismiss
                     )
-                    MoreSleepOptions.forEach { minutes ->
-                        LiquidDropdownRow(
-                            text = stringResource(id = R.string.sleep_timer_minutes, minutes),
-                            selected = false,
-                            onClick = {
-                                Vibrator.click(context)
-                                MediaController.startSleepTimer(minutes)
-                                onDismiss()
-                            }
-                        )
-                    }
-                    SleepTimerSliderRow(
-                        initialMinutes = sleepPanelMinutes,
-                        onCommit = { minutes ->
-                            MediaController.startSleepTimer(minutes)
-                            onDismiss()
-                        }
-                    )
-                    SleepTimerFinishRow()
                 }
             }
         }
     }
+}
+
+@Composable
+private fun MoreSleepEntryRow(
+    visible: Boolean,
+    title: String,
+    expanded: Boolean,
+    onBounds: (IntRect) -> Unit,
+    onClick: () -> Unit,
+) {
+    // 收起期间不订阅 1Hz 定时倒计时；保留关闭瞬间的值避免退场淡出时闪回“关闭”。
+    val cachedRemaining = remember { mutableIntStateOf(0) }
+    val sleepRemaining = if (visible) {
+        MediaController.sleepTimerRemainingSeconds.intValue.also {
+            cachedRemaining.intValue = it
+        }
+    } else {
+        cachedRemaining.intValue
+    }
+    MoreEntryRow(
+        title = title,
+        value = if (sleepRemaining > 0)
+            stringResource(id = R.string.sleep_timer_remaining, formatSleepRemaining(sleepRemaining))
+        else stringResource(id = R.string.sleep_timer_off),
+        expanded = expanded,
+        isLast = true,
+        onBounds = onBounds,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun MoreSleepSectionContent(
+    visible: Boolean,
+    section: MoreSection,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val cachedRemaining = remember { mutableIntStateOf(0) }
+    val sleepRemaining = if (visible) {
+        MediaController.sleepTimerRemainingSeconds.intValue.also {
+            cachedRemaining.intValue = it
+        }
+    } else {
+        cachedRemaining.intValue
+    }
+    val sleepPanelMinutes = remember(section, sleepRemaining) {
+        if (sleepRemaining > 0) {
+            ((sleepRemaining + 59) / 60).coerceIn(SleepCustomMinMinutes, SleepCustomMaxMinutes)
+        } else {
+            SleepCustomMinMinutes
+        }
+    }
+    LiquidDropdownRow(
+        text = stringResource(id = R.string.sleep_timer_off),
+        selected = sleepRemaining <= 0,
+        isFirst = true,
+        onClick = {
+            Vibrator.click(context)
+            MediaController.cancelSleepTimer()
+            onDismiss()
+        }
+    )
+    MoreSleepOptions.forEach { minutes ->
+        LiquidDropdownRow(
+            text = stringResource(id = R.string.sleep_timer_minutes, minutes),
+            selected = false,
+            onClick = {
+                Vibrator.click(context)
+                MediaController.startSleepTimer(minutes)
+                onDismiss()
+            }
+        )
+    }
+    SleepTimerSliderRow(
+        initialMinutes = sleepPanelMinutes,
+        onCommit = { minutes ->
+            MediaController.startSleepTimer(minutes)
+            onDismiss()
+        }
+    )
+    SleepTimerFinishRow()
 }
 
 /** “播完当前歌曲后暂停”受控 Toggle 行。 */
@@ -4366,6 +4428,7 @@ internal fun PlayerControl(
     // 「到窗口底距离」——换算需要页面基准，只有调用方（NowPlaying 根节点）知道；
     // 用窗口坐标会在播放页整体下移时把位移算成两倍（见调用点注释）。
     onProgressTopChanged: ((LayoutCoordinates) -> Unit)? = null,
+    active: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val playingDuration = rememberSaveable(key = "PlayerControl_playingDuration") {
@@ -4461,37 +4524,37 @@ internal fun PlayerControl(
         ) {
 
             YosWrapper {
-                // 启动作用
+                // 启动作用：仅在播放页可见（active）且宿主前台 RESUMED 时轮询；激活/恢复时立即同步一次。
                 YosWrapper {
-                    val lifecycleState =
-                        LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+                    val lifecycleOwner = LocalLifecycleOwner.current
 
-                        LaunchedEffect(Unit) {
+                    LaunchedEffect(active, lifecycleOwner) {
+                        if (!active) return@LaunchedEffect
+                        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                             var lastDurationMs = Long.MIN_VALUE
                             var lastPositionSecond = Long.MIN_VALUE
-                            while (true) {
-                                if (lifecycleState.value.isAtLeast(Lifecycle.State.RESUMED)) {
-                                    val duration = mediaControl?.duration ?: 0L
-                                    val position = mediaControl?.currentPosition ?: 0L
-                                    if (duration != lastDurationMs) {
-                                        playingDuration.longValue = duration
-                                        lastDurationMs = duration
-                                    }
-                                    if (!isSliding.value && duration > 0L) {
-                                        val totalSeconds = position.coerceAtLeast(0) / 1000
-                                        if (totalSeconds != lastPositionSecond) {
-                                            playedTime.value = formatTime(totalSeconds)
-                                            sliderPosition.floatValue = position.coerceAtLeast(0).toFloat()
-                                            val remainingSeconds =
-                                                duration.coerceAtLeast(0) / 1000 - totalSeconds
-                                            remainingTime.value = "-${formatTime(remainingSeconds)}"
-                                            lastPositionSecond = totalSeconds
-                                        }
+                            while (isActive) {
+                                val duration = mediaControl?.duration ?: 0L
+                                val position = mediaControl?.currentPosition ?: 0L
+                                if (duration != lastDurationMs) {
+                                    playingDuration.longValue = duration
+                                    lastDurationMs = duration
+                                }
+                                if (!isSliding.value && duration > 0L) {
+                                    val totalSeconds = position.coerceAtLeast(0) / 1000
+                                    if (totalSeconds != lastPositionSecond) {
+                                        playedTime.value = formatTime(totalSeconds)
+                                        sliderPosition.floatValue = position.coerceAtLeast(0).toFloat()
+                                        val remainingSeconds =
+                                            duration.coerceAtLeast(0) / 1000 - totalSeconds
+                                        remainingTime.value = "-${formatTime(remainingSeconds)}"
+                                        lastPositionSecond = totalSeconds
                                     }
                                 }
                                 delay(700)
                             }
                         }
+                    }
                 }
 
                 // 进度条

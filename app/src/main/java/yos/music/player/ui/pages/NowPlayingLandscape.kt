@@ -159,7 +159,8 @@ internal fun NowPlayingLandscape(
     onOpenAlbum: () -> Unit = {},
     // 评论页未登录 → 去登录（由外壳在当前 Tab 内 push 登录页）
     onOpenLogin: () -> Unit = {},
-    dynamicCoverActive: Boolean = true
+    dynamicCoverActive: Boolean = true,
+    showMiniPlayer: Boolean = false
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -199,7 +200,8 @@ internal fun NowPlayingLandscape(
             onOpenArtist = onOpenArtist,
             onOpenAlbum = onOpenAlbum,
             onOpenLogin = onOpenLogin,
-            dynamicCoverActive = dynamicCoverActive
+            dynamicCoverActive = dynamicCoverActive,
+            showMiniPlayer = showMiniPlayer
         )
         return
     }
@@ -336,7 +338,8 @@ internal fun NowPlayingLandscape(
                     onCoverClick = onLyrics,
                     onOpenArtist = onOpenArtist,
                     onOpenAlbum = onOpenAlbum,
-                    dynamicCoverActive = dynamicCoverActive
+                    dynamicCoverActive = dynamicCoverActive,
+                    showMiniPlayer = showMiniPlayer
                 )
             }
 
@@ -392,7 +395,9 @@ internal fun NowPlayingLandscape(
                         // 故顶部垫高取 32dp（原 8dp 会让歌词整体偏高 24dp）。
                         topSpacerHeight = 32.dp,
                         topSpacerWithStatusBar = false,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        active = !showMiniPlayer && page == Lyric,
+                        isPlaying = isPlayingStatusLambda
                     )
                 }
 
@@ -518,7 +523,8 @@ private fun LandscapeMediaColumn(
     onOpenArtist: (String) -> Unit = {},
     // 更多菜单「前往该歌曲专辑」
     onOpenAlbum: () -> Unit = {},
-    dynamicCoverActive: Boolean = true
+    dynamicCoverActive: Boolean = true,
+    showMiniPlayer: Boolean = false
 ) {
     Column(
         modifier = modifier,
@@ -581,7 +587,8 @@ private fun LandscapeMediaColumn(
                 .padding(top = 6.dp)
                 .width(contentWidth),
             onWhile = onWhile,
-            onControlGesture = onControlGesture
+            onControlGesture = onControlGesture,
+            active = !showMiniPlayer
         )
     }
 }
@@ -846,7 +853,8 @@ private fun NowPlayingLandscapePhone(
     onOpenArtist: (String) -> Unit = {},
     onOpenAlbum: () -> Unit = {},
     onOpenLogin: () -> Unit = {},
-    dynamicCoverActive: Boolean = true
+    dynamicCoverActive: Boolean = true,
+    showMiniPlayer: Boolean = false
 ) {
     val context = LocalContext.current
 
@@ -964,7 +972,8 @@ private fun NowPlayingLandscapePhone(
                                 .fillMaxSize()
                                 .graphicsLayer { alpha = controlsAlphaState.value },
                             onWhile = onWhile,
-                            onControlGesture = onControlGesture
+                            onControlGesture = onControlGesture,
+                            active = !showMiniPlayer
                         )
 
                         if (page != Album) {
@@ -1001,7 +1010,9 @@ private fun NowPlayingLandscapePhone(
                                     },
                                     topSpacerHeight = 0.dp,
                                     topSpacerWithStatusBar = false,
-                                    modifier = Modifier.fillMaxSize()
+                                    modifier = Modifier.fillMaxSize(),
+                                    active = !showMiniPlayer && page == Lyric,
+                                    isPlaying = isPlayingStatusLambda
                                 )
                             }
                         }

@@ -2058,10 +2058,21 @@ class MainActivity : BaseActivity() {
                                         prepare = { target ->
                                             val uri = target as? android.net.Uri
                                             if (uri != null) {
+                                                val bgEffect = SettingsLibrary.NowplayingBackgroundEffect
+                                                val useMesh = bgEffect &&
+                                                        SettingsLibrary.NowplayingBackgroundMode ==
+                                                        SettingsLibrary.BACKGROUND_MODE_MESH &&
+                                                        yos.music.player.ui.widgets.effects.pearmesh.isPearMeshSupported(context)
+                                                val needFloatingLight =
+                                                    !useMesh && (bgEffect || !SettingsLibrary.NowplayingStaticFullScreenAlbum)
                                                 coroutineScope {
                                                     launch { warmUpPlaybackCover(context, uri) }
-                                                    launch { warmUpFloatingLightArtwork(context, uri) }
-                                                    launch { warmUpMeshArtwork(context, uri) }
+                                                    if (needFloatingLight) {
+                                                        launch { warmUpFloatingLightArtwork(context, uri) }
+                                                    }
+                                                    if (useMesh) {
+                                                        launch { warmUpMeshArtwork(context, uri) }
+                                                    }
                                                 }
                                             }
                                         }
@@ -3605,20 +3616,33 @@ private fun ProgressivePlayerShellBackground(
             )
         }
     }
-    val tabletSplitProgress = if (lastTabletLandscapeMode.value != isLandscapeMode) {
-        tabletSplitTarget
-    } else {
-        tabletSplitAnim.value
+    val latestIsLandscapeMode by rememberUpdatedState(isLandscapeMode)
+    val latestIsTabletDevice by rememberUpdatedState(isTabletDevice)
+    val latestSplitX by rememberUpdatedState(resolvedSplits.splitX)
+    val latestSplitTarget by rememberUpdatedState(tabletSplitTarget)
+    val latestCoverPageProgress by rememberUpdatedState(coverPageProgress)
+    val coverOriginXProvider = remember {
+        {
+            if (latestIsLandscapeMode && latestIsTabletDevice) {
+                val splitProgress = if (lastTabletLandscapeMode.value != latestIsLandscapeMode) {
+                    latestSplitTarget
+                } else {
+                    tabletSplitAnim.value
+                }
+                ProgressiveBlurMath.centeredOriginX(latestSplitX, splitProgress)
+            } else {
+                0f
+            }
+        }
     }
-    val coverOriginX = if (isLandscapeMode && isTabletDevice) {
-        ProgressiveBlurMath.centeredOriginX(resolvedSplits.splitX, tabletSplitProgress)
-    } else {
-        0f
-    }
-    val pageBlurProgress = if (!isLandscapeMode) {
-        (1f - coverPageProgress()).coerceIn(0f, 1f)
-    } else {
-        0f
+    val pageBlurProgressProvider = remember {
+        {
+            if (!latestIsLandscapeMode) {
+                (1f - latestCoverPageProgress()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+        }
     }
 
     val bgEffectOn = SettingsLibrary.NowplayingBackgroundEffect
@@ -3667,11 +3691,12 @@ private fun ProgressivePlayerShellBackground(
         config = blurConfig,
         isPlaying = isAudioPlaying() && !showMiniPlayer,
         forceStaticCover = !dynamicCoverEnabled,
-        coverOriginX = coverOriginX,
-        pageBlurProgress = pageBlurProgress,
         alphaFadeMode = bgEffectOn,
         morphTargetRect = morphTargetRect,
         morphCornerPx = with(density) { 5.dp.toPx() },
+        renderingActive = !showMiniPlayer,
+        coverOriginXProvider = coverOriginXProvider,
+        pageBlurProgressProvider = pageBlurProgressProvider,
         modifier = Modifier.fillMaxSize(),
     )
 }

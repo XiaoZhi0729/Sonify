@@ -44,21 +44,36 @@ internal fun isPearMeshSupported(context: Context): Boolean {
 internal fun PearMeshBackground(
     state: PearMeshState,
     modifier: Modifier = Modifier,
+    renderingActive: Boolean = true,
     onFirstFrameRendered: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val latestState = rememberUpdatedState(state)
+    val latestRenderingActive = rememberUpdatedState(renderingActive)
     val latestFirstFrame = rememberUpdatedState(onFirstFrameRendered)
     val lifecycleOwner = LocalLifecycleOwner.current
     val renderThread = remember { AtomicReference<EglRenderThread?>(null) }
 
     val lifecycleState = lifecycleOwner.lifecycle.currentState
-    val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && renderingActive
+
+    DisposableEffect(state) {
+        val listener = {
+            renderThread.get()?.wakeFromIdle()
+            Unit
+        }
+        state.renderInvalidatedListener = listener
+        onDispose {
+            if (state.renderInvalidatedListener === listener) {
+                state.renderInvalidatedListener = null
+            }
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, _ ->
             val enabled = lifecycleOwner.lifecycle.currentState
-                .isAtLeast(Lifecycle.State.RESUMED)
+                .isAtLeast(Lifecycle.State.RESUMED) && latestRenderingActive.value
             renderThread.get()?.setRenderingEnabled(enabled)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -89,7 +104,7 @@ internal fun PearMeshBackground(
                             initialHeight = height,
                             stateProvider = { latestState.value.snapshot() },
                             initiallyRenderingEnabled = lifecycleOwner.lifecycle.currentState
-                                .isAtLeast(Lifecycle.State.RESUMED),
+                                .isAtLeast(Lifecycle.State.RESUMED) && latestRenderingActive.value,
                         )
                         renderThread.getAndSet(thread)?.stopAndJoin()
                         thread.start()
@@ -126,8 +141,10 @@ internal fun PearMeshBackground(
         },
     )
 
-    // Re-arm the render thread when the host comes back to the foreground.
-    LaunchedEffect(resumed) {
-        renderThread.get()?.setRenderingEnabled(resumed)
+    // Re-arm the render thread when visibility or lifecycle rendering gate changes.
+    LaunchedEffect(resumed, renderingActive) {
+        val enabled = lifecycleOwner.lifecycle.currentState
+            .isAtLeast(Lifecycle.State.RESUMED) && renderingActive
+        renderThread.get()?.setRenderingEnabled(enabled)
     }
 }
