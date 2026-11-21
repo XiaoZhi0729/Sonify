@@ -136,6 +136,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.draw.shadow
 import androidx.compose.animation.BoundsTransform
 import androidx.compose.ui.geometry.CornerRadius
@@ -2813,8 +2815,18 @@ internal fun Lyric(
             // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束。
             // 真 HDR 启用时不能套 8 位离屏 saveLayer（否则扩展亮度会被钳回 SDR 白）；
             // 此时边缘渐隐交给 KaraokeLyricsView 内部通过逐行 ModulateAlpha 完成。
+            // HDR 下没有外层 DstIn 遮罩，歌词滑移（viewModifier）时会穿过底部控件区。
+            // 这里在滑移机之外、静止视口坐标上做一道纯几何裁剪（不开离屏层，不损失 HDR 亮度）：
+            // 控件可见时与 SDR 遮罩的全透明起点（10/17）对齐。
             val lyricViewModifier = if (extendedHdrActive) {
                 Modifier
+                    .drawWithContent {
+                        val clipBottom =
+                            if (weightLambda()) size.height * (10f / 17f) else size.height
+                        clipRect(0f, 0f, size.width, clipBottom) {
+                            this@drawWithContent.drawContent()
+                        }
+                    }
                     .clipToBounds()
                     .then(viewModifier)
             } else {
