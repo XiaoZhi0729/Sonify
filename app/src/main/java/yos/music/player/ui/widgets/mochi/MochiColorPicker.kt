@@ -412,42 +412,54 @@ internal enum class SpectrumModel(@StringRes val sliderLabelRes: Int, val slider
     LCH(R.string.color_picker_axis_chroma, 150, ""),
     ;
 
-    fun argb(x: Float, y: Float, z: Float, scratch: FloatArray = FloatArray(3)): Int = when (this) {
-        HSL -> hslToArgb(x * 360f, z, 1f - y)
+    fun argb(x: Float, y: Float, z: Float, scratch: FloatArray = FloatArray(3)): Int {
+        val cx = x.coerceIn(0f, 1f)
+        val cy = y.coerceIn(0f, 1f)
+        val cz = z.coerceIn(0f, 1f)
+        return when (this) {
+            HSL -> hslToArgb(cx * 360f, cz, 1f - cy)
 
-        HCT -> MochiColorSpaces.hctToArgb(x * 360.0, z * 150.0, (1f - y) * 100.0)
+            HCT -> MochiColorSpaces.hctToArgb(cx * 360.0, cz * 150.0, (1f - cy) * 100.0)
 
-        Lab -> {
-            MochiColorSpaces.labToSrgb(z * 100.0, (x * 2f - 1f) * 128.0, (1f - y * 2f) * 128.0, scratch)
-            MochiColorSpaces.argb(scratch[0], scratch[1], scratch[2])
-        }
+            Lab -> {
+                MochiColorSpaces.labToSrgb(cz * 100.0, (cx * 2f - 1f) * 128.0, (1f - cy * 2f) * 128.0, scratch)
+                MochiColorSpaces.argb(scratch[0], scratch[1], scratch[2])
+            }
 
-        LCH -> {
-            MochiColorSpaces.lchToSrgb((1f - y) * 100.0, z * 150.0, x * 360.0, scratch)
-            MochiColorSpaces.argb(scratch[0], scratch[1], scratch[2])
+            LCH -> {
+                MochiColorSpaces.lchToSrgb((1f - cy) * 100.0, cz * 150.0, cx * 360.0, scratch)
+                MochiColorSpaces.argb(scratch[0], scratch[1], scratch[2])
+            }
         }
     }
 
-    fun locate(c: Color): FloatArray = when (this) {
-        HSL -> {
-            val hsl = argbToHsl(c)
-            floatArrayOf(hsl[0] / 360f, 1f - hsl[2], hsl[1])
-        }
+    fun locate(c: Color): FloatArray {
+        val raw = when (this) {
+            HSL -> {
+                val hsl = argbToHsl(c)
+                floatArrayOf(hsl[0] / 360f, 1f - hsl[2], hsl[1])
+            }
 
-        HCT -> {
-            val h = MochiColorSpaces.argbToHct(c.toArgb())
-            floatArrayOf((h[0] / 360.0).toFloat(), (1.0 - h[2] / 100.0).toFloat(), (h[1] / 150.0).toFloat().coerceAtMost(1f))
-        }
+            HCT -> {
+                val h = MochiColorSpaces.argbToHct(c.toArgb())
+                floatArrayOf((h[0] / 360.0).toFloat(), (1.0 - h[2] / 100.0).toFloat(), (h[1] / 150.0).toFloat())
+            }
 
-        Lab -> {
-            val lab = MochiColorSpaces.srgbToLab(c.red, c.green, c.blue)
-            floatArrayOf((lab[1] / 256.0 + 0.5).toFloat(), (0.5 - lab[2] / 256.0).toFloat(), (lab[0] / 100.0).toFloat())
-        }
+            Lab -> {
+                val lab = MochiColorSpaces.srgbToLab(c.red, c.green, c.blue)
+                floatArrayOf((lab[1] / 256.0 + 0.5).toFloat(), (0.5 - lab[2] / 256.0).toFloat(), (lab[0] / 100.0).toFloat())
+            }
 
-        LCH -> {
-            val lch = MochiColorSpaces.srgbToLch(c.red, c.green, c.blue)
-            floatArrayOf((lch[2] / 360.0).toFloat(), (1.0 - lch[0] / 100.0).toFloat(), (lch[1] / 150.0).toFloat().coerceAtMost(1f))
+            LCH -> {
+                val lch = MochiColorSpaces.srgbToLch(c.red, c.green, c.blue)
+                floatArrayOf((lch[2] / 360.0).toFloat(), (1.0 - lch[0] / 100.0).toFloat(), (lch[1] / 150.0).toFloat())
+            }
         }
+        return floatArrayOf(
+            if (raw[0].isFinite()) raw[0].coerceIn(0f, 1f) else 0f,
+            if (raw[1].isFinite()) raw[1].coerceIn(0f, 1f) else 0f,
+            if (raw[2].isFinite()) raw[2].coerceIn(0f, 1f) else 0f,
+        )
     }
 
     fun render(z: Float, w: Int, h: Int, active: () -> Boolean): IntArray? {
@@ -530,7 +542,10 @@ private const val PlaneW = 96
 private const val PlaneH = 80
 
 internal fun hslToArgb(h: Float, s: Float, l: Float): Int {
-    val c = Color.hsl(h.mod(360f), s, l)
+    val hue = if (h.isFinite()) h.mod(360f).coerceIn(0f, 360f) else 0f
+    val sat = if (s.isFinite()) s.coerceIn(0f, 1f) else 0f
+    val lit = if (l.isFinite()) l.coerceIn(0f, 1f) else 0f
+    val c = Color.hsl(hue, sat, lit)
     return c.toArgb()
 }
 
@@ -540,17 +555,19 @@ internal fun argbToHsl(c: Color): FloatArray {
     val b = c.blue
     val max = maxOf(r, g, b)
     val min = minOf(r, g, b)
-    val l = (max + min) / 2f
+    val l = ((max + min) / 2f).coerceIn(0f, 1f)
     val d = max - min
     if (d < 1e-6f) return floatArrayOf(0f, 0f, l)
-    val s = d / (1f - kotlin.math.abs(2f * l - 1f))
+    val denom = 1f - kotlin.math.abs(2f * l - 1f)
+    val s = if (denom <= 1e-6f) 0f else (d / denom).coerceIn(0f, 1f)
     var h = when (max) {
         r -> 60f * (((g - b) / d).mod(6f))
         g -> 60f * ((b - r) / d + 2f)
         else -> 60f * ((r - g) / d + 4f)
     }
     if (h < 0f) h += 360f
-    return floatArrayOf(h, s, l)
+    val normalizedHue = if (h.isFinite()) h.mod(360f).coerceIn(0f, 360f) else 0f
+    return floatArrayOf(normalizedHue, s, l)
 }
 
 @Composable

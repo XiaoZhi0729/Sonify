@@ -283,7 +283,9 @@ private fun CoverArtworkDriver(state: CoverArtworkState, feedback: () -> Unit) {
                     }
                 } else if (state.dragged.value) {
                     // Phase 2：让位给外壳收起拖拽——无弹性静默收回，不补满、不庆祝。
-                    android.util.Log.d("CoverFx", "fx up：拖拽让位，静默收回")
+                    if (yos.music.player.BuildConfig.DEBUG) {
+                        android.util.Log.d("CoverFx", "fx up：拖拽让位，静默收回")
+                    }
                     coroutineScope {
                         launch { state.press.animateTo(0f, vetoSpec) }
                         launch { state.tiltX.animateTo(0f, vetoSpec) }
@@ -405,7 +407,9 @@ internal fun Modifier.coverArtworkGesture(
                             state.dragged.value = false
                             state.position.value = change.position
                             state.pressed.value = true
-                            android.util.Log.d("CoverFx", "gesture down：pos=$downAt")
+                            if (yos.music.player.BuildConfig.DEBUG) {
+                                android.util.Log.d("CoverFx", "gesture down：pos=$downAt")
+                            }
                         } else if (state.pressed.value && !state.dragged.value) {
                             val dx = change.position.x - downAt.x
                             val dy = change.position.y - downAt.y
@@ -419,10 +423,12 @@ internal fun Modifier.coverArtworkGesture(
                             ) {
                                 state.dragged.value = true
                                 state.pressed.value = false
-                                android.util.Log.d(
-                                    "CoverFx",
-                                    "gesture veto：dx=$dx dy=$dy"
-                                )
+                                if (yos.music.player.BuildConfig.DEBUG) {
+                                    android.util.Log.d(
+                                        "CoverFx",
+                                        "gesture veto：dx=$dx dy=$dy"
+                                    )
+                                }
                             }
                         }
                     }
@@ -439,7 +445,9 @@ internal fun Modifier.coverArtworkGesture(
             indication = null
         ) {
             if (!isEnabled.value()) return@clickable
-            android.util.Log.d("CoverFx", "click：立即切页")
+            if (yos.music.player.BuildConfig.DEBUG) {
+                android.util.Log.d("CoverFx", "click：立即切页")
+            }
             currentOnClick.value()
         }
 }

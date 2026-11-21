@@ -186,6 +186,25 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     // 并且必须是**未做联动的**这层节点：胶囊本体会随面板下沉/收缩（见 capsuleFollow），
     // 锚点若跟着走，面板会反算回锚点位置，形成逐帧放大的抖动回环
     var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
+    val anchorCoordsRef = remember {
+        object {
+            var coords: androidx.compose.ui.layout.LayoutCoordinates? = null
+        }
+    }
+    fun updateAnchorBoundsFromCoords(coords: androidx.compose.ui.layout.LayoutCoordinates?) {
+        if (coords == null || !coords.isAttached) return
+        val pos = coords.positionInWindow()
+        val size = coords.size
+        val next = IntRect(
+            left = pos.x.toInt(),
+            top = pos.y.toInt(),
+            right = pos.x.toInt() + size.width,
+            bottom = pos.y.toInt() + size.height
+        )
+        if (next != anchorBounds) {
+            anchorBounds = next
+        }
+    }
 
     // 胶囊本体随面板揭示进度的联动：面板从胶囊顶边下方长出并盖住它（可见顶边压在锚点上方
     // 7dp），胶囊跟着同向下沉 6dp、缩到 0.9、淡出；与「更多」按钮用的是同一套参数
@@ -196,19 +215,16 @@ fun MusicQualityIndicator(onExpandedChanged: (Boolean) -> Unit = {}) {
     val qualityTriggerGesture = rememberDropdownTriggerGestureState(qualityDragSelect)
     val openQualityMenu: () -> Unit = {
         if (!isTransitioning) {
+            updateAnchorBoundsFromCoords(anchorCoordsRef.coords)
             menuOpen = true
         }
     }
 
     fun captureAnchor(coords: androidx.compose.ui.layout.LayoutCoordinates) {
-        val pos = coords.positionInWindow()
-        val size = coords.size
-        anchorBounds = IntRect(
-            left = pos.x.toInt(),
-            top = pos.y.toInt(),
-            right = pos.x.toInt() + size.width,
-            bottom = pos.y.toInt() + size.height
-        )
+        anchorCoordsRef.coords = coords
+        if (menuOpen) {
+            updateAnchorBoundsFromCoords(coords)
+        }
     }
 
     // 播放壳层常驻，无曲目时也要占住这 22dp：否则展开/收起播放器会带动时间行跳动

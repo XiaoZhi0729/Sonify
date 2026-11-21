@@ -2,8 +2,10 @@ package yos.music.player.ui.widgets.mochi
 
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import yos.music.player.ui.theme.AppAccentColors
 import kotlin.math.abs
 
 class MochiColorSpacesTest {
@@ -58,5 +60,51 @@ class MochiColorSpacesTest {
             assertEquals("$m x", x, p[0], 0.02f)
             assertEquals("$m y", 0.45f, p[1], 0.02f)
         }
+    }
+
+    @Test
+    fun allApplePresetsAndExtremeColorsLocateAndRenderSafelyInEverySpectrumModel() {
+        val candidates = buildList {
+            for (preset in AppAccentColors.Presets) {
+                add(preset.light)
+                add(preset.dark)
+            }
+            add(Color(0xFF000000))
+            add(Color(0xFFFFFFFF))
+            add(Color(0xFFFF0000))
+            add(Color(0xFF00FF00))
+            add(Color(0xFF0000FF))
+            add(Color(0xFFFFFF00))
+            add(Color(0xFF00FFFF))
+            add(Color(0xFFFF00FF))
+            add(Color(0xFFFF3B30))
+            add(Color(0xFFFF453A))
+            add(Color(0xFFFE0100))
+            add(Color(0xFFFF0101))
+        }
+        for (color in candidates) {
+            for (model in SpectrumModel.entries) {
+                val pos = model.locate(color)
+                assertEquals(3, pos.size)
+                for (i in 0..2) {
+                    assertTrue("$model $color axis[$i]=${pos[i]}", pos[i].isFinite() && pos[i] in 0f..1f)
+                }
+                val pixels = model.render(pos[2], 16, 16) { true }
+                assertNotNull("$model $color rendered null", pixels)
+                assertEquals(256, pixels!!.size)
+            }
+        }
+    }
+
+    @Test
+    fun hslToArgbClampsOutOfRangeAndNonFiniteInputs() {
+        val fromCrash = Color(hslToArgb(1.875f, 1.0000001f, 0.99375f))
+        assertEquals(Color.hsl(1.875f, 1f, 0.99375f), fromCrash)
+
+        val clampedNeg = Color(hslToArgb(-1e-7f, -0.01f, 1.01f))
+        assertEquals(Color.White, clampedNeg)
+
+        val nonFinite = Color(hslToArgb(Float.NaN, Float.NaN, Float.NaN))
+        assertEquals(Color.Black, nonFinite)
     }
 }

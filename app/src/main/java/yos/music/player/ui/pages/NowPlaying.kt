@@ -444,14 +444,38 @@ internal fun NowPlaying(
     // 播放页根节点坐标：评论页的进度条让位量必须相对**页面**测量。
     // 用窗口坐标会在页面整体位移（外壳收起时整页随壳顶下移）时跟着漂，使面板
     // 底边（输入框/发送键/底部渐隐钉在这条边上）走出两倍行程。
-    val pageRootCoords = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val pageRootCoordsRef = remember {
+        object {
+            var rootCoords: LayoutCoordinates? = null
+            var sliderCoords: LayoutCoordinates? = null
+        }
+    }
     // 上报回调在非组合上下文执行，密度必须在这里取好。
     val pageDensity = LocalDensity.current
+    // 评论页输入框底边跟随进度条真实位置（null=尚未测量，用比例公式兜底）。
+    // 不能用固定 dp：控件带高度随屏高、字号、机型变化。
+    val progressTopFromBottom = remember { mutableStateOf<Dp?>(null) }
+    fun refreshProgressTopFromBottom() {
+        val root = pageRootCoordsRef.rootCoords
+        val sliderCoords = pageRootCoordsRef.sliderCoords
+        if (root != null && root.isAttached && sliderCoords != null && sliderCoords.isAttached) {
+            val y = root.localPositionOf(sliderCoords, Offset.Zero).y
+            val next = with(pageDensity) { (root.size.height - y).toDp() }
+            if (next != progressTopFromBottom.value) {
+                progressTopFromBottom.value = next
+            }
+        }
+    }
 
     Surface(
         modifier = modifier
             .fillMaxSize()
-            .onGloballyPositioned { pageRootCoords.value = it }
+            .onGloballyPositioned {
+                pageRootCoordsRef.rootCoords = it
+                if (nowPageLambda() == Comment) {
+                    refreshProgressTopFromBottom()
+                }
+            }
             .pointerInput(Unit) {
                 try {
                     awaitPointerEventScope {
@@ -558,12 +582,12 @@ internal fun NowPlaying(
         val showControl = rememberSaveable(key = "NowPlaying_showControl") {
             mutableStateOf(!showMiniPlayer)
         }
-        // 评论页输入框底边跟随进度条真实位置（null=尚未测量，用比例公式兜底）。
-        // 不能用固定 dp：控件带高度随屏高、字号、机型变化。
-        val progressTopFromBottom = remember { mutableStateOf<Dp?>(null) }
         LaunchedEffect(showMiniPlayer, page) {
             if (!showMiniPlayer) {
                 showControl.value = true
+            }
+            if (page == Comment) {
+                refreshProgressTopFromBottom()
             }
         }
 
@@ -1020,11 +1044,13 @@ internal fun NowPlaying(
                                                         // "点击生效（进歌词）但动效整段没播"的怪象。
                                                         coverEnabled = {
                                                             val onAlbum = nowPageLambda() == Album
-                                                            android.util.Log.d(
-                                                                "CoverFx",
-                                                                "gate：onAlbum=$onAlbum" +
-                                                                    " suppressed=${albumCoverSuppressed()}"
+                                                            if (yos.music.player.BuildConfig.DEBUG) {
+                                                                android.util.Log.d(
+                                                                    "CoverFx",
+                                                                    "gate：onAlbum=$onAlbum" +
+                                                                        " suppressed=${albumCoverSuppressed()}"
                                                                 )
+                                                            }
                                                             onAlbum
                                                     },
                                                     coordsOnChanged = albumCoverCoordsOnChanged,
@@ -1523,13 +1549,9 @@ internal fun NowPlaying(
                                         // 不跟着内容一起走、自己往一个方向跑。相对页根节点测量则与
                                         // 页面位移无关，三者恒与列表内容同速。
                                         onProgressTopChanged = { sliderCoords ->
-                                            val root = pageRootCoords.value
-                                            if (root != null && root.isAttached && sliderCoords.isAttached) {
-                                                val y = root.localPositionOf(sliderCoords, Offset.Zero).y
-                                                progressTopFromBottom.value =
-                                                    with(pageDensity) {
-                                                        (root.size.height - y).toDp()
-                                                    }
+                                            pageRootCoordsRef.sliderCoords = sliderCoords
+                                            if (page == Comment) {
+                                                refreshProgressTopFromBottom()
                                             }
                                         },
                                         modifier = Modifier
@@ -2804,6 +2826,25 @@ internal fun ActionButtonsRow(
     // 必须是按钮本体（28dp）而不是整行：弹层按锚点右缘内收 27dp 对齐、缩放原点取
     // 最近锚点角，锚点给整行会把菜单甩到行尾（音质胶囊同一个教训）
     var moreAnchorBounds by remember { mutableStateOf(IntRect.Zero) }
+    val moreAnchorCoordsRef = remember {
+        object {
+            var coords: LayoutCoordinates? = null
+        }
+    }
+    fun updateMoreAnchorBounds(coords: LayoutCoordinates?) {
+        if (coords == null || !coords.isAttached) return
+        val pos = coords.positionInWindow()
+        val size = coords.size
+        val next = IntRect(
+            left = pos.x.toInt(),
+            top = pos.y.toInt(),
+            right = pos.x.toInt() + size.width,
+            bottom = pos.y.toInt() + size.height
+        )
+        if (next != moreAnchorBounds) {
+            moreAnchorBounds = next
+        }
+    }
     // 按钮本体随面板揭示进度的联动（弹层可见顶边压在锚点上方 7dp，按钮就住在玻璃底下）：
     // 面板向下长时按钮跟着同向下沉一点、缩一点、淡掉，收起后回原位。
     // 联动变换挂在**内层**的 AnimatedContent 上，外层节点的 onGloballyPositioned 报的才是
@@ -2827,6 +2868,7 @@ internal fun ActionButtonsRow(
         // 点按/长按共用同一入口（Context 在上面才取到，故声明在此）
         val openMoreMenu: () -> Unit = {
             Vibrator.click(context)
+            updateMoreAnchorBounds(moreAnchorCoordsRef.coords)
             moreMenuOpen = true
         }
         val scope = rememberCoroutineScope()
@@ -2914,14 +2956,10 @@ internal fun ActionButtonsRow(
                 }
                 .size(dp)
                 .onGloballyPositioned { coords ->
-                    val pos = coords.positionInWindow()
-                    val size = coords.size
-                    moreAnchorBounds = IntRect(
-                        left = pos.x.toInt(),
-                        top = pos.y.toInt(),
-                        right = pos.x.toInt() + size.width,
-                        bottom = pos.y.toInt() + size.height
-                    )
+                    moreAnchorCoordsRef.coords = coords
+                    if (moreMenuOpen) {
+                        updateMoreAnchorBounds(coords)
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {

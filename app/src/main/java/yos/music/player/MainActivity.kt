@@ -112,6 +112,7 @@ import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
@@ -145,6 +146,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1059,6 +1061,7 @@ class MainActivity : BaseActivity() {
                                     minOf(target, heightClamp, widthClamp).coerceAtLeast(0f)
                                 }
                         }
+                        val bottomSheetConfigState = rememberUpdatedState(yosBottomSheetConfig)
 
                         suspend fun waitForMorphHandoff(target: Float) {
                             var previousRect: Rect? = null
@@ -1117,14 +1120,16 @@ class MainActivity : BaseActivity() {
                                     val anchor = yosBottomSheetConfig.expandedAnchorPx
                                     if (anchor <= 0f) return@launch
                                     // TEMP 诊断：区分"拖拽起步"与"点按/返回键落位"两条路径。
-                                    android.util.Log.d(
-                                        "MorphGeo",
-                                        "ANIMATE_TO target=%.2f from=%.3f v=%.0f".format(
-                                            target,
-                                            (offsetY.value / anchor).coerceIn(0f, 1f),
-                                            initialVelocity
+                                    if (BuildConfig.DEBUG) {
+                                        android.util.Log.d(
+                                            "MorphGeo",
+                                            "ANIMATE_TO target=%.2f from=%.3f v=%.0f".format(
+                                                target,
+                                                (offsetY.value / anchor).coerceIn(0f, 1f),
+                                                initialVelocity
+                                            )
                                         )
-                                    )
+                                    }
                                     offsetY.updateBounds(0f, anchor)
                                     expandedAnchorPxSnapshot.floatValue = anchor
                                     if (startOffset != null) {
@@ -1579,6 +1584,14 @@ class MainActivity : BaseActivity() {
                                                     navBarBottomInsetPx
                                             ).toDp()
                                 }
+                                val playerFullyCoversScreen = remember("MainActivity_playerFullyCoversScreen") {
+                                    {
+                                        val cfg = bottomSheetConfigState.value
+                                        cfg.progress >= 0.99f &&
+                                            !dragActive.value &&
+                                            playerMotionJob.value == null
+                                    }
+                                }
                                 NavPageVisual(
                                     navBackdrop = navBackdrop,
                                     pageScale = pageScale,
@@ -1588,7 +1601,8 @@ class MainActivity : BaseActivity() {
                                     bottomScrimHeight = bottomScrimHeight,
                                     // 渐隐段 = 迷你条自身高度：屏幕底到迷你条底边是
                                     // 纯 65% 不透明，再在迷你条高度内渐隐到顶边为 0。
-                                    bottomScrimFadeHeight = miniPlayerHeight
+                                    bottomScrimFadeHeight = miniPlayerHeight,
+                                    backdropSuppressed = playerFullyCoversScreen
                                 ) {
                                     // 下拉的定位/高度上限要避开迷你条 + 底栏：把实测的底部
                                     // 遮罩高度传给房子内的所有 LiquidDropdown。
@@ -1699,7 +1713,10 @@ class MainActivity : BaseActivity() {
                         // 仍置于动画 Shell 外，避免 alpha/clip/位移影响回调生命周期。
                         // 系统返回直接收起全屏播放器，不逐层退出歌词/播放列表页；
                         // 那两页回 Album 只由页内点击 PlayingBar 触发，与拖拽收起行为一致。
-                        BackHandler(enabled = yosBottomSheetConfig.progress > 0.01f) {
+                        val playerBackEnabled = remember("MainActivity_playerBackEnabled") {
+                            derivedStateOf { bottomSheetConfigState.value.progress > 0.01f }
+                        }
+                        BackHandler(enabled = playerBackEnabled.value) {
                             animatePlayerTo(0f)
                         }
 
@@ -1839,16 +1856,6 @@ class MainActivity : BaseActivity() {
                                         val isPlaying = MediaViewModelObject.isPlaying
 
                                     // 全屏播放器宿主：尺寸与父容器一致，并随 Shell 顶边连续展开。
-                                    val shellHeightPx =
-                                        (parentHeight.intValue - yosBottomSheetConfig.shellTopPx - yosBottomSheetConfig.shellBottomInset).coerceAtLeast(miniPlayerHeightPx)
-                                    val shellHeightDp = with(density) {
-                                        shellHeightPx.toDp()
-                                    }
-                                    val shellRadiusDp = with(density) {
-                                        yosBottomSheetConfig.shellRadius.toDp()
-                                    }
-                                    val shellShape: androidx.compose.ui.graphics.Shape =
-                                        RoundedRectangle(shellRadiusDp)
                                     // 展开/关闭动画期间，外壳表面统一为纯色过渡层，液态玻璃与
                                     // Haze 两种材质都采用；动画期不做模糊采样，静止后恢复各自材质。
                                     // "动画中" = 壳真实位移中：拖拽发生过位移（shellDragDisplaced）
@@ -1863,10 +1870,8 @@ class MainActivity : BaseActivity() {
                                         playerMotionJob.value != null
                                     // 玻璃边缘带按深浅色分两套配方（数值与 ClassYaba LiquidButton 一致）。
                                     val shellIsNight = isFlamingoInDarkMode()
-                                    // 盖层 alpha：进入动画期**直切打满**（组合期 if 短路读常数 1，
-                                    // 与表面/背景停画门禁同帧生效）——若淡入，门禁已停画的头几帧
-                                    // 盖层还接近 0，材质层又是空的，整壳呈全透明闪变；退回静止时
-                                    // 保留 0.2s 淡出（Animatable 从 1 渐到 0，露出原材质）。
+                                    // 盖层 alpha：进入动画期**直切打满**（绘制期读 1，与表面/背景停画门禁同帧生效）；
+                                    // 退回静止时保留 0.2s 淡出（Animatable 从 1 渐到 0，露出原材质）。
                                     val shellFillAnim = remember("MainActivity_shellFillAnim") {
                                         Animatable(0f)
                                     }
@@ -1877,16 +1882,41 @@ class MainActivity : BaseActivity() {
                                             shellFillAnim.animateTo(0f, tween(durationMillis = 200))
                                         }
                                     }
-                                    val animFillAlpha = if (shellAnimating) 1f else shellFillAnim.value
-                                    val shellShadowElevation by animateDpAsState(
-                                        targetValue = if (shellAnimating) 0.dp else 4.dp,
-                                        animationSpec = tween(durationMillis = 200),
-                                        label = "shellShadowElevation"
-                                    )
+                                    val shellAnimatingForDraw by rememberUpdatedState(shellAnimating)
+                                    val shellFillAnimForDraw = remember(shellFillAnim) { shellFillAnim }
+                                    val shellHasRadius = remember("MainActivity_shellHasRadius") {
+                                        derivedStateOf { bottomSheetConfigState.value.shellRadius > 0f }
+                                    }
+                                    val showAnimFill = remember("MainActivity_showAnimFill") {
+                                        derivedStateOf {
+                                            shellAnimatingForDraw || shellFillAnim.value > 0.001f
+                                        }
+                                    }
+                                    val shellShapeCache = remember(density) {
+                                        object {
+                                            var lastRadius = Float.NaN
+                                            var shape: Shape = RectangleShape
+                                            fun get(): Shape {
+                                                val r = bottomSheetConfigState.value.shellRadius
+                                                if (r != lastRadius) {
+                                                    lastRadius = r
+                                                    shape = if (r <= 0f) {
+                                                        RectangleShape
+                                                    } else {
+                                                        RoundedRectangle(with(density) { r.toDp() })
+                                                    }
+                                                }
+                                                return shape
+                                            }
+                                        }
+                                    }
+                                    val shellShapeProvider: () -> Shape = remember(shellShapeCache) {
+                                        { shellShapeCache.get() }
+                                    }
                                     val velocityThreshold = with(density) { 300.dp.toPx() }
 
                                     fun settleFromDrag(releaseVelocity: Float?) {
-                                        val anchor = yosBottomSheetConfig.expandedAnchorPx
+                                        val anchor = bottomSheetConfigState.value.expandedAnchorPx
                                         if (anchor <= 0f) {
                                             // 几何未就绪时也必须交还拖拽占用：dragActive 只在
                                             // 本函数的两条路径里清零，这里早退不清就会永久卡在
@@ -1983,15 +2013,17 @@ class MainActivity : BaseActivity() {
                                             } else {
                                                 (delta + touchSlopPx).coerceAtMost(0f)
                                             }
-                                            android.util.Log.d(
-                                                "MorphGeo",
-                                                "DRAG_FIRST delta=%.1f slop=%.1f apply=%.1f".format(
-                                                    delta, touchSlopPx, applied
+                                            if (BuildConfig.DEBUG) {
+                                                android.util.Log.d(
+                                                    "MorphGeo",
+                                                    "DRAG_FIRST delta=%.1f slop=%.1f apply=%.1f".format(
+                                                        delta, touchSlopPx, applied
+                                                    )
                                                 )
-                                            )
+                                            }
                                             if (applied == 0f) return@rememberDraggableState
                                         }
-                                        val anchor = yosBottomSheetConfig.expandedAnchorPx
+                                        val anchor = bottomSheetConfigState.value.expandedAnchorPx
                                         if (anchor > 0f) {
                                             val before = dragOffsetY.floatValue
                                             dragOffsetY.floatValue =
@@ -2034,16 +2066,6 @@ class MainActivity : BaseActivity() {
                                             }
                                         }
                                     )
-                                    GlassDiagnostics.state(
-                                        "shell_gate",
-                                        "barBlur=${SettingsLibrary.BarBlurEffect} shellGlass=${glassProbe.shellGlass} " +
-                                                "radius=${shellRadiusDp.value} progressBucket=${(yosBottomSheetConfig.progress * 10f).toInt()} " +
-                                                "animating=$shellAnimating " +
-                                                "backdropDraw=${glassProbe.shellBackdropDraw}"
-                                    )
-                                    val shellAnimatingForDraw by rememberUpdatedState(
-                                        shellAnimating
-                                    )
                                     // 运动期装饰层门禁的绘制期副本 + 廉价描边的几何/配色。
                                     // 全部在 draw 阶段读取，不新增逐帧重组。
                                     val shellDecorOffForDraw by rememberUpdatedState(
@@ -2053,19 +2075,17 @@ class MainActivity : BaseActivity() {
                                             playerMotionJob.value != null
                                         )
                                     )
-                                    val shellShapeForDraw by rememberUpdatedState(shellShape)
                                     val shellIsNightForDraw by rememberUpdatedState(shellIsNight)
-                                    val shellFillAnimForDraw = remember(shellFillAnim) { shellFillAnim }
-                                    val shellProgressForDraw by rememberUpdatedState(yosBottomSheetConfig.progress)
                                     val shellBackdropDrawEnabled by rememberUpdatedState(glassProbe.shellBackdropDraw)
                                     val shellColorForDraw by rememberUpdatedState(color)
                                     val shellSurfaceAlphaForDraw by rememberUpdatedState(hazeSurfaceAlpha)
                                     val liquidShellOnDrawBackdrop: DrawScope.(DrawScope.() -> Unit) -> Unit =
                                         remember {
                                             { drawBackdrop ->
+                                                val progress = bottomSheetConfigState.value.progress
                                                 if (!shellAnimatingForDraw &&
                                                     shellBackdropDrawEnabled &&
-                                                    shellProgressForDraw < 0.55f
+                                                    progress < 0.55f
                                                 ) {
                                                     drawBackdrop()
                                                 }
@@ -2074,7 +2094,7 @@ class MainActivity : BaseActivity() {
                                     val plainShellOnDrawBackdrop: DrawScope.(DrawScope.() -> Unit) -> Unit =
                                         remember {
                                             { drawBackdrop ->
-                                                if (!shellAnimatingForDraw && shellProgressForDraw < 0.55f) {
+                                                if (!shellAnimatingForDraw && bottomSheetConfigState.value.progress < 0.55f) {
                                                     drawBackdrop()
                                                 }
                                             }
@@ -2088,31 +2108,39 @@ class MainActivity : BaseActivity() {
                                     // 顶边由 progress 驱动，底边按底部 inset 保持与导航栏的间隙。
                                     Box(
                                         Modifier
-                                            .fillMaxWidth()
                                             // 全屏沉浸页（音乐画廊）：壳的命中测试门禁。
                                             // 本节点布局高度 = 壳高度（收起态 43dp），不是全屏，
                                             // 因此在 Initial 阶段消费只吃掉底部这条带——画廊底部
                                             // 药丸正好落在带内，不关的话点它会命中下面看不见的
                                             // 播放控件；画廊自己的横向翻页手势在整屏范围内不受影响。
                                             .appChromePointerGate(hideAppChrome)
-                                            .padding(
-                                                start = with(density) { yosBottomSheetConfig.shellLeftInsetPx.toDp() },
-                                                end = with(density) { yosBottomSheetConfig.shellRightInsetPx.toDp() }
-                                            )
-                                            .height(shellHeightDp)
-                                            .offset {
-                                                // 用布局位移把壳的底部 inset 写进 LayoutCoordinates。
-                                                // Haze 的 source/consumer 映射依赖布局坐标；graphicsLayer
-                                                // translationY 只改绘制矩阵，动画结束后会留下错误的 Y 采样基准。
-                                                IntOffset(
-                                                    x = 0,
-                                                    y = -yosBottomSheetConfig.shellBottomInset.roundToInt()
+                                            // 将 shellWidth / shellHeight / leftInset / rightInset / bottomInset
+                                            // 全部下沉到 Layout 阶段测量与放置：offsetY 120Hz 动画不再触发整棵壳重组。
+                                            .layout { measurable, constraints ->
+                                                val cfg = bottomSheetConfigState.value
+                                                val totalWidth = if (constraints.hasBoundedWidth) {
+                                                    constraints.maxWidth
+                                                } else {
+                                                    constraints.minWidth
+                                                }
+                                                val leftInsetPx = cfg.shellLeftInsetPx.roundToInt().coerceAtLeast(0)
+                                                val rightInsetPx = cfg.shellRightInsetPx.roundToInt().coerceAtLeast(0)
+                                                val innerWidth = (totalWidth - leftInsetPx - rightInsetPx).coerceAtLeast(0)
+                                                val heightPx = cfg.shellHeightPx.roundToInt()
+                                                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                                                val bottomInsetPx = cfg.shellBottomInset.roundToInt()
+                                                val placeable = measurable.measure(
+                                                    Constraints.fixed(innerWidth, heightPx)
                                                 )
+                                                layout(totalWidth, heightPx) {
+                                                    placeable.placeRelative(leftInsetPx, -bottomInsetPx)
+                                                }
                                             }
                                             .graphicsLayer {
                                                 // 这个 modifier 必须位于材质节点之前：Compose modifier
                                                 // 链的前项包住后项，才能裁掉 Haze/backdrop 的离屏输出。
-                                                shape = shellShape
+                                                // 收起态=RectangleShape，clip 仍为 true 以裁剪 Ken Burns 缩放光效。
+                                                shape = shellShapeProvider()
                                                 clip = true
                                             }
                                             .then(
@@ -2120,28 +2148,29 @@ class MainActivity : BaseActivity() {
                                                 // backdrop：其形状蒙版只在节点尺寸变化时重录，动画
                                                 // 停住后仅改 shape 不生效，弧角会永久残留（真机实证）。
                                                 // p=1 时 backdrop 本来只画不透明底色 drawRect(color,1)，
-                                                // background(color, shellShape) 与它逐像素等价，切换
+                                                // background(color, RectangleShape) 与它逐像素等价，切换
                                                 // 无感；动画重启时回到本分支，节点重建、蒙版按当前
                                                 // 圆角重录。玻璃效果本身不动。
                                                 if (SettingsLibrary.BarBlurEffect &&
                                                     glassProbe.shellGlass &&
-                                                    shellRadiusDp != 0.dp
+                                                    shellHasRadius.value
                                                 ) {
                                                     Modifier.drawBackdrop(
                                                         backdrop = navBackdrop,
-                                                        shape = { shellShape },
+                                                        shape = shellShapeProvider,
                                                         effects = {
                                                             // 运动期只保留轻模糊：真正贵的是 highlight/shadow
                                                             // （各 ~17.7ms 的近全屏离屏记录，已在下方运动期置 null），
                                                             // vibrancy/lens 量级小但同样可省；blur 在已记录的层上
                                                             // 只值 0-2ms，故运动期照留——模糊质感不丢。
                                                             val animating = shellAnimatingForDraw
+                                                            val cfg = bottomSheetConfigState.value
                                                             if (glassProbe.shellBlur) {
                                                                 // 玻璃模糊强度倍率：在本体量过大的组合体里改在
                                                                 // effects 内读（库对 effects 内读取走 observeReads，
                                                                 // 值变即重建 RenderEffect 链，不触发整壳重组）。
                                                                 blur(
-                                                                    4.dp.toPx() * (1f - yosBottomSheetConfig.opticFade) *
+                                                                    4.dp.toPx() * (1f - cfg.opticFade) *
                                                                             yos.music.player.ui.widgets.liquid.glassBlurScale
                                                                 )
                                                             }
@@ -2151,8 +2180,8 @@ class MainActivity : BaseActivity() {
                                                                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                                                                 ) {
                                                                     lens(
-                                                                        minOf(16.dp.toPx() * (1f - yosBottomSheetConfig.opticFade), shellRadiusDp.toPx()),
-                                                                        32.dp.toPx() * (1f - yosBottomSheetConfig.opticFade)
+                                                                        minOf(16.dp.toPx() * (1f - cfg.opticFade), cfg.shellRadius),
+                                                                        32.dp.toPx() * (1f - cfg.opticFade)
                                                                     )
                                                                 }
                                                             }
@@ -2168,16 +2197,15 @@ class MainActivity : BaseActivity() {
                                                         // nohigh 摘掉。运动期观感由 drawShellCheapRim 补偿。
                                                         highlight = {
                                                             if (!glassProbe.shellHighlight ||
-                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                    playerMotionJob.value != null) ||
-                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                                shellDecorOffForDraw ||
+                                                                bottomSheetConfigState.value.progress >= 0.5f
                                                             ) null
                                                             else Highlight.Default.copy(
-                                                                width = if (shellIsNight) 0.4f.dp else 0.5f.dp,
-                                                                blurRadius = if (shellIsNight) 0.1f.dp else 0.2f.dp,
+                                                                width = if (shellIsNightForDraw) 0.4f.dp else 0.5f.dp,
+                                                                blurRadius = if (shellIsNightForDraw) 0.1f.dp else 0.2f.dp,
                                                                 alpha = 1f,
                                                                 style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = if (shellIsNight) 0.4f else 0.5f),
+                                                                    color = Color.Black.copy(alpha = if (shellIsNightForDraw) 0.4f else 0.5f),
                                                                     blendMode = BlendMode.SrcOver,
                                                                     angle = 0f,
                                                                     falloff = 0.9f,
@@ -2186,15 +2214,15 @@ class MainActivity : BaseActivity() {
                                                             )
                                                         },
                                                         shadow = {
+                                                            val progress = bottomSheetConfigState.value.progress
                                                             if (!glassProbe.shellShadow ||
-                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                    playerMotionJob.value != null) ||
-                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                                shellDecorOffForDraw ||
+                                                                progress >= 0.5f
                                                             ) null
                                                             else com.kyant.backdrop.shadow.Shadow.Default.copy(
                                                                 // 与 highlight 的门禁对齐：0.5 处 alpha 正好为 0，
                                                                 // 避免阴影在 0.5 还有一半不透明度时被硬切掉。
-                                                                alpha = 1f - smoothStep(0f, 0.50f, yosBottomSheetConfig.progress)
+                                                                alpha = 1f - smoothStep(0f, 0.50f, progress)
                                                             )
                                                         },
                                                         onDrawBackdrop = liquidShellOnDrawBackdrop,
@@ -2203,20 +2231,21 @@ class MainActivity : BaseActivity() {
                                                             // 与 alpha 均跟随底栏遮罩），
                                                             // 避免与过渡遮罩重复叠加。
                                                             if (!shellAnimatingForDraw) {
-                                                                val underlay = smoothStep(0.35f, 0.55f, shellProgressForDraw)
-                                                                val tint = 0.5f * (1f - shellProgressForDraw)
+                                                                val progress = bottomSheetConfigState.value.progress
+                                                                val underlay = smoothStep(0.35f, 0.55f, progress)
+                                                                val tint = 0.5f * (1f - progress)
                                                                 drawRect(shellColorForDraw.copy(alpha = maxOf(tint, underlay)))
                                                                 // 提取色 tint 画在表面色之上、描边高光之下（高光由库画在
                                                                 // surface 之后）；随壳展开进度归零，全屏播放页不着色。
                                                                 // 绘制期读取：艺人页转场逐帧只重绘不重组。
                                                                 val shellAccent = tintColorProvider()
                                                                 if (shellAccent.alpha > 0.005f) {
-                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - shellProgressForDraw)))
+                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - progress)))
                                                                 }
                                                             }
                                                         }
                                                     )
-                                                } else if (!SettingsLibrary.BarBlurEffect && shellRadiusDp != 0.dp) {
+                                                } else if (!SettingsLibrary.BarBlurEffect && shellHasRadius.value) {
                                                     // 关闭工具栏液态玻璃时，与底栏使用同一个 Kyant
                                                     // drawBackdrop backend，避免 Haze 与底栏的 surface
                                                     // 合成顺序不同而产生颜色偏差。
@@ -2235,7 +2264,7 @@ class MainActivity : BaseActivity() {
                                                     // "关闭液态玻璃时展开卡顿"的主因。
                                                     Modifier.drawBackdrop(
                                                         backdrop = navBackdrop,
-                                                        shape = { shellShape },
+                                                        shape = shellShapeProvider,
                                                         // 磨砂分支使用独立的 frostedBlurScale（与液态玻璃的 glassBlurScale 互不干扰），
                                                         // 在 effects 内读由库 observeReads 观察。
                                                         effects = {
@@ -2247,16 +2276,15 @@ class MainActivity : BaseActivity() {
                                                         // 分支：运动期/展开期/探针 nohigh 时不画。
                                                         highlight = {
                                                             if (!glassProbe.shellHighlight ||
-                                                                shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                    playerMotionJob.value != null) ||
-                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                                shellDecorOffForDraw ||
+                                                                bottomSheetConfigState.value.progress >= 0.5f
                                                             ) null
                                                             else Highlight.Default.copy(
-                                                                width = if (shellIsNight) 0.4f.dp else 0.5f.dp,
-                                                                blurRadius = if (shellIsNight) 0.1f.dp else 0.2f.dp,
+                                                                width = if (shellIsNightForDraw) 0.4f.dp else 0.5f.dp,
+                                                                blurRadius = if (shellIsNightForDraw) 0.1f.dp else 0.2f.dp,
                                                                 alpha = 1f,
                                                                 style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = if (shellIsNight) 0.4f else 0.5f),
+                                                                    color = Color.Black.copy(alpha = if (shellIsNightForDraw) 0.4f else 0.5f),
                                                                     blendMode = BlendMode.SrcOver,
                                                                     angle = 0f,
                                                                     falloff = 0.9f,
@@ -2265,28 +2293,29 @@ class MainActivity : BaseActivity() {
                                                             )
                                                         },
                                                         shadow = {
-                                                            if (shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                    playerMotionJob.value != null) ||
-                                                                yosBottomSheetConfig.progress >= 0.5f
+                                                            val progress = bottomSheetConfigState.value.progress
+                                                            if (shellDecorOffForDraw ||
+                                                                progress >= 0.5f
                                                             ) null
                                                             else com.kyant.backdrop.shadow.Shadow.Default.copy(
-                                                                alpha = 1f - smoothStep(0f, 0.50f, yosBottomSheetConfig.progress)
+                                                                alpha = 1f - smoothStep(0f, 0.50f, progress)
                                                             )
                                                         },
                                                         innerShadow = { null },
                                                         onDrawBackdrop = plainShellOnDrawBackdrop,
                                                         onDrawSurface = {
                                                             if (!shellAnimatingForDraw) {
+                                                                val progress = bottomSheetConfigState.value.progress
                                                                 drawRect(shellColorForDraw.copy(alpha = shellSurfaceAlphaForDraw))
                                                                 val shellAccent = tintColorProvider()
                                                                 if (shellAccent.alpha > 0.005f) {
-                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - shellProgressForDraw)))
+                                                                    drawRect(shellAccent.copy(alpha = shellAccent.alpha * (1f - progress)))
                                                                 }
                                                             }
                                                         }
                                                     )
                                                 } else {
-                                                    Modifier.background(color, shellShape)
+                                                    Modifier.background(color, RectangleShape)
                                                 }
                                             )
                                             // 动画期纯色覆盖层（0.2s 过渡淡入淡出）：动画开始淡入，
@@ -2299,23 +2328,26 @@ class MainActivity : BaseActivity() {
                                             // "85% 表面色"跳到"模糊内容透底"再跳回——
                                             // 这就是静止态与动画态色差的来源。
                                             .then(
-                                                if (animFillAlpha > 0.001f) {
+                                                if (showAnimFill.value) {
                                                     // 取值在绘制期读取（scrimColorProvider 读的都是快照
                                                     // 状态）：艺人页转场逐帧混色只失效重绘，不重组这棵
                                                     // 壳作用域；drawBehind 与 background 语义等价（画在
                                                     // 后续内容之后/之下），只是把取值时机推迟到 draw。
                                                     Modifier.drawBehind {
-                                                        // drawRect 没有 shape 参数：圆角矩形用 drawOutline
-                                                        // 画（语义等价 background(color, shellShape)）。
-                                                        drawOutline(
-                                                            outline = shellShape.createOutline(
-                                                                size,
-                                                                layoutDirection,
-                                                                this
-                                                            ),
-                                                            color = scrimColorProvider()
-                                                                .copy(alpha = bottomScrimAlpha * animFillAlpha)
-                                                        )
+                                                        val fillAlpha = if (shellAnimatingForDraw) 1f else shellFillAnimForDraw.value
+                                                        if (fillAlpha > 0.001f) {
+                                                            // drawRect 没有 shape 参数：圆角矩形用 drawOutline
+                                                            // 画（语义等价 background(color, shellShape)）。
+                                                            drawOutline(
+                                                                outline = shellShapeProvider().createOutline(
+                                                                    size,
+                                                                    layoutDirection,
+                                                                    this
+                                                                ),
+                                                                color = scrimColorProvider()
+                                                                    .copy(alpha = bottomScrimAlpha * fillAlpha)
+                                                            )
+                                                        }
                                                     }
                                                 } else Modifier
                                             )
@@ -2337,12 +2369,12 @@ class MainActivity : BaseActivity() {
                                                     Modifier.drawBehind {
                                                         val rimAlpha =
                                                             if (shellDecorOffForDraw) {
-                                                                1f - smoothStep(0.30f, 0.50f, shellProgressForDraw)
+                                                                1f - smoothStep(0.30f, 0.50f, bottomSheetConfigState.value.progress)
                                                             } else {
                                                                 shellFillAnimForDraw.value
                                                             }
                                                         drawShellCheapRim(
-                                                            shape = shellShapeForDraw,
+                                                            shape = shellShapeProvider(),
                                                             isNight = shellIsNightForDraw,
                                                             glowAlpha = rimAlpha,
                                                         )
@@ -2355,20 +2387,19 @@ class MainActivity : BaseActivity() {
                                             .then(
                                                 Modifier.drawBackdrop(
                                                     backdrop = emptyBackdrop(),
-                                                    shape = { shellShape },
+                                                    shape = shellShapeProvider,
                                                     effects = {},
                                                     highlight = {
                                                         if (!glassProbe.shellHighlight ||
-                                                            shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                playerMotionJob.value != null) ||
-                                                            yosBottomSheetConfig.progress >= 0.5f
+                                                            shellDecorOffForDraw ||
+                                                            bottomSheetConfigState.value.progress >= 0.5f
                                                         ) null
                                                         else Highlight.Default.copy(
                                                             width = 1f.dp,
-                                                            blurRadius = if (shellIsNight) 0.5f.dp else 0.1f.dp,
-                                                            alpha = if (shellIsNight) 1f else 0.8f,
+                                                            blurRadius = if (shellIsNightForDraw) 0.5f.dp else 0.1f.dp,
+                                                            alpha = if (shellIsNightForDraw) 1f else 0.8f,
                                                             style = HighlightStyle.Default(
-                                                                color = Color.White.copy(alpha = if (shellIsNight) 0.1f else 0.2f),
+                                                                color = Color.White.copy(alpha = if (shellIsNightForDraw) 0.1f else 0.2f),
                                                                 blendMode = BlendMode.Plus,
                                                                 angle = 90f,
                                                                 falloff = 1f
@@ -2385,9 +2416,8 @@ class MainActivity : BaseActivity() {
                                                         // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
                                                         // 门禁与白高光一致。
                                                         if (!glassProbe.shellHighlight ||
-                                                            shellDecorationsOff(glassProbe, shellDragDisplaced.value,
-                                                                playerMotionJob.value != null) ||
-                                                            yosBottomSheetConfig.progress >= 0.5f
+                                                            shellDecorOffForDraw ||
+                                                            bottomSheetConfigState.value.progress >= 0.5f
                                                         ) {
                                                             // 运动期/展开期不画
                                                         } else {
@@ -2442,12 +2472,14 @@ class MainActivity : BaseActivity() {
                                                 enabled = !controlGestureActive.value &&
                                                         !hideAppChromeState.value,
                                                 onDragStarted = {
-                                                    android.util.Log.d(
-                                                        "MorphGeo",
-                                                        "DRAG_START p=%.4f".format(
-                                                            yosBottomSheetConfig.progress
+                                                    if (BuildConfig.DEBUG) {
+                                                        android.util.Log.d(
+                                                            "MorphGeo",
+                                                            "DRAG_START p=%.4f".format(
+                                                                bottomSheetConfigState.value.progress
+                                                            )
                                                         )
-                                                    )
+                                                    }
                                                     if (controlGestureActive.value) {
                                                         // 手势起点在控件上：本次由控件独占，
                                                         // shell 不位移，也不置 dragActive。
@@ -2464,13 +2496,15 @@ class MainActivity : BaseActivity() {
                                                 },
                                                 onDragStopped = { velocity ->
                                                     dragSkipFirstDelta.value = false
-                                                    android.util.Log.d(
-                                                        "MorphGeo",
-                                                        "DRAG_STOP v=%.0f p=%.4f".format(
-                                                            velocity,
-                                                            yosBottomSheetConfig.progress
+                                                    if (BuildConfig.DEBUG) {
+                                                        android.util.Log.d(
+                                                            "MorphGeo",
+                                                            "DRAG_STOP v=%.0f p=%.4f".format(
+                                                                velocity,
+                                                                bottomSheetConfigState.value.progress
+                                                            )
                                                         )
-                                                    )
+                                                    }
                                                     if (gestureVetoed.value) {
                                                         gestureVetoed.value = false
                                                     } else {
@@ -2527,7 +2561,7 @@ class MainActivity : BaseActivity() {
                                                         with(density) { orientedBgH.toDp() }
                                                     )
                                                     .graphicsLayer {
-                                                        alpha = yosBottomSheetConfig.playerAlpha
+                                                        alpha = bottomSheetConfigState.value.playerAlpha
                                                     }
                                             ) {
                                                 if (SettingsLibrary.NowplayingStaticFullScreenAlbum) {
@@ -2579,7 +2613,7 @@ class MainActivity : BaseActivity() {
                                                         // 之后全程满不透明——切换大小封面时标题/歌手/
                                                         // 收藏/更多不再经历半透明发灰。与迷你条用同一
                                                         // 窗口互补（和恒为 1），不引入重叠。
-                                                        alpha = smoothStep(0f, 0.45f, yosBottomSheetConfig.progress)
+                                                        alpha = smoothStep(0f, 0.45f, bottomSheetConfigState.value.progress)
                                                     }
                                                     // 全屏播放页坐标系：Album 封面相对它换算。
                                                     // 页面内部布局与展开进度无关，所以这个偏移恒定；
@@ -2643,7 +2677,7 @@ class MainActivity : BaseActivity() {
                                                         CompositingStrategy.ModulateAlpha
                                                     // 与内容层同一窗口互补：1 - smoothStep(0,0.45,progress)，
                                                     // 保证两者之和恒为 1，交叉淡入淡出在前 45% 完成。
-                                                    this.alpha = 1f - smoothStep(0f, 0.45f, yosBottomSheetConfig.progress)
+                                                    this.alpha = 1f - smoothStep(0f, 0.45f, bottomSheetConfigState.value.progress)
                                                 }
                                                 .then(
                                                     if (miniContentInteractive.value) {
@@ -2798,7 +2832,7 @@ class MainActivity : BaseActivity() {
                                         CoverMorphLayer(
                                             progress = {
                                                 morphProgressOverride.value
-                                                    ?: yosBottomSheetConfig.progress
+                                                    ?: bottomSheetConfigState.value.progress
                                             },
                                             pageProgress = { coverPageProgress.value },
                                             active = { coverLayerActive.value },
@@ -2889,26 +2923,20 @@ class MainActivity : BaseActivity() {
         scrimColorProvider: () -> Color,
         bottomScrimHeight: Dp,
         bottomScrimFadeHeight: Dp,
+        backdropSuppressed: () -> Boolean = { false },
         content: @Composable () -> Unit
     ) {
-        GlassDiagnostics.state(
-            "page_geometry",
-            "backdrop=${System.identityHashCode(navBackdrop)} " +
-                    "scale=${(pageScale.value * 1000f).toInt()} corner=${pageCorner.value.value} " +
-                    "scrim=${bottomScrimHeight.value.toInt()} fade=${bottomScrimFadeHeight.value.toInt()}"
-        )
         // This host remains in full-screen coordinates; scaling belongs to its child.
         // 生产者的 LayoutCoordinates 决定玻璃消费端（底栏/迷你条）的采样映射，
         // 因此它必须留在全屏坐标系里；缩放只作用于其子节点。
-        val navBackdropEnabled = remember(bottomScrimHeight, pageScale) {
-            { bottomScrimHeight > 0.dp || pageScale.value < 0.999f }
+        val navBackdropEnabled = remember(bottomScrimHeight, backdropSuppressed) {
+            { !backdropSuppressed() && bottomScrimHeight > 0.dp }
         }
         val navBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
-            bottomScrimHeight,
-            pageScale
+            bottomScrimHeight
         ) {
             {
-                if (pageScale.value < 0.999f || bottomScrimHeight <= 0.dp) {
+                if (bottomScrimHeight <= 0.dp) {
                     null
                 } else {
                     val bandHeightPx = (bottomScrimHeight + 48.dp).toPx()
@@ -3822,6 +3850,20 @@ private fun CoverMorphLayer(
     // 全屏端点底边淡出用的离屏图层 paint：saveLayer 只覆盖淡出带本身
     //（≈1.12×层宽 × 0.28×层宽），不是整层——离屏开销与真实节点的图层同级。
     val fadeLayerPaint = remember { Paint() }
+    val clipPath = remember { Path() }
+    val cornerShapeCache = remember {
+        object {
+            var lastRadiusDp = Float.NaN
+            var shape: YosRoundedCornerShape = YosRoundedCornerShape(0.dp)
+            fun get(radiusDp: Float): YosRoundedCornerShape {
+                if (radiusDp != lastRadiusDp) {
+                    lastRadiusDp = radiusDp
+                    shape = YosRoundedCornerShape(radiusDp.dp)
+                }
+                return shape
+            }
+        }
+    }
     // 阴影的 BlurMaskFilter 原先每帧 new 一个再写回 paint。模糊半径是常量，
     // 因此只建一次即可（每帧 new 会持续分配，且写 maskFilter 会脏化 paint）。
     val shadowMaskFilter = remember(shadowBlurPx) {
@@ -3902,19 +3944,18 @@ private fun CoverMorphLayer(
         // 全屏端点模式下大封面档圆角为 0（真实满屏封面无圆角）。
         val albumCornerDp = if (fullScreenEndpoint) 0f else morphCornerEndDp
         val pageCornerDp = morphCornerBarDp + (albumCornerDp - morphCornerBarDp) * frame.pageT
-        val radiusDp = (morphCornerStartDp +
-                (pageCornerDp - morphCornerStartDp) * p).dp
-        val shape = YosRoundedCornerShape(radiusDp)
+        val radiusDp = morphCornerStartDp + (pageCornerDp - morphCornerStartDp) * p
+        val shape = cornerShapeCache.get(radiusDp)
         val frameRect = Rect(Offset(frame.left, frame.top), Size(side, side))
         // createOutline 生成的轮廓永远位于坐标原点 (0,0)，而封面画在
         // frame.left / frame.top 处。必须把裁剪路径平移到封面位置，
         // 否则遮罩停在左上角、封面右下角会被裁掉（真机实测：表现为
         // "图片本身没圆角、被一个偏左上方的圆角遮罩切掉了右下方"）。
         val outline = shape.createOutline(Size(side, side), layoutDirection, this)
-        val path = Path().apply {
-            addOutline(outline)
-            translate(Offset(frame.left, frame.top))
-        }
+        clipPath.rewind()
+        clipPath.addOutline(outline)
+        clipPath.translate(Offset(frame.left, frame.top))
+        val path = clipPath
 
         // 阴影与描边都在**屏幕坐标**里按真实像素绘制，和真实封面节点完全同参：
         // 那些节点的坐标空间本来就是 1:1 屏幕空间，所以模糊半径和描边宽度
@@ -3930,7 +3971,7 @@ private fun CoverMorphLayer(
             drawCoverShadow(
                 paint = shadowPaint,
                 frameRect = frameRect,
-                radiusDp = radiusDp,
+                shadowShape = shape,
                 alpha = shadowAlpha,
                 blurPx = shadowBlurPx,
                 shadowType = shadowType,
@@ -4075,10 +4116,7 @@ private fun CoverMorphLayer(
             }
             drawRect(
                 brush = Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to Color.Black,
-                        1f to Color.Transparent
-                    ),
+                    colorStops = MorphFadeStops,
                     startY = fadeStartY,
                     endY = fadeEndY
                 ),
@@ -4215,11 +4253,15 @@ private const val morphFadeBandMargin = 8f
 // 参数相同，交接时才逐像素一致。
 // morph 封面两道描边共用的 Stroke（宽度固定，避免每帧新建对象）。
 private val morphStroke = Stroke(width = 12f)
+private val MorphFadeStops = arrayOf(
+    0f to Color.Black,
+    1f to Color.Transparent
+)
 
 private fun DrawScope.drawCoverShadow(
     paint: Paint,
     frameRect: Rect,
-    radiusDp: androidx.compose.ui.unit.Dp,
+    shadowShape: Shape,
     alpha: Float,
     blurPx: Float,
     shadowType: ShadowType,
@@ -4234,7 +4276,6 @@ private fun DrawScope.drawCoverShadow(
     val h = frameRect.height
     if (w <= 0f || h <= 0f) return
     val weight = shadowType.areaWeight
-    val shadowShape = YosRoundedCornerShape(radiusDp)
     val shadowOutline = shadowShape.createOutline(
         Size(w * weight, h * weight),
         LayoutDirection.Ltr,

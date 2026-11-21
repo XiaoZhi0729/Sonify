@@ -70,28 +70,30 @@ internal object MochiColorSpaces {
     private fun inGamut(lin: DoubleArray): Boolean = lin.all { it >= 0.0 && it <= 1.0 }
 
     fun lchToSrgb(l: Double, c: Double, hDeg: Double, out: FloatArray) {
+        val safeL = l.coerceIn(0.0, 100.0)
+        val safeC = c.coerceAtLeast(0.0)
         val lin = DoubleArray(3)
         val h = Math.toRadians(hDeg)
         val ca = cos(h)
         val sa = sin(h)
-        labToLinear(l, c * ca, c * sa, lin)
+        labToLinear(safeL, safeC * ca, safeC * sa, lin)
         if (!inGamut(lin)) {
             var lo = 0.0
-            var hi = c
+            var hi = safeC
             repeat(18) {
                 val mid = (lo + hi) / 2.0
-                labToLinear(l, mid * ca, mid * sa, lin)
+                labToLinear(safeL, mid * ca, mid * sa, lin)
                 if (inGamut(lin)) lo = mid else hi = mid
             }
-            labToLinear(l, lo * ca, lo * sa, lin)
+            labToLinear(safeL, lo * ca, lo * sa, lin)
             if (!inGamut(lin)) {
-                val y = if (l > Kappa * Eps) ((l + 16.0) / 116.0).pow(3) else l / Kappa
+                val y = if (safeL > Kappa * Eps) ((safeL + 16.0) / 116.0).pow(3) else safeL / Kappa
                 lin[0] = y
                 lin[1] = y
                 lin[2] = y
             }
         }
-        for (i in 0..2) out[i] = fromLinear(lin[i]).toFloat().coerceIn(0f, 1f)
+        for (i in 0..2) out[i] = fromLinear(lin[i].coerceIn(0.0, 1.0)).toFloat().coerceIn(0f, 1f)
     }
 
     fun labToSrgb(l: Double, a: Double, b: Double, out: FloatArray) {
