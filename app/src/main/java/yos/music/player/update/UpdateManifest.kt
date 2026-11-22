@@ -257,7 +257,13 @@ internal object UpdateUrls {
 
     fun redirect(url: HttpUrl, manifest: Boolean) {
         if (manifest) manifest(url)
-        else if (url.host == "github.com" || url.host == "gitee.com") apk(url)
+        else if (url.host == "github.com") apk(url)
+        else if (url.host == "gitee.com") {
+            https(url)
+            val trustedRelease = url.encodedPath.matches(Regex("$GITEE_REPOSITORY/releases/download/[^/]+/[^/]+\\.apk"))
+            val trustedAttachFile = url.encodedPath.matches(Regex("$GITEE_REPOSITORY/attach_files/[0-9]+/download/[^/]+\\.apk"))
+            require((trustedRelease || trustedAttachFile) && url.query == null) { "Untrusted APK URL" }
+        }
         else {
             https(url)
             require(

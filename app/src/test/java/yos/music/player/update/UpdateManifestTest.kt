@@ -71,6 +71,7 @@ class UpdateManifestTest {
         UpdateUrls.manifest("https://raw.giteeusercontent.com/XiaoZhi114514/Sonify/raw/master/updates/latest.json?signature=example".toHttpUrl())
         UpdateUrls.manifest("https://raw.githubusercontent.com/XiaoZhi0729/Sonify/master/updates/preview.json".toHttpUrl())
         UpdateUrls.apk("https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.0/Sonify.apk".toHttpUrl())
+        UpdateUrls.redirect("https://gitee.com/XiaoZhi114514/Sonify/attach_files/3790333/download/Sonify-v0.2.6.apk".toHttpUrl(), false)
         UpdateUrls.redirect("https://foruda.gitee.com/attach_file/example.apk".toHttpUrl(), false)
         rejects { UpdateRepository(manifestUrl = "https://gitee.com/Other/Sonify/raw/master/updates/latest.json") }
         rejects { UpdateUrls.redirect("https://gitee.com.evil.test/file.apk".toHttpUrl(), false) }
