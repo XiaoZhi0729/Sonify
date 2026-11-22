@@ -123,6 +123,31 @@ $publishPayload = [System.Text.Encoding]::UTF8.GetBytes((@{ draft = $false } | C
 $release = Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/XiaoZhi0729/Sonify/releases/$($release.id)" -Headers $headers -ContentType "application/json; charset=utf-8" -Body $publishPayload
 ```
 
+### Also Upload Directly to Gitee Release (Fast Local Upload)
+
+Because GitHub Actions cross-border upload to Gitee can be slow, push/create the Gitee Release and attach the APK directly from local using the Gitee token stored in `git credential` (`host=gitee.com`, never hardcode the token in repo files):
+```powershell
+$giteeCreds = ("protocol=https`nhost=gitee.com`n" | git credential fill)
+$giteeToken = ($giteeCreds | Where-Object { $_ -match '^password=' }) -replace '^password=', ''
+if ($giteeToken) {
+    $giteeBase = "https://gitee.com/api/v5/repos/XiaoZhi114514/Sonify/releases"
+    $giteeHeaders = @{ Authorization = "token $giteeToken" }
+    # Note: Gitee returns HTTP 200 + null (not 404) when the release tag does not exist yet
+    $existing = Invoke-RestMethod -Method Get -Uri "$giteeBase/tags/v<version>" -Headers $giteeHeaders -UseBasicParsing
+    $giteeReleaseId = if ($existing -and $existing.id) { $existing.id } else {
+        $gPayload = [System.Text.Encoding]::UTF8.GetBytes((@{
+            tag_name = "v<version>"
+            target_commitish = "master"
+            name = "Sonify v<version>"
+            body = $bodyText
+            prerelease = $false
+        } | ConvertTo-Json -Depth 4))
+        (Invoke-RestMethod -Method Post -Uri $giteeBase -Headers $giteeHeaders -ContentType "application/json; charset=utf-8" -Body $gPayload).id
+    }
+    curl.exe --fail-with-body -sS -X POST -H "Authorization: token $giteeToken" -F "file=@$apkPath" "$giteeBase/$giteeReleaseId/attach_files"
+}
+```
+
 ## 8. Verify Online APK & Activate Cloud Update Manifest
 
 Per `docs/cloud-update.md`, the in-app updater reads `updates/latest.json` (formal) or `updates/preview.json` (preview) rather than GitHub `/releases/latest`:
