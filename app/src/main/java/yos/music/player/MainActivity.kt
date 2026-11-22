@@ -179,6 +179,7 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import yos.music.player.ui.widgets.liquid.WrapHighlightStyle
+import yos.music.player.ui.widgets.liquid.ios27GlassEdge
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.unit.Dp
@@ -2212,16 +2213,17 @@ class MainActivity : BaseActivity() {
                                                         // 真机实测摘掉后"超级流畅"）；progress>=0.5 摘掉；探针
                                                         // nohigh 摘掉。运动期观感由 drawShellCheapRim 补偿。
                                                         highlight = {
-                                                            if (!glassProbe.shellHighlight ||
+                                                            if (!shellIsNightForDraw ||
+                                                                !glassProbe.shellHighlight ||
                                                                 shellDecorOffForDraw ||
                                                                 bottomSheetConfigState.value.progress >= 0.5f
                                                             ) null
                                                             else Highlight.Default.copy(
-                                                                width = if (shellIsNightForDraw) 0.4f.dp else 0.5f.dp,
-                                                                blurRadius = if (shellIsNightForDraw) 0.1f.dp else 0.2f.dp,
+                                                                width = 0.4f.dp,
+                                                                blurRadius = 0.1f.dp,
                                                                 alpha = 1f,
                                                                 style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = if (shellIsNightForDraw) 0.4f else 0.5f),
+                                                                    color = Color.Black.copy(alpha = 0.4f),
                                                                     blendMode = BlendMode.SrcOver,
                                                                     angle = 0f,
                                                                     falloff = 0.9f,
@@ -2291,16 +2293,17 @@ class MainActivity : BaseActivity() {
                                                         // 描边（用户要求与底栏磨砂胶囊一致）。门禁同玻璃
                                                         // 分支：运动期/展开期/探针 nohigh 时不画。
                                                         highlight = {
-                                                            if (!glassProbe.shellHighlight ||
+                                                            if (!shellIsNightForDraw ||
+                                                                !glassProbe.shellHighlight ||
                                                                 shellDecorOffForDraw ||
                                                                 bottomSheetConfigState.value.progress >= 0.5f
                                                             ) null
                                                             else Highlight.Default.copy(
-                                                                width = if (shellIsNightForDraw) 0.4f.dp else 0.5f.dp,
-                                                                blurRadius = if (shellIsNightForDraw) 0.1f.dp else 0.2f.dp,
+                                                                width = 0.4f.dp,
+                                                                blurRadius = 0.1f.dp,
                                                                 alpha = 1f,
                                                                 style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = if (shellIsNightForDraw) 0.4f else 0.5f),
+                                                                    color = Color.Black.copy(alpha = 0.4f),
                                                                     blendMode = BlendMode.SrcOver,
                                                                     angle = 0f,
                                                                     falloff = 0.9f,
@@ -2402,73 +2405,77 @@ class MainActivity : BaseActivity() {
                                             // 不再采样玻璃内容，不会盖住下层的黑色环绕高光。门禁与黑边一致。
                                             .then(
                                                 if (shellHasRadius.value) {
-                                                    Modifier.drawBackdrop(
-                                                        backdrop = emptyBackdrop(),
-                                                        shape = shellShapeProvider,
-                                                        effects = {},
-                                                        highlight = {
-                                                            if (!glassProbe.shellHighlight ||
-                                                                shellDecorOffForDraw ||
-                                                                bottomSheetConfigState.value.progress >= 0.5f
-                                                            ) null
-                                                            else Highlight.Default.copy(
-                                                                width = 1f.dp,
-                                                                blurRadius = if (shellIsNightForDraw) 0.5f.dp else 0.1f.dp,
-                                                                alpha = if (shellIsNightForDraw) 1f else 0.8f,
-                                                                style = HighlightStyle.Default(
-                                                                    color = Color.White.copy(alpha = if (shellIsNightForDraw) 0.1f else 0.2f),
-                                                                    blendMode = BlendMode.Plus,
-                                                                    angle = 90f,
-                                                                    falloff = 1f
+                                                    if (!shellIsNightForDraw) {
+                                                        Modifier.ios27GlassEdge(
+                                                            shape = shellShapeProvider,
+                                                            enabled = {
+                                                                glassProbe.shellHighlight &&
+                                                                    !shellDecorOffForDraw &&
+                                                                    bottomSheetConfigState.value.progress < 0.5f
+                                                            },
+                                                            drawSurfaceShading = true,
+                                                        )
+                                                    } else {
+                                                        Modifier.drawBackdrop(
+                                                            backdrop = emptyBackdrop(),
+                                                            shape = shellShapeProvider,
+                                                            effects = {},
+                                                            highlight = {
+                                                                if (!glassProbe.shellHighlight ||
+                                                                    shellDecorOffForDraw ||
+                                                                    bottomSheetConfigState.value.progress >= 0.5f
+                                                                ) null
+                                                                else Highlight.Default.copy(
+                                                                    width = 1f.dp,
+                                                                    blurRadius = 0.5f.dp,
+                                                                    alpha = 1f,
+                                                                    style = HighlightStyle.Default(
+                                                                        color = Color.White.copy(alpha = 0.1f),
+                                                                        blendMode = BlendMode.Plus,
+                                                                        angle = 90f,
+                                                                        falloff = 1f
+                                                                    )
                                                                 )
-                                                            )
-                                                        },
-                                                        shadow = { null },
-                                                        innerShadow = { null },
-                                                        onDrawBackdrop = { },
-                                                        onDrawSurface = {
-                                                            // 上下高光的内阴影延伸：顶部高光向下、底部高光向上
-                                                            // 各拉一条白色内渐变带，颜色与白高光一致、同用 Plus
-                                                            // 叠加。画在本层 surface 记录内（复用已有图层、不新增
-                                                            // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
-                                                            // 门禁与白高光一致。
-                                                            if (!glassProbe.shellHighlight ||
-                                                                shellDecorOffForDraw ||
-                                                                bottomSheetConfigState.value.progress >= 0.5f
-                                                            ) {
-                                                                // 运动期/展开期不画
-                                                            } else {
-                                                                // 浅色 0.2 → 0.1（与底栏 LiquidBottomTabs 同步，
-                                                                // 用户要求只削弱上下两条渐变带）：白纱本体已是半透明白，
-                                                                // 6dp 带再 0.2 偏亮。上方 1dp 描边高光的 color 不动。
-                                                                val glowColor = Color.White.copy(alpha = 0.1f)
-                                                                val glowH = 6.dp.toPx()
-                                                                // 顶边高光向下渐隐
-                                                                drawRect(
-                                                                    brush = Brush.verticalGradient(
-                                                                        0f to glowColor,
-                                                                        1f to Color.Transparent,
-                                                                        startY = 0f,
-                                                                        endY = glowH
-                                                                    ),
-                                                                    size = Size(size.width, glowH),
-                                                                    blendMode = BlendMode.Plus
-                                                                )
-                                                                // 底边高光向上渐隐
-                                                                drawRect(
-                                                                    brush = Brush.verticalGradient(
-                                                                        0f to Color.Transparent,
-                                                                        1f to glowColor,
-                                                                        startY = size.height - glowH,
-                                                                        endY = size.height
-                                                                    ),
-                                                                    topLeft = Offset(0f, size.height - glowH),
-                                                                    size = Size(size.width, glowH),
-                                                                    blendMode = BlendMode.Plus
-                                                                )
+                                                            },
+                                                            shadow = { null },
+                                                            innerShadow = { null },
+                                                            onDrawBackdrop = { },
+                                                            onDrawSurface = {
+                                                                if (!glassProbe.shellHighlight ||
+                                                                    shellDecorOffForDraw ||
+                                                                    bottomSheetConfigState.value.progress >= 0.5f
+                                                                ) {
+                                                                    // 运动期/展开期不画
+                                                                } else {
+                                                                    val glowColor = Color.White.copy(alpha = 0.1f)
+                                                                    val glowH = 6.dp.toPx()
+                                                                    // 顶边高光向下渐隐
+                                                                    drawRect(
+                                                                        brush = Brush.verticalGradient(
+                                                                            0f to glowColor,
+                                                                            1f to Color.Transparent,
+                                                                            startY = 0f,
+                                                                            endY = glowH
+                                                                        ),
+                                                                        size = Size(size.width, glowH),
+                                                                        blendMode = BlendMode.Plus
+                                                                    )
+                                                                    // 底边高光向上渐隐
+                                                                    drawRect(
+                                                                        brush = Brush.verticalGradient(
+                                                                            0f to Color.Transparent,
+                                                                            1f to glowColor,
+                                                                            startY = size.height - glowH,
+                                                                            endY = size.height
+                                                                        ),
+                                                                        topLeft = Offset(0f, size.height - glowH),
+                                                                        size = Size(size.width, glowH),
+                                                                        blendMode = BlendMode.Plus
+                                                                    )
+                                                                }
                                                             }
-                                                        }
-                                                    )
+                                                        )
+                                                    }
                                                 } else Modifier
                                             )
                                             // 外壳内容坐标系：迷你封面与全屏封面都相对它换算。
@@ -4673,25 +4680,37 @@ private fun DrawScope.drawShellCheapRim(
     if (glowAlpha <= 0.001f) return
     val outline = shape.createOutline(size, layoutDirection, this)
 
-    // ---- ① 黑边环绕（近似 WrapHighlightStyle：左右最深，中线保留 baseline=0.4）----
-    val rimAlpha = if (isNight) 0.4f else 0.5f
+    // ---- ① 黑边环绕（近似 plusDarker：左右最深，中线保留 baseline）----
+    val rimWidthPx = (if (isNight) 0.4f else 0.36f).dp.toPx()
+    val rimAlpha = if (isNight) 0.4f else 0.22f
     val rimColor = Color.Black.copy(alpha = rimAlpha * glowAlpha)
     drawOutline(
         outline = outline,
         brush = Brush.horizontalGradient(
             0f to rimColor,
-            // 垂直中线 = 上下边缘处的最弱值（baseline × 最深处），与 baseline=0.4 对齐
+            // 垂直中线 = 上下边缘处的最弱值（baseline × 最深处）
             0.5f to rimColor.copy(alpha = rimColor.alpha * 0.4f),
             1f to rimColor,
         ),
-        style = Stroke(width = (if (isNight) 0.4f else 0.5f).dp.toPx()),
+        style = Stroke(width = rimWidthPx),
         blendMode = BlendMode.SrcOver,
     )
+    if (!isNight) {
+        val burnColor = Color(0.70f, 0.70f, 0.70f, 0.85f * glowAlpha)
+        drawOutline(
+            outline = outline,
+            brush = Brush.horizontalGradient(
+                0f to burnColor,
+                0.5f to burnColor.copy(alpha = burnColor.alpha * 0.4f),
+                1f to burnColor,
+            ),
+            style = Stroke(width = rimWidthPx),
+            blendMode = BlendMode.ColorBurn,
+        )
+    }
 
     // ---- ② 白色提亮边（近似 HighlightStyle.Default angle=90：亮在上下直边）----
-    // 描边与 ③ 的渐变带原本共用一个 whiteAlpha；现在只压渐变带（浅色 0.2 → 0.1，
-    // 与底栏及静止态 onDrawSurface 同步），描边保持原值，故拆成两个系数。
-    val edgeAlpha = if (isNight) 0.1f else 0.2f
+    val edgeAlpha = if (isNight) 0.1f else 0.20f
     val edgeColor = Color.White.copy(alpha = edgeAlpha * glowAlpha)
     drawOutline(
         outline = outline,

@@ -178,13 +178,14 @@ internal class HighlightNode(
 
     private fun DrawScope.configurePaint(highlight: Highlight) {
         paint.color = highlight.style.color
-        paint.strokeWidth = ceil(highlight.width.toPx().fastCoerceAtMost(size.minDimension / 2f)) * 2f
+        val halfStrokePx = highlight.width.toPx().coerceAtLeast(1f).fastCoerceAtMost(size.minDimension / 2f)
+        paint.strokeWidth = halfStrokePx * 2f
         paint.blur(highlight.blurRadius.toPx())
         if (isRuntimeShaderSupported()) {
             val shader =
                 with(highlight.style) {
                     createShader(
-                        shape = shapeProvider.shape,
+                        shape = shapeProvider.innerShape,
                         runtimeShaderCache = runtimeShaderCache
                     )
                 }

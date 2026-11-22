@@ -18,5 +18,10 @@ internal fun Paint.blur(radius: Float) {
 
 @Suppress("DEPRECATION")
 internal fun Paint.setRuntimeShader(runtimeShader: RuntimeShader?) {
-    this.asFrameworkPaint().shader = runtimeShader?.asAndroidRuntimeShader()
+    val frameworkPaint = this.asFrameworkPaint()
+    val androidShader = runtimeShader?.asAndroidRuntimeShader()
+    if (frameworkPaint.shader === androidShader && androidShader != null) {
+        frameworkPaint.shader = null
+    }
+    frameworkPaint.shader = androidShader
 }

@@ -164,65 +164,66 @@ fun LiquidBottomTabs(
     // （MainActivity PlayerShell Kyant 分支）同样挂着这层高光+内阴影延伸，缺了它
     // 关闭玻璃时底栏会比迷你条少一层亮边（用户报告的材质不一致）。
     val containerHighlightOverlay = remember(isLightTheme) {
-        Modifier.drawBackdrop(
-            backdrop = emptyBackdrop(),
-            shape = { Capsule() },
-            effects = {},
-            highlight = {
-                if (GlassProbe.current.navContainerHighlight) {
-                    Highlight.Default.copy(
-                        width = 1f.dp,
-                        blurRadius = if (isLightTheme) 0.1f.dp else 0.5f.dp,
-                        alpha = if (isLightTheme) 0.8f else 1f,
-                        style = HighlightStyle.Default(
-                            color = Color.White.copy(alpha = if (isLightTheme) 0.2f else 0.1f),
-                            blendMode = BlendMode.Plus,
-                            angle = 90f,
-                            falloff = 1f
+        if (isLightTheme) {
+            Modifier.ios27GlassEdge(
+                shape = { Capsule() },
+                enabled = { GlassProbe.current.navContainerHighlight },
+                drawSurfaceShading = true,
+            )
+        } else {
+            Modifier.drawBackdrop(
+                backdrop = emptyBackdrop(),
+                shape = { Capsule() },
+                effects = {},
+                highlight = {
+                    if (GlassProbe.current.navContainerHighlight) {
+                        Highlight.Default.copy(
+                            width = 1f.dp,
+                            blurRadius = 0.5f.dp,
+                            alpha = 1f,
+                            style = HighlightStyle.Default(
+                                color = Color.White.copy(alpha = 0.1f),
+                                blendMode = BlendMode.Plus,
+                                angle = 90f,
+                                falloff = 1f
+                            )
                         )
-                    )
-                } else null
-            },
-            shadow = { null },
-            innerShadow = { null },
-            onDrawBackdrop = { },
-            onDrawSurface = {
-                // 上下高光的内阴影延伸（与迷你条同款）：顶部高光向下、底部高光向上各拉
-                // 一条白色内渐变带，颜色与白高光一致、同用 Plus 叠加。画在本层 surface
-                // 记录内，节点已按 Capsule 裁剪。门禁与白高光同用 navContainerHighlight。
-                if (GlassProbe.current.navContainerHighlight) {
-                    // 浅色 0.2 → 0.1（2026-11-09 用户要求只削弱这两条渐变带）：6dp 白渐变带
-                    // 直接压在 0.5 白纱上偏亮。只动这里——1dp 描边高光（上面 HighlightStyle.Default
-                    // 的 color，仍为浅色 0.2）与黑边环绕高光保持原值，胶囊轮廓不受影响。
-                    // 深色原本就是 0.1，改后两态同值。
-                    val glowColor = Color.White.copy(alpha = 0.1f)
-                    val glowH = 6f.dp.toPx()
-                    // 顶边高光向下渐隐
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to glowColor,
-                            1f to Color.Transparent,
-                            startY = 0f,
-                            endY = glowH
-                        ),
-                        size = Size(size.width, glowH),
-                        blendMode = BlendMode.Plus
-                    )
-                    // 底边高光向上渐隐
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            1f to glowColor,
-                            startY = size.height - glowH,
-                            endY = size.height
-                        ),
-                        topLeft = Offset(0f, size.height - glowH),
-                        size = Size(size.width, glowH),
-                        blendMode = BlendMode.Plus
-                    )
+                    } else null
+                },
+                shadow = { null },
+                innerShadow = { null },
+                onDrawBackdrop = { },
+                onDrawSurface = {
+                    if (GlassProbe.current.navContainerHighlight) {
+                        val glowColor = Color.White.copy(alpha = 0.1f)
+                        val glowH = 6f.dp.toPx()
+                        // 顶边高光向下渐隐
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to glowColor,
+                                1f to Color.Transparent,
+                                startY = 0f,
+                                endY = glowH
+                            ),
+                            size = Size(size.width, glowH),
+                            blendMode = BlendMode.Plus
+                        )
+                        // 底边高光向上渐隐
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                1f to glowColor,
+                                startY = size.height - glowH,
+                                endY = size.height
+                            ),
+                            topLeft = Offset(0f, size.height - glowH),
+                            size = Size(size.width, glowH),
+                            blendMode = BlendMode.Plus
+                        )
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     val tabsBackdrop = rememberLayerBackdrop()
@@ -348,13 +349,13 @@ fun LiquidBottomTabs(
         val containerCapsuleShape: () -> com.kyant.shapes.RoundedRectangularShape = remember { { Capsule() } }
         val containerHighlight: () -> Highlight? = remember(isLightTheme) {
             {
-                if (GlassProbe.current.navContainerHighlight) {
+                if (!isLightTheme && GlassProbe.current.navContainerHighlight) {
                     Highlight.Default.copy(
-                        width = if (isLightTheme) 0.5f.dp else 0.4f.dp,
-                        blurRadius = if (isLightTheme) 0.2f.dp else 0.1f.dp,
+                        width = 0.4f.dp,
+                        blurRadius = 0.1f.dp,
                         alpha = 1f,
                         style = WrapHighlightStyle(
-                            color = Color.Black.copy(alpha = if (isLightTheme) 0.5f else 0.4f),
+                            color = Color.Black.copy(alpha = 0.4f),
                             blendMode = BlendMode.SrcOver,
                             angle = 0f,
                             falloff = 0.9f,

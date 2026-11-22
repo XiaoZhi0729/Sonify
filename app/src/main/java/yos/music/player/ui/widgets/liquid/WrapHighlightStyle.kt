@@ -1,6 +1,7 @@
 package yos.music.player.ui.widgets.liquid
 
 import android.os.Build
+import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.BlendMode
@@ -12,6 +13,7 @@ import androidx.compose.ui.util.fastCoerceAtMost
 import com.kyant.backdrop.RuntimeShader
 import com.kyant.backdrop.RuntimeShaderCache
 import com.kyant.backdrop.highlight.HighlightStyle
+import com.kyant.shapes.RoundedRectangularShape
 import kotlin.math.PI
 
 /**
@@ -53,8 +55,9 @@ data class WrapHighlightStyle(
                 .apply {
                     setFloatUniform("size", size.width, size.height)
                     setFloatUniform("cornerRadii", getCornerRadii(shape))
-                    // 保留调色 alpha（不用 copy(alpha=1f)），深浅交给 color 而不是 Highlight.alpha。
-                    setColorUniform("color", color)
+                    // HighlightModifier.configurePaint 已将 paint.color 设为 highlight.style.color（携带 color.alpha），
+                    // shader uniform 必须像 HighlightStyle.Default 一样传 copy(alpha = 1f)，否则 Skia 会将 paint.alpha 与 shader 输出相乘导致 alpha 被平方。
+                    setColorUniform("color", color.copy(alpha = 1f))
                     setFloatUniform("angle", angle * (PI / 180f).toFloat())
                     setFloatUniform("falloff", falloff)
                     setFloatUniform("baseline", baseline)
@@ -68,20 +71,39 @@ data class WrapHighlightStyle(
 private fun DrawScope.getCornerRadii(shape: Shape): FloatArray {
     val size = size
     val maxRadius = size.minDimension / 2f
-    // Kyant shapes（Capsule/RoundedRectangle）不是 Compose CornerBasedShape，
-    // 走兜底 = 满圆角，对胶囊几何恰好正确。
-    val cornerShape = shape as? CornerBasedShape ?: return FloatArray(4) { maxRadius }
-    val isLtr = layoutDirection == LayoutDirection.Ltr
-    val topLeft = if (isLtr) cornerShape.topStart.toPx(size, this) else cornerShape.topEnd.toPx(size, this)
-    val topRight = if (isLtr) cornerShape.topEnd.toPx(size, this) else cornerShape.topStart.toPx(size, this)
-    val bottomRight = if (isLtr) cornerShape.bottomEnd.toPx(size, this) else cornerShape.bottomStart.toPx(size, this)
-    val bottomLeft = if (isLtr) cornerShape.bottomStart.toPx(size, this) else cornerShape.bottomEnd.toPx(size, this)
-    return floatArrayOf(
-        topLeft.fastCoerceAtMost(maxRadius),
-        topRight.fastCoerceAtMost(maxRadius),
-        bottomRight.fastCoerceAtMost(maxRadius),
-        bottomLeft.fastCoerceAtMost(maxRadius),
-    )
+    return when (shape) {
+        is RoundedRectangularShape -> {
+            val radii = shape.cornerRadii(size, layoutDirection, this)
+            floatArrayOf(
+                radii[0].fastCoerceAtMost(maxRadius),
+                radii[1].fastCoerceAtMost(maxRadius),
+                radii[2].fastCoerceAtMost(maxRadius),
+                radii[3].fastCoerceAtMost(maxRadius),
+            )
+        }
+        is AbsoluteRoundedCornerShape -> {
+            floatArrayOf(
+                shape.topStart.toPx(size, this).fastCoerceAtMost(maxRadius),
+                shape.topEnd.toPx(size, this).fastCoerceAtMost(maxRadius),
+                shape.bottomEnd.toPx(size, this).fastCoerceAtMost(maxRadius),
+                shape.bottomStart.toPx(size, this).fastCoerceAtMost(maxRadius),
+            )
+        }
+        is CornerBasedShape -> {
+            val isLtr = layoutDirection == LayoutDirection.Ltr
+            val topLeft = if (isLtr) shape.topStart.toPx(size, this) else shape.topEnd.toPx(size, this)
+            val topRight = if (isLtr) shape.topEnd.toPx(size, this) else shape.topStart.toPx(size, this)
+            val bottomRight = if (isLtr) shape.bottomEnd.toPx(size, this) else shape.bottomStart.toPx(size, this)
+            val bottomLeft = if (isLtr) shape.bottomStart.toPx(size, this) else shape.bottomEnd.toPx(size, this)
+            floatArrayOf(
+                topLeft.fastCoerceAtMost(maxRadius),
+                topRight.fastCoerceAtMost(maxRadius),
+                bottomRight.fastCoerceAtMost(maxRadius),
+                bottomLeft.fastCoerceAtMost(maxRadius),
+            )
+        }
+        else -> FloatArray(4) { maxRadius }
+    }
 }
 
 private const val WrapHighlightShaderString = """
@@ -122,21 +144,13 @@ float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
 half4 main(float2 coord) {
     float2 halfSize = size * 0.5;
     float2 centeredCoord = coord - halfSize;
+    float radius = radiusAt(centeredCoord, cornerRadii);
 
-    // 渐变按「沿轴的位置比例」算，而不是方位角。
-    // 胶囊左右是半圆帽，用方位角会让整个帽子都接近满强度→糊成黑点/黑块。
-    // 改用位置比例：沿 axis 方向投影后除以该方向半长，左右最边缘=1、垂直中线=0，
-    // 整条边平滑过渡，端帽不再堆积出硬黑点。
+    float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
+    float2 grad = gradSdRoundedRect(centeredCoord, halfSize, gradRadius);
     float2 axis = float2(cos(angle), sin(angle));
-    float proj = abs(dot(centeredCoord, axis));
-    float halfExtent = abs(axis.x) * halfSize.x + abs(axis.y) * halfSize.y;
-    float t = clamp(proj / max(halfExtent, 1.0), 0.0, 1.0);
+    float t = clamp(abs(dot(grad, axis)), 0.0, 1.0);
 
-    // 过渡曲线：pow(t, falloff)，t=1 为最深处(左右)，t=0 为最浅(上下)。
-    //   falloff < 1（如 0.9）：起点(t=1)附近平缓=峰是"软"的不会是尖点，
-    //     且暗部从起点就开始延长地往中间渐变 → 渐变被拉长、强度更柔。
-    //   falloff = 1：线性。
-    //   falloff > 1：暗部收紧到最边缘 → 越来越像尖点（不要）。
     float directional = pow(t, falloff);
     float intensity = baseline + (1.0 - baseline) * directional;
     return color * intensity;

@@ -306,19 +306,23 @@ private fun Modifier.demoMaterialBackdrop(
             }
         },
         highlight = {
-            Highlight.Default.copy(
-                alpha = if (isDarkState.value) 0.55f else 0.90f,
-            )
+            if (isDarkState.value) {
+                Highlight.Default.copy(alpha = 0.55f)
+            } else {
+                classyabaBlackRim()
+            }
         },
         shadow = { Shadow.Default },
         onDrawSurface = {
             val surface = if (isDarkState.value) {
                 Color.White.copy(alpha = 0.08f)
             } else {
-                Color.White.copy(alpha = 0.14f)
+                Color.White.copy(alpha = 0.5f)
             }
             drawRect(surface)
         },
+    ).then(
+        if (!isDarkState.value) Modifier.classyabaWhiteEdge(shape) else Modifier
     )
 } else {
     drawBackdrop(

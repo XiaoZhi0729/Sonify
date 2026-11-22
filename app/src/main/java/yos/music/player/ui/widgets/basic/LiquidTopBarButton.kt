@@ -114,7 +114,7 @@ fun LiquidTopBarButton(
     // 深色保持项目原状（整圈均匀白环），所以这里只判主题。
     val rimHighlight: (() -> com.kyant.backdrop.highlight.Highlight?)? =
         if (isLightTheme) classyabaBlackRim else null
-    val shadowColor = if (isLightTheme) "#12000000".toColorInt() else "#20000000".toColorInt()
+    val shadowColor = if (isLightTheme) "#06000000".toColorInt() else "#20000000".toColorInt()
     val interactionSource = remember { MutableInteractionSource() }
     val animationScope = rememberCoroutineScope()
     val interactiveHighlight = remember(animationScope) {
@@ -153,11 +153,12 @@ fun LiquidTopBarButton(
                     val spread = shadowAlpha()
                     if (spread > 0.01f) {
                         val blurRadius = (10f * density * spread).coerceAtLeast(0.1f)
-                        val shadowSpread = 2f * density * spread
+                        val shadowSpread = (if (isLightTheme) 1f else 2f) * density * spread
+                        val shadowOffsetY = if (isLightTheme) 3.5f * density * spread else 0f
                         val outerRadius = size.minDimension / 2f + shadowSpread
                         val innerRadius = size.minDimension / 2f
                         path.rewind()
-                        path.addCircle(center.x, center.y, outerRadius, Path.Direction.CW)
+                        path.addCircle(center.x, center.y + shadowOffsetY, outerRadius, Path.Direction.CW)
                         path.addCircle(center.x, center.y, innerRadius, Path.Direction.CCW)
                         paint.color = android.graphics.Color.argb(
                             (android.graphics.Color.alpha(shadowColor) * 3.2f).coerceAtMost(255f).toInt(),

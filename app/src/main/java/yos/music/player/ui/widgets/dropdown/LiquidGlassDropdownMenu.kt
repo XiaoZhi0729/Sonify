@@ -117,7 +117,7 @@ private const val PanelBlur = 4f
 private val ShadowColorLight = Color(0x1A000000)
 private val ShadowColorDark = Color(0x2E000000)
 /** 收起态阴影色（= LiquidTopBarButton 的 shadowColor） */
-private val CollapsedShadowColorLight = Color(0x12000000)
+private val CollapsedShadowColorLight = Color(0x06000000)
 private val CollapsedShadowColorDark = Color(0x20000000)
 private const val ShadowBlur = 12f
 /** 收起态阴影模糊半径（= LiquidTopBarButton 的 10f * density） */
@@ -397,15 +397,17 @@ fun LiquidGlassDropdownMenu(
                         )
                         val blurDp = CollapsedShadowBlur + (ShadowBlur - CollapsedShadowBlur) * fClamped
                         val blurRadius = blurDp * density * spread
-                        val shadowSpread = ShadowExtend * density * spread
+                        val collapsedSpread = if (isLightTheme) 1f else ShadowExtend
+                        val shadowSpread = (collapsedSpread + (ShadowExtend - collapsedSpread) * fClamped) * density * spread
+                        val shadowOffsetY = if (isLightTheme) 3.5f * (1f - fClamped) * density * spread else 0f
                         val r = PanelCornerRadius.toPx()
                         // 环形：外圈 roundrect CW + 内圈 roundrect CCW（winding 差集）
                         val ringPath = Path().apply {
                             addRoundRect(
                                 RoundRect(
                                     rect = Rect(
-                                        -shadowSpread, -shadowSpread,
-                                        size.width + shadowSpread, size.height + shadowSpread,
+                                        -shadowSpread, -shadowSpread + shadowOffsetY,
+                                        size.width + shadowSpread, size.height + shadowSpread + shadowOffsetY,
                                     ),
                                     cornerRadius = CornerRadius(r + shadowSpread, r + shadowSpread),
                                 ),
