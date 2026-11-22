@@ -119,7 +119,14 @@ $uploadUrl = "https://uploads.github.com/repos/XiaoZhi0729/Sonify/releases/$($re
 $asset = Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers $headers -ContentType "application/vnd.android.package-archive" -Body $bytes
 ```
 
-## 8. Final Report
+## 8. Verify Online APK & Activate Cloud Update Manifest
+
+Per `docs/cloud-update.md`, the in-app updater reads `updates/latest.json` (formal) or `updates/preview.json` (preview) rather than GitHub `/releases/latest`:
+1. Verify the uploaded GitHub Release APK is publicly downloadable and matches the exact byte size and SHA-256.
+2. Update `updates/latest.json` (for formal releases) or `updates/preview.json` (for preview releases) with `versionCode`, `versionName`, `apkUrl`, `mirrorApkUrls` (`https://gitee.com/XiaoZhi114514/Sonify/releases/download/v<version>/Sonify-v<version>.apk`), `apkSize`, `sha256`, `releasePageUrl`, and 4-language `releaseNotes` (`en`, `zh-CN`, `zh-TW`, `ja`).
+3. Commit and push `updates/latest.json` (or `updates/preview.json`) to `master` so Gitee/GitHub raw manifests and `.github/workflows/sync-gitee.yml` activate the update.
+
+## 9. Final Report
 
 Report to the user:
 - Local signed APK path (`app\build\outputs\apk\release\Sonify-v<version>.apk`)
