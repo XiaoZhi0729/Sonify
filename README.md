@@ -13,14 +13,13 @@
 
 ## 特性
 
-- **液态玻璃 UI** — 基于 Backdrop 的背景采样与模糊效果，迷你播放条、全屏播放页与底部导航采用玻璃质感，封面色彩随歌曲流动。
-- **在线曲库** — 酷狗音源搜索、精选歌单、每日推荐与私人 FM；支持手机号验证码登录、在线艺人入口和我的歌单管理。
-- **应用内更新** — 在「设置 → 关于」检查新版，应用内下载并交给系统安装器；下载后核对大小、SHA-256、包名、版本与签名身份。
-- **多音质切换** — 标准到超高音质自由切换，切换过程带探测与失败自动回退，不中断播放。
-- **歌词** — 逐行高亮歌词与翻译，支持状态栏歌词（Hook 方案）。
-- **完整播放功能** — 倍速播放、睡眠定时器、播放队列拖拽编辑、最近播放。
-- **手机 / 平板双形态** — 平板横屏分栏布局，一台设备两种体验。
-- **后台播放** — 基于 Media3 / MediaSession，后台稳定播放，通知栏与蓝牙耳机线控齐全。
+- **液态玻璃 UI 与主题定制** — 基于 Backdrop 与 Haze 的实时背景采样与模糊，统一应用 iOS 27 双层立体玻璃描边；支持自定义主题色（11 种预设与网格 / 色谱 / 滑块取色器）、全局玻璃模糊强度调节及底栏自定义排序与显隐。
+- **播放页与视觉动效** — 支持 Pear Wall 流体网格、专辑动态封面、静态 / 漂移背景与封面取色渐变，支持播放页自动隐藏状态栏，带来沉浸式全屏观感。
+- **在线曲库与探索** — 酷狗音源搜索（最佳结果 + 歌曲 / 艺人 / 专辑分区）、精选歌单、每日推荐、音乐画廊（四槽位环形轮转）、听歌识曲与歌曲评论区；支持手机号验证码与二维码扫码登录，以及在线艺人详情与个人歌单管理。
+- **专业音频与智能播放** — 标准到超高音质自由切换（带探测与失败自动回退）、智能过渡（Crossfade 节拍与能量分析融合）、ExoPlayer 解码策略切换（Auto / FFmpeg / System）、实时人声分离（TFLite 推理，比例可调）、外部音频直接打开、倍速播放与睡眠定时器。
+- **歌词体验** — 整页卡拉 OK 逐字高亮、翻译、HDR 高光调节、自定义字体与高潮起点标记，支持状态栏歌词（Hook 方案）及车载蓝牙歌词。
+- **多端适配与桌面小组件** — 深度适配手机与平板横屏分栏布局；提供 4×2、4×1、2×2 三种桌面小组件；资料库支持 MochiIndexBar 多语言字母索引与全场景排序。
+- **后台播放与云端更新** — 基于 Media3 / MediaSession 的稳定后台播放与线控支持；在「设置 → 关于」检查更新（Gitee 主源加速 + GitHub 兜底，支持正式版与预览版通道），下载后核对大小、SHA-256、包名、版本与签名身份。
 
 ## 截图
 
@@ -30,20 +29,22 @@
 
 <table>
   <tr>
-    <td width="100%"><img src="docs/screenshots/home_tablet.jpg" alt="平板横屏" /></td>
+    <td width="50%"><img src="docs/screenshots/home_tablet.jpg" alt="平板横屏主页" /></td>
+    <td width="50%"><img src="docs/screenshots/player_tablet.jpg" alt="平板横屏播放分栏" /></td>
   </tr>
   <tr>
-    <td align="center"><sub>平板横屏分栏</sub></td>
+    <td align="center"><sub>平板横屏主页</sub></td>
+    <td align="center"><sub>平板横屏播放分栏</sub></td>
   </tr>
 </table>
 
 ## 下载
 
-前往 [**Releases**](https://github.com/XiaoZhi0729/Sonify/releases) 页面下载最新 APK 安装包。
+前往 [**GitHub Releases**](https://github.com/XiaoZhi0729/Sonify/releases) 或国内镜像 [**Gitee Releases**](https://gitee.com/XiaoZhi114514/Sonify/releases) 下载最新 APK 安装包。
 
-> 当前发布版本：**[Sonify v0.1.2](https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.1.2)（测试版）**。重做在线艺人页与播放页过渡，修复在线拖动进度、返回手势与歌词控件触发范围问题。项目仍处于早期测试阶段，遇到问题欢迎提 [Issue](https://github.com/XiaoZhi0729/Sonify/issues) 反馈。
+> 当前发布版本：**[Sonify v0.2.6](https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.2.6)（测试版）**。新增自定义主题色、自定义底栏、iOS 27 双层玻璃描边、智能过渡（Crossfade）、ExoPlayer 解码策略切换、外部音频打开、画廊独立设置与横屏重构，并大幅优化 120Hz 滚动与播放页性能。完整更新记录见 [v0.2.6 更新日志](docs/CHANGELOG_v0.2.6.md)（历史版本见 [v0.2.5](docs/CHANGELOG_v0.2.5.md)、[v0.2.4](docs/CHANGELOG_v0.2.4.md)）。项目仍处于测试阶段，遇到问题欢迎提 [Issue](https://github.com/XiaoZhi0729/Sonify/issues) 反馈。
 
-> 从 v0.1.0 升级需手动下载并覆盖安装一次；v0.1.1 起可在「设置 → 关于 → 检查更新」获取后续版本。更新仅在用户确认后下载和安装，不会静默安装。
+> 从 v0.1.0 升级需手动下载并覆盖安装一次；v0.1.1 起可在「设置 → 关于 → 检查更新」获取后续版本（支持开启「接收预览版更新」）。更新仅在用户确认后下载和安装，不会静默安装。
 
 > 需要 Android 6.0（API 23）及以上。小米/Redmi（HyperOS）设备建议在「省电策略」中设为无限制并允许自启动，否则息屏后播放可能被冻结。
 
@@ -61,12 +62,12 @@
 | 项目 | 说明 | 许可 |
 |---|---|---|
 | [Cresto / Glasense](https://github.com/nevodev) | 居中玻璃弹窗、材质与动效的设计及实现来源 | Apache-2.0 |
-| [Pear Wall](https://github.com/Nevodev/Pear-Wall) | 流体网格播放背景（网格形变、多重模糊、镜头预设）。修改说明见 `assets/licenses/pear-wall-NOTICE.txt` | Apache-2.0 |
+| [Pear Wall](https://github.com/Nevodev/Pear-Wall) | 流体网格播放背景（网格形变、多重模糊、镜头预设）。修改说明见 `app/src/main/assets/licenses/pear-wall-NOTICE.txt` | Apache-2.0 |
 | [Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds) | Pear Wall 的网格控制点预设与观感上游 | Apache-2.0 |
 | [NexioSchedule](https://github.com/HaoZai000/NexioSchedule) | 顶栏玻璃圆钮、液态玻璃下拉弹层、渐进模糊顶栏 | AGPL-3.0 |
 | [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) | 液态玻璃滑块、自适应亮度采样 | Apache-2.0 |
 | [ComposeOverscroll](https://github.com/Cormor/ComposeOverscroll) | 列表越界回弹（`overscroll_core` 模块） | GPL-3.0 |
-| [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) | 玻璃对话框的配色取值。见 `assets/licenses/cresto-THIRD_PARTY_NOTICES.md` | MIT |
+| [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) | 玻璃对话框的配色取值。见 `app/src/main/assets/licenses/cresto-THIRD_PARTY_NOTICES.md` | MIT |
 
 同时感谢以下开源库：
 
@@ -75,8 +76,8 @@
 [Media3 FFmpeg 扩展](https://github.com/androidx/media/tree/release/libraries/decoder_ffmpeg)（音频软解） ·
 [Coil](https://github.com/coil-kt/coil) ·
 [Accompanist](https://github.com/google/accompanist) ·
-[Accompanist Lyrics](https://github.com/6xingyv/accompanist-lyrics-ui)（歌词渲染，本项目打补丁修改，见 `docs/LYRIC_LIB_VALIDATION.md`） ·
-[Backdrop](https://github.com/Kyant0/backdrop)（液态玻璃背景模糊） ·
+[Accompanist Lyrics](https://github.com/6xingyv/accompanist-lyrics-ui)（歌词渲染，本项目打补丁修改并内置于 `libs/maven`） ·
+[Backdrop](https://github.com/Kyant0/backdrop)（液态玻璃背景模糊，源码定制内置于 `app/src/main/java/com/kyant/`） ·
 [Haze](https://github.com/chrisbanes/haze)（模糊玻璃材质） ·
 [Shapes](https://github.com/Kyant0/Shapes)（连续曲率圆角） ·
 [Cupertino](https://github.com/alexzhirkevich/cupertino) ·
@@ -130,7 +131,7 @@ Android Studio（SDK 37）。Windows PowerShell 下把 `./gradlew` 换成 `.\gra
 | 媒体控制（播放/队列/音质切换的单一事实源） | `object MediaController` | `code/MediaController.kt` |
 | 在线曲库仓库 | `object KugouRepository` | `data/repositories/KugouRepository.kt` |
 | 音质切换策略（纯函数，表格驱动 JVM 单测覆盖） | `object QualitySwitchPolicy` | `data/repositories/QualitySwitchPolicy.kt` |
-| 主要 UI 页面 | `Home`、`NowPlaying` 及 discovery / library / search / settings 子目录 | `ui/pages/` |
+| 主要 UI 页面 | `Home`、`NowPlaying`、`NowPlayingLandscape` 及 `discovery` / `gallery` / `library` / `recognition` / `search` / `comments` / `settings` 子目录 | `ui/pages/` |
 
 欢迎 Issue 与 PR。提交前请先运行 `./gradlew test` 确认单测通过。
 
