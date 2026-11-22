@@ -57,8 +57,11 @@ object LyricHdr {
         windowColorModeHdr = value
     }
 
-    /** 峰值最多 3 倍 SDR 白：再亮只会刺眼、更耗电，彩色光也更容易顶到屏幕上限 */
-    const val MaxBoost = 3f
+    /**
+     * 峰值最多 2.4 倍 SDR 白：三通道等比提亮时，「70% 白 + 30% 封面色」若推到 3× 容易在
+     * 面板高光 Tone-Mapper 拐点处漂白，2.4× 既保留明显 HDR 通透感又不易丢失封面色相。
+     */
+    const val MaxBoost = 2.4f
 
     /**
      * 已向系统申请到的余量（API 35+ 的 `setDesiredHdrHeadroom` 生效时才有值）。
@@ -67,7 +70,7 @@ object LyricHdr {
     private var requestedHeadroom: Float by mutableFloatStateOf(0f)
 
     /**
-     * 按 0..1 强度映射目标 HDR 峰值倍率（1 = SDR 白，MaxBoost = 3× SDR 白）。
+     * 按 0..1 强度映射目标 HDR 峰值倍率（1 = SDR 白，MaxBoost = 2.4× SDR 白）。
      */
     fun targetBoostFor(strength: Float): Float {
         val s = strength.coerceIn(0f, 1f)
@@ -81,20 +84,30 @@ object LyricHdr {
         enabled && boost(strength) > 1.001f
 
     /**
+     * 根据设置强度与系统报告的屏幕当前余量计算实际提亮倍率。
+     *
+     * 当屏幕已报告有效余量（[headroom] > 1.05）时，按 `headroom * 0.92f` 封顶以避开面板
+     * 高光压缩导致的「已唱部分漂白、扫色过渡带显色」断层；未报告前先按 [targetBoostFor]
+     * 唤醒 HDR 图层，避免冷启「先有鸡还是先有蛋」死锁。
+     */
+    internal fun resolveBoost(strength: Float, headroom: Float): Float {
+        val target = targetBoostFor(strength)
+        if (target <= 1.001f) return 1f
+        if (headroom > 1.05f) {
+            val safeCeiling = maxOf(1f, headroom * 0.92f)
+            return minOf(target, safeCeiling)
+        }
+        return target
+    }
+
+    /**
      * HDR 光效的峰值亮度（SDR 白 = 1，线性光）；未生效时恰好是 1。
      * [strength] 是 0..1 的强度（设置项）：用掉屏幕可用余量的多少。
-     * 所有 HDR 画法都保证每个通道都不超过它，不会因为某个通道顶到屏幕上限被截断而发白。
      */
     fun boost(strength: Float): Float {
         val s = strength.coerceIn(0f, 1f)
         if (!windowActive || !supported || s <= 0.001f) return 1f
-        // API 35+ 与 window.setDesiredHdrHeadroom(targetBoostFor(s)) 1:1 匹配：
-        // 不再依赖滞后且存在「先有鸡还是先有蛋」死锁的 hdrSdrRatio 读数，也不重复乘强度。
-        if (Build.VERSION.SDK_INT >= 35) return targetBoostFor(s)
-        // API 34 无 setDesiredHdrHeadroom：若系统已报告有效余量则按余量封顶，否则按 MaxBoost
-        // 兜底唤醒部分 OEM 惰性 HDR 管线，避免始终输出 1.0 导致无法激活 HDR 图层。
-        val ceiling = if (headroom > 1.05f) minOf(headroom, MaxBoost) else MaxBoost
-        return 1f + (ceiling - 1f) * s
+        return resolveBoost(s, headroom)
     }
 
     /** 只给建窗/窗口模式路径写 */

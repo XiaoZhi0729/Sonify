@@ -6,6 +6,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -457,4 +458,47 @@ object GallerySlotGeometry {
 
     /** 文字纵向位移（dp，正值在下方）：新文字从下方 +16dp 推入，旧文字向 -16dp 上移淡出。 */
     fun textTranslationYDp(offset: Float): Float = 16f * offset.coerceIn(-1f, 1f)
+
+    /**
+     * 底部「上一首 / 下一首」按钮点击后的目标整数位。
+     *
+     * - 若已有进行中的落位目标（连点场景），在 [activeTarget] 上累加 [delta]，避免连点被吞；
+     * - 否则从 `scrollIndex.roundToInt()` 起步；
+     * - 下界钳到 0，上界不设限。
+     */
+    fun stepTarget(scrollIndex: Float, activeTarget: Int?, delta: Int): Int {
+        val base = (activeTarget ?: scrollIndex.roundToInt()).coerceAtLeast(0)
+        return (base + delta).coerceAtLeast(0)
+    }
+
+    /** 是否允许点击「上一首」（已处第 0 首且无正向目标时禁用）。 */
+    fun canStepPrevious(scrollIndex: Float, activeTarget: Int?): Boolean =
+        (activeTarget ?: scrollIndex.roundToInt()).coerceAtLeast(0) > 0
+
+    /**
+     * 点击第 [containerIndex] 个卡片容器后应当跳转到的整数聚焦位。
+     *
+     * 以当前（或正在落位的）[activeTarget] / `scrollIndex.roundToInt()` 为基准 [base]：
+     * - Slot 0（主焦点）：返回 [base]（已在焦点位）
+     * - Slot 3（左中，下一首）：`base + 1`
+     * - Slot 2（正下方，下下首）：`base + 2`
+     * - Slot 1（右侧，上一首）：`base > 0` 时返回 `base - 1`；
+     *   冷启动 `base == 0` 时该槽位按环窗口显示 `displaySongIndex(-1, size)`（通常为第 4 首），
+     *   直接前进到该下标即可让画面与歌曲无缝对齐。
+     */
+    fun cardClickTarget(
+        containerIndex: Int,
+        scrollIndex: Float,
+        activeTarget: Int?,
+        size: Int
+    ): Int {
+        val base = (activeTarget ?: scrollIndex.roundToInt()).coerceAtLeast(0)
+        return when (wrapSlot(containerIndex + base)) {
+            0 -> base
+            3 -> base + 1
+            2 -> base + 2
+            1 -> if (base > 0) base - 1 else displaySongIndex(-1, size)
+            else -> base
+        }
+    }
 }

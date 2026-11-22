@@ -1592,6 +1592,9 @@ class MainActivity : BaseActivity() {
                                             playerMotionJob.value == null
                                     }
                                 }
+                                CompositionLocalProvider(
+                                    yos.music.player.ui.widgets.basic.LocalOccludedByFullscreenPlayer provides playerFullyCoversScreen
+                                ) {
                                 NavPageVisual(
                                     navBackdrop = navBackdrop,
                                     pageScale = pageScale,
@@ -1686,7 +1689,9 @@ class MainActivity : BaseActivity() {
                                     isSplitMode = isSplitMode,
                                     parentWidth = parentWidth,
                                     glassProbe = glassProbe,
+                                    occluded = playerFullyCoversScreen,
                                 )
+                                }
                                 }
                             }
 
@@ -2396,73 +2401,75 @@ class MainActivity : BaseActivity() {
                                             // 一致）：angle=90 直上直下，亮在上下直边；挂在 emptyBackdrop 上
                                             // 不再采样玻璃内容，不会盖住下层的黑色环绕高光。门禁与黑边一致。
                                             .then(
-                                                Modifier.drawBackdrop(
-                                                    backdrop = emptyBackdrop(),
-                                                    shape = shellShapeProvider,
-                                                    effects = {},
-                                                    highlight = {
-                                                        if (!glassProbe.shellHighlight ||
-                                                            shellDecorOffForDraw ||
-                                                            bottomSheetConfigState.value.progress >= 0.5f
-                                                        ) null
-                                                        else Highlight.Default.copy(
-                                                            width = 1f.dp,
-                                                            blurRadius = if (shellIsNightForDraw) 0.5f.dp else 0.1f.dp,
-                                                            alpha = if (shellIsNightForDraw) 1f else 0.8f,
-                                                            style = HighlightStyle.Default(
-                                                                color = Color.White.copy(alpha = if (shellIsNightForDraw) 0.1f else 0.2f),
-                                                                blendMode = BlendMode.Plus,
-                                                                angle = 90f,
-                                                                falloff = 1f
+                                                if (shellHasRadius.value) {
+                                                    Modifier.drawBackdrop(
+                                                        backdrop = emptyBackdrop(),
+                                                        shape = shellShapeProvider,
+                                                        effects = {},
+                                                        highlight = {
+                                                            if (!glassProbe.shellHighlight ||
+                                                                shellDecorOffForDraw ||
+                                                                bottomSheetConfigState.value.progress >= 0.5f
+                                                            ) null
+                                                            else Highlight.Default.copy(
+                                                                width = 1f.dp,
+                                                                blurRadius = if (shellIsNightForDraw) 0.5f.dp else 0.1f.dp,
+                                                                alpha = if (shellIsNightForDraw) 1f else 0.8f,
+                                                                style = HighlightStyle.Default(
+                                                                    color = Color.White.copy(alpha = if (shellIsNightForDraw) 0.1f else 0.2f),
+                                                                    blendMode = BlendMode.Plus,
+                                                                    angle = 90f,
+                                                                    falloff = 1f
+                                                                )
                                                             )
-                                                        )
-                                                    },
-                                                    shadow = { null },
-                                                    innerShadow = { null },
-                                                    onDrawBackdrop = { },
-                                                    onDrawSurface = {
-                                                        // 上下高光的内阴影延伸：顶部高光向下、底部高光向上
-                                                        // 各拉一条白色内渐变带，颜色与白高光一致、同用 Plus
-                                                        // 叠加。画在本层 surface 记录内（复用已有图层、不新增
-                                                        // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
-                                                        // 门禁与白高光一致。
-                                                        if (!glassProbe.shellHighlight ||
-                                                            shellDecorOffForDraw ||
-                                                            bottomSheetConfigState.value.progress >= 0.5f
-                                                        ) {
-                                                            // 运动期/展开期不画
-                                                        } else {
-                                                            // 浅色 0.2 → 0.1（与底栏 LiquidBottomTabs 同步，
-                                                            // 用户要求只削弱上下两条渐变带）：白纱本体已是半透明白，
-                                                            // 6dp 带再 0.2 偏亮。上方 1dp 描边高光的 color 不动。
-                                                            val glowColor = Color.White.copy(alpha = 0.1f)
-                                                            val glowH = 6.dp.toPx()
-                                                            // 顶边高光向下渐隐
-                                                            drawRect(
-                                                                brush = Brush.verticalGradient(
-                                                                    0f to glowColor,
-                                                                    1f to Color.Transparent,
-                                                                    startY = 0f,
-                                                                    endY = glowH
-                                                                ),
-                                                                size = Size(size.width, glowH),
-                                                                blendMode = BlendMode.Plus
-                                                            )
-                                                            // 底边高光向上渐隐
-                                                            drawRect(
-                                                                brush = Brush.verticalGradient(
-                                                                    0f to Color.Transparent,
-                                                                    1f to glowColor,
-                                                                    startY = size.height - glowH,
-                                                                    endY = size.height
-                                                                ),
-                                                                topLeft = Offset(0f, size.height - glowH),
-                                                                size = Size(size.width, glowH),
-                                                                blendMode = BlendMode.Plus
-                                                            )
+                                                        },
+                                                        shadow = { null },
+                                                        innerShadow = { null },
+                                                        onDrawBackdrop = { },
+                                                        onDrawSurface = {
+                                                            // 上下高光的内阴影延伸：顶部高光向下、底部高光向上
+                                                            // 各拉一条白色内渐变带，颜色与白高光一致、同用 Plus
+                                                            // 叠加。画在本层 surface 记录内（复用已有图层、不新增
+                                                            // 离屏记录），节点已按 shellShape 裁剪，圆角处跟随轮廓。
+                                                            // 门禁与白高光一致。
+                                                            if (!glassProbe.shellHighlight ||
+                                                                shellDecorOffForDraw ||
+                                                                bottomSheetConfigState.value.progress >= 0.5f
+                                                            ) {
+                                                                // 运动期/展开期不画
+                                                            } else {
+                                                                // 浅色 0.2 → 0.1（与底栏 LiquidBottomTabs 同步，
+                                                                // 用户要求只削弱上下两条渐变带）：白纱本体已是半透明白，
+                                                                // 6dp 带再 0.2 偏亮。上方 1dp 描边高光的 color 不动。
+                                                                val glowColor = Color.White.copy(alpha = 0.1f)
+                                                                val glowH = 6.dp.toPx()
+                                                                // 顶边高光向下渐隐
+                                                                drawRect(
+                                                                    brush = Brush.verticalGradient(
+                                                                        0f to glowColor,
+                                                                        1f to Color.Transparent,
+                                                                        startY = 0f,
+                                                                        endY = glowH
+                                                                    ),
+                                                                    size = Size(size.width, glowH),
+                                                                    blendMode = BlendMode.Plus
+                                                                )
+                                                                // 底边高光向上渐隐
+                                                                drawRect(
+                                                                    brush = Brush.verticalGradient(
+                                                                        0f to Color.Transparent,
+                                                                        1f to glowColor,
+                                                                        startY = size.height - glowH,
+                                                                        endY = size.height
+                                                                    ),
+                                                                    topLeft = Offset(0f, size.height - glowH),
+                                                                    size = Size(size.width, glowH),
+                                                                    blendMode = BlendMode.Plus
+                                                                )
+                                                            }
                                                         }
-                                                    }
-                                                )
+                                                    )
+                                                } else Modifier
                                             )
                                             // 外壳内容坐标系：迷你封面与全屏封面都相对它换算。
                                             .onGloballyPositioned {
@@ -2956,7 +2963,15 @@ class MainActivity : BaseActivity() {
                 }
             }
         }
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    if (!backdropSuppressed()) {
+                        drawContent()
+                    }
+                }
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -3090,6 +3105,7 @@ class MainActivity : BaseActivity() {
         parentWidth: androidx.compose.runtime.MutableIntState,
         glassProbe: yos.music.player.code.utils.others.GlassProbe,
         containerTintProvider: () -> Color,
+        occluded: () -> Boolean = { false },
     ) {
 YosWrapper {
     val density = LocalDensity.current
@@ -3109,6 +3125,11 @@ YosWrapper {
     Box(
         Modifier
             .fillMaxSize()
+            .drawWithContent {
+                if (!occluded()) {
+                    drawContent()
+                }
+            }
             .then(chromeGate)
             .navigationBarsPadding()
             .then(

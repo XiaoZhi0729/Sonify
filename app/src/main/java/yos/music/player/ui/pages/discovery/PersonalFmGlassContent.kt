@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -98,6 +99,8 @@ internal fun GlassContent(
     val onGlass = onGlassColorOf(accent, isDark)
     val playingId = MediaController.musicPlaying.value?.mediaId
     val isPlayingNow = MediaViewModelObject.isPlaying.value
+    val occludedProvider = yos.music.player.ui.widgets.basic.LocalOccludedByFullscreenPlayer.current
+    val occludedByPlayer by remember(occludedProvider) { derivedStateOf { occludedProvider() } }
 
     val item = song?.let { KugouRepository.toQueueMediaItem(it) }
     val isThisSongPlaying = item != null && playingId == item.mediaId
@@ -154,6 +157,7 @@ internal fun GlassContent(
             letterSpacing = (-0.2).sp,
             color = onGlass,
             fadeWidth = 10.dp,
+            enabled = !occludedByPlayer,
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(2.dp))
@@ -180,7 +184,7 @@ internal fun GlassContent(
         ) {
             Waveform(
                 color = onGlass,
-                playing = showPause,
+                playing = showPause && !occludedByPlayer,
                 modifier = Modifier
                     .weight(1f)
                     .padding(end = 6.dp)
@@ -240,6 +244,7 @@ private fun MarqueeText(
     letterSpacing: TextUnit,
     color: Color,
     fadeWidth: Dp,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // 文字实际宽度 vs 可用宽度：只有溢出了才需要渐隐
@@ -290,9 +295,9 @@ private fun MarqueeText(
             // 中间某帧把文字截成"xxx…"，跑马灯看起来像在抽搐。
             overflow = TextOverflow.Clip,
             softWrap = false,
-            // basicMarquee 只在文字确实超出容器时才滚，短标题保持静止。
+            // basicMarquee 只在文字确实超出容器且可见未被遮挡时才滚，短标题保持静止。
             modifier = Modifier.basicMarquee(
-                iterations = Int.MAX_VALUE,
+                iterations = if (enabled) Int.MAX_VALUE else 0,
                 repeatDelayMillis = 1200,
                 initialDelayMillis = 900
             )

@@ -501,6 +501,30 @@ object SettingsLibrary {
     )
 
     /**
+     * 音乐画廊背景是否跟随「音乐播放页」的背景设置。
+     *
+     * 默认开启：自动同步「音乐播放页」的静态 / 慢速漂移 / 流体网格选择；
+     * 关闭后使用 [GalleryBackgroundMode] 独立控制画廊背景。
+     */
+    var GalleryFollowPlaybackBackground by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_gallery_follow_playback_background",
+        initialValue = true
+    )
+
+    /**
+     * 音乐画廊独立背景样式（仅在 [GalleryFollowPlaybackBackground] 为 false 时生效）：
+     * - [GALLERY_BG_STATIC]：静态模糊底图
+     * - [GALLERY_BG_DRIFT]：慢速漂移（默认）
+     * - [GALLERY_BG_MESH]：流体网格（需设备支持 GLES3）
+     */
+    var GalleryBackgroundMode by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_gallery_background_mode",
+        initialValue = GALLERY_BG_DRIFT
+    )
+
+    /**
      * 封面取色背景：四个 Tab 首页的整页底色改为当前歌曲封面提取的柔和纵向渐变。
      *
      * 默认关闭——开启后整屏底色会随歌曲变化，属于明显的视觉风格改变，
@@ -905,6 +929,8 @@ object SettingsLibrary {
         NowplayingBackgroundPortraitPreset = 3
         NowplayingBackgroundLandscapePreset = 3
         NowplayingBackgroundRandomPreset = false
+        GalleryFollowPlaybackBackground = true
+        GalleryBackgroundMode = GALLERY_BG_DRIFT
         NowPlayingShowClimaxMark = true
         NowPlayingAutoHideStatusBar = false
         TrackBackdropGradient = false
@@ -944,6 +970,10 @@ object SettingsLibrary {
 
     const val BACKGROUND_MODE_DRIFT = 0
     const val BACKGROUND_MODE_MESH = 1
+
+    const val GALLERY_BG_STATIC = 0
+    const val GALLERY_BG_DRIFT = 1
+    const val GALLERY_BG_MESH = 2
 
     const val CROSSFADE_MODE_SMOOTH = "Smooth"
     const val CROSSFADE_MODE_SMART = "Smart"

@@ -255,3 +255,40 @@ internal fun fmShouldFocusOnSettle(
  */
 internal fun fmPageKey(songs: List<yos.music.player.data.repositories.KugouNewSong>, page: Int): String =
     songs.getOrNull(page)?.hash ?: "fm-placeholder-$page"
+
+/**
+ * 封面是否可点击：仅当前页（右半露出）及后续露出的封面可点击，
+ * 滑入玻璃左侧淡出的历史页不响应点击，避免误触玻璃文字区域。
+ */
+internal fun fmIsCoverClickable(page: Int, currentPage: Int): Boolean = page >= currentPage
+
+/** 点击露出的电台封面后应执行的动作。 */
+internal enum class FmCoverClickAction {
+    /** 跳转到目标页并确保播放该曲目（若已暂停则恢复，未在播则切歌）。 */
+    SCROLL_AND_PLAY,
+    /** 已在目标页且当前曲目处于暂停态，直接恢复播放。 */
+    RESUME_CURRENT,
+    /** 无需动作（点在玻璃背后已淡出的旧页，或当前页已在播放中）。 */
+    NONE
+}
+
+/** 计算点击第 [clickedPage] 台封面时的动作（纯函数，便于单测）。 */
+internal fun fmCoverClickAction(
+    clickedPage: Int,
+    currentPage: Int,
+    targetMediaId: String?,
+    playingMediaId: String?,
+    isPlaying: Boolean
+): FmCoverClickAction {
+    if (!fmIsCoverClickable(clickedPage, currentPage) || targetMediaId == null) {
+        return FmCoverClickAction.NONE
+    }
+    if (clickedPage == currentPage) {
+        return when {
+            targetMediaId != playingMediaId -> FmCoverClickAction.SCROLL_AND_PLAY
+            !isPlaying -> FmCoverClickAction.RESUME_CURRENT
+            else -> FmCoverClickAction.NONE
+        }
+    }
+    return FmCoverClickAction.SCROLL_AND_PLAY
+}

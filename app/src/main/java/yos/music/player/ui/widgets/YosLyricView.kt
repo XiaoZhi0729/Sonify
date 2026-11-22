@@ -160,6 +160,7 @@ import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLyricsView
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsAnchor
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.LyricsFade
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLineText
+import com.mocharealm.accompanist.lyrics.ui.motion.LyricsMotionProfile
 import yos.music.player.code.hdr.LyricHdr
 import yos.music.player.code.hdr.hdrSolidBrush
 import yos.music.player.code.utils.others.YosDiagnostics
@@ -167,6 +168,11 @@ import yos.music.player.code.utils.others.YosDiagnostics
 // ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
 // 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由歌词页按当前封面更新。
 private const val LyricSungCoverMix = 0.3f
+
+// 与 NowPlaying.kt SDR 底部 DstIn 渐变遮罩完全一致的逐段不透明度曲线（仅在 hdrBrush != null 时传入，
+// 避免关闭 HDR 或不支持 HDR 时在外层遮罩之外再叠加一次衰减）。
+private val HdrBottomFadeStopsControlsVisible = listOf(1f, 0.233f, 0.043f, 0f)
+private val HdrBottomFadeStopsControlsHidden = listOf(1f, 0.262f, 0.124f, 0.032f, 0f)
 
 private object LyricCoverTint {
     val color = mutableStateOf(Color.White)
@@ -282,6 +288,7 @@ fun YosLyricViewLib(
     lastLineObstructionFraction: Float = 0f,
     active: Boolean = true,
     isPlaying: () -> Boolean = { true },
+    contentSlideFraction: () -> Float = { 0f },
 ) {
     val entries = lrcEntriesLambda()
     val otherSideForLines = MediaViewModelObject.otherSideForLines
@@ -364,9 +371,11 @@ fun YosLyricViewLib(
     val latestIsPlaying by rememberUpdatedState(isPlaying)
     val lifecycleOwner = LocalLifecycleOwner.current
     val positionState = remember { mutableIntStateOf(liveTimeLambda()) }
+    var recalibrateFlag by remember { mutableStateOf(true) }
     fun syncPositionNow() {
         val value = latestLiveTime()
         if (value != positionState.intValue) positionState.intValue = value
+        recalibrateFlag = true
     }
     LaunchedEffect(active, entries, lyricCoverUri) {
         if (active) syncPositionNow()
@@ -383,9 +392,43 @@ fun YosLyricViewLib(
                 .collectLatest { playing ->
                     syncPositionNow()
                     if (!playing) return@collectLatest
+                    var anchorPosMs = positionState.intValue
+                    var anchorFrameNanos = 0L
+                    var lastCalibrateNanos = 0L
                     while (isActive) {
-                        withFrameNanos {
-                            syncPositionNow()
+                        // 稳态逐字扫光节流到 ~60Hz（120Hz 屏每 2 个 VSYNC 推进一次，60Hz 屏仍对齐每帧）：
+                        // 切行滚动（scrollAnimationSpec）、链式弹簧和手势拖动仍走 Compose 原生 120Hz 动画时钟，
+                        // 拖动进度条或刚 seek/切歌重校准时跳过节流以零延迟响应。
+                        if (
+                            MainViewModelObject.scrubPositionMs.value == null &&
+                                !recalibrateFlag &&
+                                anchorFrameNanos != 0L
+                        ) {
+                            delay(12L)
+                        }
+                        withFrameNanos { frameNanos ->
+                            if (MainViewModelObject.scrubPositionMs.value != null) {
+                                val real = latestLiveTime()
+                                if (real != positionState.intValue) positionState.intValue = real
+                                recalibrateFlag = true
+                            } else if (
+                                recalibrateFlag ||
+                                    anchorFrameNanos == 0L ||
+                                    frameNanos - lastCalibrateNanos >= 250_000_000L
+                            ) {
+                                val real = latestLiveTime()
+                                anchorPosMs = real
+                                anchorFrameNanos = frameNanos
+                                lastCalibrateNanos = frameNanos
+                                recalibrateFlag = false
+                                if (real != positionState.intValue) positionState.intValue = real
+                            } else {
+                                val elapsedMs = ((frameNanos - anchorFrameNanos) / 1_000_000L).toInt()
+                                val interpolated = anchorPosMs + elapsedMs
+                                if (interpolated != positionState.intValue) {
+                                    positionState.intValue = interpolated
+                                }
+                            }
                         }
                     }
                 }
@@ -531,6 +574,7 @@ fun YosLyricViewLib(
                         }
                         mediaEvent.onSeek(line.start)
                         positionState.intValue = line.start
+                        recalibrateFlag = true
                     },
                     onLinePressed = {},
                     modifier = Modifier.fillMaxSize(),
@@ -553,15 +597,26 @@ fun YosLyricViewLib(
                     },
                     hdrBrush = hdrBrush,
                     hdrBoost = hdrBoost,
+                    fadeViewportOffsetY = { viewportHeightPx ->
+                        viewportHeightPx * contentSlideFraction()
+                    },
                     useBlurEffect = blurLambda(),
                     showTranslation = translationLambda(),
                     showPhonetic = false,
                     anchor = LyricsAnchor.Fraction(LYRIC_ACTIVE_ANCHOR_FRACTION),
                     topFade = LyricsFade.ToAnchor(topFadeInset),
                     bottomFade = if (weightLambda()) {
-                        LyricsFade.Range(7f / 17f, 10f / 17f)
+                        LyricsFade.Range(
+                            7f / 17f,
+                            10f / 17f,
+                            alphaStops = HdrBottomFadeStopsControlsVisible,
+                        )
                     } else {
-                        LyricsFade.Range(15f / 19f, 1f)
+                        LyricsFade.Range(
+                            15f / 19f,
+                            1f,
+                            alphaStops = HdrBottomFadeStopsControlsHidden,
+                        )
                     },
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
@@ -569,6 +624,8 @@ fun YosLyricViewLib(
                     // 换行时各行相对偏移的跟随弹簧：库里默认是欠阻尼（ζ≈0.6）会过冲回摆，
                     // 这里换成临界阻尼（ζ≈1.04），见 LyricFollowScrollChain 的注释。
                     scrollChain = LyricFollowScrollChain,
+                    seekDragActive = MainViewModelObject.scrubPositionMs.value != null,
+                    motionProfile = LyricsMotionProfile.LyricsX,
                     preparedLyrics = preparedLyrics,
                     // 场景缓存：切页回来复用排版 + 渲染资源 + 已栅格化的行，等同页面常驻
                     sceneCacheKey = "$cacheKey|${textColor.value}",

@@ -13,7 +13,7 @@ class LyricHdrTest {
         assertEquals(1f, LyricHdr.targetBoostFor(-0.5f), 0.0001f)
         assertEquals(1f, LyricHdr.targetBoostFor(0f), 0.0001f)
         assertEquals(1f, LyricHdr.targetBoostFor(0.0005f), 0.0001f)
-        assertEquals(2.2f, LyricHdr.targetBoostFor(0.6f), 0.0001f)
+        assertEquals(1f + (LyricHdr.MaxBoost - 1f) * 0.6f, LyricHdr.targetBoostFor(0.6f), 0.0001f)
         assertEquals(LyricHdr.MaxBoost, LyricHdr.targetBoostFor(1f), 0.0001f)
         assertEquals(LyricHdr.MaxBoost, LyricHdr.targetBoostFor(2f), 0.0001f)
 
@@ -43,20 +43,34 @@ class LyricHdrTest {
     }
 
     @Test
-    fun hdrLiftPreservesChromaShadowAndAlphaOnSaturatedColor() {
-        val orange = Color(1f, 0.2f, 0.1f, 0.8f)
-        val linearOrange = orange.convert(ColorSpaces.LinearExtendedSrgb)
+    fun hdrLiftScalesAllChannelsUniformlyToPreserveChromaticity() {
+        val coverTint = Color(1f, 0.2f, 0.1f, 0.8f)
+        val mixed = Color(
+            red = 0.7f + 0.3f * coverTint.red,
+            green = 0.7f + 0.3f * coverTint.green,
+            blue = 0.7f + 0.3f * coverTint.blue,
+            alpha = 0.8f,
+        )
+        val linearMixed = mixed.convert(ColorSpaces.LinearExtendedSrgb)
         val gain = 2.5f
-        val lifted = orange.hdrLift(gain)
+        val lifted = mixed.hdrLift(gain)
 
         assertEquals(ColorSpaces.LinearExtendedSrgb, lifted.colorSpace)
         assertEquals(0.8f, lifted.alpha, 0.001f)
-        // 最高通道按 gain 抬升，最低通道保留在原始 SDR 线性亮度附近不泛白
-        val expectedMax = maxOf(linearOrange.red, linearOrange.green, linearOrange.blue) * gain
-        val expectedMin = minOf(linearOrange.red, linearOrange.green, linearOrange.blue)
-        val actualMax = maxOf(lifted.red, lifted.green, lifted.blue)
-        val actualMin = minOf(lifted.red, lifted.green, lifted.blue)
-        assertEquals(expectedMax, actualMax, 0.001f)
-        assertEquals(expectedMin, actualMin, 0.001f)
+        // 三通道在线性光下等比放大，严格保持色度不变
+        assertEquals(linearMixed.red * gain, lifted.red, 0.001f)
+        assertEquals(linearMixed.green * gain, lifted.green, 0.001f)
+        assertEquals(linearMixed.blue * gain, lifted.blue, 0.001f)
+    }
+
+    @Test
+    fun resolveBoostCapsByMeasuredHeadroomWithMargin() {
+        val target = LyricHdr.targetBoostFor(0.6f)
+        // 未报告有效余量（<= 1.05）时按 target 唤醒 HDR 管线
+        assertEquals(target, LyricHdr.resolveBoost(0.6f, 1f), 0.0001f)
+        // 已报告较低余量时按 headroom * 0.92f 封顶，避免高光漂白
+        assertEquals(1.5f * 0.92f, LyricHdr.resolveBoost(0.6f, 1.5f), 0.0001f)
+        // 余量充足时仍按用户设置的 target 输出
+        assertEquals(target, LyricHdr.resolveBoost(0.6f, 3.0f), 0.0001f)
     }
 }

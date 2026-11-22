@@ -5,6 +5,7 @@ import android.provider.Settings
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -67,10 +69,13 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.code.utils.player.FadeExo.fadePlay
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MediaViewModelObject
 import yos.music.player.data.objects.PersonalFmObject
@@ -223,7 +228,45 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
      * 所以统一在调用点用 [programmaticScroll] 打标，凡未打标的 `isScrollInProgress=true`
      * 一律视为用户手势。
      */
-    var programmaticScroll by remember { mutableStateOf(false) }
+    var programmaticScrollCount by remember { mutableIntStateOf(0) }
+    val programmaticScroll by remember { derivedStateOf { programmaticScrollCount > 0 } }
+
+    fun onCoverClick(page: Int) {
+        val targetMediaId = mediaIdAt(page)
+        val playingMediaId = MediaController.musicPlaying.value?.mediaId
+        val currentlyPlaying = MediaViewModelObject.isPlaying.value
+        when (
+            fmCoverClickAction(
+                clickedPage = page,
+                currentPage = pagerState.currentPage,
+                targetMediaId = targetMediaId,
+                playingMediaId = playingMediaId,
+                isPlaying = currentlyPlaying
+            )
+        ) {
+            FmCoverClickAction.NONE -> return
+            FmCoverClickAction.RESUME_CURRENT -> {
+                MediaController.mediaControl?.fadePlay()
+            }
+            FmCoverClickAction.SCROLL_AND_PLAY -> {
+                if (targetMediaId == playingMediaId) {
+                    if (!currentlyPlaying) MediaController.mediaControl?.fadePlay()
+                } else {
+                    focusSongAt(page)
+                }
+                if (page != pagerState.currentPage) {
+                    scope.launch {
+                        programmaticScrollCount++
+                        try {
+                            pagerState.animateScrollToPage(page)
+                        } finally {
+                            programmaticScrollCount--
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // 外部切歌（通知栏 / 自动下一首 / 蓝牙）→ 平滑滑到新歌。
     // ★只在"播放中的歌真的换了"时跟随，且用户没在滑。
@@ -233,11 +276,11 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
         val idx = currentPlayingIndex
         if (idx >= 0 && idx != pagerState.currentPage) {
             if (!pagerState.isScrollInProgress) {
-                programmaticScroll = true
+                programmaticScrollCount++
                 try {
                     pagerState.animateScrollToPage(idx)
                 } finally {
-                    programmaticScroll = false
+                    programmaticScrollCount--
                 }
             }
         }
@@ -347,6 +390,7 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
     // 时钟协程是长跑的，闭包里必须读"最新值"而不是组合期捕获的那一份
     val currentSpinRamp by rememberUpdatedState(spinRamp)
     val currentSpinningKey by rememberUpdatedState(spinningKey)
+    val occludedProvider = yos.music.player.ui.widgets.basic.LocalOccludedByFullscreenPlayer.current
 
     /**
      * 旋转时钟。
@@ -356,32 +400,33 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
      * 角度插值在"停止"时会倒着转回去，视觉上像倒带；
      * 速度斜坡则是"转速慢慢降下来停住"，和音量淡出是同一种感觉。
      *
-     * 时钟**永远在跑**（只要系统动画开着），因为停止也需要缓冲期继续推进；
-     * 只有 `spinRamp == 0` 时才真的不写 state。
+     * 仅在未播放被停稳（key != null && ramp > 0f）且未被全屏播放页遮挡时推进帧，
+     * 对齐 ~30fps，避免后台 120Hz 空唤醒主线程 Choreographer。
      */
-    LaunchedEffect(systemAnimated) {
+    LaunchedEffect(systemAnimated, occludedProvider) {
         if (!systemAnimated) return@LaunchedEffect
-        var last = 0L
-        var acc = 0f
-        while (true) {
-            withFrameNanos { now ->
-                if (last != 0L) acc += (now - last) / 1_000_000f
-                last = now
-                if (acc >= ROTATION_FRAME_MS) {
-                    val key = currentSpinningKey
-                    val ramp = currentSpinRamp
-                    if (key != null && ramp > 0f) {
-                        // ★不做 % 360、且按台各自推进（见 fmAdvancePhase 的注释）
-                        rotationPhases[key] = fmAdvancePhase(
-                            prevDegrees = rotationPhases[key],
-                            deltaMs = acc * ramp,          // ← 缓冲乘在**时间**上
-                            degreesPerMs = ROTATION_DEG_PER_MS
-                        )
+        snapshotFlow { currentSpinningKey != null && currentSpinRamp > 0f && !occludedProvider() }
+            .collectLatest { shouldRun ->
+                if (!shouldRun) return@collectLatest
+                var last = 0L
+                while (true) {
+                    delay(28L)
+                    withFrameNanos { now ->
+                        val deltaMs = if (last != 0L) ((now - last) / 1_000_000f).coerceIn(0f, 100f) else 0f
+                        last = now
+                        val key = currentSpinningKey
+                        val ramp = currentSpinRamp
+                        if (key != null && ramp > 0f && deltaMs > 0f) {
+                            // ★不做 % 360、且按台各自推进（见 fmAdvancePhase 的注释）
+                            rotationPhases[key] = fmAdvancePhase(
+                                prevDegrees = rotationPhases[key],
+                                deltaMs = deltaMs * ramp,          // ← 缓冲乘在**时间**上
+                                degreesPerMs = ROTATION_DEG_PER_MS
+                            )
+                        }
                     }
-                    acc = 0f
                 }
             }
-        }
     }
 
     // ---------- 取色 ----------
@@ -557,11 +602,11 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                             val t = (pagerState.currentPage - 1).coerceAtLeast(0)
                             if (t == pagerState.currentPage) return@launch
                             // 无障碍动作 = 明确的翻页意图，与手势同一条路径
-                            programmaticScroll = true
+                            programmaticScrollCount++
                             try {
                                 pagerState.animateScrollToPage(t)
                             } finally {
-                                programmaticScroll = false
+                                programmaticScrollCount--
                             }
                             focusSongAt(t)
                         }
@@ -571,11 +616,11 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                         scope.launch {
                             val t = (pagerState.currentPage + 1).coerceAtMost(songs.size - 1)
                             if (t == pagerState.currentPage) return@launch
-                            programmaticScroll = true
+                            programmaticScrollCount++
                             try {
                                 pagerState.animateScrollToPage(t)
                             } finally {
-                                programmaticScroll = false
+                                programmaticScrollCount--
                             }
                             focusSongAt(t)
                         }
@@ -698,17 +743,19 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                         //   ★整段淡出被关在玻璃内部：1.0 在玻璃右缘，
                         //   0.0 在玻璃左缘——滑出玻璃之前就已经彻底消失，
                         //   不会在玻璃左边拖出一截半透明的残影。
-                            fadeAlpha = {
-                                fmCoverAlpha(
-                                    page = page,
-                                    pagerPosition = pagerPosition,
-                                    pageSizePx = pageSizePx,
-                                    fadeStartXPx = fadeStartXPx,
-                                    fadeEndXPx = fadeEndXPx
-                                )
-                            },
-                            onImageReady = { imageLoadTick++ }
-                        )
+                        fadeAlpha = {
+                            fmCoverAlpha(
+                                page = page,
+                                pagerPosition = pagerPosition,
+                                pageSizePx = pageSizePx,
+                                fadeStartXPx = fadeStartXPx,
+                                fadeEndXPx = fadeEndXPx
+                            )
+                        },
+                        clickable = fmIsCoverClickable(page, pagerState.currentPage),
+                        onClick = { onCoverClick(page) },
+                        onImageReady = { imageLoadTick++ }
+                    )
                 }
             }
         ) {
@@ -738,6 +785,8 @@ private fun CircleCover(
     song: KugouNewSong,
     rotation: () -> Float,
     fadeAlpha: () -> Float,
+    clickable: Boolean,
+    onClick: () -> Unit,
     onImageReady: () -> Unit
 ) {
     val context = LocalContext.current
@@ -762,20 +811,26 @@ private fun CircleCover(
             .width(FmPageSize),
         contentAlignment = Alignment.Center
     ) {
-        AsyncImage(
-            model = request,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            onSuccess = { onImageReady() },
-            onError = { onImageReady() },
-            modifier = Modifier
+        Box(
+            Modifier
                 .size(FmCircleDiameter)
                 .clip(CircleShape)
-                .graphicsLayer {
-                    rotationZ = rotation()
-                    // 绘制期读：同一帧内既转又隐，不需要重建图层
-                    alpha = fadeAlpha()
-                }
-        )
+                .then(if (clickable) Modifier.clickable(onClick = onClick) else Modifier)
+        ) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onSuccess = { onImageReady() },
+                onError = { onImageReady() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        rotationZ = rotation()
+                        // 绘制期读：同一帧内既转又隐，不需要重建图层
+                        alpha = fadeAlpha()
+                    }
+            )
+        }
     }
 }

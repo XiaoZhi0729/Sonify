@@ -453,4 +453,89 @@ class PersonalFmSectionTest {
             light.luminance() < dark.luminance()
         )
     }
+
+    // ---------- 点击露出的封面跳转播放 ----------
+
+    @Test
+    fun onlyCurrentAndExposedNextCoversAreClickable() {
+        assertEquals(false, fmIsCoverClickable(page = 0, currentPage = 2))
+        assertEquals(false, fmIsCoverClickable(page = 1, currentPage = 2))
+        assertEquals(true, fmIsCoverClickable(page = 2, currentPage = 2))
+        assertEquals(true, fmIsCoverClickable(page = 3, currentPage = 2))
+    }
+
+    @Test
+    fun clickingExposedNextCoverScrollsAndPlays() {
+        assertEquals(
+            FmCoverClickAction.SCROLL_AND_PLAY,
+            fmCoverClickAction(
+                clickedPage = 2,
+                currentPage = 1,
+                targetMediaId = "kugou-online-2",
+                playingMediaId = "kugou-online-1",
+                isPlaying = true
+            )
+        )
+        assertEquals(
+            FmCoverClickAction.SCROLL_AND_PLAY,
+            fmCoverClickAction(
+                clickedPage = 3,
+                currentPage = 1,
+                targetMediaId = "kugou-online-3",
+                playingMediaId = null,
+                isPlaying = false
+            )
+        )
+    }
+
+    @Test
+    fun clickingCurrentCoverPlaysOrResumesWhenNotPlaying() {
+        // 未播放当前页曲目 → 准备并播放
+        assertEquals(
+            FmCoverClickAction.SCROLL_AND_PLAY,
+            fmCoverClickAction(
+                clickedPage = 1,
+                currentPage = 1,
+                targetMediaId = "kugou-online-1",
+                playingMediaId = "kugou-online-0",
+                isPlaying = true
+            )
+        )
+        // 当前页曲目处于暂停态 → 恢复播放
+        assertEquals(
+            FmCoverClickAction.RESUME_CURRENT,
+            fmCoverClickAction(
+                clickedPage = 1,
+                currentPage = 1,
+                targetMediaId = "kugou-online-1",
+                playingMediaId = "kugou-online-1",
+                isPlaying = false
+            )
+        )
+        // 当前页已在播放 → 无动作
+        assertEquals(
+            FmCoverClickAction.NONE,
+            fmCoverClickAction(
+                clickedPage = 1,
+                currentPage = 1,
+                targetMediaId = "kugou-online-1",
+                playingMediaId = "kugou-online-1",
+                isPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun clickingFadedCoverBehindGlassDoesNothing() {
+        assertEquals(
+            FmCoverClickAction.NONE,
+            fmCoverClickAction(
+                clickedPage = 0,
+                currentPage = 1,
+                targetMediaId = "kugou-online-0",
+                playingMediaId = "kugou-online-1",
+                isPlaying = true
+            )
+        )
+    }
 }

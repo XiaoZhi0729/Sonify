@@ -504,23 +504,20 @@ private fun BackgroundLayer(
     // 恢复后从原相位继续（与旧 KenBurnsView.pause/resume 语义一致）。
     val phaseSec = remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(running) {
-        if (!running) return@LaunchedEffect
+    LaunchedEffect(running, useKenBurns) {
+        if (!running || !useKenBurns) return@LaunchedEffect
         var lastNanos = -1L
-        var accMs = 0f
         while (true) {
+            kotlinx.coroutines.delay(28L)
             withFrameNanos { now ->
                 if (lastNanos < 0L) {
                     lastNanos = now
                     return@withFrameNanos
                 }
-                val dtMs = (now - lastNanos) / 1_000_000f
+                val dtSec = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
                 lastNanos = now
-                accMs += dtMs
-                // 30fps 节流：糊图慢漂移用不到更高帧率，其余帧不写状态、不触发合成
-                if (accMs >= DRIFT_FRAME_MS) {
-                    phaseSec.floatValue += accMs / 1000f
-                    accMs = 0f
+                if (dtSec > 0f) {
+                    phaseSec.floatValue += dtSec
                 }
             }
         }

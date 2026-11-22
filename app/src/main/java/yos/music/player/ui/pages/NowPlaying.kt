@@ -1190,6 +1190,7 @@ internal fun NowPlaying(
                                             viewModifier = Modifier.graphicsLayer {
                                                 translationY = size.height * lyricSlide.value
                                             },
+                                            contentSlideFraction = { lyricSlide.value },
                                             // 竖屏控件层压在底部：末句固定上抬到控件之上，不随控件显隐移动。
                                             lastLineObstructionFraction =
                                                 lyricObstructionFraction,
@@ -2790,6 +2791,7 @@ internal fun Lyric(
     lastLineObstructionFraction: Float = 0f,
     active: Boolean = true,
     isPlaying: () -> Boolean = { true },
+    contentSlideFraction: () -> Float = { 0f },
 ) = YosWrapper {
 
     val context = LocalContext.current
@@ -2799,10 +2801,6 @@ internal fun Lyric(
         modifier.fillMaxSize()
     ) {
         YosWrapper {
-            val lyricHdrEffect = SettingsLibrary.LyricHdrEffect
-            val lyricHdrStrength = SettingsLibrary.LyricHdrStrength
-            val extendedHdrActive = LyricHdr.isExtendedHdrActive(lyricHdrEffect, lyricHdrStrength)
-
             Spacer(
                 modifier = if (topSpacerWithStatusBar) {
                     Modifier.statusBarsHeight(topSpacerHeight)
@@ -2811,83 +2809,19 @@ internal fun Lyric(
                 }
             )
 
-            // mask 最外（节点坐标固定）→ clip 次之 → 滑动机最内：
-            // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束。
-            // 真 HDR 启用时不能套 8 位离屏 saveLayer（否则扩展亮度会被钳回 SDR 白）；
-            // 此时边缘渐隐交给 KaraokeLyricsView 内部通过逐行 ModulateAlpha 完成。
-            // HDR 下没有外层 DstIn 遮罩，歌词滑移（viewModifier）时会穿过底部控件区。
-            // 这里在滑移机之外、静止视口坐标上做一道纯几何裁剪（不开离屏层，不损失 HDR 亮度）：
-            // 控件可见时与 SDR 遮罩的全透明起点（10/17）对齐。
-            val lyricViewModifier = if (extendedHdrActive) {
-                Modifier
-                    .drawWithContent {
-                        val clipBottom =
-                            if (weightLambda()) size.height * (10f / 17f) else size.height
-                        clipRect(0f, 0f, size.width, clipBottom) {
-                            this@drawWithContent.drawContent()
-                        }
+            // 渐隐与不可见行裁剪已统一交由 KaraokeLyricsView 内部分区视口渐隐管线完成
+            // （中间清晰区零离屏 FBO 直绘，仅渐隐区单行局部遮罩），外层不再套全屏 saveLayer，
+            // 仅保留零成本的几何 clipRect 作为滑移/控件边界硬性兜底。
+            val lyricViewModifier = Modifier
+                .drawWithContent {
+                    val clipBottom =
+                        if (weightLambda()) size.height * (10f / 17f) else size.height
+                    clipRect(0f, 0f, size.width, clipBottom) {
+                        this@drawWithContent.drawContent()
                     }
-                    .clipToBounds()
-                    .then(viewModifier)
-            } else {
-                Modifier
-                    .drawWithCache {
-                        val overlayPaint = Paint().apply {
-                            blendMode = if (lyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver
-                        }
-                        val rect = Rect(0f, 0f, size.width, size.height)
-                        val topFadeEnd = lyricTopMaskEndPx(
-                            size.height, LYRIC_TOP_FADE_INSET_DP.dp.toPx(),
-                        )
-                        val topGradient = if (topFadeEnd > 0f) {
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black),
-                                startY = 0f,
-                                endY = topFadeEnd,
-                            )
-                        } else null
-                        val bottomGradient = if (weightLambda()) {
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.Black,
-                                    Color(0x59000000),
-                                    Color(0x21000000),
-                                    Color.Transparent,
-                                ),
-                                startY = size.height * (7f / 17f),
-                                endY = size.height * (10f / 17f),
-                            )
-                        } else {
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.Black,
-                                    Color(0x59000000),
-                                    Color(0x3F000000),
-                                    Color(0x21000000),
-                                    Color.Transparent,
-                                ),
-                                startY = size.height * (15f / 19f),
-                                endY = size.height,
-                            )
-                        }
-
-                        onDrawWithContent {
-                            val canvas = this.drawContext.canvas
-                            canvas.saveLayer(rect, overlayPaint)
-                            drawContent()
-                            topGradient?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
-                            bottomGradient?.let {
-                                drawRect(
-                                    brush = it,
-                                    blendMode = BlendMode.DstIn,
-                                )
-                            }
-                            canvas.restore()
-                        }
-                    }
-                    .clipToBounds()
-                    .then(viewModifier)
-            }
+                }
+                .clipToBounds()
+                .then(viewModifier)
 
             val noLrcText = stringResource(id = R.string.tip_no_lyrics)
             val lyricUiConfig = remember(noLrcText) {
@@ -2922,6 +2856,7 @@ internal fun Lyric(
                 lastLineObstructionFraction = lastLineObstructionFraction,
                 active = active,
                 isPlaying = isPlaying,
+                contentSlideFraction = contentSlideFraction,
             )
         }
     }
@@ -4790,7 +4725,7 @@ internal fun PlayerControl(
                                     onControlGesture(false)
                                 }
                             }
-                            .overlayEffect()
+                            .overlayEffect(expand = 16.dp)
                             .graphicsLayer { alpha = sliderControlAlphaState.value }
                             .layout { measurable, constraints ->
                                 val hPx = (sliderTrackHeightState.value + 6.dp).roundToPx()
@@ -5248,7 +5183,7 @@ private fun VolumeSlider(
         modifier = Modifier
             .padding(horizontal = volumeSideInset)
             .padding(top = 4.dp, bottom = 2.5.dp)
-            .overlayEffect()
+            .overlayEffect(expand = 16.dp)
             .graphicsLayer { alpha = volumeAlphaState.value }
     ) {
         Icon(

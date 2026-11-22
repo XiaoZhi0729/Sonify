@@ -1,6 +1,7 @@
 package yos.music.player.ui.pages.gallery
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -708,5 +709,56 @@ class GallerySlotGeometryTest {
         assertEquals(1f, GallerySlotGeometry.textAlpha(0f), 0f)
         assertEquals(0f, GallerySlotGeometry.textAlpha(-1f), 0f)
         assertEquals(0f, GallerySlotGeometry.textTranslationYDp(0f), 0f)
+    }
+
+    // ---------- 上一首 / 下一首步进 ----------
+
+    @Test
+    fun canStepPreviousDisabledAtZeroAndEnabledForward() {
+        assertFalse(GallerySlotGeometry.canStepPrevious(0f, null))
+        assertFalse(GallerySlotGeometry.canStepPrevious(-0.3f, null))
+        assertFalse(GallerySlotGeometry.canStepPrevious(0.4f, 0))
+        assertTrue(GallerySlotGeometry.canStepPrevious(0.2f, 1))
+        assertTrue(GallerySlotGeometry.canStepPrevious(1f, null))
+    }
+
+    @Test
+    fun stepTargetAdvancesAndAccumulatesAcrossRapidClicks() {
+        assertEquals(1, GallerySlotGeometry.stepTarget(0f, null, 1))
+        assertEquals(0, GallerySlotGeometry.stepTarget(0f, null, -1))
+        // 橡皮筋负偏移后点击下一首应回到安全非负位置并前进
+        assertEquals(1, GallerySlotGeometry.stepTarget(-0.35f, null, 1))
+        // 动画中途（scroll=0.2, activeTarget=1）再次连点下一首应在 activeTarget 上累进到 2
+        assertEquals(2, GallerySlotGeometry.stepTarget(0.2f, 1, 1))
+        // 动画中途（scroll=1.2, activeTarget=2）点击上一首应回到 1
+        assertEquals(1, GallerySlotGeometry.stepTarget(1.2f, 2, -1))
+        // 无上界：队列长度之外仍可继续递增
+        assertEquals(101, GallerySlotGeometry.stepTarget(100f, null, 1))
+    }
+
+    @Test
+    fun cardClickTargetMatchesDisplayedSongAtZeroAndPositivePositions() {
+        // 冷启动 seg=0（size=10）：
+        // container 0→Slot0(0), container 3→Slot3(1), container 2→Slot2(2), container 1→Slot1(环回第4首=3)
+        assertEquals(0, GallerySlotGeometry.cardClickTarget(0, 0f, null, size = 10))
+        assertEquals(1, GallerySlotGeometry.cardClickTarget(3, 0f, null, size = 10))
+        assertEquals(2, GallerySlotGeometry.cardClickTarget(2, 0f, null, size = 10))
+        assertEquals(3, GallerySlotGeometry.cardClickTarget(1, 0f, null, size = 10))
+
+        // 正常前进到 seg=2（size=10）：
+        // container 2→Slot0(2), container 1→Slot3(3), container 0→Slot2(4), container 3→Slot1(1)
+        assertEquals(2, GallerySlotGeometry.cardClickTarget(2, 2f, null, size = 10))
+        assertEquals(3, GallerySlotGeometry.cardClickTarget(1, 2f, null, size = 10))
+        assertEquals(4, GallerySlotGeometry.cardClickTarget(0, 2f, null, size = 10))
+        assertEquals(1, GallerySlotGeometry.cardClickTarget(3, 2f, null, size = 10))
+    }
+
+    @Test
+    fun cardClickTargetUsesActiveTargetDuringTransition() {
+        // 动画从 0 走向 activeTarget=1 时，按目标位 1 的槽位映射计算
+        assertEquals(1, GallerySlotGeometry.cardClickTarget(3, 0.2f, activeTarget = 1, size = 10))
+        assertEquals(2, GallerySlotGeometry.cardClickTarget(2, 0.2f, activeTarget = 1, size = 10))
+        assertEquals(3, GallerySlotGeometry.cardClickTarget(1, 0.2f, activeTarget = 1, size = 10))
+        assertEquals(0, GallerySlotGeometry.cardClickTarget(0, 0.2f, activeTarget = 1, size = 10))
     }
 }

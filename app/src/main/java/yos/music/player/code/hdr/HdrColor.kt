@@ -26,25 +26,17 @@ private fun useHdr(boost: Float) = boost > 1.001f && Build.VERSION.SDK_INT >= 29
 
 /**
  * 同一种颜色在线性光下亮 [gain] 倍，结果在 LinearExtendedSrgb（通道值可超过 1）。
+ * 三通道等比放大以严格保持色度不变（70% 白 + 30% 封面色开/关 HDR 不偏色）。
  * [gain] ≤ 1 时原样返回。
  */
 internal fun Color.hdrLift(gain: Float): Color {
     if (gain <= 1f) return this
     val l = convert(ColorSpaces.LinearExtendedSrgb)
     val g = gain.coerceAtMost(7f)
-    val hi = maxOf(l.red, l.green, l.blue)
-    val lo = minOf(l.red, l.green, l.blue).coerceAtLeast(0f)
-    if (hi <= 0f) return l
-    // 彩色部分的放大倍数：让最亮的通道到 hi·g，最小的通道不动
-    val chroma = if (hi - lo > 1e-4f) (hi * g - lo) / (hi - lo) else g
-    // 饱和度低（接近白、灰）时平滑地退回整体乘 g
-    val t = ((hi - lo) / hi / 0.3f).coerceIn(0f, 1f)
-    val w = t * t * (3f - 2f * t)
-    fun ch(v: Float) = (v * g) * (1f - w) + (lo + (v - lo) * chroma) * w
     return Color(
-        red = ch(l.red).coerceIn(-0.5f, 7.4f),
-        green = ch(l.green).coerceIn(-0.5f, 7.4f),
-        blue = ch(l.blue).coerceIn(-0.5f, 7.4f),
+        red = (l.red * g).coerceIn(-0.5f, 7.4f),
+        green = (l.green * g).coerceIn(-0.5f, 7.4f),
+        blue = (l.blue * g).coerceIn(-0.5f, 7.4f),
         alpha = l.alpha,
         colorSpace = ColorSpaces.LinearExtendedSrgb,
     )
