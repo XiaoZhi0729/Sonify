@@ -4074,9 +4074,9 @@ private fun NowPlayingHandle(
 //   圆角 9dp  = PillRadiusIdle（且同用 YosRoundedCornerShape 超椭圆）
 //   底衬 24%  = ScrimAlphaCollapsed
 //   整体 alpha 0.4 = PillContentAlphaCollapsed
-private val TranslateBoxSize = 36.dp
-private val TranslateIconSize = 30.dp
-private val TranslateCornerRadius = 9.dp
+private val PillButtonBoxSize = 36.dp
+private val PillButtonIconSize = 30.dp
+private val PillButtonCornerRadius = 9.dp
 
 /**
  * 底衬白色浓度：关闭 24% → 开启 90%。
@@ -4089,19 +4089,57 @@ private val TranslateCornerRadius = 9.dp
  * 想要明显更白就得把它拉高。实际有效浓度 ≈ 0.4 × 0.9 = 0.36。
  * 不取 100%：留一点余量透出背景，避免变成纯白实心块。
  */
-private const val TranslateScrimOff = 0.24f
-private const val TranslateScrimOn = 0.90f
+private const val PillButtonScrimOff = 0.24f
+private const val PillButtonScrimOn = 0.90f
 
 /**
  * 整体不透明度。
  *
  * 两个状态都是 0.4，与改动前完全一致。开启态的「更白」只靠
- * [TranslateScrimOn] 提浓度实现，不动这一层——否则关闭态也会跟着变亮。
+ * [PillButtonScrimOn] 提浓度实现，不动这一层——否则关闭态也会跟着变亮。
  */
 private const val TranslateContentAlpha = 0.4f
 
 /** 已开启态的字形颜色：压在白色底衬上，必须是深色（白字会看不见）。 */
-private val TranslateGlyphOnColor = Color(0xFF1A1A1A)
+private val PillButtonGlyphOnColor = Color(0xFF1A1A1A)
+
+/**
+ * 播放页圆角药丸开关按钮（翻译、歌词、评论、队列共用）：
+ * 与人声分离药丸对齐的 36dp × 36dp 超椭圆（9dp 圆角），
+ * 24% → 90% 白色底衬，30dp 居中字形。
+ */
+@Composable
+private fun NowPlayingPillBox(
+    isOn: Boolean,
+    @androidx.annotation.DrawableRes iconRes: Int,
+    modifier: Modifier = Modifier,
+    scrimOffAlpha: Float = PillButtonScrimOff
+) {
+    // 底衬浓度跟着开关态过渡。120ms 的 tween 是"即点即变"的手感，又保留一点点过渡避免生硬跳变。
+    val scrimAlphaState = animateFloatAsState(
+        targetValue = if (isOn) PillButtonScrimOn else scrimOffAlpha,
+        animationSpec = tween(durationMillis = 120),
+        label = "pillButtonScrimAlpha"
+    )
+    Box(
+        modifier = modifier
+            .size(PillButtonBoxSize)
+            .clip(YosRoundedCornerShape(PillButtonCornerRadius))
+            .drawBehind {
+                if (scrimAlphaState.value > 0f) {
+                    drawRect(Color.White.copy(alpha = scrimAlphaState.value))
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = null,
+            modifier = Modifier.size(PillButtonIconSize),
+            tint = if (isOn) PillButtonGlyphOnColor else Color.White
+        )
+    }
+}
 
 @Composable
 internal fun TranslationToggleButton(
@@ -4109,42 +4147,44 @@ internal fun TranslationToggleButton(
     enabled: Boolean,
     onPress: () -> Unit
 ) {
-    // 底衬浓度跟着开关态过渡。切换要**快**：之前用 spring(stiffness=600) 约 400ms，
-    // 点下去半天才亮到位，读起来像卡顿。120ms 的 tween 是"即点即变"的手感，
-    // 又保留一点点过渡避免生硬跳变。
-    val scrimAlphaState = animateFloatAsState(
-        targetValue = if (translation.value) TranslateScrimOn else TranslateScrimOff,
-        animationSpec = tween(durationMillis = 120),
-        label = "translateScrimAlpha"
-    )
-    Box(
+    NowPlayingPillBox(
+        isOn = translation.value,
+        iconRes = R.drawable.ic_translate_glyph,
         modifier = Modifier
-            .size(TranslateBoxSize)
             // overlayEffect 在最外层：它的 saveLayer 包住后面全部绘制（含底衬），
             // 与旧实现把底衬烘在 drawable 里时的加性提亮范围一致。
             .overlayEffect()
             .alpha(TranslateContentAlpha)
-            .clip(YosRoundedCornerShape(TranslateCornerRadius))
-            .drawBehind {
-                drawRect(Color.White.copy(alpha = scrimAlphaState.value))
-            }
             .clickable(
                 enabled = enabled,
                 onClick = onPress,
                 indication = null,
-                interactionSource = remember { MutableInteractionSource() }),
+                interactionSource = remember { MutableInteractionSource() }
+            )
+    )
+}
+
+@Composable
+private fun NowPlayingEntryPillButton(
+    modifier: Modifier,
+    isOn: Boolean,
+    @androidx.annotation.DrawableRes iconRes: Int,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(PillButtonBoxSize)
+            .clickable(
+                onClick = onClick,
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ),
         contentAlignment = Alignment.Center
     ) {
-        // 不再用 AnimatedContent：两个状态只差一个 tint，尺寸完全相同，
-        // 换子树纯属浪费。而且子组合树的进出会放大重组范围——歌词库
-        // （LyricsLazyColumn 的 SubcomposeLayout）在语义变化检测触发的重布局里
-        // 踩到「place is called on a deactivated node」，点击本按钮后崩溃。
-        // 收敛成单个 Icon 能显著缩小那个竞态窗口。
-        Icon(
-            painter = painterResource(id = R.drawable.ic_translate_glyph),
-            contentDescription = null,
-            modifier = Modifier.size(TranslateIconSize),
-            tint = if (translation.value) TranslateGlyphOnColor else Color.White
+        NowPlayingPillBox(
+            isOn = isOn,
+            iconRes = iconRes,
+            scrimOffAlpha = 0f
         )
     }
 }
@@ -4156,37 +4196,12 @@ internal fun LyricsEntryButton(
     onLyrics: () -> Unit,
     nowPage: () -> String
 ) {
-    Box(
-        modifier = modifier
-            .height(36.dp)
-            .clickable(
-                onClick = { onLyrics() },
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = nowPage() == Lyric,
-            transitionSpec = {
-                fadeIn(snap()) togetherWith fadeOut(snap())
-            }) {
-            if (it) {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_lyricson),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            } else {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_lyrics),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            }
-        }
-    }
+    NowPlayingEntryPillButton(
+        modifier = modifier,
+        isOn = nowPage() == Lyric,
+        iconRes = R.drawable.ic_nowplaying_lyrics,
+        onClick = onLyrics
+    )
 }
 
 // 队列入口按钮（竖屏控制层底部 & 横屏底部悬浮行共用）
@@ -4196,37 +4211,12 @@ internal fun QueueEntryButton(
     onPlaylist: () -> Unit,
     nowPage: () -> String
 ) {
-    Box(
-        modifier = modifier
-            .height(36.dp)
-            .clickable(
-                onClick = { onPlaylist() },
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = nowPage() == PlayingList,
-            transitionSpec = {
-                fadeIn(snap()) togetherWith fadeOut(snap())
-            }) {
-            if (it) {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_queueon),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            } else {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_queue),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            }
-        }
-    }
+    NowPlayingEntryPillButton(
+        modifier = modifier,
+        isOn = nowPage() == PlayingList,
+        iconRes = R.drawable.ic_nowplaying_queue,
+        onClick = onPlaylist
+    )
 }
 
 // 评论入口按钮（竖屏控制层底部 & 横屏底部悬浮行共用）
@@ -4236,37 +4226,12 @@ internal fun CommentEntryButton(
     onComments: () -> Unit,
     nowPage: () -> String
 ) {
-    Box(
-        modifier = modifier
-            .height(36.dp)
-            .clickable(
-                onClick = { onComments() },
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = nowPage() == Comment,
-            transitionSpec = {
-                fadeIn(snap()) togetherWith fadeOut(snap())
-            }) {
-            if (it) {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_commenton),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            } else {
-                Icon(
-                    painterResource(id = R.drawable.ic_nowplaying_comment),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(32.dp)
-                )
-            }
-        }
-    }
+    NowPlayingEntryPillButton(
+        modifier = modifier,
+        isOn = nowPage() == Comment,
+        iconRes = R.drawable.ic_nowplaying_comment,
+        onClick = onComments
+    )
 }
 
 // 传输键通用外壳（统一点击震动反馈）
@@ -5074,6 +5039,7 @@ private fun VolumeSlider(
     // 不可信时 maxVolumeKnown 保持 false、界面置 0 且禁用拖动，防止 NaN 进语义树。
     val maxVolumeState = remember("VolumeSlider_maxVolume") { mutableIntStateOf(15) }
     val maxVolumeKnownState = remember("VolumeSlider_maxVolumeKnown") { mutableStateOf(false) }
+    val volumeInitialized = remember("VolumeSlider_initialized") { mutableStateOf(false) }
     val sliderPosition = remember("VolumeSlider_sliderPosition") { mutableFloatStateOf(0f) }
     val sliding = remember("VolumeSlider_sliding") {
         mutableStateOf(false)
@@ -5119,6 +5085,7 @@ private fun VolumeSlider(
             sliderPosition.floatValue =
                 if (known) (currentVol.toFloat() / maxVol).coerceIn(0f, 1f) else 0f
         }
+        volumeInitialized.value = true
     }
 
     val volumeChangeReceiver = remember("VolumeSlider_volumeChangeReceiver") {
@@ -5199,7 +5166,7 @@ private fun VolumeSlider(
         )
 
         YosWrapper {
-            val animatedProgress = if (sliding.value) {
+            val animatedProgress = if (sliding.value || !volumeInitialized.value) {
                 sliderPosition
             } else {
                 animateFloatAsState(

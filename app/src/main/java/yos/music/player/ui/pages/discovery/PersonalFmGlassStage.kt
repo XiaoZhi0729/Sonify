@@ -18,7 +18,6 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.highlight.Highlight
-import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 
@@ -72,16 +71,7 @@ internal fun PersonalFmGlassStage(
     backdropContent: @Composable BoxScope.() -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val isDark = isFlamingoInDarkMode()
-    val edgeAlpha = if (isDark) 0.32f else 0.65f
-    val darkRimHighlight = remember(edgeAlpha) {
-        { Highlight.Ambient.copy(alpha = edgeAlpha) }
-    }
-    val glassHighlight: (() -> Highlight?)? = when {
-        !glassOn -> null
-        !isDark -> classyabaBlackRim
-        else -> darkRimHighlight
-    }
+    val glassHighlight: (() -> Highlight?)? = if (glassOn) classyabaBlackRim else null
 
     Box(modifier) {
         // ---- 1. 采样源 ----
@@ -116,15 +106,13 @@ internal fun PersonalFmGlassStage(
                         backdrop = backdrop,
                         shape = { shape },
                         effects = if (glassOn) glassEffects else frostedEffects,
-                        // 液态玻璃边缘：浅色模式采用与按钮一致的「左右暗、上下亮」ClassYaba 描边
-                        // （classyabaBlackRim + classyabaWhiteEdge）；深色模式保持 Ambient 柔光。
-                        // 磨砂态不加边缘高光。
+                        // 液态玻璃边缘：浅色与深色统一使用 iOS 27 立体描边；磨砂态不加边缘高光。
                         highlight = glassHighlight,
                         shadow = null,
                         onDrawSurface = if (glassOn) glassSurface else frostedSurface
                     )
                     .then(
-                        if (glassOn && !isDark) Modifier.classyabaWhiteEdge(shape) else Modifier
+                        if (glassOn) Modifier.classyabaWhiteEdge(shape) else Modifier
                     ),
                 content = content
             )

@@ -166,9 +166,6 @@ fun LiquidGlassDropdownMenu(
     val isLightTheme = !isDropdownDarkTheme()
     val chromeLens = LocalChromeLensEnabled.current
     val hapticFeedback = LocalHapticFeedback.current
-    // 面板边光（展开态与未启用自适应的调用点共用）。浅色分支已改走 ClassYaba 描边，
-    // 这个 spec 只留给深色分支与自适应路径。
-    val themeEdgeLight = rememberDropdownEdgeLight()
     // 形状在收起↔展开间连续变化（42dp 正圆 → 200dp × 面板高圆角矩形），而且
     // `squircle()` 每次调用都新建实例，而 ShapeProvider 按**引用**比较形状、引用一变就
     // 重算 outline。这里 remember 成单实例，供材质、阴影、描边共用同一份。
@@ -176,10 +173,6 @@ fun LiquidGlassDropdownMenu(
     // 边缘折射有亚像素级差异；未对齐是因为按 f 切 Shape 需在组合期读 fraction，
     // 会逐帧重组并重算 outline，代价远大于收益。
     val panelShape = remember { squircle(PanelCornerRadius, smoothBand = true) }
-    // 浅色模式的黑环走 ClassYaba 配方（左右最深、上下保留 baseline 0.4）：与顶栏圆钮
-    // （LiquidTopBarButton）、设置页预览控件同一套。深色不移植，保持项目原状。
-    val rimHighlight: (() -> com.kyant.backdrop.highlight.Highlight?)? =
-        if (isLightTheme) classyabaBlackRim else null
 
     // 「工具栏液态玻璃」关闭时收起态是纯图标（无圆底/边光/投影），与 TitleBar 的扁平返回键同形；
     // 开启时是那颗 42dp 玻璃钮，材质与底栏 / 迷你条收起态同源（固定色 + 提取色 tint）。
@@ -447,8 +440,6 @@ fun LiquidGlassDropdownMenu(
                         }
                     }
                 }
-            // 边光：一律沿用主题档（自适应路径已移除，收起态与返回键同材质的白环口径）。
-            val edgeLightSpec = themeEdgeLight
             // 玻璃单独一层：只有它跟材质 alpha（layerBlock 作用于整个节点，挂容器上会连图标一起透明）
             Box(
                 modifier = Modifier
@@ -458,9 +449,8 @@ fun LiquidGlassDropdownMenu(
                         backdrop = backdrop,
                         shape = { panelShape },
                         effects = glassEffects,
-                        // 浅色：ClassYaba 黑色环绕环（走材质自身的 highlight 槽，不额外增加离屏图层）。
-                        // 深色：保持 highlight = null + 下方 edgeLight 白环。
-                        highlight = rimHighlight,
+                        // 描边已统一收口到下方 ios27GlassEdge，此处传 null 避免额外开离屏层
+                        highlight = classyabaBlackRim,
                         shadow = null,
                         onDrawBackdrop = DefaultOnDrawBackdrop,
                         onDrawSurface = {
@@ -488,20 +478,8 @@ fun LiquidGlassDropdownMenu(
                             }
                         }
                     )
-                    // 描边：浅色换 ClassYaba 配方（黑环已在上面 highlight 槽，这里补白色上下
-                    // 提亮边）；深色保留项目原有的 edgeLight 白环。
-                    //
-                    // 挂在玻璃这一层而不是 42dp 外容器上，与 edgeLight 原位置一致：描边必须
-                    // 跟着 materialVisible 一起淡，否则顶栏滚动时会出现「只有边、没有玻璃」。
-                    // 展开成 200dp 面板时继续画（与 edgeLight 原作用范围一致），避免收起↔
-                    // 展开时描边突然消失。
-                    .then(
-                        if (isLightTheme) {
-                            Modifier.classyabaWhiteEdge(panelShape)
-                        } else {
-                            Modifier.dropdownEdgeLight(shape = panelShape, spec = edgeLightSpec)
-                        }
-                    )
+                    // 描边：浅色与深色统一走 iOS 27 立体描边，挂在玻璃层上跟随 materialVisible 淡入淡出。
+                    .classyabaWhiteEdge(panelShape)
             )
 
             // 按压高光：必须在玻璃壳之上、菜单内容之下 —— 前者否则被材质盖住，

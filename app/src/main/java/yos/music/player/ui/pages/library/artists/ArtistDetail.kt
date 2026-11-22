@@ -54,6 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -89,6 +90,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -372,8 +374,9 @@ fun ArtistDetail(
     val pagerState = androidx.compose.runtime.key(songsState) {
         rememberPagerState(pageCount = { (songs.size + 3) / 4 })
     }
-    val hotPagerState = androidx.compose.runtime.key(songsState) {
-        rememberPagerState(pageCount = { (hotSongs.value.size + 3) / 4 })
+    val hotRowsPerColumn = if (isLandscape) 3 else 4
+    val hotPagerState = androidx.compose.runtime.key(songsState, hotRowsPerColumn) {
+        rememberPagerState(pageCount = { (hotSongs.value.size + hotRowsPerColumn - 1) / hotRowsPerColumn })
     }
     val heroScrolledOut = remember(listState) {
         derivedStateOf {
@@ -1179,21 +1182,25 @@ fun ArtistDetail(
                         (latestAlbum != null || (albumsLoading.value && albumsError.value == null))
                     if (showLandscapeSideBySide) {
                         item("LandscapeFeaturedAndHot") {
+                            var hotSongsHeightPx by remember { mutableIntStateOf(0) }
+                            val targetCoverHeight = if (hotSongsHeightPx > 0) {
+                                with(density) { hotSongsHeightPx.toDp() }
+                            } else {
+                                193.dp
+                            }
                             Row(
                                 Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.Top
                             ) {
-                                Column(Modifier.weight(0.34f)) {
+                                Column(Modifier.weight(0.38f)) {
                                     ArtistSectionHeader(stringResource(R.string.artist_detail_latest_release))
                                     FadeInContent(
                                         hasData = latestAlbum != null,
                                         skeleton = {
                                             if (albumsLoading.value) {
-                                                ArtistLatestAlbumSkeleton(
-                                                    shimmer = skeletonShimmer,
-                                                    modifier = Modifier.padding(
-                                                        start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp
-                                                    )
+                                                ArtistLandscapeFeaturedAlbumSkeleton(
+                                                    targetHeight = targetCoverHeight,
+                                                    shimmer = skeletonShimmer
                                                 )
                                             }
                                         }
@@ -1201,17 +1208,14 @@ fun ArtistDetail(
                                         latestAlbum?.let { album ->
                                             val count = if (latestAlbumCount.value > 0) latestAlbumCount.value
                                             else ArtistPresentationCache.albumSongCount(album.albumId) ?: -1
-                                            ArtistLatestAlbumCard(
+                                            ArtistLandscapeFeaturedAlbum(
                                                 album = album,
                                                 songCount = count,
                                                 underlayColor = bgColorState.value,
+                                                targetHeight = targetCoverHeight,
                                                 sharedTransitionScope = sharedTransitionScope,
                                                 animatedVisibilityScope = animatedVisibilityScope,
-                                                probeName = "LatestAlbum",
-                                                modifier = Modifier.padding(
-                                                    start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp
-                                                ),
-                                                titleMaxLines = 2
+                                                probeName = "LatestAlbum"
                                             ) { selected ->
                                                 NavGuard.run {
                                                     OnlineAlbumObject.setSelected(selected)
@@ -1223,21 +1227,24 @@ fun ArtistDetail(
                                         }
                                     }
                                 }
-                                Column(Modifier.weight(0.66f)) {
+                                Column(Modifier.weight(0.62f)) {
                                     ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
                                         navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
                                     }
-                                    ArtistSongSection(
-                                        songs = hotSongs.value,
-                                        loading = hotLoading.value,
-                                        error = hotError.value,
-                                        pagerState = hotPagerState,
-                                        shimmer = skeletonShimmer,
-                                        onRetry = { hotRetry.value += 1 },
-                                        onPlayAt = { playAt(hotSongs.value, it) },
-                                        probeName = "HotSongs",
-                                        columnsPerViewport = landscapeSongColumns
-                                    )
+                                    Box(Modifier.fillMaxWidth().onSizeChanged { hotSongsHeightPx = it.height }) {
+                                        ArtistSongSection(
+                                            songs = hotSongs.value,
+                                            loading = hotLoading.value,
+                                            error = hotError.value,
+                                            pagerState = hotPagerState,
+                                            shimmer = skeletonShimmer,
+                                            onRetry = { hotRetry.value += 1 },
+                                            onPlayAt = { playAt(hotSongs.value, it) },
+                                            probeName = "HotSongs",
+                                            columnsPerViewport = landscapeSongColumns,
+                                            rowsPerColumn = hotRowsPerColumn
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1283,7 +1290,8 @@ fun ArtistDetail(
                                 onRetry = { hotRetry.value += 1 },
                                 onPlayAt = { playAt(hotSongs.value, it) },
                                 probeName = "HotSongs",
-                                columnsPerViewport = landscapeSongColumns
+                                columnsPerViewport = landscapeSongColumns,
+                                rowsPerColumn = hotRowsPerColumn
                             )
                         }
                     }

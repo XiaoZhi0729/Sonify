@@ -80,6 +80,7 @@ import yos.music.player.ui.pages.NowPlayingPage.Lyric
 import yos.music.player.ui.pages.NowPlayingPage.PlayingList
 import yos.music.player.ui.pages.comments.SongCommentsPanel
 import yos.music.player.ui.widgets.YosLyricScrollState
+import yos.music.player.ui.widgets.audio.VocalSeparationPill
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -439,6 +440,38 @@ internal fun NowPlayingLandscape(
             // 在本次状态切换的 transition 参数读取完后再记录当前页，保留上一次页面用于下一次判断。
             SideEffect { previousPage.value = page }
 
+        }
+
+        // 右上角悬浮控制：仅在歌词页显示（人声分离药丸向下展开 + 翻译切换按钮）
+        AnimatedVisibility(
+            visible = outerPage == Lyric,
+            enter = fadeIn(animationSpec = tween(250)),
+            exit = fadeOut(animationSpec = tween(205)),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(top = 20.dp, end = 30.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                VocalSeparationPill(
+                    enabled = !showMiniPlayer && outerPage == Lyric,
+                    expandDownward = true
+                )
+
+                TranslationToggleButton(
+                    translation = translation,
+                    enabled = !showMiniPlayer && outerPage == Lyric
+                ) {
+                    yos.music.player.code.utils.others.Vibrator.click(context)
+                    translation.value = !translation.value
+                    showControl.value = true
+                    lastClickTime.longValue = TimeUtils.getNowMills()
+                    SettingsLibrary.NowPlayingTranslation = translation.value
+                }
+            }
         }
 
         // 底部悬浮行：输出设备（左）& 歌词/队列入口（右）

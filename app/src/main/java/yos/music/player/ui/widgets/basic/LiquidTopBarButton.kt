@@ -107,13 +107,7 @@ fun LiquidTopBarButton(
     else Color(0xFF1C1C1E).copy(0.5f)
     val resolvedContentColor =
         if (isLightTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.85f)
-    val edgeLightColor =
-        if (isLightTheme) Color.White.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.32f)
-    // 描边分两套，与 ClassYaba LiquidButton 的判据一致：那边也是按**应用主题**
-    // （GlasenseTheme.darkTheme）分流，不看 backdrop 亮度。本次只复刻浅色那套，
-    // 深色保持项目原状（整圈均匀白环），所以这里只判主题。
-    val rimHighlight: (() -> com.kyant.backdrop.highlight.Highlight?)? =
-        if (isLightTheme) classyabaBlackRim else null
+    // 浅色与深色统一采用 iOS 27 的自适应双层描边（ios27GlassEdge）；此处 highlight 传 null 避免重复开离屏层。
     val shadowColor = if (isLightTheme) "#06000000".toColorInt() else "#20000000".toColorInt()
     val interactionSource = remember { MutableInteractionSource() }
     val animationScope = rememberCoroutineScope()
@@ -208,10 +202,7 @@ fun LiquidTopBarButton(
                             lens(8f.dp.toPx(), 24f.dp.toPx())
                         }
                     },
-                    // 浅色模式描边改为 ClassYaba 配方（黑色环绕环，左右最深、上下保留
-                    // baseline 0.4）：交给材质自身的 highlight 槽，不额外增加离屏图层。
-                    // 深色模式保持原状（highlight = null + 下方 circleEdgeLight 白环）。
-                    highlight = rimHighlight,
+                    highlight = classyabaBlackRim,
                     shadow = { null },
                     layerBlock = {
                         // 只保留滚动联动的玻璃淡入；按压/拖动变换已上移到外层整体图层
@@ -227,19 +218,8 @@ fun LiquidTopBarButton(
                         drawRect(Color.Black.copy(alpha = 0.03f * interactiveHighlight.pressProgress))
                     }
                 )
-                // 白色提亮边（上下直边最亮）：浅色模式下与上面的黑环合成 ClassYaba 的
-                // 「左右暗、上下亮」立体描边。深色模式不移植，继续用整圈均匀白环。
-                .then(
-                    if (isLightTheme) Modifier.classyabaWhiteEdge(CircleShape) else Modifier
-                )
-                .then(
-                    if (isLightTheme) Modifier
-                    else Modifier.circleEdgeLight(
-                        color = edgeLightColor,
-                        width = 0.15f.dp,
-                        blurRadius = 0.5f.dp
-                    )
-                )
+                // 浅色与深色统一使用 iOS 27 双层立体描边（内缩 plusLighter 倒角 + 外圈 plusDarker 暗环）
+                .classyabaWhiteEdge(CircleShape)
                 .then(interactiveHighlight.modifier)
                 .then(if (draggable) interactiveHighlight.gestureModifier else interactiveHighlight.pressOnlyModifier)
                 .zIndex(0f)

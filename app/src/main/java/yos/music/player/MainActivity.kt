@@ -169,16 +169,12 @@ import androidx.navigation.compose.NavHost
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.backdrops.emptyBackdrop
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.highlight.HighlightStyle
 import com.kyant.shapes.RoundedRectangle
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
-import yos.music.player.ui.widgets.liquid.WrapHighlightStyle
 import yos.music.player.ui.widgets.liquid.ios27GlassEdge
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.widthIn
@@ -2092,7 +2088,6 @@ class MainActivity : BaseActivity() {
                                             playerMotionJob.value != null
                                         )
                                     )
-                                    val shellIsNightForDraw by rememberUpdatedState(shellIsNight)
                                     val shellBackdropDrawEnabled by rememberUpdatedState(glassProbe.shellBackdropDraw)
                                     val shellColorForDraw by rememberUpdatedState(color)
                                     val shellSurfaceAlphaForDraw by rememberUpdatedState(hazeSurfaceAlpha)
@@ -2203,34 +2198,8 @@ class MainActivity : BaseActivity() {
                                                                 }
                                                             }
                                                         },
-                                                        // 黑边环绕高光（数值与 ClassYaba LiquidButton blackSideHighlight
-                                                        // 完全一致）：WrapHighlightStyle 沿轮廓整圈连续，左右最深、
-                                                        // 上下保留 baseline=0.4，黑边不会在上下消失。白色提亮高光
-                                                        // 由下方 emptyBackdrop 覆盖层单独叠加。
-                                                        //
-                                                        // 门禁：运动期一律摘掉（库内每帧 record 一个壳尺寸的离屏层
-                                                        // 并新建 BlurMaskFilter + 跑 AGSL，是这条动画的最大头，
-                                                        // 真机实测摘掉后"超级流畅"）；progress>=0.5 摘掉；探针
-                                                        // nohigh 摘掉。运动期观感由 drawShellCheapRim 补偿。
-                                                        highlight = {
-                                                            if (!shellIsNightForDraw ||
-                                                                !glassProbe.shellHighlight ||
-                                                                shellDecorOffForDraw ||
-                                                                bottomSheetConfigState.value.progress >= 0.5f
-                                                            ) null
-                                                            else Highlight.Default.copy(
-                                                                width = 0.4f.dp,
-                                                                blurRadius = 0.1f.dp,
-                                                                alpha = 1f,
-                                                                style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = 0.4f),
-                                                                    blendMode = BlendMode.SrcOver,
-                                                                    angle = 0f,
-                                                                    falloff = 0.9f,
-                                                                    baseline = 0.4f
-                                                                )
-                                                            )
-                                                        },
+                                                        // 描边已统一收口到下方 ios27GlassEdge，此处置 { null } 避免额外开离屏层。
+                                                        highlight = { null },
                                                         shadow = {
                                                             val progress = bottomSheetConfigState.value.progress
                                                             if (!glassProbe.shellShadow ||
@@ -2288,29 +2257,8 @@ class MainActivity : BaseActivity() {
                                                         effects = {
                                                             blur(12.dp.toPx() * yos.music.player.ui.widgets.liquid.frostedBlurScale)
                                                         },
-                                                        // 黑边环绕高光：与上方玻璃分支同配方
-                                                        // （ClassYaba blackSideHighlight），关玻璃态也保留
-                                                        // 描边（用户要求与底栏磨砂胶囊一致）。门禁同玻璃
-                                                        // 分支：运动期/展开期/探针 nohigh 时不画。
-                                                        highlight = {
-                                                            if (!shellIsNightForDraw ||
-                                                                !glassProbe.shellHighlight ||
-                                                                shellDecorOffForDraw ||
-                                                                bottomSheetConfigState.value.progress >= 0.5f
-                                                            ) null
-                                                            else Highlight.Default.copy(
-                                                                width = 0.4f.dp,
-                                                                blurRadius = 0.1f.dp,
-                                                                alpha = 1f,
-                                                                style = WrapHighlightStyle(
-                                                                    color = Color.Black.copy(alpha = 0.4f),
-                                                                    blendMode = BlendMode.SrcOver,
-                                                                    angle = 0f,
-                                                                    falloff = 0.9f,
-                                                                    baseline = 0.4f
-                                                                )
-                                                            )
-                                                        },
+                                                        // 描边已统一收口到下方 ios27GlassEdge，此处置 { null } 避免额外开离屏层。
+                                                        highlight = { null },
                                                         shadow = {
                                                             val progress = bottomSheetConfigState.value.progress
                                                             if (shellDecorOffForDraw ||
@@ -2394,88 +2342,23 @@ class MainActivity : BaseActivity() {
                                                             }
                                                         drawShellCheapRim(
                                                             shape = shellShapeProvider(),
-                                                            isNight = shellIsNightForDraw,
                                                             glowAlpha = rimAlpha,
                                                         )
                                                     }
                                                 } else Modifier
                                             )
-                                            // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight
-                                            // 一致）：angle=90 直上直下，亮在上下直边；挂在 emptyBackdrop 上
-                                            // 不再采样玻璃内容，不会盖住下层的黑色环绕高光。门禁与黑边一致。
+                                            // iOS 27 立体双层描边覆盖层（浅色与深色统一）。门禁与投影一致。
                                             .then(
                                                 if (shellHasRadius.value) {
-                                                    if (!shellIsNightForDraw) {
-                                                        Modifier.ios27GlassEdge(
-                                                            shape = shellShapeProvider,
-                                                            enabled = {
-                                                                glassProbe.shellHighlight &&
-                                                                    !shellDecorOffForDraw &&
-                                                                    bottomSheetConfigState.value.progress < 0.5f
-                                                            },
-                                                            drawSurfaceShading = true,
-                                                        )
-                                                    } else {
-                                                        Modifier.drawBackdrop(
-                                                            backdrop = emptyBackdrop(),
-                                                            shape = shellShapeProvider,
-                                                            effects = {},
-                                                            highlight = {
-                                                                if (!glassProbe.shellHighlight ||
-                                                                    shellDecorOffForDraw ||
-                                                                    bottomSheetConfigState.value.progress >= 0.5f
-                                                                ) null
-                                                                else Highlight.Default.copy(
-                                                                    width = 1f.dp,
-                                                                    blurRadius = 0.5f.dp,
-                                                                    alpha = 1f,
-                                                                    style = HighlightStyle.Default(
-                                                                        color = Color.White.copy(alpha = 0.1f),
-                                                                        blendMode = BlendMode.Plus,
-                                                                        angle = 90f,
-                                                                        falloff = 1f
-                                                                    )
-                                                                )
-                                                            },
-                                                            shadow = { null },
-                                                            innerShadow = { null },
-                                                            onDrawBackdrop = { },
-                                                            onDrawSurface = {
-                                                                if (!glassProbe.shellHighlight ||
-                                                                    shellDecorOffForDraw ||
-                                                                    bottomSheetConfigState.value.progress >= 0.5f
-                                                                ) {
-                                                                    // 运动期/展开期不画
-                                                                } else {
-                                                                    val glowColor = Color.White.copy(alpha = 0.1f)
-                                                                    val glowH = 6.dp.toPx()
-                                                                    // 顶边高光向下渐隐
-                                                                    drawRect(
-                                                                        brush = Brush.verticalGradient(
-                                                                            0f to glowColor,
-                                                                            1f to Color.Transparent,
-                                                                            startY = 0f,
-                                                                            endY = glowH
-                                                                        ),
-                                                                        size = Size(size.width, glowH),
-                                                                        blendMode = BlendMode.Plus
-                                                                    )
-                                                                    // 底边高光向上渐隐
-                                                                    drawRect(
-                                                                        brush = Brush.verticalGradient(
-                                                                            0f to Color.Transparent,
-                                                                            1f to glowColor,
-                                                                            startY = size.height - glowH,
-                                                                            endY = size.height
-                                                                        ),
-                                                                        topLeft = Offset(0f, size.height - glowH),
-                                                                        size = Size(size.width, glowH),
-                                                                        blendMode = BlendMode.Plus
-                                                                    )
-                                                                }
-                                                            }
-                                                        )
-                                                    }
+                                                    Modifier.ios27GlassEdge(
+                                                        shape = shellShapeProvider,
+                                                        enabled = {
+                                                            glassProbe.shellHighlight &&
+                                                                !shellDecorOffForDraw &&
+                                                                bottomSheetConfigState.value.progress < 0.5f
+                                                        },
+                                                        drawSurfaceShading = true,
+                                                    )
                                                 } else Modifier
                                             )
                                             // 外壳内容坐标系：迷你封面与全屏封面都相对它换算。
@@ -4674,16 +4557,14 @@ private fun shellDecorationsOff(
  */
 private fun DrawScope.drawShellCheapRim(
     shape: androidx.compose.ui.graphics.Shape,
-    isNight: Boolean,
     glowAlpha: Float,
 ) {
     if (glowAlpha <= 0.001f) return
     val outline = shape.createOutline(size, layoutDirection, this)
 
     // ---- ① 黑边环绕（近似 plusDarker：左右最深，中线保留 baseline）----
-    val rimWidthPx = (if (isNight) 0.4f else 0.36f).dp.toPx()
-    val rimAlpha = if (isNight) 0.4f else 0.22f
-    val rimColor = Color.Black.copy(alpha = rimAlpha * glowAlpha)
+    val rimWidthPx = 0.36f.dp.toPx()
+    val rimColor = Color.Black.copy(alpha = 0.22f * glowAlpha)
     drawOutline(
         outline = outline,
         brush = Brush.horizontalGradient(
@@ -4695,23 +4576,20 @@ private fun DrawScope.drawShellCheapRim(
         style = Stroke(width = rimWidthPx),
         blendMode = BlendMode.SrcOver,
     )
-    if (!isNight) {
-        val burnColor = Color(0.70f, 0.70f, 0.70f, 0.85f * glowAlpha)
-        drawOutline(
-            outline = outline,
-            brush = Brush.horizontalGradient(
-                0f to burnColor,
-                0.5f to burnColor.copy(alpha = burnColor.alpha * 0.4f),
-                1f to burnColor,
-            ),
-            style = Stroke(width = rimWidthPx),
-            blendMode = BlendMode.ColorBurn,
-        )
-    }
+    val burnColor = Color(0.70f, 0.70f, 0.70f, 0.85f * glowAlpha)
+    drawOutline(
+        outline = outline,
+        brush = Brush.horizontalGradient(
+            0f to burnColor,
+            0.5f to burnColor.copy(alpha = burnColor.alpha * 0.4f),
+            1f to burnColor,
+        ),
+        style = Stroke(width = rimWidthPx),
+        blendMode = BlendMode.ColorBurn,
+    )
 
     // ---- ② 白色提亮边（近似 HighlightStyle.Default angle=90：亮在上下直边）----
-    val edgeAlpha = if (isNight) 0.1f else 0.20f
-    val edgeColor = Color.White.copy(alpha = edgeAlpha * glowAlpha)
+    val edgeColor = Color.White.copy(alpha = 0.20f * glowAlpha)
     drawOutline(
         outline = outline,
         brush = Brush.verticalGradient(

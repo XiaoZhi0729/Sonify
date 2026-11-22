@@ -30,9 +30,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.TransformOrigin
@@ -59,8 +56,6 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.highlight.HighlightStyle
-import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import yos.music.player.code.utils.others.GlassProbe
@@ -158,72 +153,13 @@ fun LiquidBottomTabs(
         }
     }
 
-    // 白色提亮高光覆盖层（数值与 ClassYaba LiquidButton defaultHighlight 一致）：angle=90
-    // 直上直下，亮在上下直边；挂在 emptyBackdrop 上不再采样玻璃，不会盖住玻璃分支
-    // 主层的黑色环绕高光。磨砂胶囊与玻璃分支共用这一层——迷你播放器关玻璃分支
-    // （MainActivity PlayerShell Kyant 分支）同样挂着这层高光+内阴影延伸，缺了它
-    // 关闭玻璃时底栏会比迷你条少一层亮边（用户报告的材质不一致）。
-    val containerHighlightOverlay = remember(isLightTheme) {
-        if (isLightTheme) {
-            Modifier.ios27GlassEdge(
-                shape = { Capsule() },
-                enabled = { GlassProbe.current.navContainerHighlight },
-                drawSurfaceShading = true,
-            )
-        } else {
-            Modifier.drawBackdrop(
-                backdrop = emptyBackdrop(),
-                shape = { Capsule() },
-                effects = {},
-                highlight = {
-                    if (GlassProbe.current.navContainerHighlight) {
-                        Highlight.Default.copy(
-                            width = 1f.dp,
-                            blurRadius = 0.5f.dp,
-                            alpha = 1f,
-                            style = HighlightStyle.Default(
-                                color = Color.White.copy(alpha = 0.1f),
-                                blendMode = BlendMode.Plus,
-                                angle = 90f,
-                                falloff = 1f
-                            )
-                        )
-                    } else null
-                },
-                shadow = { null },
-                innerShadow = { null },
-                onDrawBackdrop = { },
-                onDrawSurface = {
-                    if (GlassProbe.current.navContainerHighlight) {
-                        val glowColor = Color.White.copy(alpha = 0.1f)
-                        val glowH = 6f.dp.toPx()
-                        // 顶边高光向下渐隐
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                0f to glowColor,
-                                1f to Color.Transparent,
-                                startY = 0f,
-                                endY = glowH
-                            ),
-                            size = Size(size.width, glowH),
-                            blendMode = BlendMode.Plus
-                        )
-                        // 底边高光向上渐隐
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                0f to Color.Transparent,
-                                1f to glowColor,
-                                startY = size.height - glowH,
-                                endY = size.height
-                            ),
-                            topLeft = Offset(0f, size.height - glowH),
-                            size = Size(size.width, glowH),
-                            blendMode = BlendMode.Plus
-                        )
-                    }
-                }
-            )
-        }
+    // 浅色与深色统一采用 iOS 27 立体双层描边覆盖层（内缩 plusLighter 倒角 + 外圈 plusDarker 暗环）
+    val containerHighlightOverlay = remember {
+        Modifier.ios27GlassEdge(
+            shape = { Capsule() },
+            enabled = { GlassProbe.current.navContainerHighlight },
+            drawSurfaceShading = true,
+        )
     }
 
     val tabsBackdrop = rememberLayerBackdrop()
@@ -347,24 +283,7 @@ fun LiquidBottomTabs(
         val glassScale = glassBlurScale
         val frostedScale = frostedBlurScale
         val containerCapsuleShape: () -> com.kyant.shapes.RoundedRectangularShape = remember { { Capsule() } }
-        val containerHighlight: () -> Highlight? = remember(isLightTheme) {
-            {
-                if (!isLightTheme && GlassProbe.current.navContainerHighlight) {
-                    Highlight.Default.copy(
-                        width = 0.4f.dp,
-                        blurRadius = 0.1f.dp,
-                        alpha = 1f,
-                        style = WrapHighlightStyle(
-                            color = Color.Black.copy(alpha = 0.4f),
-                            blendMode = BlendMode.SrcOver,
-                            angle = 0f,
-                            falloff = 0.9f,
-                            baseline = 0.4f
-                        )
-                    )
-                } else null
-            }
-        }
+        val containerHighlight: () -> Highlight? = remember { { null } }
         val solidEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit = remember(frostedScale) {
             { blur(12.dp.toPx() * frostedScale) }
         }

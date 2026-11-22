@@ -189,6 +189,7 @@ private val JellySpan = 6.dp
 fun VocalSeparationPill(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    expandDownward: Boolean = false,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -397,9 +398,9 @@ fun VocalSeparationPill(
                                 baseRatio = VocalSeparationState.ratio
                             }
                         }
-                        // 向上拖（delta.y 为负）= 水位上升 = 效果增强 = 原声含量下降。
-                        // 所以这里对 ratio 取**负**增量，与 fillFraction = 1 - ratio 一致。
-                        accumulated += delta.y
+                        // 向上展开时：向上拖（delta.y 为负）= 水位上升 = 原声含量下降；
+                        // 向下展开时：向下拖（delta.y 为正）= 水位上升 = 原声含量下降。
+                        accumulated += if (expandDownward) -delta.y else delta.y
                         val span = if (dragSpanPx > 1f) dragSpanPx else 1f
                         val next = (baseRatio + accumulated / span).coerceIn(0f, 1f)
                         val before = (VocalSeparationState.ratio * 20f).toInt()
@@ -415,12 +416,13 @@ fun VocalSeparationPill(
                         } else if (!atBottom) {
                             toppedOut = false
                         }
-                        // 果冻：形变方向跟随手指拖动方向（上拉变高变细）
-                        jellyTarget = (-delta.y / jellySpanPx).coerceIn(-1f, 1f)
+                        // 果冻：形变方向跟随手指拖动方向
+                        val signedDelta = if (expandDownward) delta.y else -delta.y
+                        jellyTarget = (signedDelta / jellySpanPx).coerceIn(-1f, 1f)
                     }
                 )
             },
-        contentAlignment = Alignment.BottomCenter
+        contentAlignment = if (expandDownward) Alignment.TopCenter else Alignment.BottomCenter
     ) {
         // 展开体：根节点高度已经是 pillHeight（36dp 或 88dp），所以这里直接填满，
         // 靠根节点的 `contentAlignment = BottomCenter` 保持底边对齐、向上生长。
@@ -444,15 +446,21 @@ fun VocalSeparationPill(
                 // 顺序**必须**是 overlayEffect 在外、alpha 在内：
                 // 反过来（Plus 落在离屏层内部）时目标缓冲是空的，Plus 退化成 SrcOver，
                 // 加性效果整个丢失。
-                .overlayEffect()
+                // 扩边 12dp：按压放大（1.08×）与果冻拉伸会超出 36dp/88dp 布局边界，
+                // 若用默认 expand=0dp 的 Offscreen 图层会把超出的圆角裁平。
+                .overlayEffect(expand = 12.dp)
                 .graphicsLayer {
                     val pressScale = pressScaleState.value
                     val jelly = jellyState.value
                     alpha = contentAlphaState.value
                     scaleX = pressScale * (1f - JellySqueeze * jelly)
                     scaleY = pressScale * (1f + JellyStretch * jelly)
-                    // 以底边为缩放原点：放大/拉长都向上长，不挤动下方邻居
-                    transformOrigin = TransformOrigin(0.5f, 1f)
+                    // 以固定边为缩放原点：向上展开锚定底边，向下展开锚定顶边
+                    transformOrigin = if (expandDownward) {
+                        TransformOrigin(0.5f, 0f)
+                    } else {
+                        TransformOrigin(0.5f, 1f)
+                    }
                     // 图标"镂空"用 BlendMode.DstOut 擦像素，必须在离屏层里做：
                     // 否则擦的是窗口内容，挖出来是黑洞而不是页面背景。
                     compositingStrategy = CompositingStrategy.Offscreen
@@ -466,18 +474,24 @@ fun VocalSeparationPill(
                         if (fillPx > 0f) {
                             drawRect(
                                 color = Color.White,
-                                topLeft = Offset(0f, size.height - fillPx),
+                                topLeft = Offset(0f, if (expandDownward) 0f else size.height - fillPx),
                                 size = Size(size.width, fillPx)
                             )
                         }
                     }
                 },
-            contentAlignment = Alignment.BottomCenter
+            contentAlignment = if (expandDownward) Alignment.TopCenter else Alignment.BottomCenter
         ) {
-            // 图标：钉在展开体底部 = 节点底部，收起/展开都在同一位置
+            // 图标：钉在固定端（向上展开钉底边，向下展开钉顶边），收起/展开都在同一位置
             Box(
                 modifier = Modifier
-                    .padding(bottom = PillIconBottomPad)
+                    .then(
+                        if (expandDownward) {
+                            Modifier.padding(top = PillIconBottomPad)
+                        } else {
+                            Modifier.padding(bottom = PillIconBottomPad)
+                        }
+                    )
                     .size(PillIconSize)
             ) {
                 Icon(
@@ -487,7 +501,7 @@ fun VocalSeparationPill(
                     tint = iconTint
                 )
                 if (isOn) {
-                    // 「反色」= 镂空：水位线以下的图标**挖成透明**，让页面背景直接透出来。
+                    // 「反色」= 镂空：水位线覆盖到的图标区域**挖成透明**，让页面背景直接透出来。
                     Icon(
                         painter = painterResource(id = R.drawable.ic_vocal_separation),
                         contentDescription = null,
@@ -496,23 +510,42 @@ fun VocalSeparationPill(
                             .drawWithContent {
                                 val fillPx = pillHeightState.value.toPx() *
                                     fillFractionState.value.coerceIn(0f, 1f)
-                                val top = (iconTopPadPx + iconSizePx) - fillPx
-                                // 水位线已在图标上方（整块图标都浸在白色里）→ 全挖
-                                // 水位线在图标下方 → 图标完整保留，不挖
-                                if (top < size.height) {
-                                    val holeTop = top.coerceAtLeast(0f)
-                                    clipRect(
-                                        left = 0f,
-                                        top = holeTop,
-                                        right = size.width,
-                                        bottom = size.height
-                                    ) {
-                                        drawContext.canvas.saveLayer(
-                                            Rect(0f, holeTop, size.width, size.height),
-                                            dstOutPaint
-                                        )
-                                        this@drawWithContent.drawContent()
-                                        drawContext.canvas.restore()
+                                if (expandDownward) {
+                                    val holeBottom = (fillPx - iconTopPadPx).coerceAtMost(size.height)
+                                    if (holeBottom > 0f) {
+                                        clipRect(
+                                            left = 0f,
+                                            top = 0f,
+                                            right = size.width,
+                                            bottom = holeBottom
+                                        ) {
+                                            drawContext.canvas.saveLayer(
+                                                Rect(0f, 0f, size.width, holeBottom),
+                                                dstOutPaint
+                                            )
+                                            this@drawWithContent.drawContent()
+                                            drawContext.canvas.restore()
+                                        }
+                                    }
+                                } else {
+                                    val top = (iconTopPadPx + iconSizePx) - fillPx
+                                    // 水位线已在图标上方（整块图标都浸在白色里）→ 全挖
+                                    // 水位线在图标下方 → 图标完整保留，不挖
+                                    if (top < size.height) {
+                                        val holeTop = top.coerceAtLeast(0f)
+                                        clipRect(
+                                            left = 0f,
+                                            top = holeTop,
+                                            right = size.width,
+                                            bottom = size.height
+                                        ) {
+                                            drawContext.canvas.saveLayer(
+                                                Rect(0f, holeTop, size.width, size.height),
+                                                dstOutPaint
+                                            )
+                                            this@drawWithContent.drawContent()
+                                            drawContext.canvas.restore()
+                                        }
                                     }
                                 }
                             },

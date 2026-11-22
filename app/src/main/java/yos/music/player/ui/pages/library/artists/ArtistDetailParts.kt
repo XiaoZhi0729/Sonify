@@ -6,6 +6,7 @@ import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -49,6 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.coroutineScope
@@ -173,7 +175,8 @@ internal fun ArtistSongSection(
     onRetry: () -> Unit,
     onPlayAt: (Int) -> Unit,
     probeName: String = "",
-    columnsPerViewport: Int = 1
+    columnsPerViewport: Int = 1,
+    rowsPerColumn: Int = 4
 ) {
     // 整个区块装在**一个** lazy item 内部，没有 LazyColumn 的"item 不重叠"限制，
     // 所以骨架可以直接叠在内容上淡出（与主页 DiscoverySectionSlot 同款）。
@@ -187,12 +190,12 @@ internal fun ArtistSongSection(
             hasData = songs.isNotEmpty(),
             skeleton = {
                 when {
-                    loading -> ArtistSongsSkeleton(shimmer, columnsPerViewport)
+                    loading -> ArtistSongsSkeleton(shimmer, columnsPerViewport, rowsPerColumn)
                     error == null -> ArtistEmptyStatus(stringResource(R.string.artist_detail_empty))
                 }
             }
         ) {
-            SongsPagerSection(songs, pagerState, onPlayAt, columnsPerViewport)
+            SongsPagerSection(songs, pagerState, onPlayAt, columnsPerViewport, rowsPerColumn)
         }
         // Appended-page failures remain visible without hiding already loaded songs.
         if (error != null) ArtistSectionError(error, loading, onRetry)
@@ -210,8 +213,10 @@ internal fun SongsPagerSection(
     songs: List<KugouNewSong>,
     pagerState: PagerState,
     onPlayAt: (Int) -> Unit,
-    columnsPerViewport: Int = 1
+    columnsPerViewport: Int = 1,
+    rowsPerColumn: Int = 4
 ) {
+    val safeRows = rowsPerColumn.coerceAtLeast(1)
     val displaySongs = remember(songs) {
         val t0 = System.nanoTime()
         val r = songs.map { KugouRepository.toDisplayMediaItem(it) }
@@ -219,9 +224,9 @@ internal fun SongsPagerSection(
         if (ms >= 2.0) android.util.Log.w("ArtistPerf", "mapDisplay n=${songs.size} ${"%.1f".format(ms)}ms")
         r
     }
-    val pageKeys = remember(songs) {
+    val pageKeys = remember(songs, safeRows) {
         val t0 = System.nanoTime()
-        val r = songs.chunked(4).mapIndexed { index, column -> "artist-page-$index-${column.first().hash}" }
+        val r = songs.chunked(safeRows).mapIndexed { index, column -> "artist-page-$index-${column.first().hash}" }
         val ms = (System.nanoTime() - t0) / 1_000_000.0
         if (ms >= 2.0) android.util.Log.w("ArtistPerf", "pageKeys n=${songs.size} ${"%.1f".format(ms)}ms")
         r
@@ -255,15 +260,15 @@ internal fun SongsPagerSection(
                     .measureProbe("Page$page")
                     .drawProbe("Page$page")
             ) {
-                repeat(4) { row ->
-                    val index = page * 4 + row
+                repeat(safeRows) { row ->
+                    val index = page * safeRows + row
                     val item = displaySongs.getOrNull(index) ?: return@repeat
                     androidx.compose.foundation.layout.Box(
                         Modifier.fillMaxWidth().measureProbe("Row$row").drawProbe("Row$row")
                     ) {
                         MusicList(item, horizontalPadding = 0.dp) { onPlayAt(index) }
                     }
-                    if (row < 3 && index + 1 < songs.size) {
+                    if (row < safeRows - 1 && index + 1 < songs.size) {
                         OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
                     }
                 }
@@ -280,16 +285,18 @@ internal fun SongsPagerSection(
 @Composable
 internal fun ArtistSongsSkeleton(
     shimmer: SkeletonShimmer? = null,
-    columnsPerViewport: Int = 1
+    columnsPerViewport: Int = 1,
+    rowsPerColumn: Int = 4
 ) {
     val safeColumns = columnsPerViewport.coerceAtLeast(1)
+    val safeRows = rowsPerColumn.coerceAtLeast(1)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         repeat(safeColumns) {
             Column(Modifier.weight(1f)) {
-                repeat(4) {
+                repeat(safeRows) {
                     Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
                         ArtistSkeletonBlock(Modifier.size(52.dp), shimmer)
                         Spacer(Modifier.width(14.dp))
@@ -451,6 +458,89 @@ private val albumOutputDateFormat = object : ThreadLocal<java.text.DateFormat>()
         java.text.DateFormat.getDateInstance(java.text.DateFormat.DEFAULT, Locale.getDefault())
 }
 
+@Composable
+private fun rememberAlbumDateText(publishTime: String?): String? = remember(publishTime) {
+    publishTime?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+        runCatching {
+            val parsed = albumInputDateFormat.get()?.parse(raw.take(10))
+            parsed?.let { albumOutputDateFormat.get()?.format(it) }
+        }.getOrNull() ?: raw
+    }
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun ArtistLatestAlbumCover(
+    album: KugouNewAlbum,
+    coverSize: Dp,
+    sharedTransitionScope: SharedTransitionScope?,
+    animatedVisibilityScope: AnimatedVisibilityScope?
+) {
+    // 封面外壳承载 sharedElement：进入专辑详情时封面连续放大
+    val coverModifier = Modifier
+        .size(coverSize)
+        .then(
+            if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                with(sharedTransitionScope) {
+                    Modifier.sharedElement(
+                        sharedContentState = rememberSharedContentState("album/latest/${album.albumId}"),
+                        animatedVisibilityScope = animatedVisibilityScope
+                    )
+                }
+            } else Modifier
+        )
+    Box(coverModifier) {
+        ShadowImage(
+            modifier = Modifier.fillMaxSize(),
+            dataLambda = { album.coverUrl.takeIf { it.isNotEmpty() } },
+            contentDescription = album.name,
+            cornerRadius = 10.dp,
+            imageQuality = ImageQuality.HIGH,
+            matchDisplaySize = true,
+            shadowType = ShadowType.Medium
+        )
+    }
+}
+
+@Composable
+private fun ArtistLatestAlbumMetaColumn(
+    dateText: String?,
+    albumName: String,
+    titleMaxLines: Int,
+    songCount: Int,
+    underlayColor: Color,
+    modifier: Modifier = Modifier
+) {
+    // 次级文字色（日期/歌曲数）：随取色明暗分流——暗卡 = 白 + Plus 加色微光
+    // （播放页歌手名同款质感），亮卡 = 深色弱化；阈值与 ArtistArtworkColors.content 的明暗判定一致（0.179）。
+    val lightCard = underlayColor.luminance() > 0.179f
+    val secondaryText = if (lightCard) Color(0xFF161616).copy(alpha = 0.55f)
+                        else Color.White.copy(alpha = 0.45f)
+    val secondaryGlow = Modifier.then(if (lightCard) Modifier else Modifier.overlayEffect())
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        dateText?.let {
+            Text(it, fontSize = 12.5.sp, lineHeight = 16.sp, color = secondaryText, modifier = secondaryGlow)
+        }
+        Text(
+            albumName,
+            fontSize = 17.sp,
+            lineHeight = 22.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = titleMaxLines,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (songCount > 0) {
+            Text(
+                stringResource(R.string.artist_detail_songs, songCount),
+                fontSize = 12.5.sp,
+                lineHeight = 16.sp,
+                color = secondaryText,
+                modifier = secondaryGlow
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 internal fun ArtistLatestAlbumCard(
@@ -467,27 +557,12 @@ internal fun ArtistLatestAlbumCard(
     val isDark = isFlamingoInDarkMode()
     // 同心圆角规则（用户定版）：外圆角 = 内圆角 + 内边距 —— 封面 10dp + 垂直内边距 12dp = 22dp
     val shape = YosRoundedCornerShape(22.dp)
-    // 次级文字色（日期/歌曲数）：随取色明暗分流——暗卡 = 白 + Plus 加色微光
-    // （播放页歌手名同款质感），亮卡 = 深色弱化；原先的 White 35% 定版在浅色
-    // 取色底上会淡到近乎隐形（普通混合的白被亮底稀释，加色更会直接饱和融底）。
-    // 阈值与 ArtistArtworkColors.content 的明暗判定一致（0.179）。
-    val lightCard = underlayColor.luminance() > 0.179f
-    val secondaryText = if (lightCard) Color(0xFF161616).copy(alpha = 0.55f)
-                        else Color.White.copy(alpha = 0.45f)
-    val secondaryGlow = Modifier.then(if (lightCard) Modifier else Modifier.overlayEffect())
     val context = LocalContext.current
     val prefetchScope = rememberCoroutineScope()
     LaunchedEffect(album.albumId, album.coverUrl) {
         preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
     }
-    val dateText = remember(album.publishTime) {
-        album.publishTime?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
-            runCatching {
-                val parsed = albumInputDateFormat.get()?.parse(raw.take(10))
-                parsed?.let { albumOutputDateFormat.get()?.format(it) }
-            }.getOrNull() ?: raw
-        }
-    }
+    val dateText = rememberAlbumDateText(album.publishTime)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -523,51 +598,101 @@ internal fun ArtistLatestAlbumCard(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 封面外壳承载 sharedElement：进入专辑详情时封面连续放大
-        val coverModifier = Modifier
-            .size(92.dp)
-            .then(
-                if (sharedTransitionScope != null && animatedVisibilityScope != null) {
-                    with(sharedTransitionScope) {
-                        Modifier.sharedElement(
-                            sharedContentState = rememberSharedContentState("album/latest/${album.albumId}"),
-                            animatedVisibilityScope = animatedVisibilityScope
-                        )
+        ArtistLatestAlbumCover(album, 92.dp, sharedTransitionScope, animatedVisibilityScope)
+        Spacer(Modifier.width(16.dp))
+        ArtistLatestAlbumMetaColumn(
+            dateText = dateText,
+            albumName = album.name,
+            titleMaxLines = titleMaxLines,
+            songCount = songCount,
+            underlayColor = underlayColor,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/**
+ * 横屏「最新发行」无框大封面版：左侧方形大封面占满与右侧歌曲区等高的剩余高度，
+ * 右侧信息列垂直居中且靠左对齐，去掉外层半透明卡片框。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun ArtistLandscapeFeaturedAlbum(
+    album: KugouNewAlbum,
+    songCount: Int,
+    underlayColor: Color,
+    targetHeight: Dp,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    probeName: String = "",
+    modifier: Modifier = Modifier.padding(start = 20.dp, end = 4.dp),
+    onOpen: (KugouNewAlbum) -> Unit
+) {
+    val context = LocalContext.current
+    val prefetchScope = rememberCoroutineScope()
+    LaunchedEffect(album.albumId, album.coverUrl) {
+        preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
+    }
+    val dateText = rememberAlbumDateText(album.publishTime)
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .measureProbe(probeName)
+            .drawProbe(probeName)
+    ) {
+        val coverSize = minOf(targetHeight, maxWidth * 0.62f).coerceAtLeast(92.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button
+                ) {
+                    SharedCoverStyle.lastSourceCorner = 10.dp
+                    OnlineAlbumObject.setSharedCoverKey(album.albumId, "album/latest/${album.albumId}")
+                    prefetchScope.launch {
+                        coroutineScope {
+                            launch { preloadRawCover(context, album.coverUrl) }
+                            launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
+                        }
+                        onOpen(album)
                     }
-                } else Modifier
-            )
-        Box(coverModifier) {
-            ShadowImage(
-                modifier = Modifier.fillMaxSize(),
-                dataLambda = { album.coverUrl.takeIf { it.isNotEmpty() } },
-                contentDescription = album.name,
-                cornerRadius = 10.dp,
-                imageQuality = ImageQuality.HIGH,
-                matchDisplaySize = true,
-                shadowType = ShadowType.Medium
+                },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ArtistLatestAlbumCover(album, coverSize, sharedTransitionScope, animatedVisibilityScope)
+            Spacer(Modifier.width(16.dp))
+            ArtistLatestAlbumMetaColumn(
+                dateText = dateText,
+                albumName = album.name,
+                titleMaxLines = 2,
+                songCount = songCount,
+                underlayColor = underlayColor,
+                modifier = Modifier.weight(1f)
             )
         }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            dateText?.let {
-                Text(it, fontSize = 12.5.sp, lineHeight = 16.sp, color = secondaryText, modifier = secondaryGlow)
-            }
-            Text(
-                album.name,
-                fontSize = 17.sp,
-                lineHeight = 22.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = titleMaxLines,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (songCount > 0) {
-                Text(
-                    stringResource(R.string.artist_detail_songs, songCount),
-                    fontSize = 12.5.sp,
-                    lineHeight = 16.sp,
-                    color = secondaryText,
-                    modifier = secondaryGlow
-                )
+    }
+}
+
+@Composable
+internal fun ArtistLandscapeFeaturedAlbumSkeleton(
+    targetHeight: Dp,
+    shimmer: SkeletonShimmer? = null,
+    modifier: Modifier = Modifier.padding(start = 20.dp, end = 4.dp)
+) {
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val coverSize = minOf(targetHeight, maxWidth * 0.62f).coerceAtLeast(92.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ArtistSkeletonBlock(Modifier.size(coverSize), shimmer)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ArtistSkeletonBlock(Modifier.fillMaxWidth(0.45f).height(11.dp), shimmer)
+                ArtistSkeletonBlock(Modifier.fillMaxWidth(0.8f).height(15.dp), shimmer)
+                ArtistSkeletonBlock(Modifier.fillMaxWidth(0.35f).height(11.dp), shimmer)
             }
         }
     }
