@@ -11,6 +11,11 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional GitHub release tag to sync to Gitee (e.g. v0.2.6)"
+        required: false
+        type: string
 
 jobs:
   sync:
@@ -36,11 +41,11 @@ jobs:
           git push gitee --tags --force
 
       - name: Sync GitHub Release APK assets to Gitee Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         env:
           GH_TOKEN: ${{ github.token }}
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_BODY: ${{ github.event.release.body }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
@@ -48,6 +53,12 @@ jobs:
           if [ -z "$GITEE_TOKEN" ]; then
             echo "GITEE_TOKEN secret is not configured; skipping Gitee release sync."
             exit 0
+          fi
+
+          if [ -z "$RELEASE_NAME" ] && [ -n "$TAG_NAME" ]; then
+            RELEASE_NAME="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json name -q .name || echo "$TAG_NAME")"
+            RELEASE_BODY="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json body -q .body || true)"
+            IS_PRERELEASE="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease || echo "false")"
           fi
 
           mkdir -p release-apks
@@ -82,7 +93,9 @@ jobs:
           try:
               req = urllib.request.Request(f"{base}/tags/{urllib.parse.quote(tag)}", headers=headers)
               with urllib.request.urlopen(req) as resp:
-                  release_id = json.loads(resp.read().decode("utf-8")).get("id")
+                  data = json.loads(resp.read().decode("utf-8"))
+                  if isinstance(data, dict):
+                      release_id = data.get("id")
           except urllib.error.HTTPError as e:
               if e.code != 404:
                   raise
