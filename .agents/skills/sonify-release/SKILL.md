@@ -96,14 +96,14 @@ $headers = @{
     "X-GitHub-Api-Version" = "2022-11-28"
 }
 
-# Use ReadAllText (NOT Get-Content, which attaches PS NoteProperties that break ConvertTo-Json)
+# Create as draft=true first so `release: published` (which triggers sync-gitee.yml) fires ONLY after the APK is attached!
 $bodyText = [System.IO.File]::ReadAllText((Resolve-Path "docs\CHANGELOG_v<version>.md").Path, [System.Text.Encoding]::UTF8)
 $payload = @{
     tag_name = "v<version>"
     target_commitish = "master"
     name = "Sonify v<version>"
     body = $bodyText
-    draft = $false
+    draft = $true
     prerelease = $false
 } | ConvertTo-Json -Depth 4
 $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
@@ -117,6 +117,10 @@ $null = $fs.Read($bytes, 0, $bytes.Length)
 $fs.Close()
 $uploadUrl = "https://uploads.github.com/repos/XiaoZhi0729/Sonify/releases/$($release.id)/assets?name=Sonify-v<version>.apk"
 $asset = Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers $headers -ContentType "application/vnd.android.package-archive" -Body $bytes
+
+# Publish the release now that the APK is attached
+$publishPayload = [System.Text.Encoding]::UTF8.GetBytes((@{ draft = $false } | ConvertTo-Json))
+$release = Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/XiaoZhi0729/Sonify/releases/$($release.id)" -Headers $headers -ContentType "application/json; charset=utf-8" -Body $publishPayload
 ```
 
 ## 8. Verify Online APK & Activate Cloud Update Manifest
