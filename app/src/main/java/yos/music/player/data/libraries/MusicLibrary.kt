@@ -26,6 +26,7 @@ import yos.music.player.UriTypeAdapter
 import yos.music.player.code.MediaController
 import yos.music.player.data.NormalSaver
 import yos.music.player.data.SongListSaver
+import yos.music.player.data.objects.RecommendMaskCache
 import yos.music.player.data.repositories.KugouRepository.withPlayableUri
 
 /*@Parcelize
@@ -171,7 +172,7 @@ object MusicLibrary {
     // 艺人→歌曲 / 专辑→歌曲 索引：一次构建，按名查询 O(1)，
     // 避免每次 Artist[name]/Album[name] 全库 filter
     private val artistIndexCache = derivedStateOf {
-        val index = HashMap<String, MutableList<YosMediaItem>>()
+        val index = LinkedHashMap<String, MutableList<YosMediaItem>>()
         for (song in songsCache.value) {
             for (artist in song.artistsList ?: defaultArtists) {
                 index.getOrPut(artist) { mutableListOf() }.add(song)
@@ -181,21 +182,26 @@ object MusicLibrary {
     }
 
     private val albumIndexCache = derivedStateOf {
-        val index = HashMap<String, MutableList<YosMediaItem>>()
+        val index = LinkedHashMap<String, MutableList<YosMediaItem>>()
         for (song in songsCache.value) {
             index.getOrPut(song.album ?: defaultAlbum) { mutableListOf() }.add(song)
         }
         index
     }
 
-    val artists
-        get() = songs.flatMap {
-            it.artistsList ?: defaultArtists
-        }
-            .distinct()
+    private val artistsCache = derivedStateOf {
+        artistIndexCache.value.keys.toList()
+    }
 
-    val albums
-        get() = songs.distinctBy { it.album ?: defaultAlbum }.map { it.album ?: defaultAlbum }
+    private val albumsCache = derivedStateOf {
+        albumIndexCache.value.keys.toList()
+    }
+
+    val artists: List<String>
+        get() = artistsCache.value
+
+    val albums: List<String>
+        get() = albumsCache.value
 
     @Stable
     object Album {
@@ -228,6 +234,9 @@ object MusicLibrary {
             add(item)
             addAll(recentlyPlayed.filter { (it.mediaId ?: it.uri?.toString()) != recordKey })
         }.take(RECENTLY_PLAYED_LIMIT)
+        MediaController.appContext?.let { ctx ->
+            RecommendMaskCache.warmUp(ctx, listOf(item.thumb))
+        }
         println("recordRecentlyPlayed ${item.title}，历史 ${recentlyPlayed.size} 条")
     }
 

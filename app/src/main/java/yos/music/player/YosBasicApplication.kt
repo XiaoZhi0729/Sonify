@@ -136,6 +136,12 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             // 解析地址缓存同样跨重启保留：30 分钟内重启可免去第一首的 /song/url 解析
             yos.music.player.data.repositories.KugouRepository.preloadUrlCache()
             yos.music.player.data.objects.ArtistPresentationCache.preload()
+            // 资料库在线数据对象同样在主线程提前建好 State，避免 IO 预热线程先触碰
+            // mutableStateOf 导致主线程首帧抛 "Reading a state that was created after the snapshot was taken"。
+            yos.music.player.data.objects.FollowedArtistsObject.artists.value
+            yos.music.player.data.objects.CollectedAlbumsObject.albums.value
+            yos.music.player.data.objects.CollectedPlaylistsObject.entries.value
+            yos.music.player.data.objects.UserPlaylistsObject.playlists.value
             // 缓存上限设置项（Int，不依赖类型转换器）：主线程先建好，避免播放线程首次读它时
             // 把 DataSaver 状态创建到非全局快照里，主线程（设置页）再读即崩。
             yos.music.player.data.libraries.SettingsLibrary.AudioCacheCapMb
@@ -161,6 +167,17 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // 与 DiscoveryObject 并列启动，把这段串行 IO 挪到首帧之前。
         CoroutineScope(Dispatchers.IO).launch {
             runCatching { yos.music.player.data.objects.PersonalFmObject.ensureLoaded() }
+        }
+
+        // 资料库在线数据启动预热：歌单、关注歌手、收藏专辑、收藏歌单在首帧前就加载持久化快照并按 TTL 同步，
+        // 避免切到资料库（或本地 ↔ 在线切换）时才现拉导致卡顿或空白。
+        CoroutineScope(Dispatchers.IO).launch {
+            if (yos.music.player.native.KugouApiService.isLoggedIn()) {
+                runCatching { yos.music.player.data.objects.UserPlaylistsObject.ensureLoaded() }
+                runCatching { yos.music.player.data.objects.FollowedArtistsObject.ensureLoaded() }
+                runCatching { yos.music.player.data.objects.CollectedAlbumsObject.ensureLoaded() }
+                runCatching { yos.music.player.data.objects.CollectedPlaylistsObject.ensureLoaded() }
+            }
         }
 
         // 音频字节缓存上限：主线程读设置一次存进 OnlineAudioCache 的普通字段，缓存层后续
@@ -253,7 +270,13 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
         // DataSaver 列表，必须在上面各 registerTypeConverters 之后、且在主线程先触发一次——
         // 否则（早于转换器注册）会抛 "YosDataSaver: Cannot read []"，或让后台线程抢先初始化
         // 状态、主线程读取时抛 "Reading a state that was created after the snapshot was taken"。
-        runCatching { yos.music.player.data.libraries.MusicLibrary.recentlyPlayed }
+        runCatching {
+            val recent = yos.music.player.data.libraries.MusicLibrary.recentlyPlayed
+            yos.music.player.data.objects.RecommendMaskCache.warmUp(
+                this,
+                recent.take(10).map { it.thumb }
+            )
+        }
 
         // 迷你播放器在 MediaSession 异步连接前就会组合；先用上次保存的条目填充标题和封面，
         // 避免首帧显示默认占位。媒体会话连接后仍按下方恢复流程校正当前条目，不会因此自动播放。

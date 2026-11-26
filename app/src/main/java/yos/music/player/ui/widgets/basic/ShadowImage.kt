@@ -189,6 +189,11 @@ fun ShadowImage(
      * RAW 档不受影响（它本来就是按源图原尺寸解码）。
      */
     matchDisplaySize: Boolean = false,
+    /**
+     * 调用方已知网格/卡片的目标像素边长时直接传入，首帧即按目标尺寸请求 Coil，
+     * 跳过 `onSizeChanged` 在 Layout 阶段的回写与第二帧重建请求。
+     */
+    targetSizePx: Int = 0,
     onImageLoaded: (() -> Unit)? = null
 ) = YosWrapper {
     val shape = remember(cornerRadius) { YosRoundedCornerShape(cornerRadius) }
@@ -200,8 +205,9 @@ fun ShadowImage(
     // 测量到的实际显示边长（px）。0 = 尚未测量，此时先用 1080 占位请求，
     // 测完立刻按真实尺寸重建请求（Compose 会在同一帧内完成，用户看不到中间态）。
     var displayPx by remember(loadUrl) { mutableIntStateOf(0) }
+    val resolvedSizePx = if (targetSizePx > 0) targetSizePx else displayPx
     val imgContext = LocalContext.current
-    val request = remember(loadUrl, url, imageQuality, hiresCover, matchDisplaySize, displayPx, imgContext) {
+    val request = remember(loadUrl, url, imageQuality, hiresCover, matchDisplaySize, resolvedSizePx, imgContext) {
         ImageRequest.Builder(imgContext).data(data = loadUrl).crossfade(false)
             .error(R.drawable.placeholder_music_default_artwork)
             .placeholder(R.drawable.placeholder_music_default_artwork)
@@ -232,7 +238,7 @@ fun ShadowImage(
                         // INEXACT：源图本身小于显示尺寸时也接受放大版本，不反复重试。
                         this.precision(Precision.INEXACT)
                         this.size(
-                            if (displayPx > 0) displayPx else PlaybackCoverSize
+                            if (resolvedSizePx > 0) resolvedSizePx else PlaybackCoverSize
                         )
                     }
                     else -> {
@@ -256,7 +262,7 @@ fun ShadowImage(
             // 实测显示边长：决定"要多大一张图才算清楚"。只在需要时挂，
             // 其余调用点保持原样（多一层布局回调没有收益）。
             .then(
-                if (matchDisplaySize) {
+                if (matchDisplaySize && targetSizePx <= 0) {
                     Modifier.onSizeChanged { displayPx = it.width.coerceAtLeast(0) }
                 } else Modifier
             )
