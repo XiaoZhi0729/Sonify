@@ -44,12 +44,12 @@ private const val SAMPLE_SIZE = 96
 private const val DECODE_SIZE = SAMPLE_SIZE
 
 /**
- * 读取（必要时计算）某张封面的板块渐变。
+ * 读取（必要时计算）某张封面对应的 HCT 色相（0..360）。
  *
- * @param coverUrl 该台歌曲的封面地址。空值返回 null，调用方沿用上一台的颜色。
+ * @param coverUrl 该台歌曲的封面地址。空值或尚未解析完成时返回 null。
  */
 @Composable
-internal fun rememberFmGradient(coverUrl: String?): TrackBackdropGradient? {
+internal fun rememberFmHue(coverUrl: String?): Float? {
     if (coverUrl.isNullOrBlank()) return null
     val isDark = isFlamingoInDarkMode()
     val key = remember(coverUrl, isDark) { fmPaletteKey(coverUrl, isDark) }
@@ -95,7 +95,18 @@ internal fun rememberFmGradient(coverUrl: String?): TrackBackdropGradient? {
         }.getOrNull() ?: return@LaunchedEffect
     }
 
-    val hue = remember(packed) { decodePalette(packed)?.first }
+    return remember(packed) { decodePalette(packed)?.first }
+}
+
+/**
+ * 读取（必要时计算）某张封面的板块渐变。
+ *
+ * @param coverUrl 该台歌曲的封面地址。空值返回 null，调用方沿用上一台的颜色。
+ */
+@Composable
+internal fun rememberFmGradient(coverUrl: String?): TrackBackdropGradient? {
+    val isDark = isFlamingoInDarkMode()
+    val hue = rememberFmHue(coverUrl)
     return remember(hue, isDark) {
         if (hue == null) null else gradientFromHue(hue, isDark)
     }

@@ -76,6 +76,16 @@ fun Settings(navController: NavController) =
                         ListHeader(stringResource(id = R.string.settings_library_title))
                         RoundColumn {
                             SwitchItem(
+                                title = stringResource(id = R.string.settings_library_use_new_library),
+                                onClick = {
+                                    SettingsLibrary.UseNewLibrary =
+                                        !SettingsLibrary.UseNewLibrary
+                                },
+                                checkedLambda = { SettingsLibrary.UseNewLibrary }
+                            )
+
+                            Divider()
+                            SwitchItem(
                                 title = stringResource(id = R.string.settings_library_show_local_library),
                                 onClick = {
                                     SettingsLibrary.ShowLocalLibrary =

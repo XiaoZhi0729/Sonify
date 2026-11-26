@@ -7,12 +7,20 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
+import yos.music.player.R
+import yos.music.player.data.libraries.FavPlayListLibrary
+import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.libraries.PlayListLibrary
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
 import yos.music.player.ui.pages.discovery.PersonalFmDetail
+import yos.music.player.ui.pages.discovery.RecentPlayedDetail
 import yos.music.player.ui.pages.gallery.MusicGalleryPage
 import yos.music.player.ui.pages.library.Library
 import yos.music.player.ui.pages.library.NormalMusic
@@ -53,13 +61,59 @@ fun LibraryNavHost(
                     navController = navController,
                     onOpenSettings = { navigator.openSettings(HouseId.Library) },
                     onOpenOnlinePlaylist = { selection -> navController.navigate(selection.toRoute()) },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable,
                 )
             }
         }
         composable(UI.PlayLists) { PlayLists(navController) }
         composable(UI.NormalMusic) { NormalMusic(navController) }
+        composable(
+            route = UI.LocalArtistSongsPattern,
+            arguments = listOf(
+                navArgument(UI.LocalArtistSongsArg) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }
+            )
+        ) { entry ->
+            val artistName = entry.arguments?.getString(UI.LocalArtistSongsArg).orEmpty()
+            NormalMusic(
+                navController = navController,
+                overrideTitle = artistName,
+                overrideList = MusicLibrary.Artist[artistName],
+            )
+        }
+        composable(UI.LocalFavorites) {
+            NormalMusic(
+                navController = navController,
+                overrideTitle = stringResource(id = R.string.page_library_playlists_fav_title),
+                overrideList = FavPlayListLibrary.favPlayList,
+            )
+        }
+        composable(
+            route = UI.LocalPlaylistDetailPattern,
+            arguments = listOf(
+                navArgument(UI.LocalPlaylistIdArg) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                }
+            )
+        ) { entry ->
+            val playlistId = entry.arguments?.getString(UI.LocalPlaylistIdArg).orEmpty()
+            val target = PlayListLibrary.playList.firstOrNull { it.listID == playlistId }
+            val byUri = MusicLibrary.songs.associateBy { it.uri }
+            val resolvedSongs = target?.songDataList?.mapNotNull { byUri[it] }.orEmpty()
+            NormalMusic(
+                navController = navController,
+                overrideTitle = target?.name.orEmpty(),
+                overrideList = resolvedSongs,
+                localPlaylistId = target?.listID,
+            )
+        }
         composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
         composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
+        composable(UI.RecentPlayedDetail) { RecentPlayedDetail(navController) }
         composable(UI.MusicGallery) { MusicGalleryPage(navController) }
         composable(UI.OnlinePlaylists) {
             OnlinePlaylists(

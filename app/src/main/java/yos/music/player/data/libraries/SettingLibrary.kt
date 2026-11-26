@@ -248,6 +248,24 @@ object SettingsLibrary {
     )
 
     /**
+     * 是否使用新版资料库布局（关闭时回退到经典列表布局）
+     */
+    var UseNewLibrary by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_library_use_new_library",
+        initialValue = true
+    )
+
+    /**
+     * 新版资料库中置顶的歌单 / 收藏专辑 / 本地播放列表标识（逗号分隔）
+     */
+    var LibraryPinnedIds by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_library_pinned_ids",
+        initialValue = ""
+    )
+
+    /**
      * 每次启动时刷新媒体库
      */
     var RefreshEveryTime by mutableDataSaverStateOf(
@@ -905,6 +923,8 @@ object SettingsLibrary {
         OnlineArtistsDescending = false
         NowPlayingTranslation = true
         ShowLocalLibrary = true
+        UseNewLibrary = true
+        LibraryPinnedIds = ""
         RefreshEveryTime = false
         LyricFontWeight = "800"
         LyricLineBalance = false

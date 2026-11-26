@@ -48,3 +48,41 @@ fun Modifier.overlayEffect(expand: Dp = 0.dp): Modifier {
         }
     }
 }
+
+/**
+ * 支持在绘制期动态读取 [alpha] 的 [overlayEffect] 重载，避免动画/滚动期间
+ * 因颜色 alpha 变化触发组合重组，同时保证不引入父级离屏缓冲而破坏 `BlendMode.Plus`。
+ */
+fun Modifier.overlayEffect(
+    expand: Dp = 0.dp,
+    alpha: () -> Float
+): Modifier {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && expand == 0.dp) {
+        return this.graphicsLayer {
+            compositingStrategy = CompositingStrategy.Offscreen
+            blendMode = BlendMode.Plus
+            clip = false
+            this.alpha = alpha()
+        }
+    }
+    return this.drawWithCache {
+        val overlayPaint = Paint().apply {
+            blendMode = BlendMode.Plus
+        }
+        val expandPx = expand.toPx()
+        val rect = Rect(-expandPx, -expandPx, size.width + expandPx, size.height + expandPx)
+
+        onDrawWithContent {
+            val currentAlpha = alpha()
+            if (currentAlpha <= 0f) return@onDrawWithContent
+            overlayPaint.alpha = currentAlpha
+            val canvas = this.drawContext.canvas
+
+            canvas.saveLayer(rect, overlayPaint)
+
+            drawContent()
+
+            canvas.restore()
+        }
+    }
+}

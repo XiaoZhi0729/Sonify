@@ -185,6 +185,60 @@ suspend fun PointerInputScope.claimHorizontalDragGestures(
     }
 }
 
+/**
+ * 纵向独占拖动：只有**纵向位移越过 touchSlop、纵向占优且 [canDrag] 允许**时才认领并消费指针。
+ *
+ * 用于水平 Pager / 纵向 LazyColumn 嵌套内的垂直翻页区域：横向拖动让给父级 Pager，
+ * 边界不可继续翻页的纵向拖动让给父级页面滚动，未越过 touchSlop 抬起不影响子项点击。
+ */
+suspend fun PointerInputScope.claimVerticalDragGestures(
+    canDrag: (deltaY: Float) -> Boolean = { true },
+    onStart: (down: PointerInputChange) -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+    onDrag: (dragAmount: Offset) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        onStart(down)
+
+        val pointer = down.id
+        var total = Offset.Zero
+        var claimed = false
+        var finished = false
+        var cancelled = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.fastFirstOrNull { it.id == pointer }
+            if (change == null) {
+                cancelled = true
+                break
+            }
+            if (change.changedToUpIgnoreConsumed()) {
+                finished = true
+                break
+            }
+            if (change.isConsumed) {
+                cancelled = true
+                break
+            }
+            val delta = change.positionChange()
+            total += delta
+            if (!claimed) {
+                if (total.getDistance() <= viewConfiguration.touchSlop) continue
+                if (abs(total.y) <= abs(total.x) || !canDrag(total.y)) {
+                    cancelled = true
+                    break
+                }
+                claimed = true
+            }
+            change.consume()
+            onDrag(delta)
+        }
+        if (finished) onEnd() else onCancel()
+    }
+}
+
 private suspend inline fun AwaitPointerEventScope.drag(
     pointerId: PointerId,
     onDrag: (PointerInputChange) -> Unit

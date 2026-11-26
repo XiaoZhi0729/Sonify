@@ -153,7 +153,7 @@ half4 main(float2 coord) {
         }
         drawContent()
     }
-    val gestureModifier = Modifier.pointerInput(animationScope) {
+    val gestureModifier = Modifier.pointerInput(this) {
         inspectDragGestures(
             onDragStart = { down ->
                 start = down.position
@@ -198,7 +198,7 @@ half4 main(float2 coord) {
      *
      * 与 [gestureModifier] 的差异只有"consume"这一点，动画规格完全一致。
      */
-    val claimingGestureModifier: Modifier = Modifier.pointerInput(animationScope) {
+    val claimingGestureModifier: Modifier = Modifier.pointerInput(this) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             start = down.position
@@ -247,7 +247,7 @@ half4 main(float2 coord) {
     // 按下时把 location 吸附到按压点，弥散高光从手指位置绽开（Nexio 原版 pressOnly
     // 不更新 position，高光会固定在 (0,0) 角落，这里修正）。
     val pressOnlyModifier: Modifier =
-        Modifier.pointerInput(animationScope) {
+        Modifier.pointerInput(this) {
             awaitEachGesture {
                 val down = awaitFirstDown()
                 start = down.position

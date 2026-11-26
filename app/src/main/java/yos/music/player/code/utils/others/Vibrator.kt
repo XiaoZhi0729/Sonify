@@ -11,6 +11,26 @@ import androidx.compose.runtime.Stable
 @Stable
 class Vibrator {
     companion object {
+        fun tick(context: Context) {
+            runCatching {
+                val vibrator =
+                    context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    vibrator.vibrate(
+                        VibrationEffect.createPredefined(
+                            VibrationEffect.EFFECT_TICK
+                        )
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(
+                        VibrationEffect.createOneShot(10L, 48)
+                    )
+                } else {
+                    vibrator.vibrate(10)
+                }
+            }
+        }
+
         fun click(context: Context) {
             val vibrator =
                 context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator

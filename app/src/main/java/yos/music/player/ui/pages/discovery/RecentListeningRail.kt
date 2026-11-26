@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -31,11 +32,11 @@ internal fun recentSongKey(song: YosMediaItem): String =
         ?: listOf(song.title.orEmpty(), song.artists.orEmpty(), song.duration).joinToString("|")
 
 @Composable
-internal fun RecentListeningRail(
+fun RecentListeningRail(
     songs: List<YosMediaItem>,
-    onSongClick: (YosMediaItem, List<YosMediaItem>) -> Unit
+    onSongClick: (YosMediaItem, List<YosMediaItem>) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
 ) {
-    val listState = rememberLazyListState()
     val displayedSongs = remember { mutableStateOf(songs) }
     val updates = remember { Channel<List<YosMediaItem>>(Channel.CONFLATED) }
     val followHead = remember { mutableStateOf(true) }

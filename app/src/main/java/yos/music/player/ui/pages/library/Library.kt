@@ -1,8 +1,12 @@
 package yos.music.player.ui.pages.library
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -17,13 +21,18 @@ import io.github.alexzhirkevich.cupertino.icons.outlined.PersonCropCircle
 import yos.music.player.R
 import yos.music.player.data.libraries.MusicLibrary.songs
 import yos.music.player.data.libraries.SettingsLibrary
+import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.KugouProfileState
+import yos.music.player.data.objects.KugouVipState
 import yos.music.player.data.objects.LibraryObject
+import yos.music.player.data.repositories.KugouProfileRepository
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.settings.GroupSpacer
 import yos.music.player.ui.pages.settings.ListHeader
 import yos.music.player.ui.toUI
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.YosWrapper
 
 /**
@@ -34,14 +43,48 @@ import yos.music.player.ui.widgets.basic.YosWrapper
  * 分区标题复用 Settings 的 ListHeader；条目沿用原版 SmallLabelItem + LibraryDivider
  * 平铺语言（Library 原生即为无边距卡片平铺，与 Settings 的 RoundColumn 卡片语言区分）。
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun Library(
     navController: NavController,
     onOpenSettings: (() -> Unit)? = null,
-    onOpenOnlinePlaylist: ((PlaylistSelection) -> Unit)? = null
+    onOpenOnlinePlaylist: ((PlaylistSelection) -> Unit)? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val openSettings = onOpenSettings ?: { navController.toUI(UI.Settings.Main) }
     val openOnlinePlaylist = onOpenOnlinePlaylist ?: { selection: PlaylistSelection -> navController.navigate(selection.toRoute()) }
+    if (SettingsLibrary.UseNewLibrary) {
+        NewLibrary(
+            navController = navController,
+            onOpenSettings = openSettings,
+            onOpenOnlinePlaylist = openOnlinePlaylist,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+        )
+    } else {
+        ClassicLibrary(
+            navController = navController,
+            onOpenSettings = openSettings,
+            onOpenOnlinePlaylist = openOnlinePlaylist
+        )
+    }
+}
+
+@Composable
+private fun ClassicLibrary(
+    navController: NavController,
+    onOpenSettings: () -> Unit,
+    onOpenOnlinePlaylist: (PlaylistSelection) -> Unit
+) {
+    // 顶栏右上角头像：与新版资料库保持一致（头像 + 更多）。
+    val isLoggedIn = KugouAccountState.isLoggedIn
+    val vipDetail = KugouVipState.vipDetail
+    val isVip = KugouAccountState.hasVipToken || (vipDetail?.isVip == true)
+    LaunchedEffect(isLoggedIn, KugouAccountState.userid) {
+        if (isLoggedIn) KugouProfileRepository.ensureLoaded()
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -49,11 +92,23 @@ fun Library(
     ) {
         Title(
             title = stringResource(id = R.string.page_library_title),
-            topRightIcon = Icons.Filled.MoreVert,
-            onTopRightIcon = {
-                openSettings()
+            extraTopPadding = 57.dp,
+            leftBarIcon = {
+                KugouProfileAvatarButton(
+                    isLoggedIn = isLoggedIn,
+                    nickname = KugouProfileState.nickname ?: vipDetail?.nickname,
+                    userid = KugouAccountState.userid,
+                    isVip = isVip,
+                    onClick = { navController.toUI(UI.Settings.KugouLogin) },
+                    avatarUrl = KugouProfileState.avatarUrl
+                )
             },
-            extraTopPadding = 57.dp
+            rightBarIcon = {
+                TitleBarIcon(
+                    icon = Icons.Filled.MoreVert,
+                    onBack = onOpenSettings
+                )
+            }
         ) {
             item("Library") {
                 Column(

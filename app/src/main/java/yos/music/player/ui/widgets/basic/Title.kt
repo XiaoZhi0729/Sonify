@@ -199,6 +199,7 @@ fun Title(
     rightIcon: ImageVector? = null,
     onRightIcon: (() -> Unit)? = null,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     bottomPadding: Dp = 134.dp,
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
@@ -225,6 +226,7 @@ fun Title(
         rightIcon = rightIcon,
         onRightIcon = onRightIcon,
         rightBarIcon = rightBarIcon,
+        leftBarIcon = leftBarIcon,
         grid = false,
         listState = listState,
         bottomPadding = bottomPadding,
@@ -248,6 +250,7 @@ fun TitleWithLazyVerticalGrid(
     rightIcon: ImageVector? = null,
     onRightIcon: (() -> Unit)? = null,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     minItemSize: Dp = DiscoveryMinImageSize,
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
@@ -268,6 +271,7 @@ fun TitleWithLazyVerticalGrid(
         rightIcon = rightIcon,
         onRightIcon = onRightIcon,
         rightBarIcon = rightBarIcon,
+        leftBarIcon = leftBarIcon,
         minItemSize = minItemSize,
         grid = true,
         extraTopPadding = extraTopPadding,
@@ -289,6 +293,7 @@ private fun BaseTitle(
     rightIcon: ImageVector? = null,
     onRightIcon: (() -> Unit)? = null,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     minItemSize: Dp = DiscoveryMinImageSize,
     grid: Boolean,
     bottomPadding: Dp = 134.dp,
@@ -315,6 +320,7 @@ private fun BaseTitle(
             rightIcon = rightIcon,
             onRightIcon = onRightIcon,
             rightBarIcon = rightBarIcon,
+            leftBarIcon = leftBarIcon,
             minItemSize = minItemSize,
             extraTopPadding = extraTopPadding,
             topRightIcon = topRightIcon,
@@ -334,6 +340,7 @@ private fun BaseTitle(
             rightIcon = rightIcon,
             onRightIcon = onRightIcon,
             rightBarIcon = rightBarIcon,
+            leftBarIcon = leftBarIcon,
             bottomPadding = bottomPadding,
             extraTopPadding = extraTopPadding,
             topRightIcon = topRightIcon,
@@ -452,6 +459,7 @@ private fun BaseTitleGrid(
     rightIcon: ImageVector? = null,
     onRightIcon: (() -> Unit)? = null,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     minItemSize: Dp = DiscoveryMinImageSize,
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
@@ -578,7 +586,8 @@ private fun BaseTitleGrid(
                 showSmallTitle = collapse.showSmallTitle,
                 backdrop = titleBackdrop,
                 barBackgroundVisible = collapse.showBarBackground,
-                rightBarIcon = effectiveRightBarIcon
+                rightBarIcon = effectiveRightBarIcon,
+                leftBarIcon = leftBarIcon
             )
 
             if (showIndexBar) {
@@ -609,6 +618,7 @@ private fun BaseTitleList(
     rightIcon: ImageVector? = null,
     onRightIcon: (() -> Unit)? = null,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     bottomPadding: Dp = 134.dp,
     extraTopPadding: Dp = 0.dp,
     topRightIcon: ImageVector? = null,
@@ -738,7 +748,8 @@ private fun BaseTitleList(
                 showSmallTitle = collapse.showSmallTitle,
                 backdrop = titleBackdrop,
                 barBackgroundVisible = collapse.showBarBackground,
-                rightBarIcon = effectiveRightBarIcon
+                rightBarIcon = effectiveRightBarIcon,
+                leftBarIcon = leftBarIcon
             )
 
             if (showIndexBar) {
@@ -1143,6 +1154,14 @@ fun TitleBar(
     title: String,
     onBack: (() -> Unit)?,
     rightBarIcon: @Composable (RowScope.() -> Unit)? = null,
+    /**
+     * 顶栏左侧槽位（与 [rightBarIcon] 同一行、同一高度，只是靠左）。
+     *
+     * 一级 Tab 页（资料库）在无返回键时用它放账号头像：位置与「更多」圆钮齐平对称，
+     * 不占大标题那行，因此大标题 57dp 下移与滚动折叠全都不受影响。
+     * 有 [onBack] 时该槽位不渲染（返回键优先，避免两个控件叠在左端）。
+     */
+    leftBarIcon: @Composable (RowScope.() -> Unit)? = null,
     showSmallTitle: State<Boolean>,
     // 页面内容录制层（见 rememberTitleBackdrop）。必须是 LayerBackdrop：顶栏材质要把
     // 自己的绘制结果导出成第二个层，供栏内玻璃圆钮采样。
@@ -1297,6 +1316,19 @@ fun TitleBar(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    // 左侧槽位：与右侧「更多」同一行、同一垂直中心，只是靠最左。
+                    // 有返回键时不渲染（返回键已占左端）。
+                    // 不写 fillMaxSize：只占内容宽度，避免盖住中间小标题的命中区。
+                    if (leftBarIcon != null && onBack == null) {
+                        Row(
+                            Modifier.padding(start = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            leftBarIcon()
                         }
                     }
 
