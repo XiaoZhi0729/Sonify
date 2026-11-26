@@ -1,5 +1,6 @@
 package yos.music.player.ui.widgets.liquid
 
+import android.content.res.Configuration
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.ui.Modifier
@@ -18,11 +19,14 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.platform.InspectorInfo
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -34,7 +38,9 @@ import com.kyant.backdrop.internal.setRuntimeShader
 import com.kyant.backdrop.isRuntimeShaderSupported
 import com.kyant.shapes.RoundedRectangularShape
 import org.intellij.lang.annotations.Language
+import yos.music.player.data.libraries.SettingsLibrary
 import kotlin.math.ceil
+import kotlin.math.min
 
 private val Ios27EdgeAlwaysEnabled: () -> Boolean = { true }
 
@@ -106,7 +112,7 @@ private class Ios27GlassEdgeNode(
     var shapeProvider: () -> Shape,
     var enabled: () -> Boolean,
     var drawSurfaceShading: Boolean,
-) : DrawModifierNode, Modifier.Node() {
+) : DrawModifierNode, CompositionLocalConsumerModifierNode, Modifier.Node() {
 
     override val shouldAutoInvalidate: Boolean = false
 
@@ -131,11 +137,23 @@ private class Ios27GlassEdgeNode(
         style = PaintingStyle.Stroke
         blendMode = BlendMode.ColorBurn
     }
+    private val darkInnerShadowPaint = Paint().apply {
+        style = PaintingStyle.Fill
+        color = Color.White
+        blendMode = BlendMode.SrcOver
+    }
 
     private var prevOutline: Outline? = null
     private var prevDensity = Float.NaN
     private var prevLayoutDirection: LayoutDirection? = null
     private var hasRecorded = false
+
+    private fun isDarkTheme(): Boolean = when (SettingsLibrary.CustomTheme) {
+        "Dark" -> true
+        "Light" -> false
+        else -> (currentValueOf(LocalConfiguration).uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+    }
 
     override fun ContentDrawScope.draw() {
         if (!enabled() || size.width <= 0f || size.height <= 0f) {
@@ -150,20 +168,54 @@ private class Ios27GlassEdgeNode(
         } else {
             null
         }
+        val isDark = isDarkTheme()
+        val useShader = isRuntimeShaderSupported()
+        val cornerRadii = if (useShader) getEdgeCornerRadii(currentShape) else null
 
-        // 先铺上轻薄的纵向立体明暗面，再画子内容（图标/文字），避免压暗前景内容
-        if (drawSurfaceShading) {
+        // 先铺上轻薄的纵向立体明暗面，以及深色模式下的上下两侧白色内阴影，再画子内容（图标/文字），避免压暗或冲白前景内容
+        if (drawSurfaceShading || isDark) {
             val canvas = drawContext.canvas
             canvas.save()
             canvas.clipOutline(outline, localClipPath)
-            drawRect(
-                brush = Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.040f),
-                    1f to Color.Black.copy(alpha = 0.015f),
-                    startY = 0f,
-                    endY = size.height,
+            if (drawSurfaceShading) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.040f),
+                        1f to Color.Black.copy(alpha = 0.015f),
+                        startY = 0f,
+                        endY = size.height,
+                    )
                 )
-            )
+            }
+            if (isDark) {
+                val shadowDepth = min(10.dp.toPx(), size.height * 0.30f)
+                if (useShader && cornerRadii != null) {
+                    val innerShadowShader = runtimeShaderCache.obtainRuntimeShader(
+                        "Ios27DarkInnerShadow",
+                        Ios27DarkInnerShadowShaderString,
+                    ).apply {
+                        setFloatUniform("size", size.width, size.height)
+                        setFloatUniform("cornerRadii", cornerRadii)
+                        setFloatUniform("shadowDepth", shadowDepth)
+                        setFloatUniform("maxAlpha", 0.055f)
+                    }
+                    darkInnerShadowPaint.color = Color.White
+                    darkInnerShadowPaint.setRuntimeShader(innerShadowShader)
+                    canvas.drawRect(0f, 0f, size.width, size.height, darkInnerShadowPaint)
+                } else {
+                    val depthFraction = (shadowDepth / size.height).coerceIn(0.01f, 0.48f)
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.White.copy(alpha = 0.035f),
+                            depthFraction to Color.Transparent,
+                            1f - depthFraction to Color.Transparent,
+                            1f to Color.White.copy(alpha = 0.035f),
+                            startY = 0f,
+                            endY = size.height,
+                        )
+                    )
+                }
+            }
             canvas.restore()
         }
 
@@ -171,8 +223,6 @@ private class Ios27GlassEdgeNode(
 
         val minHalfDim = size.minDimension / 2f
         val rimHalfPx = 0.36f.dp.toPx().coerceAtLeast(1f).fastCoerceAtMost(minHalfDim)
-        val useShader = isRuntimeShaderSupported()
-        val cornerRadii = if (useShader) getEdgeCornerRadii(currentShape) else null
 
         // 第 1 层：内缩在黑边以内的 plusLighter 羽化高光倒角
         val layer = bevelLayer
@@ -432,4 +482,55 @@ half4 main(float2 coord) {
     float horizMask = smoothstep(0.55, 0.88, abs(grad.x));
     float intensity = baseline + (1.0 - baseline) * horizMask;
     return color * intensity;
+}"""
+
+@Language("AGSL")
+private const val Ios27DarkInnerShadowShaderString = """
+uniform float2 size;
+uniform float4 cornerRadii;
+uniform float shadowDepth;
+uniform float maxAlpha;
+
+float radiusAt(float2 coord, float4 radii) {
+    if (coord.x >= 0.0) {
+        if (coord.y <= 0.0) return radii.y;
+        else return radii.z;
+    } else {
+        if (coord.y <= 0.0) return radii.x;
+        else return radii.w;
+    }
+}
+
+float sdRoundedRect(float2 coord, float2 halfSize, float radius) {
+    float2 q = abs(coord) - (halfSize - float2(radius));
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+}
+
+float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
+    float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
+    if (cornerCoord.x >= 0.0 || cornerCoord.y >= 0.0) {
+        return sign(coord) * normalize(max(cornerCoord, 0.0));
+    } else {
+        float gradX = step(cornerCoord.y, cornerCoord.x);
+        return sign(coord) * float2(gradX, 1.0 - gradX);
+    }
+}
+
+half4 main(float2 coord) {
+    float2 halfSize = size * 0.5;
+    float2 centeredCoord = coord - halfSize;
+    float radius = radiusAt(centeredCoord, cornerRadii);
+
+    float distFromEdge = max(-sdRoundedRect(centeredCoord, halfSize, radius), 0.0);
+    float vertT = clamp(1.0 - distFromEdge / max(shadowDepth, 1.0), 0.0, 1.0);
+    float edgeFalloff = vertT * vertT * (3.0 - 2.0 * vertT);
+
+    float2 grad = gradSdRoundedRect(centeredCoord, halfSize, radius);
+    float topBottomMask = smoothstep(0.25, 0.85, abs(grad.y));
+
+    float nx = clamp(abs(centeredCoord.x) / max(halfSize.x, 1.0), 0.0, 1.0);
+    float horizWeight = mix(0.45, 1.0, smoothstep(0.0, 0.90, nx));
+
+    float intensity = maxAlpha * edgeFalloff * topBottomMask * horizWeight;
+    return half4(intensity, intensity, intensity, intensity);
 }"""

@@ -317,12 +317,12 @@ class ProgressiveBlurMathTest {
     fun elongatedTabletLandscapeCentersDockedCoverAboveControlsAndProtectsMirrorSeams() {
         val cfg = ProgressiveBlurConfig.defaultTabletLandscape()
         assertEquals(0.65f, cfg.coverSize, 1e-5f)
-        assertEquals(0.30f, cfg.blurStart, 1e-5f)
-        assertEquals(0.59f, cfg.blurEnd, 1e-5f)
+        assertEquals(0.35f, cfg.blurStart, 1e-5f)
+        assertEquals(0.56f, cfg.blurEnd, 1e-5f)
         assertEquals(0.38f, cfg.blurStartY, 1e-5f)
         assertEquals(0.80f, cfg.blurEndY, 1e-5f)
-        assertEquals(5.65f, cfg.maxBlurLevel, 1e-5f)
-        assertEquals(0.21f, cfg.ambientBlend, 1e-5f)
+        assertEquals(5.95f, cfg.maxBlurLevel, 1e-5f)
+        assertEquals(0.85f, cfg.ambientBlend, 1e-5f)
         assertEquals(0.22f, cfg.scrimMaxAlpha, 1e-5f)
         assertEquals(1.28f, cfg.blurSaturation, 1e-5f)
 
@@ -333,8 +333,8 @@ class ProgressiveBlurMathTest {
         assertEquals(0f, ProgressiveBlurMath.dockedOriginX(split75), 1e-5f)
 
         val (refStart, refEnd) = ProgressiveBlurMath.resolveHorizontalBlurEdges(split75, cfg)
-        assertEquals(0.30f, refStart, 1e-4f)
-        assertEquals(0.59f, refEnd, 1e-4f)
+        assertEquals(0.35f, refStart, 1e-4f)
+        assertEquals(0.56f, refEnd, 1e-4f)
 
         // 16:10, 16:9, 20:9 center the docked cover at 0.225f and preserve symmetric seam blur.
         val wideViewports = listOf(

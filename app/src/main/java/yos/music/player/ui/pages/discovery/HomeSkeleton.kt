@@ -226,11 +226,31 @@ private fun SkeletonCard(
  */
 @Composable
 internal fun HomeSkeletonSongColumn(shimmer: SkeletonShimmer) {
-    Column(
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 39.dp)
+            .clipToBounds()
     ) {
+        val layout = calculateDiscoverySongColumnsLayout(containerWidth = maxWidth)
+        Row(Modifier.padding(start = 20.dp)) {
+            repeat(layout.columnsPerViewport) {
+                HomeSkeletonSingleSongColumn(
+                    shimmer = shimmer,
+                    modifier = Modifier
+                        .width(layout.pageWidth)
+                        .padding(end = layout.columnEndGap)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeSkeletonSingleSongColumn(
+    shimmer: SkeletonShimmer,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier) {
         repeat(SongsPerColumn) { row ->
             Row(
                 Modifier

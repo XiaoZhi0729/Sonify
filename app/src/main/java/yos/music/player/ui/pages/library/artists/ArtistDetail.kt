@@ -1183,10 +1183,12 @@ fun ArtistDetail(
                     if (showLandscapeSideBySide) {
                         item("LandscapeFeaturedAndHot") {
                             var hotSongsHeightPx by remember { mutableIntStateOf(0) }
+                            // MusicList 上下各有 6dp 留白（64dp 行高 / 52dp 封面），去掉首尾各 6dp 后，
+                            // 左侧专辑封面高度正好等于「第一首歌封面上缘 → 最后一首歌封面下缘」。
                             val targetCoverHeight = if (hotSongsHeightPx > 0) {
-                                with(density) { hotSongsHeightPx.toDp() }
+                                (with(density) { hotSongsHeightPx.toDp() } - 12.dp).coerceAtLeast(92.dp)
                             } else {
-                                193.dp
+                                181.dp
                             }
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -1228,7 +1230,11 @@ fun ArtistDetail(
                                     }
                                 }
                                 Column(Modifier.weight(0.62f)) {
-                                    ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
+                                    // MusicList 行高 64dp 内含 52dp 封面上下各 6dp 留白，标题下边距收紧 6dp 以对齐专辑区的 14dp 视觉间距
+                                    ArtistSectionHeader(
+                                        title = stringResource(R.string.artist_detail_hot_songs),
+                                        bottomPadding = 8.dp
+                                    ) {
                                         navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
                                     }
                                     Box(Modifier.fillMaxWidth().onSizeChanged { hotSongsHeightPx = it.height }) {
@@ -1276,7 +1282,11 @@ fun ArtistDetail(
                         }
                         item("HotHeader") {
                             // 标题整行可点 → 热门歌曲大全页（与「全部歌曲」同款）
-                            ArtistSectionHeader(stringResource(R.string.artist_detail_hot_songs)) {
+                            // MusicList 行高 64dp 内含 52dp 封面上下各 6dp 留白，标题下边距收紧 6dp 以对齐专辑区的 14dp 视觉间距
+                            ArtistSectionHeader(
+                                title = stringResource(R.string.artist_detail_hot_songs),
+                                bottomPadding = 8.dp
+                            ) {
                                 navController.navigate(UI.artistHotSongsRoute(resolvedId.value, artistName))
                             }
                         }
@@ -1323,7 +1333,11 @@ fun ArtistDetail(
                         )
                     }
                     item("AllSongsHeader") {
-                        ArtistSectionHeader(stringResource(R.string.artist_detail_all_songs)) {
+                        // MusicList 行高 64dp 内含 52dp 封面上下各 6dp 留白，标题下边距收紧 6dp 以对齐专辑区的 14dp 视觉间距
+                        ArtistSectionHeader(
+                            title = stringResource(R.string.artist_detail_all_songs),
+                            bottomPadding = 8.dp
+                        ) {
                             navController.navigate(UI.artistSongsRoute(resolvedId.value, artistName))
                         }
                     }

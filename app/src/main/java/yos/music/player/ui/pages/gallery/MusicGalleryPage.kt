@@ -47,17 +47,18 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
@@ -119,7 +120,6 @@ import yos.music.player.ui.widgets.effects.pearmesh.isPearMeshSupported
 import yos.music.player.ui.widgets.effects.warmUpMeshArtwork
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 import yos.music.player.ui.widgets.liquid.claimDragGestures
-import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 import yos.music.player.ui.widgets.mochi.rememberMochiSheetState
@@ -354,17 +354,17 @@ private fun Modifier.galleryPressDim(highlight: InteractiveHighlight): Modifier 
  */
 private fun Modifier.galleryGlass(
     backdrop: Backdrop,
-    shape: Shape,
+    shapeProvider: () -> Shape,
     effects: BackdropEffectScope.() -> Unit,
     surface: DrawScope.() -> Unit
 ): Modifier = drawBackdrop(
     backdrop = backdrop,
-    shape = { shape },
+    shape = shapeProvider,
     effects = effects,
-    highlight = classyabaBlackRim,
-    shadow = { null },
+    highlight = null,
+    shadow = null,
     onDrawSurface = surface
-).classyabaWhiteEdge(shape)
+).classyabaWhiteEdge(shape = shapeProvider)
 
 /** 玻璃效果链：vibrancy + blur(4dp × 倍率) + 折射（API 33+）。 */
 private fun glassEffectsOf(glassScale: Float): BackdropEffectScope.() -> Unit = {
@@ -435,9 +435,6 @@ fun MusicGalleryPage(navController: NavController) {
     var pendingFollow by remember { mutableStateOf(false) }
     // 进页锚定只做一次：补货会让列表增长（songCount 变化），不能反复重锚。
     var entryAnchored by remember { mutableStateOf(false) }
-    val canGoPrevious by remember {
-        derivedStateOf { GallerySlotGeometry.canStepPrevious(scrollIndex, settleTarget) }
-    }
 
     fun settle(
         target: Float,
@@ -533,24 +530,28 @@ fun MusicGalleryPage(navController: NavController) {
     }
 
     /**
-     * 兜底归位：只要「没有手势在拖、也没有落位动画在跑」而索引停在半途，
-     * 就把它吸回最近的整数位。
+     * 兜底归位 + 滑动翻页自动切歌（合并为单一观察者，且在拖拽/落位期间短路返回 null，
+     * 避免 60~120 FPS 动画期间每帧分配 Triple 并唤醒协程空转）。
      *
-     * 为什么需要：`claimHorizontalDragGestures` 只在正常抬手/被消费时回调
-     * onEnd/onCancel；一旦**协程本身被取消**（pointerInput 的 key 变化导致
-     * 手势节点重建），两个回调都不会执行，索引就永久卡在 0.37 这种中间态——
-     * 实机表现正是「松手后不归位，停在那里」。
-     * 看门狗与手势实现解耦，任何原因导致的悬空状态都能自愈。
+     * 只要「没有手势在拖、也没有落位动画在跑」：
+     * 1. 若索引停在半途（pointerInput 被取消导致悬空），吸回最近的整数位；
+     * 2. 若已稳定在整数位且 pendingFollow 置位，则触发自动切歌。
      */
     LaunchedEffect(Unit) {
-        snapshotFlow { Triple(dragging, settleJob != null, scrollIndex) }
-            .collect { (isDragging, settling, value) ->
-                if (isDragging || settling) return@collect
-                val nearest = value.roundToInt().coerceAtLeast(0)
-                if (abs(value - nearest) > 0.001f) {
-                    settle(nearest.toFloat(), 0f)
+        snapshotFlow {
+            if (dragging || settleJob != null) null else scrollIndex
+        }.collect { value ->
+            val current = value ?: return@collect
+            val nearest = current.roundToInt().coerceAtLeast(0)
+            if (abs(current - nearest) > 0.001f) {
+                settle(nearest.toFloat(), 0f)
+            } else if (pendingFollow) {
+                pendingFollow = false
+                if (PersonalFmObject.songs.value.isNotEmpty()) {
+                    playSongAt(nearest)
                 }
             }
+        }
     }
 
     // ---------- 进页锚定：聚焦当前正在播的歌 ----------
@@ -564,23 +565,6 @@ fun MusicGalleryPage(navController: NavController) {
         val cur = MediaController.musicPlaying.value?.mediaId ?: return@LaunchedEffect
         val idx = songs.indexOfFirst { "kugou-online-${it.hash.lowercase()}" == cur }
         if (idx > 0) scrollIndex = idx.toFloat()
-    }
-
-    // ---------- 滑动翻页自动切歌 ----------
-    // 手势结束后落位稳定在整数位，若聚焦歌不是正在播的歌则自动开播（翻页即换歌）。
-    // 判据与看门狗同源：无拖拽 + 无落位动画 + 值恰在整数位——弹簧超弹震荡期间
-    // settleJob 非 null 会被跳过，不会在半程/过冲瞬间误触发。
-    // pendingFollow 只由真实手势置位：页面首进、看门狗归位都不会动当前播放。
-    LaunchedEffect(songCount) {
-        snapshotFlow { Triple(dragging, settleJob != null, scrollIndex) }
-            .collect { (isDragging, settling, value) ->
-                if (isDragging || settling || !pendingFollow) return@collect
-                pendingFollow = false
-                if (songCount == 0) return@collect
-                val nearest = value.roundToInt().coerceAtLeast(0)
-                if (abs(value - nearest) > 0.001f) return@collect
-                playSongAt(nearest)
-            }
     }
 
     val density = LocalDensity.current
@@ -709,41 +693,10 @@ fun MusicGalleryPage(navController: NavController) {
         val stageWidthPx = with(density) { maxWidth.toPx() }
         // 卡片基准尺寸：scale=1.0 时边长 = W * 0.52（本机 ≈205dp）
         val baseSize: Dp = maxWidth * GallerySlotGeometry.BASE_SIZE_FRACTION
+        val sharedShadowImage = rememberGalleryCardShadow(baseSize + GalleryShadowPad * 2)
 
-        // 当前段号（文字区双层交叉淡化专用）与四舍五入聚焦位（播放药丸 / 收藏 / 计数器 / 背景过半同步切换）
-        val segment by remember { derivedStateOf { GallerySlotGeometry.segmentAt(scrollIndex) } }
+        // 当前四舍五入聚焦位（背景暖热与锚点使用；由 derivedStateOf 门控，仅跨半程整数切换时变化）
         val focusedIdx by remember { derivedStateOf { scrollIndex.roundToInt().coerceAtLeast(0) } }
-        val focusedSongIndex by remember(songCount) {
-            derivedStateOf {
-                GallerySlotGeometry.wrapSong(
-                    focusedIdx,
-                    songCount
-                )
-            }
-        }
-        // 当前聚焦歌的派生物：播放药丸图标、收藏按钮、自动跟随切歌三处共用。
-        // isFavorite 内部读的是 State（在线 favoriteHashes / 本地 favPlayList），
-        // 收藏状态变化会直接触发重组刷新图标。
-        val focusedSong = songs.getOrNull(focusedSongIndex)
-        val focusedItem = focusedSong?.let { KugouRepository.toQueueMediaItem(it) }
-        val focusedFavorite = focusedItem?.let { FavoriteRepository.isFavorite(it) } == true
-
-        // 收藏当前聚焦歌（顶栏收藏钮）。乐观更新：先本地翻转，云端失败回滚并提示。
-        fun toggleFocusedFavorite() {
-            val item = focusedItem ?: return
-            Vibrator.click(context)
-            scope.launch {
-                val nowFavorite = FavoriteRepository.isFavorite(item)
-                val result = if (nowFavorite) {
-                    FavoriteRepository.removeFavorite(item)
-                } else {
-                    FavoriteRepository.addFavorite(item)
-                }
-                result.onFailure { e ->
-                    Toast.makeText(context, e.message ?: "收藏操作失败", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
 
         // ---------- 背景层：静态 / 慢速漂移（奇偶双槽）/ 流体网格（单实例） ----------
         // 锚点取半程中点：evenIdx = floor((s+1)/2)*2、oddIdx = floor(s/2)*2+1，
@@ -850,21 +803,10 @@ fun MusicGalleryPage(navController: NavController) {
                 Modifier
                     .fillMaxWidth()
                     .height(180.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.22f),
-                            1f to Color.Transparent
-                        )
-                    )
+                    .background(GalleryTopScrimBrush)
             )
 
             // ---------- 封面卡片层：恒定 4 个容器，无增删 ----------
-            // 容器 i 的环位置 p = (i + scroll) mod 4；向右滑时 p 增大，
-            // 卡片沿 Slot0→1→2→3→0 顺时针前进。
-            // 空列表必须整段跳过：队列首拉期间 songs 为空，取歌会抛 IndexOutOfBounds。
-            //
-            // 卡片必须在录制层**内**：横屏/平板上 Slot2 卡片会一直延伸到底部，
-            // 底部药丸正压在其上；只录背景会让药丸采到「背后其实有卡片」的错误画面。
             if (songCount > 0) {
                 for (containerIndex in 0 until GallerySlotGeometry.SLOT_COUNT) {
                     key(containerIndex) {
@@ -873,6 +815,7 @@ fun MusicGalleryPage(navController: NavController) {
                             songs = songs,
                             stageWidthPx = stageWidthPx,
                             baseSize = baseSize,
+                            shadowImage = sharedShadowImage,
                             scroll = { scrollIndex },
                             onClick = { onCardClick(containerIndex) },
                             modifier = Modifier.align(Alignment.Center)
@@ -882,186 +825,43 @@ fun MusicGalleryPage(navController: NavController) {
             }
         }
 
-        // ---------- 顶栏 ----------
-        Row(
+        // ---------- 顶栏（独立重组作用域，收藏状态变化不波及背景/卡片） ----------
+        GalleryTopBar(
+            songs = songs,
+            songCount = songCount,
+            scroll = { scrollIndex },
+            pageBackdrop = pageBackdrop,
+            glassOn = glassOn,
+            glassEffects = glassEffects,
+            glassSurface = glassSurface,
+            onOpenSettings = {
+                Vibrator.click(context)
+                settingsSheetState.show()
+            },
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(start = 24.dp, end = 24.dp, top = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.page_music_gallery_title),
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.page_music_gallery_subtitle),
-                    color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 10.sp,
-                    letterSpacing = 2.sp
-                )
-            }
-            GalleryCircleButton(
-                // 收藏当前聚焦歌：歌手页同款星形图标，已收藏白色实心（用户定版，非红色）
-                iconRes = if (focusedFavorite) R.drawable.ic_artist_star_fill
-                else R.drawable.ic_artist_star,
-                backdrop = pageBackdrop,
-                glassOn = glassOn,
-                glassEffects = glassEffects,
-                glassSurface = glassSurface,
-                onClick = { toggleFocusedFavorite() }
-            )
-            Spacer(Modifier.width(10.dp))
-            GalleryCircleButton(
-                iconRes = R.drawable.ic_gallery_settings,
-                backdrop = pageBackdrop,
-                glassOn = glassOn,
-                glassEffects = glassEffects,
-                glassSurface = glassSurface,
-                onClick = {
-                    Vibrator.click(context)
-                    settingsSheetState.show()
-                }
-            )
-        }
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp)
+        )
 
-        // ---------- 文字区：当前歌 ↔ 下一首 的交叉淡化 ----------
-        Column(
+        // ---------- 文字区：当前歌 ↔ 下一首 的交叉淡化（Draw 阶段淡出，零每帧重组） ----------
+        GalleryTitleCrossfade(
+            songs = songs,
+            songCount = songCount,
+            scroll = { scrollIndex },
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(start = 24.dp, end = 24.dp, top = 88.dp)
-        ) {
-            // 固定小标签：私人电台（不参与 Crossfade，位置恒定）
-            Text(
-                text = stringResource(R.string.home_personal_fm_title),
-                color = Color.White.copy(alpha = 0.6f),
-                fontSize = 13.sp
-            )
-            Spacer(Modifier.height(8.dp))
-            // Crossfade 容器：两层各自叠在同一个左上角，靠 graphicsLayer 的 alpha/translationY
-            // 交叉淡化。**每层内部必须是 Column**——直接平铺两个 Text 会让歌名与歌手名
-            // 重叠在同一行（曾实机暴露的 bug）。
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(GalleryTitleBlockHeight)
-            ) {
-                if (songCount > 0) {
-                    for (i in segment..(segment + 1)) {
-                        val songIndex = GallerySlotGeometry.wrapSong(i, songCount)
-                        key(songIndex) {
-                            val song = songs[songIndex]
-                            // 淡入淡出的 alpha **必须写在文字颜色里，不能写成 graphicsLayer
-                            // 的 alpha**。原因见下方歌手名处的长注释：overlayEffect 用的是
-                            // BlendMode.Plus，它的结果取决于"加色时的底"是什么。父级一旦有
-                            // alpha<1，framework 就会为这一层建离屏缓冲，Plus 的底变成透明
-                            // 黑，加色效果消失 → 实机表现为「动画中颜色不对，停下才恢复」。
-                            val fade = GallerySlotGeometry.textAlpha(i - scrollIndex)
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    // 只做位移，**不设 alpha**：translationY 不会触发离屏层，
-                                    // 从而保证 overlayEffect 的 saveLayer 始终以整页背景为底。
-                                    .graphicsLayer {
-                                        translationY =
-                                            GallerySlotGeometry.textTranslationYDp(i - scrollIndex).dp.toPx()
-                                    }
-                            ) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = song.name,
-                                        // 标题走普通混合：直接用颜色 alpha 淡出，投影同步按
-                                        // fade 缩放，否则字淡走了黑影还留在原地。
-                                        color = Color.White.copy(alpha = fade),
-                                        fontSize = 30.sp,
-                                        // 用 ExtraBold(800) 而不是 Bold(700)：本机 MIUI 的
-                                        // /system/etc/fonts.xml 把 sans-serif 的 700 映射到
-                                        // MiSans 可变字体的 wght=450（比 400 档的 330 只粗一
-                                        // 点，肉眼近乎常规），700 实机根本不显粗。800 映射到
-                                        // wght=520，是"明显加粗但不糊"的档位；再上一档 900
-                                        // （wght=630）实机偏黑偏重，已否掉。AOSP 设备上 800 同样
-                                        // 是介于 Bold 与 Black 之间的加粗，观感一致。
-                                        fontWeight = FontWeight.ExtraBold,
-                                        lineHeight = 36.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = TextStyle(
-                                            // 投影削弱（用户裁决）：0.35/12f 偏重，降为
-                                            // 0.18/8f——只保可读性衬托，不再有"糊一圈"感
-                                            shadow = Shadow(
-                                                color = Color.Black.copy(alpha = 0.18f * fade),
-                                                blurRadius = 8f
-                                            )
-                                        )
-                                    )
-                                    Spacer(Modifier.height(6.dp))
-                                    // 仅歌手名，不拼专辑名。
-                                    //
-                                    // 颜色材质对齐艺人页的次级信息行（「N 首歌曲 · N 张专辑」，
-                                    // 见 ArtistDetail 的 HeaderStatus）：白 45% + Plus 加色混合
-                                    // 的微光质感。画布底色恒为深色封面糊图，故固定走暗底分支。
-                                    //
-                                    // **淡出为什么乘在颜色 alpha 上、而不是给父级加
-                                    // graphicsLayer alpha**：overlayEffect 内部是
-                                    // `canvas.saveLayer(rect, Paint(BlendMode.Plus))`，Plus 是
-                                    // 「结果 = 底 + 源」，**底是什么决定最终颜色**。
-                                    //   · 父级 alpha == 1：framework 不建离屏层，saveLayer 的底
-                                    //     就是整页画布（背景糊图 + 卡片）→ 得到「背景 + 白45%」
-                                    //     的发光质感，即静止态看到的颜色。
-                                    //   · 父级 alpha < 1：framework 必须为这一层建离屏缓冲才能
-                                    //     整体半透明合成，saveLayer 的底变成该缓冲的**透明黑**
-                                    //     → Plus 退化成「0 + 白45%」= 一片发暗的普通白，发光
-                                    //     质感消失。
-                                    // 于是同一段文字在「拖动中」和「停稳后」是两种颜色 —— 这就是
-                                    // 颜色跳变的根因。把 fade 乘进颜色 alpha 后，全程都不产生
-                                    // 离屏层，Plus 的底恒为整页背景，任何进度下的颜色都与静止态
-                                    // 同源，且亮度随 fade 线性衰减。
-                                    Text(
-                                        text = song.author,
-                                        color = Color.White.copy(alpha = 0.45f * fade),
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.overlayEffect()
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        )
 
         // ---------- 计数器：当前聚焦位在队列中的位置 ----------
         if (songCount > 0) {
-            val counterValue by remember(songCount) {
-                derivedStateOf {
-                    GallerySlotGeometry.wrapSong(
-                        focusedIdx,
-                        songCount
-                    ) + 1
-                }
-            }
-            AnimatedContent(
-                targetState = counterValue,
-                transitionSpec = {
-                    val offsetSpec = tween<IntOffset>(240)
-                    if (targetState > initialState) {
-                        (slideInVertically(offsetSpec) { it / 2 } + fadeIn(tween(240))) togetherWith
-                            (slideOutVertically(offsetSpec) { -it / 2 } + fadeOut(tween(150)))
-                    } else {
-                        (slideInVertically(offsetSpec) { -it / 2 } + fadeIn(tween(240))) togetherWith
-                            (slideOutVertically(offsetSpec) { it / 2 } + fadeOut(tween(150)))
-                    }
-                },
-                label = "galleryCounter",
+            GalleryCounter(
+                songCount = songCount,
+                scroll = { scrollIndex },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     // 药丸右上方：右侧 28dp、距**屏幕底边** 96dp。
@@ -1072,48 +872,25 @@ fun MusicGalleryPage(navController: NavController) {
                         bottom = (GalleryCounterBottomFromScreen - navigationBarInset)
                             .coerceAtLeast(0.dp)
                     )
-            ) { value ->
-                Text(
-                    text = String.format(Locale.US, "%d / %d", value, songCount),
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-            }
+            )
         }
 
         // ---------- 底部播放控件：上一首 + 播放药丸 + 下一首 ----------
         if (songCount > 0) {
-            val playingMediaId = MediaController.musicPlaying.value?.mediaId
-            val playingNow = MediaViewModelObject.isPlaying.value
-            // 药丸的点击/播放逻辑抽成局部函数：clickable 与无障碍入口共用同一份实现。
-            // 状态全部在调用时实时读取，不捕获组合期的旧值。
-            fun playFocused() {
-                buttonFollowJob?.cancel()
-                buttonFollowJob = null
-                val song = focusedSong ?: return
-                val item = KugouRepository.toQueueMediaItem(song)
-                val nowPlayingId = MediaController.musicPlaying.value?.mediaId
-                YosDiagnostics.log(
-                    "GALLERY_PLAY",
-                    "focused" to item.mediaId,
-                    "cur" to nowPlayingId,
-                    "playing" to MediaViewModelObject.isPlaying.value
-                )
-                if (nowPlayingId == item.mediaId) {
-                    // 已是当前歌 → 淡入淡出播放/暂停
-                    if (MediaViewModelObject.isPlaying.value) MediaController.mediaControl?.fadePause()
-                    else MediaController.mediaControl?.fadePlay()
-                } else {
-                    scope.launch(Dispatchers.IO) {
-                        val queue = PersonalFmObject.songs.value.map {
-                            KugouRepository.toQueueMediaItem(it)
-                        }
-                        MediaController.prepare(item, queue, fmQueue = true)
-                    }
-                }
-            }
-            val pillHighlight = rememberGalleryHighlight(scope)
-            Row(
+            GalleryBottomControls(
+                songs = songs,
+                songCount = songCount,
+                scroll = { scrollIndex },
+                settleTarget = { settleTarget },
+                pageBackdrop = pageBackdrop,
+                glassOn = glassOn,
+                glassEffects = glassEffects,
+                glassSurface = glassSurface,
+                onStepSong = ::stepSong,
+                onCancelButtonFollow = {
+                    buttonFollowJob?.cancel()
+                    buttonFollowJob = null
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     // 距**屏幕底边**（含手势栏）44dp：navigationBarsPadding 已让出 inset，
@@ -1122,98 +899,8 @@ fun MusicGalleryPage(navController: NavController) {
                     .padding(
                         bottom = (GalleryPillBottomFromScreen - navigationBarInset)
                             .coerceAtLeast(0.dp)
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                GalleryCircleButton(
-                    iconRes = R.drawable.ic_nowplaying_rewind,
-                    backdrop = pageBackdrop,
-                    glassOn = glassOn,
-                    glassEffects = glassEffects,
-                    glassSurface = glassSurface,
-                    contentDescription = stringResource(R.string.page_music_gallery_prev),
-                    iconTint = Color.White.copy(alpha = if (canGoPrevious) 1f else 0.35f),
-                    buttonSize = GalleryPillHeight,
-                    iconSize = 22.dp,
-                    fallbackSurfaceAlpha = 0.22f,
-                    enabled = canGoPrevious,
-                    onClick = { stepSong(-1) }
-                )
-                // 开关翻转必须换 key 强制重建节点：库内 DrawBackdropElement 会被 Compose 原地
-                // update（不重建录制管线），模糊层从此不出图、只剩半透明表面色。LiquidBottomTabs
-                // 已实证该坑，双向切换都靠换 key 恢复。key 是组合级 API，包住整个 Box。
-                key(glassOn) {
-                    Box(
-                        Modifier
-                            // 放大 + 朝手指方向微倾作用在整个药丸（玻璃/边框/图标同一图层）。
-                            .galleryPressTransform(pillHighlight, GalleryPillPressLift)
-                            .width(GalleryPillWidth)
-                            .height(GalleryPillHeight)
-                            .then(
-                                // 玻璃分支：真胶囊 + 页内采样 + ClassYaba 边框 + 轻微压暗。
-                                // 非玻璃分支：逐像素保留改动前的白 22% 平底。
-                                if (glassOn) {
-                                    Modifier
-                                        .galleryGlass(
-                                            backdrop = pageBackdrop,
-                                            shape = GalleryPillGlassShape,
-                                            effects = glassEffects,
-                                            surface = glassSurface
-                                        )
-                                        .galleryPressDim(pillHighlight)
-                                } else {
-                                    Modifier
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.22f))
-                                        .galleryPressDim(pillHighlight)
-                                }
-                            )
-                            // 弥散高光：夹在材质层与内容之间（玻璃之上、图标之下），否则会被材质盖住
-                            .then(pillHighlight.modifier)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) { playFocused() }
-                            // 按压视觉 + 拖动认领（消费免疫，见 galleryPressGesture 注释）；
-                            // 排在 clickable 之后：越过 touchSlop 才消费，纯点按不受影响
-                            .galleryPressGesture(pillHighlight)
-                            .semantics { role = Role.Button },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            // 播放/暂停用项目既有资源：播放中=播放页 ic_nowplaying_pause（双竖条，
-                            // 点按即暂停），暂停/未播=专辑页 button_icon_play（三角，点按即播放）。
-                            // 两 drawable glyph 规范不同：三角高占 viewport 61%、双杠占 100%，
-                            // 按"视觉等高≈13.4dp"反推尺寸：三角 22dp / 双杠 14dp。
-                            painter = if (playingNow && playingMediaId == focusedItem?.mediaId) {
-                                painterResource(R.drawable.ic_nowplaying_pause)
-                            } else {
-                                painterResource(R.drawable.button_icon_play)
-                            },
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(
-                                if (playingNow && playingMediaId == focusedItem?.mediaId) 17.dp else 27.dp
-                            )
-                        )
-                    }
-                }
-                GalleryCircleButton(
-                    iconRes = R.drawable.ic_nowplaying_fforward,
-                    backdrop = pageBackdrop,
-                    glassOn = glassOn,
-                    glassEffects = glassEffects,
-                    glassSurface = glassSurface,
-                    contentDescription = stringResource(R.string.page_music_gallery_next),
-                    iconTint = Color.White,
-                    buttonSize = GalleryPillHeight,
-                    iconSize = 22.dp,
-                    fallbackSurfaceAlpha = 0.22f,
-                    enabled = true,
-                    onClick = { stepSong(1) }
-                )
-            }
+                    )
+            )
         }
 
         // ---------- 加载 / 空态 ----------
@@ -1260,6 +947,331 @@ fun MusicGalleryPage(navController: NavController) {
     )
 }
 
+@Composable
+private fun GalleryTopBar(
+    songs: List<KugouNewSong>,
+    songCount: Int,
+    scroll: () -> Float,
+    pageBackdrop: Backdrop,
+    glassOn: Boolean,
+    glassEffects: BackdropEffectScope.() -> Unit,
+    glassSurface: DrawScope.() -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val focusedSongIndex by remember(songCount) {
+        derivedStateOf {
+            GallerySlotGeometry.wrapSong(scroll().roundToInt().coerceAtLeast(0), songCount)
+        }
+    }
+    val focusedSong = songs.getOrNull(focusedSongIndex)
+    val focusedItem = focusedSong?.let { KugouRepository.toQueueMediaItem(it) }
+    val focusedFavorite = focusedItem?.let { FavoriteRepository.isFavorite(it) } == true
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.page_music_gallery_title),
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.page_music_gallery_subtitle),
+                color = Color.White.copy(alpha = 0.62f),
+                fontSize = 10.sp,
+                letterSpacing = 2.sp
+            )
+        }
+        GalleryCircleButton(
+            // 收藏当前聚焦歌：歌手页同款星形图标，已收藏白色实心（用户定版，非红色）
+            iconRes = if (focusedFavorite) R.drawable.ic_artist_star_fill
+            else R.drawable.ic_artist_star,
+            backdrop = pageBackdrop,
+            glassOn = glassOn,
+            glassEffects = glassEffects,
+            glassSurface = glassSurface,
+            onClick = {
+                val item = focusedItem ?: return@GalleryCircleButton
+                Vibrator.click(context)
+                scope.launch {
+                    val nowFavorite = FavoriteRepository.isFavorite(item)
+                    val result = if (nowFavorite) {
+                        FavoriteRepository.removeFavorite(item)
+                    } else {
+                        FavoriteRepository.addFavorite(item)
+                    }
+                    result.onFailure { e ->
+                        Toast.makeText(context, e.message ?: "收藏操作失败", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+        Spacer(Modifier.width(10.dp))
+        GalleryCircleButton(
+            iconRes = R.drawable.ic_gallery_settings,
+            backdrop = pageBackdrop,
+            glassOn = glassOn,
+            glassEffects = glassEffects,
+            glassSurface = glassSurface,
+            onClick = onOpenSettings
+        )
+    }
+}
+
+@Composable
+private fun GalleryTitleCrossfade(
+    songs: List<KugouNewSong>,
+    songCount: Int,
+    scroll: () -> Float,
+    modifier: Modifier = Modifier
+) {
+    val segment by remember {
+        derivedStateOf { GallerySlotGeometry.segmentAt(scroll()) }
+    }
+    Column(modifier = modifier) {
+        // 固定小标签：私人电台（不参与 Crossfade，位置恒定）
+        Text(
+            text = stringResource(R.string.home_personal_fm_title),
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        // Crossfade 容器：两层各自叠在同一个左上角，靠绘制期 graphicsLayer/overlayEffect
+        // 完成淡入淡出与纵向位移，拖拽与动画期间零组合重组、零文本重排。
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(GalleryTitleBlockHeight)
+        ) {
+            if (songCount > 0) {
+                for (i in segment..(segment + 1)) {
+                    val songIndex = GallerySlotGeometry.wrapSong(i, songCount)
+                    key(songIndex) {
+                        val song = songs[songIndex]
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                // 只做位移，**不设 alpha**：translationY 不会触发父级离屏层，
+                                // 从而保证歌手名 overlayEffect 的 Plus 混合底色始终为整页背景。
+                                .graphicsLayer {
+                                    translationY =
+                                        GallerySlotGeometry.textTranslationYDp(i - scroll()).dp.toPx()
+                                }
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = song.name,
+                                    color = Color.White,
+                                    fontSize = 30.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    lineHeight = 36.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = GalleryTitleTextStyle,
+                                    modifier = Modifier.graphicsLayer {
+                                        alpha = GallerySlotGeometry.textAlpha(i - scroll())
+                                    }
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = song.author,
+                                    color = Color.White.copy(alpha = 0.45f),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.overlayEffect {
+                                        GallerySlotGeometry.textAlpha(i - scroll())
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GalleryCounter(
+    songCount: Int,
+    scroll: () -> Float,
+    modifier: Modifier = Modifier
+) {
+    val counterValue by remember(songCount) {
+        derivedStateOf {
+            GallerySlotGeometry.wrapSong(
+                scroll().roundToInt().coerceAtLeast(0),
+                songCount
+            ) + 1
+        }
+    }
+    AnimatedContent(
+        targetState = counterValue,
+        transitionSpec = {
+            val offsetSpec = tween<IntOffset>(240)
+            if (targetState > initialState) {
+                (slideInVertically(offsetSpec) { it / 2 } + fadeIn(tween(240))) togetherWith
+                    (slideOutVertically(offsetSpec) { -it / 2 } + fadeOut(tween(150)))
+            } else {
+                (slideInVertically(offsetSpec) { -it / 2 } + fadeIn(tween(240))) togetherWith
+                    (slideOutVertically(offsetSpec) { it / 2 } + fadeOut(tween(150)))
+            }
+        },
+        label = "galleryCounter",
+        modifier = modifier
+    ) { value ->
+        Text(
+            text = String.format(Locale.US, "%d / %d", value, songCount),
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 12.sp
+        )
+    }
+}
+
+@Composable
+private fun GalleryBottomControls(
+    songs: List<KugouNewSong>,
+    songCount: Int,
+    scroll: () -> Float,
+    settleTarget: () -> Int?,
+    pageBackdrop: Backdrop,
+    glassOn: Boolean,
+    glassEffects: BackdropEffectScope.() -> Unit,
+    glassSurface: DrawScope.() -> Unit,
+    onStepSong: (Int) -> Unit,
+    onCancelButtonFollow: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val canGoPrevious by remember {
+        derivedStateOf { GallerySlotGeometry.canStepPrevious(scroll(), settleTarget()) }
+    }
+    val focusedSongIndex by remember(songCount) {
+        derivedStateOf {
+            GallerySlotGeometry.wrapSong(scroll().roundToInt().coerceAtLeast(0), songCount)
+        }
+    }
+    val focusedSong = songs.getOrNull(focusedSongIndex)
+    val focusedItem = focusedSong?.let { KugouRepository.toQueueMediaItem(it) }
+    val playingMediaId = MediaController.musicPlaying.value?.mediaId
+    val playingNow = MediaViewModelObject.isPlaying.value
+    val isFocusedPlaying = playingNow && playingMediaId == focusedItem?.mediaId
+
+    fun playFocused() {
+        onCancelButtonFollow()
+        val song = focusedSong ?: return
+        val item = KugouRepository.toQueueMediaItem(song)
+        val nowPlayingId = MediaController.musicPlaying.value?.mediaId
+        YosDiagnostics.log(
+            "GALLERY_PLAY",
+            "focused" to item.mediaId,
+            "cur" to nowPlayingId,
+            "playing" to MediaViewModelObject.isPlaying.value
+        )
+        if (nowPlayingId == item.mediaId) {
+            if (MediaViewModelObject.isPlaying.value) MediaController.mediaControl?.fadePause()
+            else MediaController.mediaControl?.fadePlay()
+        } else {
+            scope.launch(Dispatchers.IO) {
+                val queue = PersonalFmObject.songs.value.map {
+                    KugouRepository.toQueueMediaItem(it)
+                }
+                MediaController.prepare(item, queue, fmQueue = true)
+            }
+        }
+    }
+
+    val pillHighlight = rememberGalleryHighlight(scope)
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        GalleryCircleButton(
+            iconRes = R.drawable.ic_nowplaying_rewind,
+            backdrop = pageBackdrop,
+            glassOn = glassOn,
+            glassEffects = glassEffects,
+            glassSurface = glassSurface,
+            contentDescription = stringResource(R.string.page_music_gallery_prev),
+            iconTint = Color.White.copy(alpha = if (canGoPrevious) 1f else 0.35f),
+            buttonSize = GalleryPillHeight,
+            iconSize = 22.dp,
+            fallbackSurfaceAlpha = 0.22f,
+            enabled = canGoPrevious,
+            onClick = { onStepSong(-1) }
+        )
+        // 开关翻转必须换 key 强制重建节点：库内 DrawBackdropElement 会被 Compose 原地
+        // update（不重建录制管线），模糊层从此不出图、只剩半透明表面色。
+        key(glassOn) {
+            Box(
+                Modifier
+                    .galleryPressTransform(pillHighlight, GalleryPillPressLift)
+                    .width(GalleryPillWidth)
+                    .height(GalleryPillHeight)
+                    .then(
+                        if (glassOn) {
+                            Modifier
+                                .galleryGlass(
+                                    backdrop = pageBackdrop,
+                                    shapeProvider = GalleryPillShapeProvider,
+                                    effects = glassEffects,
+                                    surface = glassSurface
+                                )
+                                .galleryPressDim(pillHighlight)
+                        } else {
+                            Modifier
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.22f))
+                                .galleryPressDim(pillHighlight)
+                        }
+                    )
+                    .then(pillHighlight.modifier)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { playFocused() }
+                    .galleryPressGesture(pillHighlight)
+                    .semantics { role = Role.Button },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = if (isFocusedPlaying) {
+                        painterResource(R.drawable.ic_nowplaying_pause)
+                    } else {
+                        painterResource(R.drawable.button_icon_play)
+                    },
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(if (isFocusedPlaying) 17.dp else 27.dp)
+                )
+            }
+        }
+        GalleryCircleButton(
+            iconRes = R.drawable.ic_nowplaying_fforward,
+            backdrop = pageBackdrop,
+            glassOn = glassOn,
+            glassEffects = glassEffects,
+            glassSurface = glassSurface,
+            contentDescription = stringResource(R.string.page_music_gallery_next),
+            iconTint = Color.White,
+            buttonSize = GalleryPillHeight,
+            iconSize = 22.dp,
+            fallbackSurfaceAlpha = 0.22f,
+            enabled = true,
+            onClick = { onStepSong(1) }
+        )
+    }
+}
+
 /**
  * 单个实体卡片容器：**恒定存在**，不随歌曲切换增删。
  *
@@ -1277,20 +1289,12 @@ private fun GalleryCardContainer(
     songs: List<KugouNewSong>,
     stageWidthPx: Float,
     baseSize: Dp,
+    shadowImage: ImageBitmap?,
     scroll: () -> Float,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 层级按**实时尺寸序**取，而不是按整槽 floor。
-    //
-    // 曾经用 slotAt()（floor 后的整槽）：卡片从 Slot3 走到 Slot0 时 p 要一路走到
-    // 4.0 才回绕成 0，于是整个拖拽过程 floor(p) 恒为 3，层级一直停在 Slot3 的 40，
-    // 直到动画结束那一帧才跳到 100 —— 实机表现就是「正在聚焦的卡片要等动画结束
-    // 才跑到最上面」。
-    // 改成按尺寸排名（GallerySlotGeometry.zRank）：接任主卡的 scale 从 0.64 涨向 1.0、
-    // 卸任主卡从 1.0 跌向 0.64，两者在**行程中点**尺寸相等，层级就在中点交换 ——
-    // 动画进行到一半新主卡就已经在最上层，落位只是"升到顶"而不是"突然跳到顶"。
-    // derivedStateOf 保证只有排名真正变化（一次翻页 1 次）才重组。
+    // 层级按**实时尺寸序**取，derivedStateOf 保证只有排名真正变化（一次翻页 1 次）才重组。
     val zRank by remember(containerIndex) {
         derivedStateOf { GallerySlotGeometry.zRank(containerIndex, scroll()) }
     }
@@ -1298,22 +1302,20 @@ private fun GalleryCardContainer(
         modifier
             .zIndex(GallerySlotGeometry.zIndexForRank(zRank))
             // 节点尺寸 = 卡片 + 一圈阴影留白。
-            //
-            // 为什么必须留白：graphicsLayer 在 alpha<1 / scale≠1 时会创建离屏层，
-            // 而离屏层**裁剪到节点边界**；阴影画在卡片边界之外，于是只有
-            // "入场/退场那种 alpha 不足 1 的卡"会丢阴影。把节点放大到能容纳阴影，
-            // 阴影就落在边界内，任何 alpha/缩放都不被裁。
             .size(baseSize + GalleryShadowPad * 2)
             .graphicsLayer {
                 val p = GallerySlotGeometry.ringPosition(containerIndex, scroll())
                 val g = GallerySlotGeometry.geometry(p)
                 translationX = g.offsetX * stageWidthPx
-                // 整簇下移 STAGE_Y_BIAS：见该常量的注释（纯构图修正，不动槽位相对关系）
                 translationY = (g.offsetY + STAGE_Y_BIAS) * stageWidthPx
                 scaleX = g.scale
                 scaleY = g.scale
             }
-            .cardDropShadow()
+            .drawBehind {
+                if (shadowImage != null) {
+                    drawImage(image = shadowImage, topLeft = Offset.Zero)
+                }
+            }
     ) {
         // 卡片本体：内缩一圈留白，落在节点中央，位置与「无留白」时完全一致
         Box(
@@ -1323,35 +1325,21 @@ private fun GalleryCardContainer(
                 .clip(GalleryCardShape)
                 .clickable(onClick = onClick)
         ) {
-            val songPair = GallerySlotGeometry.songPair(containerIndex, scroll(), songs.size)
-            // 必须用带 size 的重载：内容前后相同的那一段返回 0，不做渐变。
-            // 否则上层旧图淡出、底层因"同图不画"而空白 → 卡片淡成空框，
-            // 落位后 alpha 弹回 1 又"突然出现"（实机 bug：最后一张逐渐消失又冒出）。
-            val crossfade = GallerySlotGeometry.crossfadeAlpha(
-                containerIndex, scroll(), songs.size
-            )
+            val songCount = songs.size
+            val songPair by remember(containerIndex, songCount) {
+                derivedStateOf { GallerySlotGeometry.songPair(containerIndex, scroll(), songCount) }
+            }
+            val isCrossfading by remember(containerIndex, songCount) {
+                derivedStateOf {
+                    GallerySlotGeometry.crossfadeAlpha(containerIndex, scroll(), songCount) > 0f
+                }
+            }
 
             // 图层：**恒定两个固定槽位 + 固定 key**，只换 model、绝不增删节点。
-            //
-            // 这是"落位后闪一下"的最终修法。之前试过两种都会闪：
-            //  a) 「底层=新图 / 上层=旧图」两个角色，但"不换图"时只画一层 → 结构
-            //     在 1 层/2 层之间来回切换；
-            //  b) 用 `layers` 列表 + `key(songIndex)` → 列表长度变化时，同一首歌在
-            //     `forEach` 里的**位置**变了，Compose 按位置分组，仍视作不同节点。
-            // 两者都会让 AsyncImage 节点被销毁重建，图片重新加载 → 中间 1~2 帧空白，
-            // 视觉上就是"动画结束、图片闪一下"。
-            //
-            // 现在：两个槽位的 `key` 是**固定的字面量**（"card-base" / "card-fade"），
-            // 组合节点从页面创建到销毁全程不重建；换图只改 `model`（URL）。
-            // 由于两张封面此前都已被加载过，Coil 内存缓存命中，`model` 切换是同步
-            // 完成的，不会出现空白帧。
-            //
-            // 合成方式：底层（当前可见内容）恒 alpha=1 打底；上层（正在淡出的旧图）
-            // alpha 从 1 降到 0。段内进度 0 时上层 alpha=1 且与底层同图，视觉等价；
-            // 段末上层 alpha=0 完全隐藏，此时两层内容已一致，切换零观感差异。
-            val fade = crossfade
+            // 仅在 isCrossfading 时显示并绘制淡出上层；非换图段将 card-fade 的 alpha 置 0
+            // 跳过过绘（节点本身常驻不销毁，消除 100% 静止态双倍纹理采样）。
             val baseSong = songs.getOrNull(
-                if (fade > 0f) songPair.second else songPair.first
+                if (isCrossfading) songPair.second else songPair.first
             )
             val fadeSong = songs.getOrNull(songPair.first)
 
@@ -1369,7 +1357,12 @@ private fun GalleryCardContainer(
                         song = fadeSong,
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { alpha = 1f - fade }
+                            .graphicsLayer {
+                                val f = GallerySlotGeometry.crossfadeAlpha(
+                                    containerIndex, scroll(), songCount
+                                )
+                                alpha = if (f > 0f) 1f - f else 0f
+                            }
                     )
                 }
             }
@@ -1419,44 +1412,38 @@ private val GalleryShadowPad = 28.dp
  *  的卡会丢阴影。调用方因此把节点放大 `GalleryShadowPad`，卡片本体内缩同样距离，
  *  阴影落在边界内，任何 alpha/缩放都不被裁。
  */
-private fun Modifier.cardDropShadow(): Modifier = this.drawWithCache {
-    val w = size.width.toInt()
-    val h = size.height.toInt()
-    if (w <= 0 || h <= 0) {
-        onDrawBehind { }
-    } else {
-        val pad = GalleryShadowPad.toPx()
-        val cornerPx = GalleryCardCornerRadius.toPx()
-        val blurPx = 16.dp.toPx()
-        val offsetPx = 8.dp.toPx()
-        // 卡片矩形（内缩留白后的位置）
-        val cardLeft = pad
-        val cardTop = pad
-        val cardRight = size.width - pad
-        val cardBottom = size.height - pad
-        val bitmap = android.graphics.Bitmap.createBitmap(
-            w, h, android.graphics.Bitmap.Config.ARGB_8888
-        )
-        val canvas = android.graphics.Canvas(bitmap)
-        val paint = android.graphics.Paint().apply {
-            isAntiAlias = true
-            color = android.graphics.Color.argb((0.38f * 255f).toInt(), 0, 0, 0)
-            maskFilter = android.graphics.BlurMaskFilter(
-                blurPx, android.graphics.BlurMaskFilter.Blur.NORMAL
-            )
-        }
-        // 阴影 = 卡片矩形向下偏移 8dp，模糊 16dp（全部落在节点留白内）
-        val rect = android.graphics.RectF(
-            cardLeft,
-            cardTop + offsetPx,
-            cardRight,
-            cardBottom + offsetPx
-        )
-        canvas.drawRoundRect(rect, cornerPx, cornerPx, paint)
-        val shadowImage = bitmap.asImageBitmap()
+@Composable
+private fun rememberGalleryCardShadow(nodeSize: Dp): ImageBitmap? {
+    val density = LocalDensity.current
+    val sizePx = with(density) { nodeSize.roundToPx() }
+    val padPx = with(density) { GalleryShadowPad.toPx() }
+    val cornerPx = with(density) { GalleryCardCornerRadius.toPx() }
+    val blurPx = with(density) { 16.dp.toPx() }
+    val offsetPx = with(density) { 8.dp.toPx() }
 
-        onDrawBehind {
-            drawImage(image = shadowImage, topLeft = Offset.Zero)
+    return remember(sizePx, padPx, cornerPx, blurPx, offsetPx) {
+        if (sizePx <= 0) {
+            null
+        } else {
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bitmap)
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                color = android.graphics.Color.argb((0.38f * 255f).toInt(), 0, 0, 0)
+                maskFilter = android.graphics.BlurMaskFilter(
+                    blurPx, android.graphics.BlurMaskFilter.Blur.NORMAL
+                )
+            }
+            val rect = android.graphics.RectF(
+                padPx,
+                padPx + offsetPx,
+                sizePx - padPx,
+                sizePx - padPx + offsetPx
+            )
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, paint)
+            bitmap.asImageBitmap()
         }
     }
 }
@@ -1508,7 +1495,7 @@ private fun GalleryCircleButton(
                         Modifier
                             .galleryGlass(
                                 backdrop = backdrop,
-                                shape = CircleShape,
+                                shapeProvider = GalleryCircleShapeProvider,
                                 effects = glassEffects,
                                 surface = glassSurface
                             )
@@ -1557,3 +1544,21 @@ private val GalleryPillPressLift = 6.dp
 
 /** 播放药丸的玻璃形状：真胶囊（非玻璃分支仍用 CircleShape，保持历史像素）。 */
 private val GalleryPillGlassShape = Capsule()
+
+/** 稳定形状 Provider：避免 DrawBackdropElement 每次重组因新 lambda 触发 invalidateDrawCache。 */
+private val GalleryCircleShapeProvider: () -> Shape = { CircleShape }
+private val GalleryPillShapeProvider: () -> Shape = { GalleryPillGlassShape }
+
+/** 顶部轻 scrim 渐变画刷：避免每次组合重新分配 Brush 与 ColorStop 列表。 */
+private val GalleryTopScrimBrush = Brush.verticalGradient(
+    0f to Color.Black.copy(alpha = 0.22f),
+    1f to Color.Transparent
+)
+
+/** 标题文本投影样式（静态常量，淡出透明度通过 graphicsLayer.alpha 同步缩放）。 */
+private val GalleryTitleTextStyle = TextStyle(
+    shadow = Shadow(
+        color = Color.Black.copy(alpha = 0.18f),
+        blurRadius = 8f
+    )
+)

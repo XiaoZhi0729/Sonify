@@ -22,6 +22,7 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -918,15 +919,45 @@ internal fun sectionShowsSkeleton(hasData: Boolean, status: String): Boolean =
 internal fun sectionShowsSkeleton(items: List<*>, status: String): Boolean =
     sectionShowsSkeleton(items.isNotEmpty(), status)
 
+internal data class DiscoverySongColumnsLayout(
+    val columnsPerViewport: Int,
+    val pageWidth: Dp,
+    val columnEndGap: Dp
+)
+
+/**
+ * 计算主页横向分页歌曲列（每日推荐 / 新歌精选）在给定容器宽度下的列数与每列宽度：
+ * - 手机竖屏保持单列（pageWidth = containerWidth - 59dp），与原版完全一致；
+ * - 平板 / 横屏等宽屏按至少 260dp/列自适应拆成 2~3 列，列间保留 14dp 间距；
+ * - startInset(20) + columns * pageWidth + endInset(39) = containerWidth → 吸附等式成立。
+ */
+internal fun calculateDiscoverySongColumnsLayout(
+    containerWidth: Dp,
+    startInset: Dp = 20.dp,
+    endInset: Dp = 39.dp,
+    minColumnWidth: Dp = 260.dp,
+    maxColumns: Int = 3,
+    multiColumnGap: Dp = 14.dp
+): DiscoverySongColumnsLayout {
+    val availableWidth = (containerWidth - startInset - endInset).coerceAtLeast(100.dp)
+    val columns = (availableWidth / minColumnWidth).toInt().coerceIn(1, maxColumns)
+    val pageWidth = (availableWidth / columns).coerceAtLeast(100.dp)
+    val columnEndGap = if (columns > 1) multiColumnGap else 0.dp
+    return DiscoverySongColumnsLayout(
+        columnsPerViewport = columns,
+        pageWidth = pageWidth,
+        columnEndGap = columnEndGap
+    )
+}
+
 /**
  * 横向分页多列歌曲（新歌精选 / 每日推荐共用）：HorizontalPager 松手吸附，
  * 与排行榜/新专辑/精选歌单同款手感。
  *   每列固定 4 首，使用传入的完整 [songs]；
  *   MusicList horizontalPadding=0 → 封面左边缘 = startInset = 20dp = Header；
- *   pageWidth = screenWidth - 59（第二列封面左边缘 = startInset + pageWidth = screenWidth - 39，
- *   封面右边缘 = screenWidth + 13 → 屏内可见 39dp = 3/4 封面）；
- *   startInset(20) + pageWidth + endInset(39) = screenWidth → 吸附等式成立，
- *   每个 Page snap 后左边缘落在同一 X 坐标（含末页）。
+ *   手机单列时 pageWidth = maxWidth - 59（第二列在屏幕右侧露出 39dp）；
+ *   平板 / 横屏时一屏显示 2~3 列（[calculateDiscoverySongColumnsLayout]），
+ *   列间通过 columnEndGap 留出 14dp 呼吸感，同时保持 snap 吸附等式成立。
  *   verticalAlignment = Top：末列不足 4 首时贴左上，不垂直居中。
  */
 @Composable
@@ -941,38 +972,47 @@ private fun DiscoveryPagedSongColumns(
     val columnCount = (songs.size + songsPerColumn - 1) / songsPerColumn
     val pagerState = rememberPagerState(pageCount = { columnCount })
 
-    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val startInset = 20.dp
     val endInset = 39.dp
-    // 横屏 / 分屏 / 小窗时 screenWidth 可能 < 59dp，coerceAtLeast 防止 pageWidth 为负
-    val pageWidth = (screenWidth - startInset - endInset).coerceAtLeast(100.dp)
 
-    HorizontalPager(
-        state = pagerState,
-        flingBehavior = PagerDefaults.flingBehavior(
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val layout = calculateDiscoverySongColumnsLayout(
+            containerWidth = maxWidth,
+            startInset = startInset,
+            endInset = endInset
+        )
+
+        HorizontalPager(
             state = pagerState,
-            pagerSnapDistance = DiscoveryRailSnapDistance
-        ),
-        pageSize = PageSize.Fixed(pageWidth),
-        contentPadding = PaddingValues(start = startInset, end = endInset),
-        // foundation 1.7.0-beta07 默认 CenterVertically → 末页不足 4 首会垂直居中；
-        // 显式 Top 使所有页面统一顶部对齐。
-        verticalAlignment = Alignment.Top,
-        key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
-        beyondViewportPageCount = 0
-    ) { page ->
-        Column(Modifier.fillMaxWidth()) {
-            repeat(songsPerColumn) { row ->
-                val globalIndex = page * songsPerColumn + row
-                if (globalIndex >= songs.size) return@repeat
-                MusicList(
-                    displaySongs[globalIndex],
-                    horizontalPadding = 0.dp
-                ) {
-                    onSongClick(globalIndex)
-                }
-                if (row < songsPerColumn - 1 && globalIndex + 1 < songs.size) {
-                    OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
+            flingBehavior = PagerDefaults.flingBehavior(
+                state = pagerState,
+                pagerSnapDistance = DiscoveryRailSnapDistance
+            ),
+            pageSize = PageSize.Fixed(layout.pageWidth),
+            contentPadding = PaddingValues(start = startInset, end = endInset),
+            // foundation 1.7.0-beta07 默认 CenterVertically → 末页不足 4 首会垂直居中；
+            // 显式 Top 使所有页面统一顶部对齐。
+            verticalAlignment = Alignment.Top,
+            key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
+            beyondViewportPageCount = 0
+        ) { page ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(end = layout.columnEndGap)
+            ) {
+                repeat(songsPerColumn) { row ->
+                    val globalIndex = page * songsPerColumn + row
+                    if (globalIndex >= songs.size) return@repeat
+                    MusicList(
+                        displaySongs[globalIndex],
+                        horizontalPadding = 0.dp
+                    ) {
+                        onSongClick(globalIndex)
+                    }
+                    if (row < songsPerColumn - 1 && globalIndex + 1 < songs.size) {
+                        OnlineListItemDivider(startPadding = 66.dp, endPadding = 16.dp)
+                    }
                 }
             }
         }

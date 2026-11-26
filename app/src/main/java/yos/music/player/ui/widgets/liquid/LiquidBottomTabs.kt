@@ -182,10 +182,11 @@ fun LiquidBottomTabs(
             (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / safeTabsCount
         }
 
+        val latestMaxWidth = rememberUpdatedState(constraints.maxWidth.coerceAtLeast(1))
         val offsetAnimation = remember { Animatable(0f) }
         val panelOffset by remember(density) {
             derivedStateOf {
-                val fraction = (offsetAnimation.value / constraints.maxWidth).fastCoerceIn(-1f, 1f)
+                val fraction = (offsetAnimation.value / latestMaxWidth.value).fastCoerceIn(-1f, 1f)
                 with(density) {
                     4f.dp.toPx() * fraction.sign * EaseOut.transform(abs(fraction))
                 }

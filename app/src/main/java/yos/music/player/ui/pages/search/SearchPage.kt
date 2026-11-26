@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -102,13 +103,16 @@ import yos.music.player.ui.pages.library.OnlineStatusItem
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
 import yos.music.player.ui.widgets.basic.AppleSearchField
+import yos.music.player.ui.widgets.basic.DiscoveryMinImageSize
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.SearchCancelButton
 import yos.music.player.ui.widgets.basic.SearchFieldRow
 import yos.music.player.ui.widgets.basic.SearchMorphSpec
 import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
+import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
 import yos.music.player.ui.widgets.basic.preloadRawCover
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
@@ -1069,7 +1073,6 @@ private fun RecentSearchRow(
 
 /**
  * 结果页「最佳结果」大卡。列表里已 drop 掉首曲，故卡片不会与列表重复。
- * 不自带三竖点菜单 —— MusicList 行尾已有 SongAddToPlaylistButton，再加会重复。
  */
 @Composable
 private fun TopResultCard(song: KugouSearchSong, onClick: () -> Unit) {
@@ -1121,10 +1124,113 @@ private fun TopResultCard(song: KugouSearchSong, onClick: () -> Unit) {
                 modifier = Modifier.padding(top = 3.dp)
             )
         }
+        SongAddToPlaylistButton(music = display, onPlay = onClick)
     }
 }
 
-/** 专辑结果两列网格。 */
+/**
+ * 搜索结果封面网格的自适应容器（手机 2 列，平板/宽屏按 [DiscoveryMinImageSize] 自动扩展多列）。
+ *
+ * 外层左右留白 14dp + 单卡内边距 8dp = 封面外缘 22dp（与页头及 Tab 对齐）、卡间封面间距 16dp，
+ * 因此以 `startPadding = 22.dp, endPadding = 22.dp, spacing = 16.dp` 计算列数。
+ */
+@Composable
+private fun <T> SearchAdaptiveGrid(
+    items: List<T>,
+    itemContent: @Composable (item: T, modifier: Modifier) -> Unit
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val columns = calculateAdaptiveImageLayout(
+            containerWidth = maxWidth,
+            startPadding = 22.dp,
+            endPadding = 22.dp,
+            minImageSize = DiscoveryMinImageSize,
+            spacing = 16.dp
+        ).itemCount.coerceAtLeast(2)
+        val rows = remember(items, columns) { items.chunked(columns) }
+
+        Column(Modifier.padding(horizontal = 14.dp)) {
+            rows.forEach { rowItems ->
+                Row(Modifier.fillMaxWidth()) {
+                    rowItems.forEach { item ->
+                        itemContent(item, Modifier.weight(1f))
+                    }
+                    repeat(columns - rowItems.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 专辑/歌单自适应网格共用的正方形封面卡片。 */
+@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+@Composable
+private fun SearchMediaGridCard(
+    coverUrl: String?,
+    title: String,
+    subtitle: String,
+    sharedCoverKey: String,
+    sharedTransitionScope: androidx.compose.animation.SharedTransitionScope?,
+    animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+    ) {
+        // 圆角保持列表自身的 8dp；转场中的圆角渐变由详情端依据 SharedCoverStyle 完成
+        val coverModifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .then(
+                if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                    with(sharedTransitionScope) {
+                        Modifier.sharedElement(
+                            sharedContentState = rememberSharedContentState(key = sharedCoverKey),
+                            animatedVisibilityScope = animatedVisibilityScope
+                        )
+                    }
+                } else Modifier
+            )
+        Box(coverModifier) {
+            ShadowImageWithCache(
+                dataLambda = { coverUrl },
+                contentDescription = title,
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = 8.dp,
+                shadowAlpha = 0f,
+                // 两列及多列网格的封面在手机/平板端实际像素约 400-550px。LOW 只解码 128px，
+                // 等于把图硬放大 4 倍以上——这是"搜索里专辑/歌单封面特别糊"的根因。
+                // HIGH 解码 400px 正好等于源图分辨率（URL 档位本就是 400），且不增加流量。
+                imageQuality = ImageQuality.HIGH,
+                matchDisplaySize = true
+            )
+        }
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+        Text(
+            text = subtitle,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .alpha(0.5f)
+        )
+    }
+}
+
+/** 专辑结果自适应网格（手机 2 列，平板/宽屏自动多列）。 */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
 private fun AlbumGrid(
@@ -1135,87 +1241,36 @@ private fun AlbumGrid(
 ) {
     val context = LocalContext.current
     val preloadScope = rememberCoroutineScope()
-    Column(Modifier.padding(horizontal = 14.dp)) {
-        albums.chunked(2).forEach { rowAlbums ->
-            Row(Modifier.fillMaxWidth()) {
-                rowAlbums.forEach { album ->
-                    LaunchedEffect(album.albumId, album.coverUrl) {
-                        preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
-                    }
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable {
-                                SharedCoverStyle.lastSourceCorner = 8.dp
-                                // 记录来源 key：详情页据此与本卡封面配对
-                                OnlineAlbumObject.setSharedCoverKey(album.albumId, "album/online/${album.albumId}")
-                                preloadScope.launch {
-                                    coroutineScope {
-                                        launch { preloadRawCover(context, album.coverUrl) }
-                                        launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
-                                    }
-                                    onAlbumClick(album)
-                                }
-                            }
-                            .padding(8.dp)
-                    ) {
-                        // 圆角保持列表自身的 8dp；转场中的圆角渐变由详情端依据 SharedCoverStyle 完成
-                        val coverModifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .then(
-                                if (sharedTransitionScope != null && animatedVisibilityScope != null) {
-                                    with(sharedTransitionScope) {
-                                        Modifier.sharedElement(
-                                            sharedContentState = rememberSharedContentState(
-                                                key = "album/online/${album.albumId}"
-                                            ),
-                                            animatedVisibilityScope = animatedVisibilityScope
-                                        )
-                                    }
-                                } else Modifier
-                            )
-                        Box(coverModifier) {
-                            ShadowImageWithCache(
-                                dataLambda = { album.coverUrl },
-                                contentDescription = album.name,
-                                modifier = Modifier.fillMaxSize(),
-                                cornerRadius = 8.dp,
-                                shadowAlpha = 0f,
-                                // 两列网格的封面在手机竖屏是 542 物理像素。LOW 只解码 128px，
-                                // 等于把图硬放大 4.2 倍——这是"搜索里专辑封面特别糊"的根因。
-                                // HIGH 解码 400px 正好等于源图分辨率（URL 档位本就是 400），
-                                // 放大降到 1.36×，且不增加任何流量（只是不再被二次缩小）。
-                                imageQuality = ImageQuality.HIGH,
-                                matchDisplaySize = true
-                            )
-                        }
-                        Text(
-                            text = album.name,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                        Text(
-                            text = album.singerName,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .alpha(0.5f)
-                        )
-                    }
-                }
-                if (rowAlbums.size == 1) Spacer(Modifier.weight(1f))
-            }
+    SearchAdaptiveGrid(albums) { album, itemModifier ->
+        LaunchedEffect(album.albumId, album.coverUrl) {
+            preloadAlbumBackdropColor(context, album.albumId, album.coverUrl)
         }
+        val sharedKey = "album/online/${album.albumId}"
+        SearchMediaGridCard(
+            coverUrl = album.coverUrl,
+            title = album.name,
+            subtitle = album.singerName,
+            sharedCoverKey = sharedKey,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+            modifier = itemModifier,
+            onClick = {
+                SharedCoverStyle.lastSourceCorner = 8.dp
+                // 记录来源 key：详情页据此与本卡封面配对
+                OnlineAlbumObject.setSharedCoverKey(album.albumId, sharedKey)
+                preloadScope.launch {
+                    coroutineScope {
+                        launch { preloadRawCover(context, album.coverUrl) }
+                        launch { preloadAlbumBackdropColor(context, album.albumId, album.coverUrl) }
+                    }
+                    onAlbumClick(album)
+                }
+            }
+        )
     }
 }
 
-/** 歌单结果两列网格。 */
+/** 歌单结果自适应网格（手机 2 列，平板/宽屏自动多列）。 */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
 private fun PlaylistGrid(
@@ -1226,92 +1281,43 @@ private fun PlaylistGrid(
 ) {
     val context = LocalContext.current
     val preloadScope = rememberCoroutineScope()
-    Column(Modifier.padding(horizontal = 14.dp)) {
-        playlists.chunked(2).forEach { rowPlaylists ->
-            Row(Modifier.fillMaxWidth()) {
-                rowPlaylists.forEach { playlist ->
-                    val playlistId = playlist.globalCollectionId
-                        ?: playlist.specialId.toString()
-                    LaunchedEffect(playlistId, playlist.cover) {
-                        preloadPlaylistBackdropColor(
-                            context = context,
-                            source = PlaylistSelection.Source.Recommend.name,
-                            playlistId = playlistId,
-                            coverUrl = playlist.cover
-                        )
-                    }
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable {
-                                SharedCoverStyle.lastSourceCorner = 8.dp
-                                preloadScope.launch {
-                                    coroutineScope {
-                                        launch { preloadRawCover(context, playlist.cover ?: "") }
-                                        launch {
-                                            preloadPlaylistBackdropColor(
-                                                context = context,
-                                                source = PlaylistSelection.Source.Recommend.name,
-                                                playlistId = playlistId,
-                                                coverUrl = playlist.cover
-                                            )
-                                        }
-                                    }
-                                    onPlaylistClick(playlist)
-                                }
-                            }
-                            .padding(8.dp)
-                    ) {
-                        // 圆角保持列表自身的 8dp；转场中的圆角渐变由详情端依据 SharedCoverStyle 完成
-                        val coverModifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .then(
-                                if (sharedTransitionScope != null && animatedVisibilityScope != null) {
-                                    with(sharedTransitionScope) {
-                                        Modifier.sharedElement(
-                                            sharedContentState = rememberSharedContentState(
-                                                key = "playlist/Recommend/$playlistId"
-                                            ),
-                                            animatedVisibilityScope = animatedVisibilityScope
-                                        )
-                                    }
-                                } else Modifier
-                            )
-                        Box(coverModifier) {
-                            ShadowImageWithCache(
-                                dataLambda = { playlist.cover },
-                                contentDescription = playlist.name,
-                                modifier = Modifier.fillMaxSize(),
-                                cornerRadius = 8.dp,
-                                shadowAlpha = 0f,
-                                // 与专辑网格同尺寸（542 物理像素），同样不能用 LOW：
-                                // LOW 只解码 128px = 硬放大 4.2 倍，是"歌单封面糊"的根因。
-                                imageQuality = ImageQuality.HIGH,
-                                matchDisplaySize = true
+    SearchAdaptiveGrid(playlists) { playlist, itemModifier ->
+        val playlistId = playlist.globalCollectionId
+            ?: playlist.specialId.toString()
+        LaunchedEffect(playlistId, playlist.cover) {
+            preloadPlaylistBackdropColor(
+                context = context,
+                source = PlaylistSelection.Source.Recommend.name,
+                playlistId = playlistId,
+                coverUrl = playlist.cover
+            )
+        }
+        SearchMediaGridCard(
+            coverUrl = playlist.cover,
+            title = playlist.name,
+            subtitle = "${playlist.songCount} 首",
+            sharedCoverKey = "playlist/Recommend/$playlistId",
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+            modifier = itemModifier,
+            onClick = {
+                SharedCoverStyle.lastSourceCorner = 8.dp
+                preloadScope.launch {
+                    coroutineScope {
+                        launch { preloadRawCover(context, playlist.cover ?: "") }
+                        launch {
+                            preloadPlaylistBackdropColor(
+                                context = context,
+                                source = PlaylistSelection.Source.Recommend.name,
+                                playlistId = playlistId,
+                                coverUrl = playlist.cover
                             )
                         }
-                        Text(
-                            text = playlist.name,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                        Text(
-                            text = "${playlist.songCount} 首",
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .alpha(0.5f)
-                        )
                     }
+                    onPlaylistClick(playlist)
                 }
-                if (rowPlaylists.size == 1) Spacer(Modifier.weight(1f))
             }
-        }
+        )
     }
 }
 

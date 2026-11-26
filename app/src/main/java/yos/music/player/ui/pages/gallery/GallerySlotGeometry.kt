@@ -108,6 +108,24 @@ object GallerySlotGeometry {
     /** 按**排名**索引的层级表：rank 0（最大）→ 100，rank 3（最小）→ 40。 */
     private val rankZ: List<Float> = listOf(100f, 80f, 60f, 40f)
 
+    /** 预计算的 4 个槽位静态几何实例（避免热路径反复分配 GallerySlot）。 */
+    private val precomputedSlots: Array<GallerySlot> = Array(SLOT_COUNT) { i ->
+        val (bx, by) = slotBase[i]
+        GallerySlot(bx * SPREAD, by * SPREAD, slotScale[i], slotZ[i])
+    }
+
+    /** 预计算的槽位极坐标半径与极角（Pivot 固定，编译期即确定）。 */
+    private val slotRadii: FloatArray = FloatArray(SLOT_COUNT) { radiusOf(precomputedSlots[it]) }
+    private val slotAngles: FloatArray = FloatArray(SLOT_COUNT) { angleOf(precomputedSlots[it]) }
+    private val slotDeltaAngles: FloatArray = FloatArray(SLOT_COUNT) { i ->
+        var d = slotAngles[(i + 1) % SLOT_COUNT] - slotAngles[i]
+        while (d > PI.toFloat()) d -= (2f * PI).toFloat()
+        while (d < -PI.toFloat()) d += (2f * PI).toFloat()
+        d
+    }
+    private val slotMeanAngle: Float =
+        slotDeltaAngles.fold(0f) { acc, d -> acc + abs(d) } / SLOT_COUNT
+
     /**
      * 切线→横向混合的拐点（离枢轴的距离，单位：舞台宽度）。
      *
@@ -128,11 +146,7 @@ object GallerySlotGeometry {
     private const val Z_INDEX_BASE = 1_000_000f
 
     /** 槽位几何（整槽）。 */
-    fun slot(slot: Int): GallerySlot {
-        val i = wrapSlot(slot)
-        val (bx, by) = slotBase[i]
-        return GallerySlot(bx * SPREAD, by * SPREAD, slotScale[i], slotZ[i])
-    }
+    fun slot(slot: Int): GallerySlot = precomputedSlots[wrapSlot(slot)]
 
     /** 把任意整数归一到 `[0, SLOT_COUNT)`。 */
     fun wrapSlot(slot: Int): Int = ((slot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT
@@ -262,20 +276,19 @@ object GallerySlotGeometry {
      */
     fun geometry(ringPos: Float): GallerySlot {
         val p = if (ringPos < 0f) ringPos % SLOT_COUNT + SLOT_COUNT else ringPos % SLOT_COUNT
-        val from = floor(p).toInt()
+        val from = floor(p).toInt().coerceIn(0, SLOT_COUNT - 1)
         val t = p - from
-        val a = slot(from)
+        val a = precomputedSlots[from]
         if (t == 0f) return a
-        val b = slot(from + 1)
+        val next = (from + 1) % SLOT_COUNT
+        val b = precomputedSlots[next]
 
         val eased = smoothStep(t)
-        val radiusA = radiusOf(a)
-        val radiusB = radiusOf(b)
-        var delta = angleOf(b) - angleOf(a)
-        while (delta > PI.toFloat()) delta -= (2f * PI).toFloat()
-        while (delta < -PI.toFloat()) delta += (2f * PI).toFloat()
+        val radiusA = slotRadii[from]
+        val radiusB = slotRadii[next]
+        val delta = slotDeltaAngles[from]
         val radius = radiusA + (radiusB - radiusA) * eased
-        val angle = angleOf(a) + delta * eased
+        val angle = slotAngles[from] + delta * eased
 
         return GallerySlot(
             offsetX = PIVOT_X + radius * cos(angle),
@@ -283,6 +296,17 @@ object GallerySlotGeometry {
             scale = a.scale + (b.scale - a.scale) * t,
             z = a.z + (b.z - a.z) * t
         )
+    }
+
+    /** 仅计算指定环位置的缩放倍率（零对象分配、零三角函数），供 [zRank] 热路径使用。 */
+    internal fun scaleAt(ringPos: Float): Float {
+        val p = if (ringPos < 0f) ringPos % SLOT_COUNT + SLOT_COUNT else ringPos % SLOT_COUNT
+        val from = floor(p).toInt().coerceIn(0, SLOT_COUNT - 1)
+        val t = p - from
+        val a = slotScale[from]
+        if (t == 0f) return a
+        val b = slotScale[(from + 1) % SLOT_COUNT]
+        return a + (b - a) * t
     }
 
     /** 平滑缓动 `t*t*(3-2t)`：两端速度为 0，消除跨槽位交界处的速度折点。 */
@@ -341,7 +365,7 @@ object GallerySlotGeometry {
         }
 
         // 切线段：把"一段弧长"折算成槽位数，使沿弧拖动跟手度与半径无关。
-        val slotArc = slotArcPx(radius, stageWidthPx)
+        val slotArc = slotArcPx(radius)
         val tangentSlots = if (slotArc > 1e-3f) tangentComponent / slotArc else 0f
 
         // 横向段：沿用旧口径（整条 triggerPx 行程 = 1 槽位）。
@@ -357,18 +381,7 @@ object GallerySlotGeometry {
      * 半径越小弧长越短——这正是切线模型在圆心附近会失控的原因，
      * 所以它只在小半径以外使用（见 [radialBlend]）。
      */
-    private fun slotArcPx(radiusPx: Float, stageWidthPx: Float): Float {
-        // 取 4 个槽位极角差的平均值作为"一格"的张角
-        var total = 0f
-        for (i in 0 until SLOT_COUNT) {
-            var d = angleOf(slot(i + 1)) - angleOf(slot(i))
-            while (d > PI.toFloat()) d -= (2f * PI).toFloat()
-            while (d < -PI.toFloat()) d += (2f * PI).toFloat()
-            total += abs(d)
-        }
-        val slotAngle = total / SLOT_COUNT
-        return radiusPx * slotAngle
-    }
+    private fun slotArcPx(radiusPx: Float): Float = radiusPx * slotMeanAngle
 
     /**
      * 切线/横向的混合权重：`1` = 完全切线（远离枢轴），`0` = 完全横向（贴近枢轴）。
@@ -416,17 +429,22 @@ object GallerySlotGeometry {
      * 胜出，保证交换方向永远是"新卡翻上来"而不是"旧卡赖着不走"。
      */
     fun zRank(containerIndex: Int, scroll: Float): Int {
-        val mine = geometry(ringPosition(containerIndex, scroll))
+        val myPos = ringPosition(containerIndex, scroll)
+        val myScale = scaleAt(myPos)
+        var myForward: Float? = null
         var rank = 0
         for (other in 0 until SLOT_COUNT) {
             if (other == containerIndex) continue
             val op = ringPosition(other, scroll)
-            val o = geometry(op)
+            val otherScale = scaleAt(op)
             val larger = when {
-                o.scale > mine.scale -> true
-                o.scale < mine.scale -> false
+                otherScale > myScale -> true
+                otherScale < myScale -> false
                 // 尺寸相同：离焦点更近者在前
-                else -> forwardDistance(op) < forwardDistance(ringPosition(containerIndex, scroll))
+                else -> {
+                    val mf = myForward ?: forwardDistance(myPos).also { myForward = it }
+                    forwardDistance(op) < mf
+                }
             }
             if (larger) rank++
         }

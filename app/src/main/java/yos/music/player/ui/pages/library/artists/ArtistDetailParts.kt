@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -91,13 +92,24 @@ internal data class ArtistPagingSnapshot(
 )
 
 @Composable
-internal fun ArtistSectionHeader(title: String, onClick: (() -> Unit)? = null) {
+internal fun ArtistSectionHeader(
+    title: String,
+    bottomPadding: Dp = 14.dp,
+    onClick: (() -> Unit)? = null
+) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)
+        Modifier.fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = bottomPadding)
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp, lineHeight = 24.sp)
+        Text(
+            title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 20.sp,
+            lineHeight = 24.sp,
+            modifier = Modifier.heightIn(min = 24.dp)
+        )
         if (onClick != null) {
             Spacer(Modifier.width(4.dp))
             Icon(

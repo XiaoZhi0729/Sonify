@@ -267,9 +267,12 @@ private fun ButtonCore(
                 translationY = sh.y
             }
             .drawBehind {
-                val r = (radiusPx ?: (size.height / 2f)).coerceAtMost(min(size.width, size.height) / 2f)
+                val maxR = min(size.width, size.height) / 2f
+                val r = (radiusPx ?: (size.height / 2f)).coerceAtMost(maxR)
                 val rect = Rect(Offset.Zero, size)
-                val p = path.get(rect, r, ControlSmoothing)
+                // 全胶囊（r 贴近半高）时 G2 超椭圆会在左右两端挤出轻微尖角，改用 G1 真半圆端头
+                val smoothing = if (r >= maxR - 0.5f) 0f else ControlSmoothing
+                val p = path.get(rect, r, smoothing)
                 if (container.alpha > 0f) drawPath(p, container)
                 if (enabled && colors.pressedContainer.alpha > 0f) {
                     val k = visual.pressAmount
