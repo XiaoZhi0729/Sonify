@@ -3,14 +3,11 @@
   <groupId>com.mocharealm.accompanist</groupId>
   <artifactId>lyrics-ui-android</artifactId>
   <versioning>
-    <latest>2.0.0-rc.2-patched21</latest>
-    <release>2.0.0-rc.2-patched21</release>
+    <latest>2.0.0-rc.2-patched22</latest>
+    <release>2.0.0-rc.2-patched22</release>
     <versions>
-      <version>2.0.0-rc.2-patched17</version>
-      <version>2.0.0-rc.2-patched18</version>
-      <version>2.0.0-rc.2-patched19</version>
-      <version>2.0.0-rc.2-patched21</version>
+      <version>2.0.0-rc.2-patched22</version>
     </versions>
-    <lastUpdated>20261122034902</lastUpdated>
+    <lastUpdated>20261122121824</lastUpdated>
   </versioning>
 </metadata>

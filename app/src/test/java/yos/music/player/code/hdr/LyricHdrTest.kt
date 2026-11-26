@@ -3,6 +3,8 @@ package yos.music.player.code.hdr
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,5 +74,60 @@ class LyricHdrTest {
         assertEquals(1.5f * 0.92f, LyricHdr.resolveBoost(0.6f, 1.5f), 0.0001f)
         // 余量充足时仍按用户设置的 target 输出
         assertEquals(target, LyricHdr.resolveBoost(0.6f, 3.0f), 0.0001f)
+    }
+
+    @Test
+    fun lyricsUiHdrLiftLinearMatchesAppHdrLift() {
+        val mixed = Color(0.7f, 1f, 1f, 1f)
+        val gain = 2.2f
+        val expected = mixed.hdrLift(gain)
+        val className = "com.mocharealm.accompanist.lyrics.ui.internal.rendering.HdrSweepBrush_androidKt"
+
+        try {
+            val clazz = Class.forName(className)
+            val method = clazz.declaredMethods.firstOrNull {
+                it.name.startsWith("hdrLiftLinear") && it.parameterCount == 2
+            } ?: error("hdrLiftLinear method not found on ${clazz.name}")
+            method.isAccessible = true
+            val packedBits = method.invoke(null, mixed.value.toLong(), gain) as Long
+            val actual = Color(packedBits.toULong())
+
+            assertEquals(expected.colorSpace, actual.colorSpace)
+            assertEquals(expected.red, actual.red, 0.001f)
+            assertEquals(expected.green, actual.green, 0.001f)
+            assertEquals(expected.blue, actual.blue, 0.001f)
+            assertEquals(expected.alpha, actual.alpha, 0.001f)
+        } catch (_: UnsupportedClassVersionError) {
+            // 测试进程运行在 JDK 17 时无法加载 JvmTarget.JVM_21（classfile 65.0）的库类，
+            // 退回校验 classpath 上该类常量池，确保未回退成旧版色度放大公式。
+            val resourcePath = className.replace('.', '/') + ".class"
+            val stream = LyricHdrTest::class.java.classLoader?.getResourceAsStream(resourcePath)
+            assertNotNull("Missing $resourcePath on test classpath", stream)
+            val classBytes = stream!!.use { it.readBytes() }
+            assertTrue(containsConstantFloat(classBytes, 7.4f))
+            assertTrue(containsConstantFloat(classBytes, -0.5f))
+            assertFalse(containsConstantFloat(classBytes, 1e-4f))
+            assertFalse(containsConstantFloat(classBytes, 0.3f))
+        }
+    }
+
+    private fun containsConstantFloat(classBytes: ByteArray, value: Float): Boolean {
+        val bits = java.lang.Float.floatToRawIntBits(value)
+        val b3 = ((bits ushr 24) and 0xFF).toByte()
+        val b2 = ((bits ushr 16) and 0xFF).toByte()
+        val b1 = ((bits ushr 8) and 0xFF).toByte()
+        val b0 = (bits and 0xFF).toByte()
+        for (i in 0..classBytes.size - 5) {
+            if (
+                classBytes[i] == 0x04.toByte() &&
+                classBytes[i + 1] == b3 &&
+                classBytes[i + 2] == b2 &&
+                classBytes[i + 3] == b1 &&
+                classBytes[i + 4] == b0
+            ) {
+                return true
+            }
+        }
+        return false
     }
 }
