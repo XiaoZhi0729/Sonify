@@ -87,4 +87,24 @@ class KugouSpecialPlaylistParseTest {
         assertEquals("http://c1.kgimg.com/{size}/a.jpg", p.cover) // resolver 透传，替换在 resolveArtworkUrl
         assertEquals(13, p.songCount)
     }
+
+    /** 搜索命中关键词会被上游包 <em> 高亮标签，落模型前必须剥除。 */
+    @Test
+    fun stripsSearchHighlightEmTagsFromPlaylistName() {
+        val primary = parse(
+            mapOf(
+                "specialid" to 101,
+                "specialname" to "<em>周杰伦</em>经典怀旧精选"
+            )
+        )
+        assertEquals("周杰伦经典怀旧精选", primary.name)
+
+        val fallback = parse(
+            mapOf(
+                "specialid" to 102,
+                "name" to "夜晚<EM class=\"hl\">emo</EM>歌单"
+            )
+        )
+        assertEquals("夜晚emo歌单", fallback.name)
+    }
 }

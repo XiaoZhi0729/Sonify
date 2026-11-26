@@ -150,6 +150,22 @@ private fun JSONObject.toFieldMap(): Map<String, Any?> =
     keys().asSequence().associateWith { key -> optionalValue(key) }
 
 /**
+ * 酷狗图片 URL（封面 / 头像 / 艺人图）归一化，对齐 Dart `_resolveArtworkUri`：
+ *  - 空串视为无图（返回 null）
+ *  - `{size}` 占位符替换为 400
+ *  - 统一升级为 https：自建歌单封面实测大量位于 c1.kgimg.com，而应用网络安全配置
+ *    仅对 kugou.com / kgimg.com 放行明文 HTTP，http 的 kgimg.com 封面会被系统拦截
+ *    导致封面显示占位图；实测 imge.kugou.com / c1.kgimg.com 的 https 均 200。
+ *
+ * 抽成顶层 internal 函数供头像解析（[KugouProfileRepository]）复用，行为与原
+ * `KugouRepository.resolveArtworkUrl` 完全一致。
+ */
+internal fun normalizeKugouImageUrl(raw: String?): String? =
+    raw?.takeIf { it.isNotEmpty() }
+        ?.replace("{size}", "400")
+        ?.let { if (it.startsWith("http://")) "https://" + it.removePrefix("http://") else it }
+
+/**
  * 歌曲自带的一位歌手（酷狗 singerinfo[]/authors[] 条目）。id 可精确直达艺人页，
  * 无需按名搜歌手——按名搜索不做繁简/译名归一化，「高橋洋子」这类原名会稳定搜空。
  */
@@ -245,6 +261,12 @@ internal fun parseRecommendPlaylists(
     }
 }
 
+private val SEARCH_HIGHLIGHT_REGEX = Regex("</?em[^>]*>", RegexOption.IGNORE_CASE)
+
+/** 酷狗搜索接口会给命中关键词包 <em> 高亮标签，落模型前剥掉，避免 UI 直出。 */
+internal fun stripSearchHighlight(s: String): String =
+    s.replace(SEARCH_HIGHLIGHT_REGEX, "")
+
 /** /search/special 响应里承载歌单数组的字段（多形态兜底）；无则返回 null。 */
 internal fun specialPlaylistListArray(json: JSONObject): JSONArray? {
     val data = json.optJSONObject("data") ?: json
@@ -273,7 +295,7 @@ internal fun parseSpecialPlaylist(
         ?: text("id").toLongOrNull()
         ?: 0L
     if (specialId == 0L) return null
-    val name = text("specialname").ifEmpty { text("name") }
+    val name = stripSearchHighlight(text("specialname").ifEmpty { text("name") })
     val gcid = text("global_collection_id").ifEmpty { text("gid") }.takeIf { it.isNotEmpty() }
     return KugouPlaylistBrief(
         specialId = specialId,
@@ -515,14 +537,8 @@ object KugouRepository {
         return copy(uri = placeholderUri(hash))
     }
 
-    /** 封面 URL 归一化：酷狗图片 URL 含 {size} 占位符，对齐 Dart _resolveArtworkUri 替换为 400。
-     * 并统一升级为 https：自建歌单封面实测大量位于 c1.kgimg.com，而应用网络安全配置
-     * 仅对 kugou.com 系域名放行明文 HTTP，http 的 kgimg.com 封面会被系统拦截导致
-     * 封面显示占位图；实测 imge.kugou.com / c1.kgimg.com 的 https 均 200（image 类型）。 */
-    private fun resolveArtworkUrl(raw: String?): String? =
-        raw?.takeIf { it.isNotEmpty() }
-            ?.replace("{size}", "400")
-            ?.let { if (it.startsWith("http://")) "https://" + it.removePrefix("http://") else it }
+    /** 封面 URL 归一化。实现见顶层 [normalizeKugouImageUrl]（头像解析共用同一口径）。 */
+    private fun resolveArtworkUrl(raw: String?): String? = normalizeKugouImageUrl(raw)
 
     /** 关键词搜索在线歌曲。对应 Rust GET /search（type=song）。 */
     suspend fun searchSongs(keyword: String, page: Int = 1, pageSize: Int = 20): Result<List<KugouSearchSong>> =
@@ -552,10 +568,6 @@ object KugouRepository {
                 Result.failure(e)
             }
         }
-
-    /** 酷狗搜索接口会给命中关键词包 <em> 高亮标签，落模型前剥掉，避免 UI 直出。 */
-    private fun stripSearchHighlight(s: String): String =
-        s.replace(Regex("</?em[^>]*>", RegexOption.IGNORE_CASE), "")
 
     /** /search 歌曲条目解析（song 与 lyric 两类响应同构）；顺带登记收藏协议所需歌曲身份。 */
     private fun parseSearchSong(song: JSONObject): KugouSearchSong? {

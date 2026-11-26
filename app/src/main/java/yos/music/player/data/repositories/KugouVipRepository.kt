@@ -73,6 +73,8 @@ object KugouVipRepository {
      */
     suspend fun onLoggedIn() {
         runCatching { refreshVipDetail() }
+        // 用户资料（昵称/头像）：扫码 / 手机号 / 引导页三条登录路径都汇到这里
+        runCatching { KugouProfileRepository.refreshProfile() }
         runCatching { loadMonthRecord(currentMonthKey()) }
         if (AutoReceiveVip) runCatching { autoSignInIfNeeded() }
     }

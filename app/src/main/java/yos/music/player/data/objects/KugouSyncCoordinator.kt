@@ -73,7 +73,7 @@ object KugouSyncCoordinator {
         return KugouRepository.favoriteHashes.value != before
     }
 
-    /** 回到前台 / 登录后 / 手动刷新：强制重拉收藏、关注歌手与收藏专辑。 */
+    /** 回到前台 / 登录后 / 手动刷新：强制重拉收藏、关注歌手、收藏专辑与用户歌单。 */
     suspend fun refreshAll() {
         if (resyncFavoritesIfChanged()) notifyFavoritesChanged()
         FollowedArtistsObject.ensureLoaded(force = true)
@@ -81,6 +81,7 @@ object KugouSyncCoordinator {
         CollectedAlbumsObject.ensureLoaded(force = true)
         notifyAlbumsChanged()
         CollectedPlaylistsObject.ensureLoaded(force = true)
+        UserPlaylistsObject.ensureLoaded(force = true)
     }
 
     fun refreshAllAsync() {

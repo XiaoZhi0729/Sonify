@@ -16,8 +16,10 @@ import java.io.IOException
 import yos.music.player.code.utils.others.YosDiagnostics
 import yos.music.player.data.objects.BlacklistState
 import yos.music.player.data.objects.KugouAccountState
+import yos.music.player.data.objects.KugouProfileState
 import yos.music.player.data.objects.KugouVipState
 import yos.music.player.data.objects.MyPlaylistsCache
+import yos.music.player.data.repositories.KugouProfileRepository
 import yos.music.player.data.repositories.KugouUpstreamError
 
 /**
@@ -160,6 +162,15 @@ class KugouApiService private constructor() {
             KugouAccountState.apply(snapshot.userid, snapshot.hasVipToken)
             KugouAccountState.updateAuthVersion(snapshot.version)
             if (snapshot.isLoggedIn) KugouVipState.onAccountResolved(snapshot.userid) else KugouVipState.clear()
+            // 用户资料（昵称/头像）：切号时换 MMKV 命名空间并重载该账号的缓存头像，
+            // 登出只清内存（按账号保留，重登立即恢复）。网络拉取由
+            // KugouProfileRepository（登录后 / 进资料库时）负责，这里不发起请求。
+            if (snapshot.isLoggedIn) {
+                KugouProfileState.onAccountResolved(snapshot.userid)
+            } else {
+                KugouProfileState.clear()
+            }
+            KugouProfileRepository.reset()
             BlacklistState.reset()
             MyPlaylistsCache.reset()
             yos.music.player.data.objects.CollectedPlaylistsObject.reset()
@@ -1711,6 +1722,27 @@ class KugouApiService private constructor() {
             httpGetVipBusiness("/user/vip/detail")
         } catch (e: Exception) {
             Log.e(TAG, "getVipDetail exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 用户资料（对齐 Dart getUserDetail，kugou_api_client.dart:4010）：GET /user/detail。
+     *
+     * Rust 侧 handle_detail 转发 POST gateway.kugou.com/v3/get_my_info（x-router
+     * usercenter.kugou.com），返回 data.pic / avatar / img（头像）、nickname、userid、level。
+     * token/userid 由 Authorization 头带入，无需业务参数。
+     *
+     * 必须 bypass apicache：Rust 的 apicache key **不含 token**，切账号后会命中
+     * 上一个账号的缓存（上游 Dart 端专门传 noCache: true 就是这个原因）。
+     * 未登录时上游回 error_code=20010，由调用方按"无资料"处理。
+     */
+    suspend fun getUserDetail(): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            httpGetVipBusiness("/user/detail")
+        } catch (e: Exception) {
+            Log.e(TAG, "getUserDetail exception", e)
             Result.failure(e)
         }
     }
