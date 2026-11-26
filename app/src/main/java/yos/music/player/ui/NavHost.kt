@@ -25,6 +25,23 @@ interface UI {
         const val Favorites = "Favorites"
 
         const val NormalMusic = "NormalMusic"
+        const val LocalArtistSongs = "LocalArtistSongs"
+        const val LocalArtistSongsArg = "artistName"
+        const val LocalArtistSongsPattern =
+            "$LocalArtistSongs?$LocalArtistSongsArg={$LocalArtistSongsArg}"
+
+        fun localArtistSongsRoute(artistName: String): String =
+            "$LocalArtistSongs?$LocalArtistSongsArg=${routeEncode(artistName)}"
+
+        const val LocalFavorites = "LocalFavorites"
+        const val LocalPlaylistDetail = "LocalPlaylistDetail"
+        const val LocalPlaylistIdArg = "playlistId"
+        const val LocalPlaylistDetailPattern =
+            "$LocalPlaylistDetail?$LocalPlaylistIdArg={$LocalPlaylistIdArg}"
+
+        fun localPlaylistDetailRoute(playlistId: String): String =
+            "$LocalPlaylistDetail?$LocalPlaylistIdArg=${routeEncode(playlistId)}"
+
         const val PlayLists = "PlayLists"
         const val LocalArtists = "LocalArtists"
         const val OnlineArtists = "OnlineArtists"

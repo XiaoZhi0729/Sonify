@@ -1,5 +1,6 @@
 package yos.music.player.ui.widgets.basic
 
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -34,6 +35,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,6 +80,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
+import yos.music.player.data.libraries.MusicLibrary
+import yos.music.player.data.libraries.PlayList
+import yos.music.player.data.libraries.PlayListLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.artistsName
@@ -138,10 +143,10 @@ private data class PlaylistOption(
 /**
  * 歌曲行右侧三竖点 → 歌曲操作菜单。
  *
- * 一级：顶部竖版动作（喜爱 / 下一首 / 播放）+ 前往艺人 / 添加至歌单 / 不感兴趣，
+ * 一级：顶部竖版动作（喜爱 / 下一首 / 播放）+ 前往艺人 / 添加至歌单（在线歌曲额外含「不感兴趣」），
  * 歌单内还会多一条「从歌单移除」。点「添加至歌单」后同一块面板切换成歌单列表。
  *
- * 显隐：只对带酷狗 hash 的在线歌曲渲染（`mediaId = kugou-online-<hash>`）。
+ * 同时支持在线歌曲（`mediaId = kugou-online-<hash>`）与本地媒体库歌曲（[kugouHash] 为 null）。
  */
 @Composable
 fun SongAddToPlaylistButton(
@@ -150,7 +155,8 @@ fun SongAddToPlaylistButton(
     onDelete: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val hash = music.kugouHash() ?: return
+    val hash = music.kugouHash()
+    val isOnline = hash != null
     val songTitle = music.title ?: defaultTitle
     val songArtist = music.artistsName ?: defaultArtistsName
     val context = LocalContext.current
@@ -169,13 +175,13 @@ fun SongAddToPlaylistButton(
         artistName.isNotEmpty() && artistName != defaultArtistsName
     // 宿主使用独立组合树；状态在菜单存活期间由调用方读取后传入。
     val isFavorite = menuActive && FavoriteRepository.isFavorite(music)
-    val notInterested = menuActive && BlacklistState.isMarked(hash)
+    val notInterested = hash != null && menuActive && BlacklistState.isMarked(hash)
     val isNextInQueue = if (menuActive) {
         val queue = MediaController.playingMusicList.value.orEmpty()
         val currentMediaId = MediaController.musicPlaying.value?.mediaId
         val currentIndex = queue.indexOfFirst { it.mediaId == currentMediaId }
         currentIndex >= 0 && currentIndex + 1 < queue.size &&
-            queue[currentIndex + 1].mediaId == music.mediaId
+            music.mediaId != null && queue[currentIndex + 1].mediaId == music.mediaId
     } else false
 
     var page by remember { mutableStateOf(AddToPlaylistPage.Actions) }
@@ -190,7 +196,7 @@ fun SongAddToPlaylistButton(
 
     // 打开菜单时后台加载黑名单状态（歌单列表由面板自己按需加载）
     LaunchedEffect(expanded) {
-        if (expanded) BlacklistState.ensureLoaded()
+        if (expanded && isOnline) BlacklistState.ensureLoaded()
     }
 
     // 跟手滑选：面板级**单一竖轴状态 + 二维命中**——顶排横钮靠 X 区间区分、
@@ -272,6 +278,7 @@ fun SongAddToPlaylistButton(
                 song = music,
                 canOpenArtist = canOpenArtist,
                 isFavorite = isFavorite,
+                showNotInterested = isOnline,
                 notInterested = notInterested,
                 isNextInQueue = isNextInQueue,
                 onBack = { page = AddToPlaylistPage.Actions },
@@ -320,13 +327,14 @@ fun SongAddToPlaylistButton(
                     }
                 },
                 onNotInterested = {
+                    val onlineHash = hash ?: return@AddToPlaylistPanel
                     // 可切换：已标记则取消；点完自动收起菜单
                     expanded = false
                     val target = !notInterested
                     scope.launch {
-                        KugouRepository.setNotInterested(hash, "$songArtist - $songTitle", target)
+                        KugouRepository.setNotInterested(onlineHash, "$songArtist - $songTitle", target)
                             .onSuccess {
-                                BlacklistState.applyLocal(hash, target)
+                                BlacklistState.applyLocal(onlineHash, target)
                                 Toast.makeText(
                                     context,
                                     if (target) R.string.song_menu_not_interested_done
@@ -390,6 +398,7 @@ private fun AddToPlaylistPanel(
     song: YosMediaItem,
     canOpenArtist: Boolean,
     isFavorite: Boolean,
+    showNotInterested: Boolean,
     notInterested: Boolean,
     isNextInQueue: Boolean,
     onBack: () -> Unit,
@@ -437,6 +446,7 @@ private fun AddToPlaylistPanel(
                 song = song,
                 canOpenArtist = canOpenArtist,
                 isFavorite = isFavorite,
+                showNotInterested = showNotInterested,
                 notInterested = notInterested,
                 isNextInQueue = isNextInQueue,
                 onBack = onBack,
@@ -460,6 +470,7 @@ private fun AddToPlaylistPageContent(
     song: YosMediaItem,
     canOpenArtist: Boolean,
     isFavorite: Boolean,
+    showNotInterested: Boolean,
     notInterested: Boolean,
     isNextInQueue: Boolean,
     onBack: () -> Unit,
@@ -539,27 +550,30 @@ private fun AddToPlaylistPageContent(
                 selected = false,
                 onClick = onOpenPicker,
                 isFirst = false,
+                isLast = !showNotInterested && onDelete == null,
                 showSelectedIcon = false,
                 verticalPadding = SongMenuRowVerticalPadding,
                 leadingIcon = painterResource(R.drawable.ic_song_menu_playlist),
             )
-            MenuDivider()
-            LiquidDropdownRow(
-                text = stringResource(
-                    if (notInterested) R.string.song_menu_cancel_not_interested
-                    else R.string.song_menu_not_interested
-                ),
-                selected = false,
-                onClick = onNotInterested,
-                isFirst = false,
-                isLast = onDelete == null,
-                showSelectedIcon = false,
-                verticalPadding = SongMenuRowVerticalPadding,
-                leadingIcon = painterResource(
-                    if (notInterested) R.drawable.ic_song_menu_thumbs_down_fill
-                    else R.drawable.ic_song_menu_thumbs_down
-                ),
-            )
+            if (showNotInterested) {
+                MenuDivider()
+                LiquidDropdownRow(
+                    text = stringResource(
+                        if (notInterested) R.string.song_menu_cancel_not_interested
+                        else R.string.song_menu_not_interested
+                    ),
+                    selected = false,
+                    onClick = onNotInterested,
+                    isFirst = false,
+                    isLast = onDelete == null,
+                    showSelectedIcon = false,
+                    verticalPadding = SongMenuRowVerticalPadding,
+                    leadingIcon = painterResource(
+                        if (notInterested) R.drawable.ic_song_menu_thumbs_down_fill
+                        else R.drawable.ic_song_menu_thumbs_down
+                    ),
+                )
+            }
             if (onDelete != null) {
                 MenuDivider()
                 LiquidDropdownRow(
@@ -598,7 +612,16 @@ fun AddToPlaylistPickerPanel(
     onBack: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val hash = song.kugouHash() ?: return
+    val hash = song.kugouHash()
+    if (hash == null) {
+        LocalAddToPlaylistPickerPanel(
+            song = song,
+            heightCap = heightCap,
+            onBack = onBack,
+            onDismiss = onDismiss,
+        )
+        return
+    }
     val songTitle = song.title ?: defaultTitle
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -776,6 +799,196 @@ fun AddToPlaylistPickerPanel(
             dismissEnabled = !adding,
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
+        )
+    }
+}
+
+/**
+ * 本地歌单选择面板：展示「新建歌单」与本地自建歌单列表，点击直接确认并写入 [PlayListLibrary]。
+ */
+@Composable
+private fun LocalAddToPlaylistPickerPanel(
+    song: YosMediaItem,
+    heightCap: Dp,
+    onBack: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val songTitle = song.title ?: defaultTitle
+    val context = LocalContext.current
+    val playlists = PlayListLibrary.playList
+    val librarySongs = MusicLibrary.songs
+    val coverByPlaylistId = remember(playlists, librarySongs) {
+        val byUri = librarySongs.associateBy { it.uri }
+        playlists.associate { playlist ->
+            val coverUri = playlist.songDataList.firstNotNullOfOrNull { uri -> byUri[uri]?.thumb }
+            playlist.listID to coverUri
+        }
+    }
+    var confirmTarget by remember { mutableStateOf<PlayList?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newPlaylistName by remember { mutableStateOf("") }
+    var createError by remember { mutableStateOf<String?>(null) }
+
+    BackHandler(onBack = onBack)
+    Column(
+        modifier = Modifier
+            .width(AddToPlaylistPanelWidth)
+            .heightIn(max = heightCap)
+    ) {
+        PickerHeaderRow(onBack = onBack)
+        val listScrollState = rememberScrollState()
+        val scrolled by remember {
+            derivedStateOf { listScrollState.value > 0 }
+        }
+        val topFade by animateDpAsState(
+            targetValue = if (scrolled) 16.dp else 0.dp,
+            animationSpec = tween(180),
+            label = "localPickerTopFade",
+        )
+        Column(
+            modifier = Modifier
+                .width(AddToPlaylistPanelWidth)
+                .animateContentSize(AddToPlaylistSizeSpec)
+                .heightIn(
+                    max = (heightCap - AddToPlaylistHeaderHeight).coerceAtLeast(120.dp)
+                )
+                .fadeTopEdge(topFade)
+                .verticalScroll(listScrollState)
+        ) {
+            LiquidDropdownRow(
+                text = stringResource(R.string.online_playlists_create),
+                selected = false,
+                onClick = {
+                    newPlaylistName = ""
+                    createError = null
+                    showCreateDialog = true
+                },
+                isFirst = true,
+                isLast = playlists.isEmpty(),
+                showSelectedIcon = false,
+                verticalPadding = SongMenuRowVerticalPadding,
+                leadingIcon = painterResource(R.drawable.ic_song_menu_plus_circle),
+            )
+            if (playlists.isNotEmpty()) {
+                MenuDivider()
+                playlists.forEachIndexed { index, playlist ->
+                    val coverUri: Uri? = coverByPlaylistId[playlist.listID]
+                    LiquidDropdownRow(
+                        text = playlist.name,
+                        selected = false,
+                        onClick = { confirmTarget = playlist },
+                        isFirst = false,
+                        isLast = index == playlists.lastIndex,
+                        showSelectedIcon = false,
+                        verticalPadding = SongMenuRowVerticalPadding,
+                        marquee = true,
+                        leading = {
+                            Box(Modifier.size(26.dp)) {
+                                ShadowImageWithCache(
+                                    dataLambda = { coverUri },
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    cornerRadius = 4.dp,
+                                    shadowAlpha = 0f,
+                                    imageQuality = ImageQuality.LOW,
+                                )
+                            }
+                        },
+                        trailing = {
+                            Text(
+                                text = stringResource(
+                                    R.string.add_to_playlist_song_count,
+                                    playlist.songDataList.size
+                                ),
+                                fontSize = 12.sp,
+                                lineHeight = 12.sp,
+                                color = (Color.Black withNight Color.White)
+                                    .copy(alpha = 0.5f),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    confirmTarget?.let { target ->
+        SonifyDialog(
+            title = stringResource(R.string.add_to_playlist_menu_entry),
+            onDismissRequest = { confirmTarget = null },
+            message = stringResource(
+                R.string.add_to_playlist_confirm_message,
+                songTitle,
+                target.name
+            ),
+            positiveContent = stringResource(R.string.common_ok),
+            onPositive = {
+                val added = PlayListLibrary.addMusicIfAbsent(target.listID, song)
+                confirmTarget = null
+                val msgRes = if (added) {
+                    R.string.add_to_playlist_success
+                } else {
+                    R.string.add_to_playlist_already_exists
+                }
+                Toast.makeText(
+                    context,
+                    context.getString(msgRes, target.name),
+                    Toast.LENGTH_SHORT
+                ).show()
+                onDismiss()
+            },
+            negativeContent = stringResource(R.string.common_cancel),
+            onNegative = { confirmTarget = null },
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        )
+    }
+
+    if (showCreateDialog) {
+        SonifyDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = stringResource(R.string.online_playlists_create),
+            content = {
+                Column {
+                    SonifyDialogTextField(
+                        value = newPlaylistName,
+                        onValueChange = {
+                            newPlaylistName = it
+                            if (createError != null) createError = null
+                        },
+                        placeholder = stringResource(R.string.online_playlists_create_hint),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    createError?.let { err ->
+                        Text(
+                            text = err,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            positiveContent = stringResource(R.string.common_ok),
+            onPositive = {
+                val created = PlayListLibrary.createAndReturn(newPlaylistName)
+                if (created != null) {
+                    PlayListLibrary.addMusicIfAbsent(created.listID, song)
+                    showCreateDialog = false
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.add_to_playlist_success, created.name),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    onDismiss()
+                } else if (newPlaylistName.isNotBlank()) {
+                    createError = context.getString(R.string.local_playlist_name_exists)
+                }
+            },
+            negativeContent = stringResource(R.string.common_cancel),
+            onNegative = { showCreateDialog = false },
+            positiveEnabled = newPlaylistName.isNotBlank(),
+            closeOnPositive = false
         )
     }
 }

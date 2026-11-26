@@ -19,9 +19,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,19 +50,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
-import yos.music.player.data.libraries.FavPlayListLibrary
 import yos.music.player.data.libraries.MusicLibrary.songs
 import yos.music.player.data.libraries.PlayList
+import yos.music.player.data.libraries.PlayListLibrary
 import yos.music.player.data.libraries.PlayListLibrary.playList
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.YosMediaItem
-import yos.music.player.data.objects.LibraryObject
 import yos.music.player.ui.UI
 import yos.music.player.ui.pages.library.LibrarySortMenuButton
 import yos.music.player.ui.pages.library.sortAndIndexLibraryItems
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.toUI
+import yos.music.player.ui.widgets.basic.SonifyDialog
+import yos.music.player.ui.widgets.basic.SonifyDialogTextField
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.rememberIndexScrollOffsetPx
 import yos.music.player.ui.widgets.basic.scrollToIndexedItem
@@ -84,6 +88,9 @@ fun PlayLists(navController: NavController) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val topBarHeightPx = rememberIndexScrollOffsetPx()
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newPlaylistName by remember { mutableStateOf("") }
+    var createError by remember { mutableStateOf<String?>(null) }
     Title(
         title = stringResource(id = R.string.page_library_playlists),
         onBack = {
@@ -109,7 +116,9 @@ fun PlayLists(navController: NavController) {
             item("AddList") {
                 val targetTitle = context.getString(R.string.page_library_playlists_add_title)
                 PlayListItem(playListType = PlayListType.Add, title = targetTitle) {
-
+                    newPlaylistName = ""
+                    createError = null
+                    showCreateDialog = true
                 }
 
                 Spacer(
@@ -125,13 +134,7 @@ fun PlayLists(navController: NavController) {
             item("FavList") {
                 val targetTitle = context.getString(R.string.page_library_playlists_fav_title)
                 PlayListItem(playListType = PlayListType.Favorite, title = targetTitle) {
-                    scope.launch(Dispatchers.IO) {
-                        val targetList = FavPlayListLibrary.favPlayList
-                        LibraryObject.setTargetListWithTitle(targetTitle, targetList)
-                        withContext(Dispatchers.Main) {
-                            navController.toUI(UI.NormalMusic)
-                        }
-                    }
+                    navController.toUI(UI.LocalFavorites)
                 }
 
                 Spacer(
@@ -150,14 +153,7 @@ fun PlayLists(navController: NavController) {
                 contentType = { _, _ -> "playlist_item" }
             ) { index, playList ->
                 PlayListItem(playList = playList) {
-                    scope.launch(Dispatchers.IO) {
-                        val targetTitle = playList.name
-                        val targetList = convertToSongList(playList.songDataList, songs)
-                        LibraryObject.setTargetListWithTitle(targetTitle, targetList)
-                        withContext(Dispatchers.Main) {
-                            navController.toUI(UI.NormalMusic)
-                        }
-                    }
+                    navController.navigate(UI.localPlaylistDetailRoute(playList.listID))
                 }
                 key(index) {
                     val needDivider = index < playLists.size - 1
@@ -175,6 +171,47 @@ fun PlayLists(navController: NavController) {
             }
         }
     )
+
+    if (showCreateDialog) {
+        SonifyDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = stringResource(id = R.string.online_playlists_create),
+            content = {
+                Column {
+                    SonifyDialogTextField(
+                        value = newPlaylistName,
+                        onValueChange = {
+                            newPlaylistName = it
+                            if (createError != null) createError = null
+                        },
+                        placeholder = stringResource(id = R.string.online_playlists_create_hint),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    createError?.let { err ->
+                        Text(
+                            text = err,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            positiveContent = stringResource(id = R.string.common_ok),
+            onPositive = {
+                val created = PlayListLibrary.createAndReturn(newPlaylistName)
+                if (created != null) {
+                    showCreateDialog = false
+                } else if (newPlaylistName.isNotBlank()) {
+                    createError = context.getString(R.string.local_playlist_name_exists)
+                }
+            },
+            negativeContent = stringResource(id = R.string.common_cancel),
+            onNegative = { showCreateDialog = false },
+            positiveEnabled = newPlaylistName.isNotBlank(),
+            closeOnPositive = false
+        )
+    }
 }
 
 private fun convertToSongList(

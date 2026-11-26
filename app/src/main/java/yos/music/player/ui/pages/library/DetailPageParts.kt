@@ -365,7 +365,7 @@ fun formatDurationMs(durationMs: Long): String {
  * （24dp 序号框 + 歌名 + 仅当与专辑歌手不同时才显示的歌手行；无固定行高）。
  *
  * 不可播置灰 + 点击「先复核再决定」（与共享 [MusicList] 一致）；本地歌曲 kugouHash() 为
- * null → stateOf/ensureChecked 均为 no-op，故本行对本地专辑零影响。
+ * null → stateOf/ensureChecked 均为 no-op，行尾三竖点菜单走本地歌单/收藏操作。
  */
 @Composable
 fun AlbumTrackRow(

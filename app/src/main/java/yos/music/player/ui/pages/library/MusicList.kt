@@ -155,7 +155,7 @@ LaunchedEffect(Unit) {
             )
         }
 
-        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+        // 歌曲行尾三竖点操作菜单（在线与本地歌曲共用）
         SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onLongClick)
     }
 }

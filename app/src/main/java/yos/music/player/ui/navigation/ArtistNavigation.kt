@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
+import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.artistsList
 import yos.music.player.data.libraries.defaultArtistsName
@@ -21,8 +22,10 @@ val LocalArtistNavigator = compositionLocalOf<((YosMediaItem) -> Unit)?> { null 
 
 /**
  * 歌曲 → 艺人主页。解析链路与播放页歌手名点击完全一致：
- * 优先用歌曲自带的 singerid（[KugouRepository.performerIdFor]）直达，查不到才按名搜索
- * （[UI.artistDetailRoute] 的 artistId 传空即退化成按名搜索）。
+ * - 在线曲：优先用歌曲自带的 singerid（[KugouRepository.performerIdFor]）直达，查不到才按名搜索
+ *   （[UI.artistDetailRoute] 的 artistId 传空即退化成按名搜索）。
+ * - 本地曲：若在资料库 house 内且本地媒体库存在该艺人歌曲，优先打开本地艺人歌曲页；
+ *   否则回落在线艺人详情页。
  */
 @Composable
 fun rememberArtistNavigator(navController: NavHostController): (YosMediaItem) -> Unit =
@@ -30,16 +33,32 @@ fun rememberArtistNavigator(navController: NavHostController): (YosMediaItem) ->
         { music ->
             val name = music.artistsList?.firstOrNull()?.trim().orEmpty()
             if (name.isNotEmpty() && name != defaultArtistsName) {
-                val performerId = music.kugouHash()?.let { hash ->
-                    KugouRepository.performerIdFor(hash, name)
-                }
-                NavGuard.run {
-                    navController.navigate(
-                        UI.artistDetailRoute(
-                            artistId = performerId?.toString(),
-                            artistName = name
+                val hash = music.kugouHash()
+                val canOpenLocalArtist = hash == null &&
+                    MusicLibrary.Artist[name].isNotEmpty() &&
+                    navController.graph.findNode(UI.LocalArtistSongsPattern) != null
+                if (canOpenLocalArtist) {
+                    val topEntry = navController.currentBackStackEntry
+                    val alreadyThere =
+                        topEntry?.destination?.route == UI.LocalArtistSongsPattern &&
+                            topEntry.arguments?.getString(UI.LocalArtistSongsArg) == name
+                    if (!alreadyThere) {
+                        NavGuard.run {
+                            navController.navigate(UI.localArtistSongsRoute(name))
+                        }
+                    }
+                } else {
+                    val performerId = hash?.let {
+                        KugouRepository.performerIdFor(it, name)
+                    }
+                    NavGuard.run {
+                        navController.navigate(
+                            UI.artistDetailRoute(
+                                artistId = performerId?.toString(),
+                                artistName = name
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

@@ -19,11 +19,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.NonSkippableComposable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -42,6 +44,7 @@ import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.MusicLibrary.songs
+import yos.music.player.data.libraries.PlayListLibrary
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.libraries.SettingsLibrary.EnableDescending
 import yos.music.player.data.libraries.SettingsLibrary.SongSort
@@ -54,6 +57,7 @@ import yos.music.player.ui.pages.library.albums.NormalButton
 import yos.music.player.ui.theme.withNight
 import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
 import yos.music.player.ui.widgets.basic.SearchTextField
+import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
 import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.YosWrapper
@@ -65,31 +69,28 @@ import yos.music.player.ui.widgets.mochi.IndexedListResult
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
-fun NormalMusic(navController: NavController) {
+fun NormalMusic(
+    navController: NavController,
+    overrideTitle: String? = null,
+    overrideList: List<YosMediaItem>? = null,
+    localPlaylistId: String? = null,
+) {
     Column(
         Modifier
             .fillMaxSize()
         /*.statusBarsPadding()*/
     ) {
         val pageInfo = LibraryObject.getTargetListWithTitle()
-
-        val musicList = pageInfo.second
+        val pageTitle = overrideTitle ?: pageInfo.first
+        val musicList = overrideList ?: pageInfo.second
         val searchText = remember("NormalMusic_searchText") {
             mutableStateOf("")
         }
 
-        val showMusic = remember("NormalMusic_showMusic") {
-            derivedStateOf {
-                musicList.isEmpty()
-            }
-        }
-        if (showMusic.value) {
-            val message =
-                if (musicList == null) stringResource(id = R.string.tip_scanning) else stringResource(
-                    id = R.string.tip_no_song
-                )
+        if (musicList.isEmpty()) {
+            val message = stringResource(id = R.string.tip_no_song)
             Title(
-                title = pageInfo.first, onBack = {
+                title = pageTitle, onBack = {
                     navController.popBackStackSafely()
                 }
             ) {
@@ -157,12 +158,13 @@ fun NormalMusic(navController: NavController) {
             val scope = rememberCoroutineScope()
             val listState = rememberLazyListState()
             val topBarHeightPx = rememberIndexScrollOffsetPx()
+            var pendingRemoveSong by remember { mutableStateOf<YosMediaItem?>(null) }
 
             val expanded = remember { mutableStateOf(false) }
 
             Box(Modifier.fillMaxSize()) {
                 Title(
-                    title = pageInfo.first,
+                    title = pageTitle,
                     onBack = {
                         navController.popBackStackSafely()
                     },
@@ -257,7 +259,12 @@ fun NormalMusic(navController: NavController) {
                         contentType = { _, _ -> "normal_music_item" }
                     ) { index, music ->
                         MusicList(
-                            music
+                            music = music,
+                            onLongClick = if (localPlaylistId != null) {
+                                { pendingRemoveSong = music }
+                            } else {
+                                null
+                            }
                         ) {
                             scope.launch(Dispatchers.IO) {
                                 MediaController.prepare(
@@ -284,6 +291,27 @@ fun NormalMusic(navController: NavController) {
                     /*item("blank") {
                     Spacer(modifier = Modifier.navigationBarsHeight(15.dp))
                 }*/
+                }
+
+                if (localPlaylistId != null) {
+                    pendingRemoveSong?.let { target ->
+                        SonifyDialog(
+                            onDismissRequest = { pendingRemoveSong = null },
+                            title = stringResource(id = R.string.online_playlist_track_remove),
+                            message = stringResource(
+                                id = R.string.online_playlist_track_remove_confirm,
+                                target.title ?: defaultTitle
+                            ),
+                            positiveContent = stringResource(id = R.string.common_ok),
+                            onPositive = {
+                                PlayListLibrary.removeMusicById(localPlaylistId, target)
+                                pendingRemoveSong = null
+                            },
+                            negativeContent = stringResource(id = R.string.common_cancel),
+                            onNegative = { pendingRemoveSong = null },
+                            destructive = true,
+                        )
+                    }
                 }
             }
         }

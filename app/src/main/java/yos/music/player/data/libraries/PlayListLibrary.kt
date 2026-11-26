@@ -27,31 +27,73 @@ object PlayListLibrary {
         private set
 
     fun PlayList.addMusic(music: YosMediaItem) {
-        playList += copy(songDataList = songDataList.toMutableList().apply {
-            music.uri?.let { add(it) }
-        })
-        playList -= this
+        val targetUri = music.uri ?: return
+        playList = playList.map { item ->
+            if (item.listID == listID) {
+                item.copy(songDataList = item.songDataList + targetUri)
+            } else {
+                item
+            }
+        }
     }
 
     fun PlayList.removeMusic(music: YosMediaItem) {
-        playList += copy(songDataList = songDataList.toMutableList().apply {
-            val songToRemove = songDataList.find { data ->
-                music.uri == data
+        removeMusicById(listID, music)
+    }
+
+    /**
+     * 向指定本地歌单追加一首歌；若歌单不存在、歌曲缺少 URI 或已在歌单中则返回 false。
+     */
+    fun addMusicIfAbsent(playlistId: String, music: YosMediaItem): Boolean {
+        val targetUri = music.uri ?: return false
+        val target = playList.firstOrNull { it.listID == playlistId } ?: return false
+        if (targetUri in target.songDataList) return false
+        playList = playList.map { item ->
+            if (item.listID == playlistId) {
+                item.copy(songDataList = item.songDataList + targetUri)
+            } else {
+                item
             }
-            remove(songToRemove)
-        })
-        playList -= this
+        }
+        return true
+    }
+
+    /**
+     * 按歌单 ID 从本地歌单移除指定歌曲（保持歌单原有排序不变）。
+     */
+    fun removeMusicById(playlistId: String, music: YosMediaItem) {
+        val targetUri = music.uri ?: return
+        playList = playList.map { item ->
+            if (item.listID == playlistId) {
+                val updated = item.songDataList.toMutableList().apply {
+                    remove(targetUri)
+                }
+                item.copy(songDataList = updated)
+            } else {
+                item
+            }
+        }
     }
 
     fun PlayList.rename(name: String) {
-        playList += this.copy(name = name)
-        playList -= this
+        playList = playList.map { item ->
+            if (item.listID == listID) item.copy(name = name) else item
+        }
     }
 
     fun create(name: String) {
-        if (!playList.any { it.name == name }) {
-            playList += PlayList(UUID.randomUUID().toString(), name, listOf())
-        }
+        createAndReturn(name)
+    }
+
+    /**
+     * 创建本地歌单并返回新歌单；名称为空白或重名时返回 null。
+     */
+    fun createAndReturn(name: String): PlayList? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || playList.any { it.name == trimmed }) return null
+        val created = PlayList(UUID.randomUUID().toString(), trimmed, listOf())
+        playList += created
+        return created
     }
 
     fun remove(list: PlayList) {
@@ -75,7 +117,12 @@ object FavPlayListLibrary {
     }
 
     fun removeMusic(music: YosMediaItem) {
-        favPlayList -= music
+        val targetUri = music.uri
+        favPlayList = if (targetUri != null) {
+            favPlayList.filterNot { it.uri == targetUri }
+        } else {
+            favPlayList - music
+        }
     }
 
     fun isFavorite(music: YosMediaItem): Boolean = favPlayList.any { it.uri == music.uri }
