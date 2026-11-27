@@ -62,11 +62,41 @@ object PlayListLibrary {
      * 按歌单 ID 从本地歌单移除指定歌曲（保持歌单原有排序不变）。
      */
     fun removeMusicById(playlistId: String, music: YosMediaItem) {
-        val targetUri = music.uri ?: return
+        removeMusicByIdReturningIndex(playlistId, music)
+    }
+
+    /**
+     * 按歌单 ID 从本地歌单移除指定歌曲，并返回其原本所在位置索引（未找到返回 -1）。
+     */
+    fun removeMusicByIdReturningIndex(playlistId: String, music: YosMediaItem): Int {
+        val targetUri = music.uri ?: return -1
+        var removedIndex = -1
         playList = playList.map { item ->
             if (item.listID == playlistId) {
+                val idx = item.songDataList.indexOf(targetUri)
+                if (idx >= 0) {
+                    removedIndex = idx
+                    val updated = item.songDataList.toMutableList().apply { removeAt(idx) }
+                    item.copy(songDataList = updated)
+                } else {
+                    item
+                }
+            } else {
+                item
+            }
+        }
+        return removedIndex
+    }
+
+    /**
+     * 按原索引位置把歌曲插回本地歌单（用于移除后的撤销恢复）。
+     */
+    fun insertMusicById(playlistId: String, music: YosMediaItem, index: Int) {
+        val targetUri = music.uri ?: return
+        playList = playList.map { item ->
+            if (item.listID == playlistId && targetUri !in item.songDataList) {
                 val updated = item.songDataList.toMutableList().apply {
-                    remove(targetUri)
+                    add(index.coerceIn(0, size), targetUri)
                 }
                 item.copy(songDataList = updated)
             } else {

@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import yos.music.player.ui.widgets.mochi.LocalMochiToast
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
@@ -161,6 +162,7 @@ fun SongAddToPlaylistButton(
     val songArtist = music.artistsName ?: defaultArtistsName
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val mochiToast = LocalMochiToast.current
     // 与主页右上角「更多」同一套联动：面板揭示进度回传，按钮随之让位/收缩并淡出。
     // 锚点仍由外层未变换的 Box 捕获，变换只作用在内层图标。
     val follow = rememberLiquidDropdownFollowState()
@@ -313,9 +315,10 @@ fun SongAddToPlaylistButton(
                     expanded = false
                     scope.launch {
                         // playNext 自己吞掉并记录异常，只有协程取消才会抛出——那不是失败
-                        val message = when (MediaController.playNext(music)) {
+                        val outcome = MediaController.playNext(music)
+                        val message = when (outcome) {
                             MediaController.PlayNextOutcome.Added ->
-                                R.string.song_menu_play_next_done
+                                R.string.swipe_toast_play_next
                             MediaController.PlayNextOutcome.Cancelled ->
                                 R.string.song_menu_play_next_cancelled
                             MediaController.PlayNextOutcome.StartedPlayback ->
@@ -323,7 +326,23 @@ fun SongAddToPlaylistButton(
                             MediaController.PlayNextOutcome.Failed ->
                                 R.string.song_menu_play_next_failed
                         }
-                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        if (mochiToast != null) {
+                            val nextTint = Color(0xFF7357FF)
+                            mochiToast.show(
+                                title = context.getString(message),
+                                subtitle = if (outcome == MediaController.PlayNextOutcome.Failed) null else songTitle,
+                                icon = { _ ->
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_swipe_play_next),
+                                        contentDescription = null,
+                                        tint = nextTint,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                            )
+                        } else {
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 onNotInterested = {
@@ -625,6 +644,7 @@ fun AddToPlaylistPickerPanel(
     val songTitle = song.title ?: defaultTitle
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val mochiToast = LocalMochiToast.current
 
     val accountUserid = KugouAccountState.userid
     // 首帧直接吃内存缓存：重复打开不再闪加载行

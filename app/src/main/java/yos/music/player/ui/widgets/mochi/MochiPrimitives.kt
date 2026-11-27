@@ -135,6 +135,12 @@ internal fun jellyCrossScale(stretch: Float): Float = 1f / (1f + stretch * 0.6f)
 
 enum class MochiHapticProfile { IosLike, Rich, Off }
 
+@Composable
+internal fun rememberMochiHaptics(profile: MochiHapticProfile = MochiHapticProfile.IosLike): MochiHaptics {
+    val view = LocalView.current
+    return remember(view, profile) { MochiHaptics(view, profile) }
+}
+
 internal class MochiHaptics(private val view: View, private val profile: MochiHapticProfile) {
     private val vibrator: Vibrator? = view.context.vibratorOrNull()
     private val canCompose: Boolean =

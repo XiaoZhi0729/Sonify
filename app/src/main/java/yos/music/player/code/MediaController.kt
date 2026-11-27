@@ -559,9 +559,27 @@ object MediaController {
     /** 「下一首播放」的结果；菜单按它选文案，不再靠"有没有抛异常"判断。 */
     enum class PlayNextOutcome { Added, Cancelled, StartedPlayback, Failed }
 
+    /** 「最后播放」的结果。 */
+    enum class PlayLastOutcome { Added, StartedPlayback, Failed }
+
+    /** 队列操作的单步撤销记录（供滑动提示胶囊「撤销」按钮恢复）。 */
+    sealed class QueueUndoAction {
+        data class RemoveInserted(
+            val mediaId: String,
+            val preferredIndex: Int,
+            val fromTail: Boolean = false,
+        ) : QueueUndoAction()
+
+        data class MoveBack(
+            val mediaId: String,
+            val fromIndex: Int,
+            val toIndex: Int,
+        ) : QueueUndoAction()
+    }
+
     /**
-     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首，再点一次则取消——
-     * **从播放列表里移除「下一首」这个位置上的条目**（不是按 mediaId 另找一首）。
+     * 「下一首播放」：把歌曲排到当前曲之后；如果它已经是下一首且 [toggleIfAlreadyNext] 为 true，
+     * 再点一次则取消——**从播放列表里移除「下一首」这个位置上的条目**（不是按 mediaId 另找一首）。
      *
      * 三处必须显式处理：
      * - 随机关闭：Media3 的 shuffle order 与时间线索引互相独立，`addMediaItem(index)`
@@ -572,29 +590,40 @@ object MediaController {
      *   不绕自定义 session command：那条路要多一次异步往返，事后校验一旦有时序偏差
      *   就只能抛异常，界面上表现为"添加失败"，而队列其实可能已经改对了。
      */
-    suspend fun playNext(source: YosMediaItem): PlayNextOutcome {
+    suspend fun playNext(
+        source: YosMediaItem,
+        toggleIfAlreadyNext: Boolean = true,
+    ): PlayNextOutcome = playNextWithUndo(source, toggleIfAlreadyNext).first
+
+    suspend fun playNextWithUndo(
+        source: YosMediaItem,
+        toggleIfAlreadyNext: Boolean = false,
+    ): Pair<PlayNextOutcome, QueueUndoAction?> {
         // 菜单拿到的是列表行的展示条目（uri=null）：入队前补回 kugou:// 占位符，
         // 否则播到它必报 FileDataSource ENOENT，还会把快照和时间线搞错位。
         val item = source.withPlayableUri()
         return try {
-            withContext(Dispatchers.Main) { playNextOnMain(item) }
+            withContext(Dispatchers.Main) { playNextOnMain(item, toggleIfAlreadyNext) }
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (error: Exception) {
             // 之前调用方用 runCatching 把异常整个吞掉，几种完全不同的失败在界面上长得一模一样。
             YosDiagnostics.log("PLAY_NEXT_FAIL", "mediaId" to item.mediaId, "err" to error.toString())
-            PlayNextOutcome.Failed
+            PlayNextOutcome.Failed to null
         }
     }
 
-    private suspend fun playNextOnMain(item: YosMediaItem): PlayNextOutcome =
+    private suspend fun playNextOnMain(
+        item: YosMediaItem,
+        toggleIfAlreadyNext: Boolean,
+    ): Pair<PlayNextOutcome, QueueUndoAction?> =
         withContext(Dispatchers.Main) {
-            val controller = mediaControl ?: return@withContext PlayNextOutcome.Failed
-            val mediaId = item.mediaId ?: return@withContext PlayNextOutcome.Failed
+            val controller = mediaControl ?: return@withContext PlayNextOutcome.Failed to null
+            val mediaId = item.mediaId ?: return@withContext PlayNextOutcome.Failed to null
             if (controller.mediaItemCount == 0) {
                 // 队列为空没有"下一首"，直接起播
                 prepare(item, listOf(item))
-                return@withContext PlayNextOutcome.StartedPlayback
+                return@withContext PlayNextOutcome.StartedPlayback to null
             }
             // 插入会改变"下一首"是谁，副 player 预取的那首作废
             CrossfadeExo.abort("play_next")
@@ -603,21 +632,20 @@ object MediaController {
             YosDiagnostics.log("SRC", "fn" to "playNext", "mediaId" to mediaId)
 
             val currentIndex = controller.currentMediaItemIndex
-            if (currentIndex == C.INDEX_UNSET) return@withContext PlayNextOutcome.Failed
+            if (currentIndex == C.INDEX_UNSET) return@withContext PlayNextOutcome.Failed to null
             val nextIndex = currentIndex + 1
             val nextMediaId = if (nextIndex < controller.mediaItemCount) {
                 controller.getMediaItemAt(nextIndex).mediaId
             } else null
 
-            // 已经是下一首：再点一次 = 取消。移除的是**「下一首」这个位置上的条目**，
-            // 不按 mediaId 重新查找——同一首歌在队列里出现多次时，按 mediaId 找会删掉
-            // 别的副本，用户看到的是"点了它，删掉的却是另一行的歌"。
+            // 已经是下一首：菜单里再点一次 = 取消；左/右滑手势（toggleIfAlreadyNext=false）保持其在队首不取消。
             if (nextMediaId == mediaId) {
+                if (!toggleIfAlreadyNext) return@withContext PlayNextOutcome.Added to null
                 val countBefore = controller.mediaItemCount
                 controller.removeMediaItem(nextIndex)
                 awaitQueueApplied(controller) { it.mediaItemCount < countBefore }
                 syncQueueSnapshot()
-                return@withContext PlayNextOutcome.Cancelled
+                return@withContext PlayNextOutcome.Cancelled to null
             }
 
             val existingIndex = (0 until controller.mediaItemCount).firstOrNull {
@@ -629,7 +657,7 @@ object MediaController {
                 controller.moveMediaItem(existingIndex, to)
                 awaitNextIs(controller, mediaId)
                 syncQueueSnapshot()
-                return@withContext PlayNextOutcome.Added
+                return@withContext PlayNextOutcome.Added to QueueUndoAction.MoveBack(mediaId, to, existingIndex)
             }
 
             // 不在队列，或就是当前曲（插副本实现"再播一次"）
@@ -638,8 +666,86 @@ object MediaController {
             awaitNextIs(controller, mediaId)
             // 快照按 mediaId 合并；新条目只有这里手里有完整字段
             syncQueueSnapshot(extra = item)
-            PlayNextOutcome.Added
+            PlayNextOutcome.Added to QueueUndoAction.RemoveInserted(mediaId, insertIndex, fromTail = false)
         }
+
+    /**
+     * 「最后播放」：把歌曲追加到当前播放队列的末尾（若队列为空则直接起播）。
+     */
+    suspend fun playLast(source: YosMediaItem): PlayLastOutcome = playLastWithUndo(source).first
+
+    suspend fun playLastWithUndo(source: YosMediaItem): Pair<PlayLastOutcome, QueueUndoAction?> {
+        val item = source.withPlayableUri()
+        return try {
+            withContext(Dispatchers.Main) { playLastOnMain(item) }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            YosDiagnostics.log("PLAY_LAST_FAIL", "mediaId" to item.mediaId, "err" to error.toString())
+            PlayLastOutcome.Failed to null
+        }
+    }
+
+    private suspend fun playLastOnMain(item: YosMediaItem): Pair<PlayLastOutcome, QueueUndoAction?> =
+        withContext(Dispatchers.Main) {
+            val controller = mediaControl ?: return@withContext PlayLastOutcome.Failed to null
+            val mediaId = item.mediaId ?: return@withContext PlayLastOutcome.Failed to null
+            if (controller.mediaItemCount == 0) {
+                prepare(item, listOf(item))
+                return@withContext PlayLastOutcome.StartedPlayback to null
+            }
+            if (controller.repeatMode == REPEAT_MODE_ONE) controller.repeatMode = REPEAT_MODE_ALL
+            YosDiagnostics.log("SRC", "fn" to "playLast", "mediaId" to mediaId)
+            val countBefore = controller.mediaItemCount
+            controller.addMediaItem(countBefore, item.toMediaItem())
+            awaitQueueApplied(controller) { it.mediaItemCount > countBefore }
+            syncQueueSnapshot(extra = item)
+            PlayLastOutcome.Added to QueueUndoAction.RemoveInserted(mediaId, countBefore, fromTail = true)
+        }
+
+    /** 撤销一次「下一首播放」或「最后播放」入队操作。 */
+    suspend fun undoQueueAction(action: QueueUndoAction) = withContext(Dispatchers.Main) {
+        val controller = mediaControl ?: return@withContext
+        val count = controller.mediaItemCount
+        if (count == 0) return@withContext
+        CrossfadeExo.abort("queue_undo")
+        when (action) {
+            is QueueUndoAction.RemoveInserted -> {
+                val currentIdx = controller.currentMediaItemIndex
+                val targetIdx = when {
+                    action.preferredIndex in 0 until count &&
+                        action.preferredIndex != currentIdx &&
+                        controller.getMediaItemAt(action.preferredIndex).mediaId == action.mediaId ->
+                        action.preferredIndex
+                    action.fromTail ->
+                        (count - 1 downTo 0).firstOrNull {
+                            it != currentIdx && controller.getMediaItemAt(it).mediaId == action.mediaId
+                        }
+                    else ->
+                        (0 until count).firstOrNull {
+                            it != currentIdx && controller.getMediaItemAt(it).mediaId == action.mediaId
+                        }
+                } ?: return@withContext
+                controller.removeMediaItem(targetIdx)
+                awaitQueueApplied(controller) { it.mediaItemCount < count }
+                syncQueueSnapshot()
+            }
+            is QueueUndoAction.MoveBack -> {
+                val curIdx = if (action.fromIndex in 0 until count &&
+                    controller.getMediaItemAt(action.fromIndex).mediaId == action.mediaId
+                ) {
+                    action.fromIndex
+                } else {
+                    (0 until count).firstOrNull { controller.getMediaItemAt(it).mediaId == action.mediaId }
+                } ?: return@withContext
+                val destIdx = action.toIndex.coerceIn(0, count - 1)
+                if (curIdx != destIdx) {
+                    controller.moveMediaItem(curIdx, destIdx)
+                    syncQueueSnapshot()
+                }
+            }
+        }
+    }
 
     private fun MediaController.nextMediaId(): String? {
         val index = getNextMediaItemIndex()
@@ -683,6 +789,25 @@ object MediaController {
             .sortedDescending()
             .forEach { controller.removeMediaItem(it) }
         syncQueueSnapshot()
+    }
+
+    /**
+     * 在指定索引插回一首歌（用于队列左滑移除后的撤销恢复）。
+     */
+    suspend fun insertQueueItem(index: Int, source: YosMediaItem) = withContext(Dispatchers.Main) {
+        val item = source.withPlayableUri()
+        val controller = mediaControl ?: return@withContext
+        if (controller.mediaItemCount == 0) {
+            prepare(item, listOf(item))
+            return@withContext
+        }
+        CrossfadeExo.abort("queue_restore")
+        YosDiagnostics.log("SRC", "fn" to "insertQueueItem", "index" to index, "mediaId" to item.mediaId)
+        val countBefore = controller.mediaItemCount
+        val targetIndex = index.coerceIn(0, countBefore)
+        controller.addMediaItem(targetIndex, item.toMediaItem())
+        awaitQueueApplied(controller) { it.mediaItemCount > countBefore }
+        syncQueueSnapshot(extra = item)
     }
 
     /**

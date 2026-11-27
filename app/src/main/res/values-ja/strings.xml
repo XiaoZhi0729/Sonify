@@ -869,4 +869,15 @@
     <string name="donate_ticker_empty">最初のサポートをお待ちしています</string>
     <string name="donate_dialog_ok">閉じる</string>
     <string name="donate_dialog_summary">累計 %1$s · %2$d 件</string>
+    <string name="swipe_action_play_next">次に再生</string>
+    <string name="swipe_action_play_last">最後に再生</string>
+    <string name="swipe_action_remove">削除</string>
+    <string name="swipe_toast_play_next">次に再生に追加</string>
+    <string name="swipe_toast_play_last">最後に再生に追加</string>
+    <string name="swipe_toast_removed_playlist">プレイリストから削除</string>
+    <string name="swipe_toast_removed_queue">キューから削除</string>
+    <string name="swipe_toast_remove_failed">削除に失敗しました</string>
+    <string name="swipe_action_undo">元に戻す</string>
+    <string name="swipe_toast_restored">元に戻しました</string>
+    <string name="swipe_toast_undone">元に戻しました</string>
 </resources>

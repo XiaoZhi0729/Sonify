@@ -1003,4 +1003,15 @@
     <string name="donate_ticker_empty">Waiting for the first supporter</string>
     <string name="donate_dialog_ok">Done</string>
     <string name="donate_dialog_summary">Total %1$s · %2$d gift(s)</string>
+    <string name="swipe_action_play_next">Play Next</string>
+    <string name="swipe_action_play_last">Play Last</string>
+    <string name="swipe_action_remove">Remove</string>
+    <string name="swipe_toast_play_next">Playing Next</string>
+    <string name="swipe_toast_play_last">Playing Last</string>
+    <string name="swipe_toast_removed_playlist">Removed from Playlist</string>
+    <string name="swipe_toast_removed_queue">Removed from Queue</string>
+    <string name="swipe_toast_remove_failed">Failed to remove</string>
+    <string name="swipe_action_undo">Undo</string>
+    <string name="swipe_toast_restored">Restored</string>
+    <string name="swipe_toast_undone">Undone</string>
 </resources>

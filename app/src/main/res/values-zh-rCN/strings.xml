@@ -1002,4 +1002,15 @@
     <string name="donate_ticker_empty">等待第一位支持者的赞赏</string>
     <string name="donate_dialog_ok">好的</string>
     <string name="donate_dialog_summary">累计赞助 %1$s · 共 %2$d 笔</string>
+    <string name="swipe_action_play_next">下一首播放</string>
+    <string name="swipe_action_play_last">最后播放</string>
+    <string name="swipe_action_remove">移除</string>
+    <string name="swipe_toast_play_next">已设为下一首播放</string>
+    <string name="swipe_toast_play_last">已加入最后播放</string>
+    <string name="swipe_toast_removed_playlist">已从歌单移除</string>
+    <string name="swipe_toast_removed_queue">已从队列移除</string>
+    <string name="swipe_toast_remove_failed">移除失败</string>
+    <string name="swipe_action_undo">撤销</string>
+    <string name="swipe_toast_restored">已撤销移除</string>
+    <string name="swipe_toast_undone">已撤销</string>
 </resources>

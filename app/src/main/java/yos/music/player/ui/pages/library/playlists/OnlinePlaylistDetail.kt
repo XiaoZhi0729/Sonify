@@ -46,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,7 +88,11 @@ import yos.music.player.ui.lazyItemKeys
 import com.cormor.overscroll.core.overScrollVertical
 import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 import yos.music.player.ui.widgets.basic.navigationBarsHeight
+import yos.music.player.ui.widgets.mochi.LocalMochiToast
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
@@ -320,8 +325,10 @@ fun OnlinePlaylistDetail(
         mutableStateOf(PendingPlaylistStore.get(playlistId.orEmpty())?.takeIf { it.userid == accountUserid })
     }
     val isPendingPlaylist = source == PlaylistSelection.Source.User && pendingEntry.value != null
-    // 展示列表 = 服务端歌曲 + 挂起条目未补发的待加歌（绑定真实 listid 前详情页也有内容、可播）
-    val displayTracks: List<KugouPlaylistTrack> = if (isPendingPlaylist) {
+    val hiddenSwipeHashes = remember(playlistId, accountUserid) { mutableStateListOf<String>() }
+    val hiddenHashSet = hiddenSwipeHashes.toSet()
+    // 展示列表 = 服务端歌曲 + 挂起条目未补发的待加歌（过滤掉滑动待提交撤销窗口里的歌曲）
+    val displayTracks: List<KugouPlaylistTrack> = (if (isPendingPlaylist) {
         val queued = pendingEntry.value?.ops?.mapNotNull { op ->
             if (!op.startsWith("A|")) return@mapNotNull null
             val p = op.split('|')
@@ -336,6 +343,8 @@ fun OnlinePlaylistDetail(
         tracks.value + queued
     } else {
         tracks.value
+    }).let { list ->
+        if (hiddenHashSet.isEmpty()) list else list.filter { it.hash !in hiddenHashSet }
     }
 
     // 服务端+挂起条目拼出的列表可能出现重复 FileHash，item key 按出现序号唯一化
@@ -357,6 +366,99 @@ fun OnlinePlaylistDetail(
     // 编辑权限对确认弹层与写操作共同生效。
     val removeAt: ((Int) -> Unit)? = if (editAllowed && !removeBusy.value) {
         { index -> removeTarget.value = displayTracks.getOrNull(index) }
+    } else null
+    val mochiToast = LocalMochiToast.current
+    val pendingRemovals = remember(playlistId, accountUserid) {
+        mutableMapOf<String, Pair<Job, suspend () -> Unit>>()
+    }
+    DisposableEffect(playlistId, accountUserid) {
+        onDispose {
+            if (pendingRemovals.isNotEmpty()) {
+                val leftover = pendingRemovals.values.toList()
+                pendingRemovals.clear()
+                val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                leftover.forEach { (job, commit) ->
+                    job.cancel()
+                    flushScope.launch { commit() }
+                }
+            }
+        }
+    }
+
+    fun performSwipeRemove(target: KugouPlaylistTrack) {
+        if (!editAllowed || removeBusy.value || accountUserid != KugouAccountState.userid) return
+        if (target.hash !in hiddenSwipeHashes) {
+            hiddenSwipeHashes.add(target.hash)
+        }
+        val commitLambda: suspend () -> Unit = {
+            val entry = pendingEntry.value
+            val result = if (entry != null) {
+                PendingPlaylistStore.removeSong(entry.localId, target.hash, target.fileId)
+            } else {
+                KugouRepository.removeTrackFromPlaylist(playlistId.orEmpty(), target.fileId, target.hash)
+            }
+            if (accountUserid == KugouAccountState.userid) {
+                result
+                    .onSuccess {
+                        if (entry != null) {
+                            pendingEntry.value = PendingPlaylistStore.get(entry.localId)
+                        } else {
+                            tracks.value = tracks.value.filter { it.hash != target.hash }
+                            status.value = if (tracks.value.isEmpty()) "empty" else "ok"
+                            if (tracks.value.isNotEmpty()) {
+                                OnlinePlaylistCache.write(context, pageCacheKey, tracks.value)
+                            }
+                            PlaylistCoverCache.invalidate(playlistId.orEmpty())
+                            val currentEntry = userEntry.value
+                            if (currentEntry == null || (currentEntry.usesTrackCover && !currentEntry.isCustomPic)) {
+                                coverState.value = PlaylistTrackOrder.newestCover(tracks.value).orEmpty()
+                            }
+                        }
+                        hiddenSwipeHashes.remove(target.hash)
+                        KugouSyncCoordinator.notifyPlaylistsChanged()
+                    }
+                    .onFailure { e ->
+                        hiddenSwipeHashes.remove(target.hash)
+                        mochiToast?.show(
+                            title = context.getString(R.string.swipe_toast_remove_failed),
+                            subtitle = e.message,
+                        )
+                    }
+            }
+        }
+        pendingRemovals.remove(target.hash)?.first?.cancel()
+        val delayJob = scope.launch {
+            delay(3800L)
+            pendingRemovals.remove(target.hash)
+            commitLambda()
+        }
+        pendingRemovals[target.hash] = delayJob to commitLambda
+
+        mochiToast?.show(
+            title = context.getString(R.string.swipe_toast_removed_playlist),
+            subtitle = target.name,
+            icon = { _ ->
+                Icon(
+                    painter = painterResource(R.drawable.ic_song_menu_trash),
+                    contentDescription = null,
+                    tint = Color(0xFFFF453A),
+                    modifier = Modifier.size(19.dp),
+                )
+            },
+            durationMillis = 3600L,
+            actionLabel = context.getString(R.string.swipe_action_undo),
+            onAction = {
+                pendingRemovals.remove(target.hash)?.first?.cancel()
+                hiddenSwipeHashes.remove(target.hash)
+                mochiToast.show(
+                    title = context.getString(R.string.swipe_toast_restored),
+                    subtitle = target.name,
+                )
+            },
+        )
+    }
+    val swipeRemoveTrack: ((KugouPlaylistTrack) -> Unit)? = if (editAllowed && !removeBusy.value) {
+        { target -> performSwipeRemove(target) }
     } else null
 
     // ---------- 页内搜索（所有在线歌单） ----------
@@ -1075,7 +1177,10 @@ fun OnlinePlaylistDetail(
                                 if (isWideScreen) {
                                     DetailSongRowWide(
                                         music = KugouRepository.toDisplayMediaItem(track),
-                                        onDelete = removeAt?.let { cb -> { cb(originalIndex) } }
+                                        onDelete = removeAt?.let { cb -> { cb(originalIndex) } },
+                                        enableSwipeRight = true,
+                                        enableSwipeLeft = swipeRemoveTrack != null,
+                                        onSwipeRemove = swipeRemoveTrack?.let { cb -> { cb(track) } }
                                     ) {
                                         playAt(sortedIndex)
                                     }
@@ -1083,7 +1188,10 @@ fun OnlinePlaylistDetail(
                                     MusicList(
                                         music = KugouRepository.toDisplayMediaItem(track),
                                         itemClick = { playAt(sortedIndex) },
-                                        onLongClick = removeAt?.let { cb -> { cb(originalIndex) } }
+                                        onLongClick = removeAt?.let { cb -> { cb(originalIndex) } },
+                                        enableSwipeRight = true,
+                                        enableSwipeLeft = swipeRemoveTrack != null,
+                                        onSwipeRemove = swipeRemoveTrack?.let { cb -> { cb(track) } }
                                     )
                                 }
                             }

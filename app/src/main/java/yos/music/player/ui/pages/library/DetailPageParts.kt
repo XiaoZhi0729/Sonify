@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import yos.music.player.ui.widgets.basic.statusBarsPadding
 import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
+import yos.music.player.ui.widgets.basic.SongSwipeableWrapper
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -280,68 +281,78 @@ fun DetailPageHeader(
 fun DetailSongRowWide(
     music: YosMediaItem,
     onDelete: (() -> Unit)? = null,
+    enableSwipeRight: Boolean = true,
+    enableSwipeLeft: Boolean = false,
+    onSwipeRemove: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
     // 不做点击前的可播性预测（理由见 MusicList）：真实不可播的歌由播放失败链路跳歌并提示。
     val playAction: () -> Unit = itemClick
-    Row(
-        modifier = Modifier
-            .height(64.dp)
-            .fillMaxWidth()
-            .clickable(onClick = itemClick)
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically
+    SongSwipeableWrapper(
+        music = music,
+        enableSwipeRight = enableSwipeRight,
+        enableSwipeLeft = enableSwipeLeft && onSwipeRemove != null,
+        onSwipeRemove = onSwipeRemove,
     ) {
-        // 左半：封面 + 歌名
         Row(
-            modifier = Modifier.fillMaxWidth(0.5f),
+            modifier = Modifier
+                .height(64.dp)
+                .fillMaxWidth()
+                .clickable(onClick = itemClick)
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ShadowImageWithCache(
-                dataLambda = { music.thumb },
-                contentDescription = null,
-                modifier = Modifier.size(52.dp),
-                cornerRadius = 3.5.dp,
-                shadowAlpha = 0f,
-                imageQuality = ImageQuality.LOW
-            )
+            // 左半：封面 + 歌名
+            Row(
+                modifier = Modifier.fillMaxWidth(0.5f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ShadowImageWithCache(
+                    dataLambda = { music.thumb },
+                    contentDescription = null,
+                    modifier = Modifier.size(52.dp),
+                    cornerRadius = 3.5.dp,
+                    shadowAlpha = 0f,
+                    imageQuality = ImageQuality.LOW
+                )
 
-            Text(
-                text = music.title ?: defaultTitle,
-                modifier = Modifier.padding(start = 16.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 16.sp,
-                lineHeight = 16.sp
-            )
+                Text(
+                    text = music.title ?: defaultTitle,
+                    modifier = Modifier.padding(start = 16.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 16.sp,
+                    lineHeight = 16.sp
+                )
+            }
+
+            // 歌手列：自屏幕正中央起左对齐
+            Box(Modifier.weight(1f)) {
+                Text(
+                    text = music.artistsName ?: defaultArtistsName,
+                    modifier = Modifier.alpha(0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp,
+                    lineHeight = 13.sp
+                )
+            }
+
+            // 时长：最右；无时长数据时不占位
+            if (music.duration > 0) {
+                Text(
+                    text = formatDurationMs(music.duration),
+                    modifier = Modifier
+                        .alpha(0.5f)
+                        .padding(start = 12.dp),
+                    fontSize = 13.sp,
+                    lineHeight = 13.sp
+                )
+            }
+
+            // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+            SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onDelete)
         }
-
-        // 歌手列：自屏幕正中央起左对齐
-        Box(Modifier.weight(1f)) {
-            Text(
-                text = music.artistsName ?: defaultArtistsName,
-                modifier = Modifier.alpha(0.5f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 13.sp,
-                lineHeight = 13.sp
-            )
-        }
-
-        // 时长：最右；无时长数据时不占位
-        if (music.duration > 0) {
-            Text(
-                text = formatDurationMs(music.duration),
-                modifier = Modifier
-                    .alpha(0.5f)
-                    .padding(start = 12.dp),
-                fontSize = 13.sp,
-                lineHeight = 13.sp
-            )
-        }
-
-        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
-        SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onDelete)
     }
 }
 
@@ -373,64 +384,75 @@ fun AlbumTrackRow(
     trackNumber: Int?,
     mainArtists: List<String>,
     modifier: Modifier = Modifier,
+    enableSwipeRight: Boolean = true,
+    enableSwipeLeft: Boolean = false,
+    onSwipeRemove: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
     val playAction: () -> Unit = itemClick
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = itemClick)
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically
+    SongSwipeableWrapper(
+        music = music,
+        enableSwipeRight = enableSwipeRight,
+        enableSwipeLeft = enableSwipeLeft && onSwipeRemove != null,
+        onSwipeRemove = onSwipeRemove,
+        modifier = modifier,
     ) {
-        Box(
-            contentAlignment = Alignment.TopCenter, modifier = Modifier
-                .width(24.dp)
-                .fillMaxHeight()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = itemClick)
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "${trackNumber ?: "-"}",
-                fontSize = 16.sp,
-                modifier = Modifier.alpha(0.4f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
+            Box(
+                contentAlignment = Alignment.TopCenter, modifier = Modifier
+                    .width(24.dp)
+                    .fillMaxHeight()
+            ) {
+                Text(
+                    text = "${trackNumber ?: "-"}",
+                    fontSize = 16.sp,
+                    modifier = Modifier.alpha(0.4f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
 
-        Column(
-            Modifier
-                .weight(1f)
-                .padding(vertical = 10.dp)
-        ) {
-            Text(
-                text = music.title ?: defaultTitle,
-                fontSize = 16.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 20.sp
-            )
-            YosWrapper {
-                val needShowArtists = remember(music) {
-                    derivedStateOf {
-                        !mainArtists.containsAll(music.artistsList ?: defaultArtists)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(vertical = 10.dp)
+            ) {
+                Text(
+                    text = music.title ?: defaultTitle,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 20.sp
+                )
+                YosWrapper {
+                    val needShowArtists = remember(music) {
+                        derivedStateOf {
+                            !mainArtists.containsAll(music.artistsList ?: defaultArtists)
+                        }
+                    }
+                    if (needShowArtists.value) {
+                        Text(
+                            text = music.artistsName ?: defaultArtistsName,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = 16.sp,
+                            modifier = Modifier.alpha(0.4f)
+                        )
                     }
                 }
-                if (needShowArtists.value) {
-                    Text(
-                        text = music.artistsName ?: defaultArtistsName,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 16.sp,
-                        modifier = Modifier.alpha(0.4f)
-                    )
-                }
             }
-        }
 
-        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
-        SongAddToPlaylistButton(music = music, onPlay = playAction)
+            // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+            SongAddToPlaylistButton(music = music, onPlay = playAction)
+        }
     }
 }
 
@@ -442,71 +464,81 @@ fun AlbumTrackRow(
 fun AlbumTrackRowWide(
     music: YosMediaItem,
     trackNumber: Int?,
+    enableSwipeRight: Boolean = true,
+    enableSwipeLeft: Boolean = false,
+    onSwipeRemove: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
     val playAction: () -> Unit = itemClick
-    Row(
-        modifier = Modifier
-            .height(64.dp)
-            .fillMaxWidth()
-            .clickable(onClick = itemClick)
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically
+    SongSwipeableWrapper(
+        music = music,
+        enableSwipeRight = enableSwipeRight,
+        enableSwipeLeft = enableSwipeLeft && onSwipeRemove != null,
+        onSwipeRemove = onSwipeRemove,
     ) {
-        // 左半：序号 + 歌名
         Row(
-            modifier = Modifier.fillMaxWidth(0.5f),
+            modifier = Modifier
+                .height(64.dp)
+                .fillMaxWidth()
+                .clickable(onClick = itemClick)
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.width(24.dp)
+            // 左半：序号 + 歌名
+            Row(
+                modifier = Modifier.fillMaxWidth(0.5f),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.width(24.dp)
+                ) {
+                    Text(
+                        text = "${trackNumber ?: "-"}",
+                        fontSize = 16.sp,
+                        modifier = Modifier.alpha(0.4f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
                 Text(
-                    text = "${trackNumber ?: "-"}",
-                    fontSize = 16.sp,
-                    modifier = Modifier.alpha(0.4f),
+                    text = music.title ?: defaultTitle,
+                    modifier = Modifier.padding(start = 16.dp),
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 16.sp,
+                    lineHeight = 16.sp
                 )
             }
 
-            Text(
-                text = music.title ?: defaultTitle,
-                modifier = Modifier.padding(start = 16.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 16.sp,
-                lineHeight = 16.sp
-            )
-        }
+            // 歌手列：自屏幕正中央起左对齐
+            Box(Modifier.weight(1f)) {
+                Text(
+                    text = music.artistsName ?: defaultArtistsName,
+                    modifier = Modifier.alpha(0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp,
+                    lineHeight = 13.sp
+                )
+            }
 
-        // 歌手列：自屏幕正中央起左对齐
-        Box(Modifier.weight(1f)) {
-            Text(
-                text = music.artistsName ?: defaultArtistsName,
-                modifier = Modifier.alpha(0.5f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 13.sp,
-                lineHeight = 13.sp
-            )
-        }
+            // 时长：最右；无时长数据时不占位
+            if (music.duration > 0) {
+                Text(
+                    text = formatDurationMs(music.duration),
+                    modifier = Modifier
+                        .alpha(0.5f)
+                        .padding(start = 12.dp),
+                    fontSize = 13.sp,
+                    lineHeight = 13.sp
+                )
+            }
 
-        // 时长：最右；无时长数据时不占位
-        if (music.duration > 0) {
-            Text(
-                text = formatDurationMs(music.duration),
-                modifier = Modifier
-                    .alpha(0.5f)
-                    .padding(start = 12.dp),
-                fontSize = 13.sp,
-                lineHeight = 13.sp
-            )
+            // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
+            SongAddToPlaylistButton(music = music, onPlay = playAction)
         }
-
-        // 在线歌曲行尾三竖点（本地歌曲无酷狗 hash，组件内部直接不渲染）
-        SongAddToPlaylistButton(music = music, onPlay = playAction)
     }
 }
 

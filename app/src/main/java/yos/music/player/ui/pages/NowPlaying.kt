@@ -206,6 +206,8 @@ import yos.music.player.ui.widgets.basic.navigationBarsPadding
 import yos.music.player.ui.widgets.basic.rawNavigationBarsBottomDp
 import yos.music.player.ui.widgets.basic.rawStatusBarsTopDp
 import yos.music.player.ui.widgets.basic.kugouHash
+import yos.music.player.ui.widgets.basic.SongSwipeActionsRow
+import yos.music.player.ui.widgets.mochi.LocalMochiToast
 import yos.music.player.ui.pages.comments.SongCommentsPanel
 import yos.music.player.ui.widgets.basic.statusBarsHeight
 import yos.music.player.ui.widgets.basic.statusBarsPadding
@@ -2425,45 +2427,81 @@ internal fun PlayingList(
                                     0f
                                 }
 
-                                SmallMusicListItem(
-                                    music = music,
-                                    index = index,
-                                    totalCount = musicList.value?.size ?: 0,
-                                    editMode = editMode,
-                                    editControlsMounted = editControlsMounted,
-                                    animateEditEnter = animateEditEnter,
-                                    isSelected = { (music.mediaId ?: "index:$index") in selectedIds },
-                                    dragging = index == currentDragIndex,
-                                    hideWhenDragging = true,
-                                    displacementPx = targetDisplacement,
-                                    density = density,
+                                val swipeContext = LocalContext.current
+                                val swipeToast = LocalMochiToast.current
+                                SongSwipeActionsRow(
+                                    enableSwipeRight = false,
+                                    enableSwipeLeft = !editMode && !dragLatched,
+                                    onRemove = {
+                                        val removedIndex = index
+                                        val removedSong = music
+                                        val songTitle = music.title ?: defaultTitle
+                                        queueScope.launch { MediaController.removeQueueItems(listOf(removedIndex)) }
+                                        swipeToast?.show(
+                                            title = swipeContext.getString(R.string.swipe_toast_removed_queue),
+                                            subtitle = songTitle,
+                                            icon = { _ ->
+                                                Icon(
+                                                    painter = painterResource(R.drawable.ic_song_menu_trash),
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFF453A),
+                                                    modifier = Modifier.size(19.dp),
+                                                )
+                                            },
+                                            durationMillis = 3600L,
+                                            actionLabel = swipeContext.getString(R.string.swipe_action_undo),
+                                            onAction = {
+                                                queueScope.launch {
+                                                    MediaController.insertQueueItem(removedIndex, removedSong)
+                                                }
+                                                swipeToast.show(
+                                                    title = swipeContext.getString(R.string.swipe_toast_restored),
+                                                    subtitle = songTitle,
+                                                )
+                                            },
+                                        )
+                                    },
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = tween(durationMillis = 120),
                                         placementSpec = tween(durationMillis = 120)
                                     ),
-                                    onRowMeasured = { if (itemHeightPx.intValue == 0) itemHeightPx.intValue = it },
-                                    itemClick = {
-                                        if (editMode) {
-                                            toggleSelect(index, music)
-                                        } else {
-                                            scope.launch(Dispatchers.IO) {
-                                                MediaController.prepare(
-                                                    music,
-                                                    musicList.value ?: emptyList()
-                                                )
+                                ) {
+                                    SmallMusicListItem(
+                                        music = music,
+                                        index = index,
+                                        totalCount = musicList.value?.size ?: 0,
+                                        editMode = editMode,
+                                        editControlsMounted = editControlsMounted,
+                                        animateEditEnter = animateEditEnter,
+                                        isSelected = { (music.mediaId ?: "index:$index") in selectedIds },
+                                        dragging = index == currentDragIndex,
+                                        hideWhenDragging = true,
+                                        displacementPx = targetDisplacement,
+                                        density = density,
+                                        onRowMeasured = { if (itemHeightPx.intValue == 0) itemHeightPx.intValue = it },
+                                        itemClick = {
+                                            if (editMode) {
+                                                toggleSelect(index, music)
+                                            } else {
+                                                scope.launch(Dispatchers.IO) {
+                                                    MediaController.prepare(
+                                                        music,
+                                                        musicList.value ?: emptyList()
+                                                    )
+                                                }
                                             }
+                                        },
+                                        onLongClick = {
+                                            if (!editMode) {
+                                                animateEditEnter = true
+                                                editControlsHold = true
+                                                editMode = true
+                                                selectedIds.clear()
+                                            }
+                                            toggleSelect(index, music)
                                         }
-                                    },
-                                    onLongClick = {
-                                        if (!editMode) {
-                                            animateEditEnter = true
-                                            editControlsHold = true
-                                            editMode = true
-                                            selectedIds.clear()
-                                        }
-                                        toggleSelect(index, music)
-                                    }
-                                )
+                                    )
+                                }
                             }
                             item("blank_after", contentType = "queue_spacer") {
                                 Spacer(modifier = Modifier.height(12.dp))

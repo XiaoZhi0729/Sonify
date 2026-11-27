@@ -463,7 +463,7 @@ private suspend fun interruptible(block: suspend () -> Unit): Boolean = try {
 }
 
 @Composable
-private fun InWindowOverlay(leaving: () -> Boolean = { false }, content: @Composable () -> Unit) {
+internal fun InWindowOverlay(leaving: () -> Boolean = { false }, content: @Composable () -> Unit) {
     val hostView = LocalView.current
     val parent = rememberCompositionContext()
     val currentContent by rememberUpdatedState(content)

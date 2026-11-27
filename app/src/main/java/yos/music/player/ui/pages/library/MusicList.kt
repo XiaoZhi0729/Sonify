@@ -25,6 +25,7 @@ import yos.music.player.data.libraries.defaultTitle
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
+import yos.music.player.ui.widgets.basic.SongSwipeableWrapper
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -32,6 +33,9 @@ fun /*LazyItemScope.*/MusicList(
     music: YosMediaItem,
     horizontalPadding: Dp = 20.dp,
     onLongClick: (() -> Unit)? = null,
+    enableSwipeRight: Boolean = true,
+    enableSwipeLeft: Boolean = false,
+    onSwipeRemove: (() -> Unit)? = null,
     itemClick: () -> Unit
 ) {
     /*rememberSaveable(stateSaver = object : Saver<String?, Any> {
@@ -105,57 +109,64 @@ LaunchedEffect(Unit) {
     // "能播却灰"。真实不可播的歌交给播放失败链路（跳歌 + 提示），见 skipPastUnplayable。
     // 行点击与行尾菜单的「播放」都直接进播放，不做前置拦截。
     val playAction: () -> Unit = itemClick
-    Row(
-        modifier = Modifier
-            /*.animateItem(fadeInSpec = null, fadeOutSpec = null)*/
-            .height(64.dp)
-            .fillMaxWidth()
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(onClick = itemClick, onLongClick = onLongClick)
-                } else {
-                    Modifier.clickable(onClick = itemClick)
-                }
-            )
-            .padding(horizontal = horizontalPadding),
-        verticalAlignment = Alignment.CenterVertically
+    SongSwipeableWrapper(
+        music = music,
+        enableSwipeRight = enableSwipeRight,
+        enableSwipeLeft = enableSwipeLeft && onSwipeRemove != null,
+        onSwipeRemove = onSwipeRemove,
     ) {
-        ShadowImageWithCache(
-            dataLambda = { music.thumb },
-            contentDescription = null,
-            modifier = Modifier.size(52.dp),
-            cornerRadius = 3.5.dp,
-            shadowAlpha = 0f,
-            imageQuality = ImageQuality.LOW
-        )
-
-        Column(
-            Modifier
-                .weight(1f)
-                .padding(start = 16.dp)
+        Row(
+            modifier = Modifier
+                /*.animateItem(fadeInSpec = null, fadeOutSpec = null)*/
+                .height(64.dp)
+                .fillMaxWidth()
+                .then(
+                    if (onLongClick != null) {
+                        Modifier.combinedClickable(onClick = itemClick, onLongClick = onLongClick)
+                    } else {
+                        Modifier.clickable(onClick = itemClick)
+                    }
+                )
+                .padding(horizontal = horizontalPadding),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = music.title ?: defaultTitle,
-                modifier = Modifier.padding(bottom = 1.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 16.sp,
-                lineHeight = 16.sp,
+            ShadowImageWithCache(
+                dataLambda = { music.thumb },
+                contentDescription = null,
+                modifier = Modifier.size(52.dp),
+                cornerRadius = 3.5.dp,
+                shadowAlpha = 0f,
+                imageQuality = ImageQuality.LOW
             )
 
-            Text(
-                text = music.artistsName ?: defaultArtistsName,
-                // 用颜色 alpha 代替 Modifier.alpha(0.5f)：后者会给每行文字套一个离屏图层，
-                // 逐帧重绘时每行多一次 saveLayer（trace: "alpha caused saveLayer *x57"）。
-                color = LocalContentColor.current.copy(alpha = 0.5f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 13.sp,
-                lineHeight = 13.sp,
-            )
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp)
+            ) {
+                Text(
+                    text = music.title ?: defaultTitle,
+                    modifier = Modifier.padding(bottom = 1.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 16.sp,
+                    lineHeight = 16.sp,
+                )
+
+                Text(
+                    text = music.artistsName ?: defaultArtistsName,
+                    // 用颜色 alpha 代替 Modifier.alpha(0.5f)：后者会给每行文字套一个离屏图层，
+                    // 逐帧重绘时每行多一次 saveLayer（trace: "alpha caused saveLayer *x57"）。
+                    color = LocalContentColor.current.copy(alpha = 0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp,
+                    lineHeight = 13.sp,
+                )
+            }
+
+            // 歌曲行尾三竖点操作菜单（在线与本地歌曲共用）
+            SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onLongClick)
         }
-
-        // 歌曲行尾三竖点操作菜单（在线与本地歌曲共用）
-        SongAddToPlaylistButton(music = music, onPlay = playAction, onDelete = onLongClick)
     }
 }

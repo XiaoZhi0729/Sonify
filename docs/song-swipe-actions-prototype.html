@@ -1,0 +1,2852 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Sonify · 歌曲列表左右滑动操作原型</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page-bg: #F2F1F6;
+      --surface: #FFFFFF;
+      --surface-elevated: rgba(255, 255, 255, 0.88);
+      --workbench-bg: #E8E8ED;
+      --workbench-panel: rgba(255, 255, 255, 0.82);
+      --workbench-border: rgba(60, 60, 67, 0.11);
+      --ink-1: #1D1D1F;
+      --ink-2: rgba(29, 29, 31, 0.56);
+      --ink-3: rgba(29, 29, 31, 0.36);
+      --hairline: rgba(60, 60, 67, 0.12);
+      --accent: #FF3B30;
+      --accent-soft: rgba(255, 59, 48, 0.12);
+
+      --action-next: #6246EA;
+      --action-last: #FF9500;
+      --action-remove: #FF3B30;
+
+      --glass-bar: rgba(242, 241, 246, 0.78);
+      --glass-mini: rgba(255, 255, 255, 0.82);
+      --glass-border: rgba(60, 60, 67, 0.10);
+      --pill-bg: rgba(120, 120, 128, 0.12);
+      --pill-active-bg: #1D1D1F;
+      --pill-active-ink: #FFFFFF;
+      --switch-track: rgba(120, 120, 128, 0.24);
+      --switch-on: #34C759;
+      --focus-ring: #D35400;
+
+      --toast-bg: rgba(29, 29, 31, 0.90);
+      --toast-ink: #FFFFFF;
+      --phone-bezel: #1D1D1F;
+      --phone-shadow: 0 28px 70px rgba(0, 0, 0, 0.18), 0 4px 16px rgba(0, 0, 0, 0.08);
+      --card-shadow: 0 10px 28px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
+      --row-hover: rgba(120, 120, 128, 0.06);
+      --popover-bg: rgba(255, 255, 255, 0.94);
+    }
+
+    html[data-theme="dark"] {
+      --page-bg: #000002;
+      --surface: #1C1C1E;
+      --surface-elevated: rgba(44, 44, 46, 0.88);
+      --workbench-bg: #0B0B0D;
+      --workbench-panel: rgba(28, 28, 30, 0.84);
+      --workbench-border: rgba(255, 255, 255, 0.11);
+      --ink-1: #F5F5F7;
+      --ink-2: rgba(245, 245, 247, 0.58);
+      --ink-3: rgba(245, 245, 247, 0.36);
+      --hairline: rgba(255, 255, 255, 0.10);
+      --accent: #FF453A;
+      --accent-soft: rgba(255, 69, 58, 0.18);
+
+      --action-next: #7357FF;
+      --action-last: #FF9F0A;
+      --action-remove: #FF453A;
+
+      --glass-bar: rgba(20, 20, 22, 0.78);
+      --glass-mini: rgba(38, 38, 42, 0.84);
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --pill-bg: rgba(142, 141, 147, 0.20);
+      --pill-active-bg: #F5F5F7;
+      --pill-active-ink: #1D1D1F;
+      --switch-track: rgba(120, 120, 128, 0.38);
+      --switch-on: #30D158;
+      --focus-ring: #FF9F0A;
+
+      --toast-bg: rgba(44, 44, 46, 0.94);
+      --toast-ink: #F5F5F7;
+      --phone-bezel: #2C2C2E;
+      --phone-shadow: 0 32px 80px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --card-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+      --row-hover: rgba(255, 255, 255, 0.05);
+      --popover-bg: rgba(44, 44, 46, 0.96);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+      background: var(--workbench-bg);
+      color: var(--ink-1);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100%;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    /* ============ Layout: Desktop Workbench vs Mobile Direct ============ */
+    .workbench {
+      display: grid;
+      grid-template-columns: auto minmax(340px, 460px);
+      gap: 28px;
+      justify-content: center;
+      align-items: start;
+      min-height: 100dvh;
+      padding: 28px 24px;
+    }
+
+    .phone-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: sticky;
+      top: 24px;
+    }
+
+    .phone-frame {
+      position: relative;
+      width: 393px;
+      height: 810px;
+      border-radius: 48px;
+      background: var(--page-bg);
+      box-shadow: var(--phone-shadow), inset 0 0 0 10px var(--phone-bezel);
+      padding: 10px;
+      overflow: hidden;
+    }
+
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 38px;
+      overflow: hidden;
+      background: var(--page-bg);
+      display: flex;
+      flex-direction: column;
+      isolation: isolate;
+    }
+
+    /* Dynamic Island */
+    .dynamic-island {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 112px;
+      height: 30px;
+      border-radius: 20px;
+      background: #000000;
+      z-index: 40;
+      pointer-events: none;
+      box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+    }
+
+    /* Edge Guard Overlay (for visual verification) */
+    .edge-guard-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 35;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+
+    .edge-guard-overlay.is-visible {
+      opacity: 1;
+    }
+
+    .edge-guard-zone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 24px;
+      background: repeating-linear-gradient(
+        -45deg,
+        rgba(255, 59, 48, 0.14),
+        rgba(255, 59, 48, 0.14) 5px,
+        rgba(255, 59, 48, 0.04) 5px,
+        rgba(255, 59, 48, 0.04) 10px
+      );
+      border-color: rgba(255, 59, 48, 0.35);
+      border-style: dashed;
+      border-width: 0;
+    }
+
+    .edge-guard-zone.left {
+      left: 0;
+      border-right-width: 1px;
+    }
+
+    .edge-guard-zone.right {
+      right: 0;
+      border-left-width: 1px;
+    }
+
+    .edge-guard-flash {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 6px;
+      height: 110px;
+      border-radius: 99px;
+      background: var(--accent);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 36;
+    }
+
+    .edge-guard-flash.left { left: 6px; }
+    .edge-guard-flash.right { right: 6px; }
+
+    /* Mobile-only quick switch bar (hidden on desktop) */
+    .mobile-bar {
+      display: none;
+    }
+
+    /* ============ Translucent Nav Header ============ */
+    .app-header {
+      position: relative;
+      z-index: 20;
+      padding: 50px 18px 12px;
+      background: var(--glass-bar);
+      backdrop-filter: blur(22px) saturate(180%);
+      -webkit-backdrop-filter: blur(22px) saturate(180%);
+      border-bottom: 0.5px solid var(--glass-border);
+      flex-shrink: 0;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .header-title-group {
+      min-width: 0;
+    }
+
+    .header-kicker {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+
+    .header-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      color: var(--ink-1);
+    }
+
+    .header-title:focus {
+      outline: none;
+    }
+
+    .header-title:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+
+    .header-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--pill-bg);
+      color: var(--ink-2);
+      white-space: nowrap;
+    }
+
+    .mode-pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--switch-on);
+    }
+
+    .mode-pill.is-off .mode-pill-dot {
+      background: var(--ink-3);
+    }
+
+    .header-sub {
+      margin: 5px 0 0;
+      font-size: 12.5px;
+      color: var(--ink-2);
+      line-height: 1.35;
+    }
+
+    /* ============ Scrollable Song List ============ */
+    .list-scroll {
+      position: relative;
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior-x: none;
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding: 8px 0 96px;
+    }
+
+    .list-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .song-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      background: var(--surface);
+      border-top: 0.5px solid var(--hairline);
+      border-bottom: 0.5px solid var(--hairline);
+    }
+
+    .song-item {
+      position: relative;
+      overflow: hidden;
+      background: var(--surface);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .song-item + .song-item::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 72px;
+      right: 16px;
+      height: 0.5px;
+      background: var(--hairline);
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    .song-item.is-removing::before {
+      opacity: 0;
+    }
+
+    /* Action Trays (Behind the foreground row, sized dynamically so zero gaps) */
+    .action-tray {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      z-index: 1;
+      display: flex;
+      overflow: hidden;
+      pointer-events: none;
+      visibility: hidden;
+    }
+
+    .action-tray.is-active {
+      pointer-events: auto;
+      visibility: visible;
+    }
+
+    .action-tray-left {
+      left: 0;
+      justify-content: flex-start;
+    }
+
+    .action-tray-right {
+      right: 0;
+      justify-content: flex-end;
+    }
+
+    .swipe-btn {
+      position: relative;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      color: #FFFFFF;
+      flex-shrink: 0;
+      transition: filter 100ms ease-out;
+    }
+
+    .swipe-btn:active {
+      filter: brightness(0.90);
+    }
+
+    .swipe-btn:focus-visible {
+      outline: 3px solid #FFFFFF;
+      outline-offset: -4px;
+    }
+
+    .swipe-btn-next {
+      background: var(--action-next);
+    }
+
+    .swipe-btn-last {
+      background: var(--action-last);
+    }
+
+    .swipe-btn-remove {
+      background: var(--action-remove);
+      width: 100%;
+    }
+
+    .swipe-btn-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      width: 78px;
+      flex-shrink: 0;
+      will-change: transform, opacity;
+    }
+
+    .swipe-btn-icon {
+      width: 22px;
+      height: 22px;
+      display: block;
+      transform-origin: center;
+    }
+
+    .swipe-btn-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      line-height: 1.1;
+    }
+
+    /* Foreground Song Row */
+    .song-row {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px 10px 16px;
+      min-height: 68px;
+      background: var(--surface);
+      touch-action: pan-y;
+      cursor: grab;
+      will-change: transform;
+      transform: translate3d(0, 0, 0);
+    }
+
+    .song-row:active {
+      cursor: grabbing;
+    }
+
+    .song-row.is-pressed {
+      background: color-mix(in srgb, var(--surface) 93%, var(--ink-1) 7%);
+    }
+
+    .song-cover {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.92);
+      box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.10);
+      overflow: hidden;
+    }
+
+    .song-cover svg {
+      width: 22px;
+      height: 22px;
+      opacity: 0.85;
+    }
+
+    .song-cover-playing {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.42);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2.5px;
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+
+    .song-item.is-playing .song-cover-playing {
+      opacity: 1;
+    }
+
+    .eq-bar {
+      width: 3px;
+      border-radius: 2px;
+      background: #FFFFFF;
+      animation: eqBounce 900ms ease-in-out infinite alternate;
+    }
+
+    .eq-bar:nth-child(1) { height: 9px; animation-delay: 0ms; }
+    .eq-bar:nth-child(2) { height: 16px; animation-delay: 180ms; }
+    .eq-bar:nth-child(3) { height: 11px; animation-delay: 360ms; }
+
+    @keyframes eqBounce {
+      from { transform: scaleY(0.45); }
+      to { transform: scaleY(1); }
+    }
+
+    .song-meta {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .song-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .song-title {
+      font-size: 15.5px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--ink-1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .song-item.is-playing .song-title {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .explicit-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: var(--pill-bg);
+      color: var(--ink-2);
+      flex-shrink: 0;
+    }
+
+    .song-sub {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--ink-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .queue-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: #FFFFFF;
+      flex-shrink: 0;
+    }
+
+    .queue-tag.next { background: var(--action-next); }
+    .queue-tag.last { background: var(--action-last); }
+
+    .song-right {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .song-duration {
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink-3);
+      margin-right: 2px;
+    }
+
+    .row-more-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-2);
+      transition: background-color 140ms ease, transform 100ms ease-out;
+    }
+
+    .row-more-btn:hover {
+      background: var(--pill-bg);
+      color: var(--ink-1);
+    }
+
+    .row-more-btn:active {
+      transform: scale(0.92);
+    }
+
+    .row-more-btn:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 1px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 56px 24px;
+      gap: 12px;
+    }
+
+    .empty-state.is-visible {
+      display: flex;
+    }
+
+    .empty-state p {
+      margin: 0;
+      color: var(--ink-2);
+      font-size: 14px;
+    }
+
+    /* Accessible Row Menu Popover */
+    .row-popover {
+      position: absolute;
+      z-index: 38;
+      min-width: 176px;
+      padding: 6px;
+      border-radius: 16px;
+      background: var(--popover-bg);
+      backdrop-filter: blur(22px) saturate(180%);
+      -webkit-backdrop-filter: blur(22px) saturate(180%);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--glass-border);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      opacity: 0;
+      transform: scale(0.92);
+      transform-origin: top right;
+      pointer-events: none;
+      transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1);
+    }
+
+    .row-popover.is-open {
+      opacity: 1;
+      transform: scale(1);
+      pointer-events: auto;
+    }
+
+    .popover-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 11px;
+      border-radius: 10px;
+      font-size: 13.5px;
+      font-weight: 500;
+      text-align: left;
+      color: var(--ink-1);
+    }
+
+    .popover-item:hover:not(:disabled) {
+      background: var(--pill-bg);
+    }
+
+    .popover-item:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+    }
+
+    .popover-item.danger {
+      color: var(--action-remove);
+    }
+
+    .popover-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ============ Mini Player + Toast ============ */
+    .mini-player {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 14px;
+      z-index: 25;
+      height: 58px;
+      padding: 8px 12px;
+      border-radius: 18px;
+      background: var(--glass-mini);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 0.5px solid var(--glass-border);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mini-cover {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+    }
+
+    .mini-info {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .mini-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink-1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mini-sub {
+      font-size: 11.5px;
+      color: var(--ink-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mini-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .mini-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-1);
+    }
+
+    .mini-btn:hover {
+      background: var(--pill-bg);
+    }
+
+    .toast-bar {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 82px;
+      z-index: 34;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: var(--toast-bg);
+      color: var(--toast-ink);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(12px) scale(0.97);
+      pointer-events: none;
+      transition: opacity 200ms ease, transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1);
+    }
+
+    .toast-bar.is-visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .toast-undo {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      color: #FFFFFF;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .toast-undo:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    /* ============ Workbench Control Panel (Desktop) ============ */
+    .panel {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--workbench-panel);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--workbench-border);
+      border-radius: 22px;
+      padding: 18px 20px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+
+    .card-caption {
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--pill-bg);
+      color: var(--ink-1);
+      transition: transform 100ms ease-out, background-color 150ms ease;
+    }
+
+    .pill-btn:hover {
+      filter: brightness(0.95);
+    }
+
+    .pill-btn:active {
+      transform: scale(0.96);
+    }
+
+    .pill-btn.is-active {
+      background: var(--pill-active-bg);
+      color: var(--pill-active-ink);
+    }
+
+    .pill-btn:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    /* Accessible Switch Control (<input type="checkbox" role="switch" switch>) */
+    .switch-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      border: 0.5px solid var(--hairline);
+      cursor: pointer;
+    }
+
+    .switch-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .switch-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink-1);
+    }
+
+    .switch-desc {
+      font-size: 12px;
+      color: var(--ink-2);
+      line-height: 1.35;
+    }
+
+    /* Style native checkbox with switch attribute consistently across engines */
+    input[type="checkbox"][switch] {
+      appearance: none;
+      -webkit-appearance: none;
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      background: var(--switch-track);
+      accent-color: var(--switch-on);
+      border: none;
+      margin: 0;
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: background-color 200ms ease;
+    }
+
+    input[type="checkbox"][switch]::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+      transition: transform 240ms cubic-bezier(0.22, 1.28, 0.36, 1);
+    }
+
+    input[type="checkbox"][switch]:checked {
+      background: var(--switch-on);
+    }
+
+    input[type="checkbox"][switch]:checked::before {
+      transform: translateX(20px);
+    }
+
+    input[type="checkbox"][switch]:focus-visible {
+      outline: 3px solid var(--focus-ring);
+      outline-offset: 3px;
+    }
+
+    .preset-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .helper-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 0.5px solid var(--hairline);
+    }
+
+    /* Telemetry HUD */
+    .hud-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .hud-stat {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 75%, transparent);
+      border: 0.5px solid var(--hairline);
+    }
+
+    .hud-stat-label {
+      font-size: 11px;
+      color: var(--ink-2);
+      margin-bottom: 3px;
+    }
+
+    .hud-stat-val {
+      font-size: 14px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink-1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meter-wrap {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 75%, transparent);
+      border: 0.5px solid var(--hairline);
+    }
+
+    .meter-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--ink-2);
+      margin-bottom: 7px;
+    }
+
+    .meter-bar {
+      position: relative;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--pill-bg);
+      overflow: hidden;
+    }
+
+    .meter-center {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 1.5px;
+      background: var(--ink-3);
+      z-index: 2;
+    }
+
+    .meter-threshold {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--ink-2);
+      opacity: 0.5;
+      z-index: 2;
+    }
+
+    .meter-threshold.left { left: 25%; }
+    .meter-threshold.right { left: 75%; }
+
+    .meter-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 0;
+      border-radius: 999px;
+      background: var(--action-next);
+    }
+
+    .haptic-banner {
+      margin-top: 10px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--surface) 75%, transparent);
+      border: 0.5px solid var(--hairline);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12.5px;
+      color: var(--ink-2);
+      transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+    }
+
+    .haptic-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ink-3);
+      flex-shrink: 0;
+      transition: transform 120ms ease, background-color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .haptic-banner.is-pulsing {
+      border-color: var(--action-next);
+      color: var(--ink-1);
+    }
+
+    .haptic-banner.is-pulsing .haptic-dot {
+      background: var(--action-next);
+      transform: scale(1.35);
+      box-shadow: 0 0 0 5px rgba(98, 70, 234, 0.22);
+    }
+
+    .haptic-banner.is-pulsing-danger {
+      border-color: var(--action-remove);
+      color: var(--ink-1);
+    }
+
+    .haptic-banner.is-pulsing-danger .haptic-dot {
+      background: var(--action-remove);
+      transform: scale(1.35);
+      box-shadow: 0 0 0 5px rgba(255, 59, 48, 0.22);
+    }
+
+    /* Queue Inspector */
+    .queue-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .queue-box {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 75%, transparent);
+      border: 0.5px solid var(--hairline);
+      min-height: 86px;
+    }
+
+    .queue-box-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .queue-badge {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .queue-items {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+
+    .queue-items li {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tips-list {
+      margin: 0;
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 12.5px;
+      color: var(--ink-2);
+      line-height: 1.45;
+    }
+
+    /* ============ Mobile Direct Mode (< 840px) ============ */
+    @media (max-width: 839px) {
+      .workbench {
+        display: block;
+        padding: 0;
+        background: var(--page-bg);
+      }
+
+      .phone-stage {
+        position: static;
+        width: 100%;
+        height: 100dvh;
+      }
+
+      .phone-frame {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+        box-shadow: none;
+        padding: 0;
+      }
+
+      .phone-screen {
+        border-radius: 0;
+      }
+
+      .dynamic-island {
+        display: none;
+      }
+
+      .app-header {
+        padding-top: max(16px, env(safe-area-inset-top));
+      }
+
+      .mobile-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 0.5px solid var(--hairline);
+        flex-wrap: wrap;
+      }
+
+      .mobile-switch-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink-1);
+      }
+
+      .mobile-switch-chip input[type="checkbox"][switch] {
+        width: 40px;
+        height: 24px;
+      }
+
+      .mobile-switch-chip input[type="checkbox"][switch]::before {
+        width: 20px;
+        height: 20px;
+      }
+
+      .mobile-switch-chip input[type="checkbox"][switch]:checked::before {
+        transform: translateX(16px);
+      }
+
+      .panel {
+        display: none;
+      }
+    }
+
+    /* ============ Reduced Motion ============ */
+    @media (prefers-reduced-motion: reduce) {
+      .eq-bar {
+        animation: none;
+      }
+
+      .toast-bar,
+      .row-popover,
+      input[type="checkbox"][switch]::before {
+        transition-duration: 120ms;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="workbench">
+    <!-- Left: Interactive iPhone Stage -->
+    <section class="phone-stage" aria-label="交互预览手机窗口">
+      <div class="phone-frame" id="phoneFrame">
+        <div class="phone-screen" id="phoneScreen">
+          <div class="dynamic-island" aria-hidden="true"></div>
+
+          <!-- 24px Edge Guard Visualizer -->
+          <div class="edge-guard-overlay" id="edgeGuardOverlay" aria-hidden="true">
+            <div class="edge-guard-zone left"></div>
+            <div class="edge-guard-zone right"></div>
+          </div>
+          <div class="edge-guard-flash left" id="edgeFlashLeft" aria-hidden="true"></div>
+          <div class="edge-guard-flash right" id="edgeFlashRight" aria-hidden="true"></div>
+
+          <!-- Translucent Sticky Header -->
+          <header class="app-header">
+            <div class="header-top">
+              <div class="header-title-group">
+                <div class="header-kicker">Sonify · 播放列表</div>
+                <h2 id="listHeading" class="header-title" tabindex="-1">深夜漫游歌单</h2>
+              </div>
+              <div class="header-badges">
+                <span class="mode-pill" id="badgeRight"><span class="mode-pill-dot"></span>右滑队列</span>
+                <span class="mode-pill" id="badgeLeft"><span class="mode-pill-dot"></span>左滑移除</span>
+              </div>
+            </div>
+            <p class="header-sub" id="headerSub">右滑加入播放队列 · 左滑移除歌曲</p>
+
+            <!-- Compact Mobile Switch Bar -->
+            <div class="mobile-bar">
+              <label class="mobile-switch-chip">
+                <span>右滑队列</span>
+                <input type="checkbox" role="switch" switch id="mobileSwitchRight" checked />
+              </label>
+              <label class="mobile-switch-chip">
+                <span>左滑移除</span>
+                <input type="checkbox" role="switch" switch id="mobileSwitchLeft" checked />
+              </label>
+              <button type="button" class="pill-btn" id="mobileResetBtn">重置</button>
+              <button type="button" class="pill-btn" id="mobileThemeBtn">深色</button>
+            </div>
+          </header>
+
+          <!-- Scrollable List -->
+          <div class="list-scroll" id="listScroll">
+            <ul class="song-list" id="songList" role="list" aria-labelledby="listHeading"></ul>
+            <div class="empty-state" id="emptyState">
+              <p>歌单已全部清空</p>
+              <button type="button" class="pill-btn is-active" id="emptyResetBtn">恢复示例歌单</button>
+            </div>
+          </div>
+
+          <!-- Accessible Row Menu Popover -->
+          <div class="row-popover" id="rowPopover" role="menu" aria-label="歌曲操作">
+            <button type="button" class="popover-item" role="menuitem" data-pop-action="next">
+              <span>下一首播放</span>
+              <span class="popover-dot" style="background: var(--action-next);"></span>
+            </button>
+            <button type="button" class="popover-item" role="menuitem" data-pop-action="last">
+              <span>最后播放</span>
+              <span class="popover-dot" style="background: var(--action-last);"></span>
+            </button>
+            <button type="button" class="popover-item danger" role="menuitem" data-pop-action="remove">
+              <span>从列表移除</span>
+              <span class="popover-dot" style="background: var(--action-remove);"></span>
+            </button>
+          </div>
+
+          <!-- Floating Feedback Toast -->
+          <div class="toast-bar" id="toastBar" aria-live="off">
+            <span id="toastText">已添加到下一首播放</span>
+            <button type="button" class="toast-undo" id="toastUndoBtn" hidden>撤销</button>
+          </div>
+
+          <!-- Frosted Mini Player -->
+          <div class="mini-player" id="miniPlayer">
+            <div class="mini-cover" id="miniCover"></div>
+            <div class="mini-info">
+              <div class="mini-title" id="miniTitle">Midnight Neon</div>
+              <div class="mini-sub" id="miniSub">Lana Reyes · 点击列表行可切换</div>
+            </div>
+            <div class="mini-controls">
+              <button type="button" class="mini-btn" id="miniPlayBtn" aria-label="播放或暂停">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8 5.14v14l11-7-11-7z"/>
+                </svg>
+              </button>
+              <button type="button" class="mini-btn" id="miniNextBtn" aria-label="切到下一首">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Screen Reader Live Status Region -->
+          <p role="status" aria-live="polite" class="visually-hidden" id="srStatus"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: Interactive Workbench & Telemetry -->
+    <aside class="panel" aria-label="开关控制与手势调试台">
+      <!-- Card 1: Two Independent Switches -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h1 class="card-title">滑动方向开关与模式</h1>
+            <div class="card-caption">两个独立开关可任意组合：双开 / 单右 / 单左 / 全关</div>
+          </div>
+          <div class="toolbar-actions">
+            <button type="button" class="pill-btn" id="themeToggleBtn">深色模式</button>
+            <button type="button" class="pill-btn" id="resetListBtn">重置列表</button>
+          </div>
+        </div>
+
+        <div class="switch-list">
+          <label class="switch-row" for="switchRight">
+            <div class="switch-info">
+              <span class="switch-label">允许右滑（加入播放队列）</span>
+              <span class="switch-desc">轻滑露出紫色「下一首播放」+ 橙色「最后播放」；滑过 50% 紫色铺满，松手直接触发</span>
+            </div>
+            <input type="checkbox" role="switch" switch id="switchRight" checked />
+          </label>
+
+          <label class="switch-row" for="switchLeft">
+            <div class="switch-info">
+              <span class="switch-label">允许左滑（移除歌曲）</span>
+              <span class="switch-desc">轻滑露出红色「移除」按钮；滑过 50% 松手直接移除，并伴随下方歌曲平滑顶上</span>
+            </div>
+            <input type="checkbox" role="switch" switch id="switchLeft" checked />
+          </label>
+        </div>
+
+        <div class="preset-row" role="group" aria-label="预设组合">
+          <button type="button" class="pill-btn is-active" data-preset="both">左右都能滑</button>
+          <button type="button" class="pill-btn" data-preset="right-only">只能右滑</button>
+          <button type="button" class="pill-btn" data-preset="left-only">只能左滑</button>
+          <button type="button" class="pill-btn" data-preset="none">全部关闭</button>
+        </div>
+
+        <div class="helper-row">
+          <button type="button" class="pill-btn" id="edgeOverlayBtn" aria-pressed="false">显示 24px 边缘保护区</button>
+          <button type="button" class="pill-btn is-active" id="audioTickBtn" aria-pressed="true">桌面触感音效（模拟震动）</button>
+        </div>
+      </section>
+
+      <!-- Card 2: Live Physics & Threshold Telemetry -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">实时物理弹簧与手势状态</h2>
+            <div class="card-caption">拖动任意一行观察速度接管、临界点跨越与防误触裁决</div>
+          </div>
+        </div>
+
+        <div class="hud-grid">
+          <div class="hud-stat">
+            <div class="hud-stat-label">当前状态</div>
+            <div class="hud-stat-val" id="hudState">待机 · 无展开行</div>
+          </div>
+          <div class="hud-stat">
+            <div class="hud-stat-label">偏移 / 实时速度</div>
+            <div class="hud-stat-val" id="hudKinematics">0 px · 0 px/s</div>
+          </div>
+        </div>
+
+        <div class="meter-wrap">
+          <div class="meter-labels">
+            <span>← 左滑 50% 直接移除</span>
+            <span id="meterPct">0%</span>
+            <span>右滑 50% 紫块铺满 →</span>
+          </div>
+          <div class="meter-bar" aria-hidden="true">
+            <div class="meter-threshold left"></div>
+            <div class="meter-center"></div>
+            <div class="meter-threshold right"></div>
+            <div class="meter-fill" id="meterFill"></div>
+          </div>
+        </div>
+
+        <div class="haptic-banner" id="hapticBanner">
+          <span class="haptic-dot" aria-hidden="true"></span>
+          <span id="hapticText">越过 50% 临界线（进入或退回）会触发震动与图标弹跳</span>
+        </div>
+      </section>
+
+      <!-- Card 3: Queue Inspector -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">实时播放队列</h2>
+            <div class="card-caption">验证「下一首播放（插队）」与「最后播放（队尾）」效果</div>
+          </div>
+        </div>
+        <div class="queue-cols">
+          <div class="queue-box">
+            <div class="queue-box-title">
+              <span class="queue-badge" style="background: var(--action-next);"></span>
+              <span>下一首播放（插队）</span>
+            </div>
+            <ul class="queue-items" id="nextQueueList">
+              <li>暂无插队歌曲</li>
+            </ul>
+          </div>
+          <div class="queue-box">
+            <div class="queue-box-title">
+              <span class="queue-badge" style="background: var(--action-last);"></span>
+              <span>最后播放（队尾）</span>
+            </div>
+            <ul class="queue-items" id="lastQueueList">
+              <li>暂无队尾歌曲</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 4: Quick Verification Checklist -->
+      <section class="card">
+        <div class="card-header">
+          <h2 class="card-title">交互测试指南</h2>
+        </div>
+        <ol class="tips-list">
+          <li><strong>两段式右滑</strong>：轻滑松手停在半开（紫+橙并排）；继续拉过一半以上，紫色平滑铺满并震动跳图标，此时往左退回一半内会自然变回双按钮。</li>
+          <li><strong>两段式左滑与平滑收起</strong>：轻滑露出红色「移除」；滑过一半直接移除，下方歌曲平滑顶上来，可点底部 Toast「撤销」恢复。</li>
+          <li><strong>防误触与互斥</strong>：展开一行后去点歌曲本身会优先收起而不切歌；去滑另一行或上下滚动列表也会立刻平滑收起当前行；从最左/最右 24px 边缘起滑不会触发行滑动。</li>
+        </ol>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // ============================================================
+      // 1. Song Dataset & Config Constants
+      // ============================================================
+      const INITIAL_SONGS = [
+        { id: 's1', title: 'Midnight Neon', artist: 'Lana Reyes', album: 'Glass Horizon', duration: '3:42', explicit: true, grad: 'linear-gradient(135deg, #6246EA 0%, #B847FF 100%)' },
+        { id: 's2', title: '东京雨夜电车', artist: 'Kaito Mori', album: 'Shibuya Echoes', duration: '4:08', explicit: false, grad: 'linear-gradient(135deg, #0A84FF 0%, #5AC8FA 100%)' },
+        { id: 's3', title: 'Velvet Static', artist: 'Sora & The Waves', album: 'Afterglow FM', duration: '3:19', explicit: false, grad: 'linear-gradient(135deg, #FF3B30 0%, #FF9500 100%)' },
+        { id: 's4', title: '落日航线 2099', artist: '林深处', album: '云端便利店', duration: '4:35', explicit: false, grad: 'linear-gradient(135deg, #FF6B6B 0%, #C44569 100%)' },
+        { id: 's5', title: 'Paper Satellites', artist: 'Milo Vance', album: 'Quiet Orbit', duration: '2:56', explicit: true, grad: 'linear-gradient(135deg, #30D158 0%, #00B894 100%)' },
+        { id: 's6', title: '琥珀色海风', artist: 'Nora Chen', album: 'Summer Tape', duration: '3:51', explicit: false, grad: 'linear-gradient(135deg, #FF9F0A 0%, #FF5E3A 100%)' },
+        { id: 's7', title: 'Crystal Boulevard', artist: 'Hana Kim', album: 'Prism City', duration: '3:28', explicit: false, grad: 'linear-gradient(135deg, #5856D6 0%, #007AFF 100%)' },
+        { id: 's8', title: '失重漫步指南', artist: '白噪音俱乐部', album: '03:00 AM', duration: '4:14', explicit: false, grad: 'linear-gradient(135deg, #1D1D1F 0%, #636366 100%)' },
+        { id: 's9', title: 'Solaris Drift', artist: 'Theo Mercer', album: 'Tidal Tape', duration: '3:47', explicit: true, grad: 'linear-gradient(135deg, #AF52DE 0%, #FF2D55 100%)' },
+        { id: 's10', title: '微光车站', artist: '沈屿', album: '冬日来信', duration: '4:22', explicit: false, grad: 'linear-gradient(135deg, #00C7BE 0%, #32ADE6 100%)' }
+      ];
+
+      const REVEAL_RIGHT_WIDTH = 164; // 82px + 82px
+      const REVEAL_LEFT_WIDTH = 92;
+      const EDGE_GUARD_PX = 24;
+      const SLOP_PX = 8;
+      const ENTER_FULL_RATIO = 0.50;
+      const EXIT_FULL_RATIO = 0.47;
+
+      const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // ============================================================
+      // 2. Apple Spring Physics Engine (Interruptible, Velocity-Aware)
+      // ============================================================
+      class Spring1D {
+        constructor(value = 0, dampingRatio = 0.86, response = 0.32) {
+          this.value = value;
+          this.target = value;
+          this.velocity = 0;
+          this.dampingRatio = dampingRatio;
+          this.response = response;
+          this.settled = true;
+          this.onRest = null;
+        }
+
+        setParams(dampingRatio, response) {
+          this.dampingRatio = dampingRatio;
+          this.response = Math.max(0.06, response);
+        }
+
+        snapTo(value) {
+          this.value = value;
+          this.target = value;
+          this.velocity = 0;
+          this.settled = true;
+          this.onRest = null;
+        }
+
+        animateTo(target, { velocity = null, dampingRatio = null, response = null, onRest = null } = {}) {
+          if (dampingRatio !== null) this.dampingRatio = dampingRatio;
+          if (response !== null) this.response = Math.max(0.06, response);
+          if (velocity !== null) this.velocity = velocity;
+          this.target = target;
+          this.onRest = onRest;
+
+          if (prefersReducedMotion()) {
+            this.value = target;
+            this.velocity = 0;
+            this.settled = true;
+            const cb = this.onRest;
+            this.onRest = null;
+            if (cb) cb();
+            return;
+          }
+
+          this.settled = false;
+          ensureAnimationLoop();
+        }
+
+        step(dt) {
+          if (this.settled) return false;
+          const omega = (2 * Math.PI) / this.response;
+          const stiffness = omega * omega;
+          const damping = 2 * this.dampingRatio * omega;
+
+          const displacement = this.value - this.target;
+          const accel = -stiffness * displacement - damping * this.velocity;
+          this.velocity += accel * dt;
+          this.value += this.velocity * dt;
+
+          if (Math.abs(this.value - this.target) < 0.08 && Math.abs(this.velocity) < 0.5) {
+            this.value = this.target;
+            this.velocity = 0;
+            this.settled = true;
+            const cb = this.onRest;
+            this.onRest = null;
+            if (cb) cb();
+            return false;
+          }
+          return true;
+        }
+      }
+
+      // Apple exponential momentum projection
+      function project(velocityPxPerSec, decelerationRate = 0.992) {
+        return (velocityPxPerSec / 1000) * decelerationRate / (1 - decelerationRate);
+      }
+
+      // Apple progressive rubber-banding
+      function rubberband(overshoot, dimension, constant = 0.35) {
+        if (dimension <= 0) return 0;
+        return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+      }
+
+      // ============================================================
+      // 3. Global App State & DOM References
+      // ============================================================
+      const state = {
+        enableSwipeRight: true,
+        enableSwipeLeft: true,
+        openRowId: null,
+        playingId: 's1',
+        isPlaying: false,
+        nextQueue: [],
+        lastQueue: [],
+        removedStack: [],
+        showEdgeOverlay: false,
+        audioTickEnabled: true,
+        popoverRowId: null
+      };
+
+      const rowMap = new Map(); // id -> controller object
+      let rafId = null;
+      let lastFrameTime = 0;
+      let toastTimer = null;
+      let hapticTimer = null;
+      let audioCtx = null;
+
+      const els = {
+        phoneFrame: document.getElementById('phoneFrame'),
+        phoneScreen: document.getElementById('phoneScreen'),
+        edgeGuardOverlay: document.getElementById('edgeGuardOverlay'),
+        edgeFlashLeft: document.getElementById('edgeFlashLeft'),
+        edgeFlashRight: document.getElementById('edgeFlashRight'),
+        listHeading: document.getElementById('listHeading'),
+        headerSub: document.getElementById('headerSub'),
+        badgeRight: document.getElementById('badgeRight'),
+        badgeLeft: document.getElementById('badgeLeft'),
+        listScroll: document.getElementById('listScroll'),
+        songList: document.getElementById('songList'),
+        emptyState: document.getElementById('emptyState'),
+        rowPopover: document.getElementById('rowPopover'),
+        toastBar: document.getElementById('toastBar'),
+        toastText: document.getElementById('toastText'),
+        toastUndoBtn: document.getElementById('toastUndoBtn'),
+        srStatus: document.getElementById('srStatus'),
+
+        miniCover: document.getElementById('miniCover'),
+        miniTitle: document.getElementById('miniTitle'),
+        miniSub: document.getElementById('miniSub'),
+        miniPlayBtn: document.getElementById('miniPlayBtn'),
+        miniNextBtn: document.getElementById('miniNextBtn'),
+
+        switchRight: document.getElementById('switchRight'),
+        switchLeft: document.getElementById('switchLeft'),
+        mobileSwitchRight: document.getElementById('mobileSwitchRight'),
+        mobileSwitchLeft: document.getElementById('mobileSwitchLeft'),
+        presetBtns: [...document.querySelectorAll('[data-preset]')],
+        themeToggleBtn: document.getElementById('themeToggleBtn'),
+        mobileThemeBtn: document.getElementById('mobileThemeBtn'),
+        resetListBtn: document.getElementById('resetListBtn'),
+        mobileResetBtn: document.getElementById('mobileResetBtn'),
+        emptyResetBtn: document.getElementById('emptyResetBtn'),
+        edgeOverlayBtn: document.getElementById('edgeOverlayBtn'),
+        audioTickBtn: document.getElementById('audioTickBtn'),
+
+        hudState: document.getElementById('hudState'),
+        hudKinematics: document.getElementById('hudKinematics'),
+        meterPct: document.getElementById('meterPct'),
+        meterFill: document.getElementById('meterFill'),
+        hapticBanner: document.getElementById('hapticBanner'),
+        hapticText: document.getElementById('hapticText'),
+        nextQueueList: document.getElementById('nextQueueList'),
+        lastQueueList: document.getElementById('lastQueueList')
+      };
+
+      // ============================================================
+      // 4. Shared Animation Loop
+      // ============================================================
+      function ensureAnimationLoop() {
+        if (rafId !== null) return;
+        lastFrameTime = performance.now();
+        rafId = requestAnimationFrame(tickAnimations);
+      }
+
+      function tickAnimations(now) {
+        const frameDt = Math.min(0.032, Math.max(0.001, (now - lastFrameTime) / 1000));
+        lastFrameTime = now;
+
+        const SUBSTEP = 1 / 240;
+        let anyActive = false;
+
+        for (const ctrl of rowMap.values()) {
+          if (ctrl.isRemoving) continue;
+
+          if (!ctrl.isDraggingX) {
+            let rem = frameDt;
+            while (rem > 0) {
+              const step = Math.min(SUBSTEP, rem);
+              if (ctrl.xSpring.step(step)) anyActive = true;
+              rem -= step;
+            }
+          }
+
+          if (!ctrl.purpleShareSpring.settled) {
+            let rem = frameDt;
+            while (rem > 0) {
+              const step = Math.min(SUBSTEP, rem);
+              if (ctrl.purpleShareSpring.step(step)) anyActive = true;
+              rem -= step;
+            }
+          }
+
+          if (!ctrl.xSpring.settled || !ctrl.purpleShareSpring.settled || ctrl.needsRender) {
+            ctrl.renderTransform();
+            ctrl.needsRender = false;
+            if (!ctrl.xSpring.settled || !ctrl.purpleShareSpring.settled) {
+              anyActive = true;
+            }
+          }
+        }
+
+        if (anyActive) {
+          rafId = requestAnimationFrame(tickAnimations);
+        } else {
+          rafId = null;
+        }
+      }
+
+      // ============================================================
+      // 5. Haptic, Web Audio Tick & Visual Feedback
+      // ============================================================
+      function playTactileTick(strong = false) {
+        if (!state.audioTickEnabled) return;
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!audioCtx) audioCtx = new Ctx();
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
+          const t = audioCtx.currentTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(strong ? 185 : 145, t);
+          osc.frequency.exponentialRampToValueAtTime(55, t + 0.022);
+          gain.gain.setValueAtTime(strong ? 0.14 : 0.09, t);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.024);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(t);
+          osc.stop(t + 0.026);
+        } catch {
+          // Ignore audio context restrictions
+        }
+      }
+
+      function triggerThresholdFeedback(iconEl, label, isDanger = false) {
+        if (typeof navigator.vibrate === 'function') {
+          navigator.vibrate(12);
+        }
+        playTactileTick(isDanger);
+
+        if (iconEl && !prefersReducedMotion()) {
+          iconEl.getAnimations().forEach((a) => a.cancel());
+          iconEl.animate(
+            [
+              { transform: 'scale(1)' },
+              { transform: 'scale(1.34)', offset: 0.36 },
+              { transform: 'scale(0.92)', offset: 0.72 },
+              { transform: 'scale(1.06)', offset: 0.88 },
+              { transform: 'scale(1)' }
+            ],
+            { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+          );
+        }
+
+        els.hapticBanner.classList.remove('is-pulsing', 'is-pulsing-danger');
+        void els.hapticBanner.offsetWidth;
+        els.hapticBanner.classList.add(isDanger ? 'is-pulsing-danger' : 'is-pulsing');
+        els.hapticText.textContent = label;
+        clearTimeout(hapticTimer);
+        hapticTimer = setTimeout(() => {
+          els.hapticBanner.classList.remove('is-pulsing', 'is-pulsing-danger');
+        }, 1100);
+      }
+
+      function flashEdgeGuard(side) {
+        const el = side === 'left' ? els.edgeFlashLeft : els.edgeFlashRight;
+        el.getAnimations().forEach((a) => a.cancel());
+        el.animate(
+          [
+            { opacity: 0, transform: 'translateY(-50%) scaleY(0.7)' },
+            { opacity: 0.95, transform: 'translateY(-50%) scaleY(1)', offset: 0.25 },
+            { opacity: 0, transform: 'translateY(-50%) scaleY(0.85)' }
+          ],
+          { duration: 480, easing: 'ease-out' }
+        );
+        updateHud('边缘防冲突 (24px)', '已放行系统侧滑返回', 0);
+      }
+
+      // ============================================================
+      // 6. Telemetry HUD & Queue Views
+      // ============================================================
+      function updateHud(stateText, kinematicsText, ratio = 0) {
+        els.hudState.textContent = stateText;
+        els.hudKinematics.textContent = kinematicsText;
+
+        const clamped = Math.max(-1, Math.min(1, ratio));
+        const pct = Math.round(clamped * 100);
+        els.meterPct.textContent = `${pct > 0 ? '+' : ''}${pct}%`;
+
+        const fill = els.meterFill;
+        if (clamped >= 0) {
+          fill.style.left = '50%';
+          fill.style.width = `${clamped * 50}%`;
+          fill.style.background = Math.abs(clamped) >= ENTER_FULL_RATIO ? 'var(--action-next)' : 'var(--action-last)';
+        } else {
+          const w = Math.abs(clamped) * 50;
+          fill.style.left = `${50 - w}%`;
+          fill.style.width = `${w}%`;
+          fill.style.background = 'var(--action-remove)';
+        }
+      }
+
+      function renderQueues() {
+        const renderList = (ul, items, emptyText) => {
+          ul.innerHTML = '';
+          if (items.length === 0) {
+            const li = document.createElement('li');
+            li.textContent = emptyText;
+            ul.appendChild(li);
+            return;
+          }
+          items.slice(0, 6).forEach((entry, idx) => {
+            const li = document.createElement('li');
+            li.textContent = `${idx + 1}. ${entry.title} — ${entry.artist}`;
+            ul.appendChild(li);
+          });
+        };
+
+        renderList(els.nextQueueList, state.nextQueue, '暂无插队歌曲');
+        renderList(els.lastQueueList, state.lastQueue, '暂无队尾歌曲');
+
+        // Refresh row queue tags
+        for (const ctrl of rowMap.values()) {
+          const hasNext = state.nextQueue.some((q) => q.id === ctrl.song.id);
+          const hasLast = state.lastQueue.some((q) => q.id === ctrl.song.id);
+          ctrl.queueTagEl.hidden = !(hasNext || hasLast);
+          if (hasNext) {
+            ctrl.queueTagEl.className = 'queue-tag next';
+            ctrl.queueTagEl.textContent = '下一首';
+          } else if (hasLast) {
+            ctrl.queueTagEl.className = 'queue-tag last';
+            ctrl.queueTagEl.textContent = '最后播放';
+          }
+        }
+      }
+
+      function showToast(message, undoCallback = null) {
+        els.toastText.textContent = message;
+        if (undoCallback) {
+          els.toastUndoBtn.hidden = false;
+          els.toastUndoBtn.onclick = () => {
+            hideToast();
+            undoCallback();
+          };
+        } else {
+          els.toastUndoBtn.hidden = true;
+          els.toastUndoBtn.onclick = null;
+        }
+        els.toastBar.classList.add('is-visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(hideToast, undoCallback ? 4600 : 2500);
+      }
+
+      function hideToast() {
+        els.toastBar.classList.remove('is-visible');
+      }
+
+      function announceStatus(text) {
+        els.srStatus.textContent = '';
+        requestAnimationFrame(() => {
+          els.srStatus.textContent = text;
+        });
+      }
+
+      // ============================================================
+      // 7. Row Management & Single-Open-Row Coordination
+      // ============================================================
+      function closeAllRows(exceptId = null) {
+        for (const [id, ctrl] of rowMap.entries()) {
+          if (id !== exceptId && !ctrl.isRemoving) {
+            if (Math.abs(ctrl.xSpring.value) > 0.5 || Math.abs(ctrl.xSpring.target) > 0.5 || state.openRowId === id) {
+              ctrl.close();
+            }
+          }
+        }
+        if (!exceptId) {
+          state.openRowId = null;
+        }
+      }
+
+      function updatePlayingUI() {
+        const current = [...rowMap.values()].find((c) => c.song.id === state.playingId)?.song
+          || INITIAL_SONGS.find((s) => s.id === state.playingId)
+          || INITIAL_SONGS[0];
+
+        for (const ctrl of rowMap.values()) {
+          ctrl.itemEl.classList.toggle('is-playing', ctrl.song.id === state.playingId && state.isPlaying);
+        }
+
+        els.miniCover.style.background = current.grad;
+        els.miniCover.innerHTML = noteSvg(18);
+        els.miniTitle.textContent = current.title;
+        els.miniSub.textContent = `${current.artist} · ${state.isPlaying ? '正在播放' : '已暂停'}`;
+        els.miniPlayBtn.innerHTML = state.isPlaying
+          ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>'
+          : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v14l11-7-11-7z"/></svg>';
+      }
+
+      function updateEmptyState() {
+        const count = els.songList.querySelectorAll('.song-item:not(.is-removing)').length;
+        els.emptyState.classList.toggle('is-visible', count === 0);
+      }
+
+      // ============================================================
+      // 8. Song Actions (Play Next, Play Last, Remove, Undo)
+      // ============================================================
+      function performQueueAction(song, mode) {
+        if (mode === 'next') {
+          state.nextQueue.unshift({ ...song });
+          showToast(`已将《${song.title}》设为下一首播放`);
+          announceStatus(`已将 ${song.title} 加入下一首播放`);
+          updateHud('已触发：下一首播放', '平滑回弹归位', 0);
+        } else {
+          state.lastQueue.push({ ...song });
+          showToast(`已将《${song.title}》加到最后播放`);
+          announceStatus(`已将 ${song.title} 加入最后播放`);
+          updateHud('已触发：最后播放', '平滑回弹归位', 0);
+        }
+        renderQueues();
+      }
+
+      async function removeRowWithAnimation(ctrl, viaSwipe = false) {
+        if (ctrl.isRemoving) return;
+        ctrl.isRemoving = true;
+        closeRowPopover();
+
+        if (state.openRowId === ctrl.song.id) {
+          state.openRowId = null;
+        }
+
+        const item = ctrl.itemEl;
+        const row = ctrl.rowEl;
+        const rect = item.getBoundingClientRect();
+        const children = [...els.songList.children];
+        const originalIndex = children.indexOf(item);
+
+        // Move keyboard focus safely before collapse/removal
+        if (item.contains(document.activeElement)) {
+          const activeRows = children.filter((el) => el === item || !el.classList.contains('is-removing'));
+          const idx = activeRows.indexOf(item);
+          const nextRow = activeRows[idx + 1] ?? activeRows[idx - 1];
+          const target = nextRow?.querySelector('.row-more-btn') ?? els.listHeading;
+          target.focus();
+        }
+
+        item.classList.add('is-removing');
+        const reduce = prefersReducedMotion();
+
+        // Keep red tray stretched behind while sliding out
+        const currentX = ctrl.xSpring.value;
+        ctrl.trayRightEl.classList.add('is-active');
+        ctrl.trayRightEl.style.width = `${Math.ceil(rect.width)}px`;
+        ctrl.trayLeftEl.classList.remove('is-active');
+
+        updateHud('正在移除歌曲', `${ctrl.song.title} · 平滑收起中`, -1);
+
+        if (reduce) {
+          const fadeAnim = item.animate(
+            [
+              { height: `${rect.height}px`, opacity: 1 },
+              { height: '0px', opacity: 0 }
+            ],
+            { duration: 150, easing: 'ease', fill: 'forwards' }
+          );
+          await fadeAnim.finished.catch(() => {});
+        } else {
+          // Shrink trash icon subtly as row collapses
+          ctrl.removeInnerEl.animate(
+            [
+              { transform: 'scale(1)', opacity: 1 },
+              { transform: 'scale(0.55)', opacity: 0 }
+            ],
+            { duration: 220, easing: 'ease-out', fill: 'forwards' }
+          );
+
+          // Slide foreground row cleanly off to the left
+          const slideAnim = row.animate(
+            [
+              { transform: `translate3d(${currentX}px, 0, 0)` },
+              { transform: `translate3d(${-rect.width}px, 0, 0)` }
+            ],
+            { duration: 220, easing: 'cubic-bezier(0.25, 0.9, 0.3, 1)', fill: 'forwards' }
+          );
+
+          // Collapse height smoothly so songs underneath glide up
+          const heightAnim = item.animate(
+            [
+              { height: `${rect.height}px`, opacity: 1 },
+              { height: '0px', opacity: 0.4 }
+            ],
+            {
+              duration: 280,
+              delay: viaSwipe ? 55 : 90,
+              easing: 'cubic-bezier(0.25, 0.9, 0.3, 1)',
+              fill: 'forwards'
+            }
+          );
+
+          await Promise.allSettled([slideAnim.finished, heightAnim.finished]);
+        }
+
+        rowMap.delete(ctrl.song.id);
+        item.remove();
+        updateEmptyState();
+
+        state.removedStack.push({ song: ctrl.song, index: Math.max(0, originalIndex) });
+        announceStatus(`已移除 ${ctrl.song.title}`);
+        updateHud('待机 · 已移除歌曲', '列表已平滑补位', 0);
+
+        showToast(`已移除《${ctrl.song.title}》`, () => {
+          const last = state.removedStack.pop();
+          if (!last) return;
+          restoreSongAtIndex(last.song, last.index);
+        });
+      }
+
+      function restoreSongAtIndex(song, targetIndex) {
+        const ctrl = createSongRowController(song);
+        rowMap.set(song.id, ctrl);
+        const children = [...els.songList.children];
+        if (targetIndex >= children.length) {
+          els.songList.appendChild(ctrl.itemEl);
+        } else {
+          els.songList.insertBefore(ctrl.itemEl, children[targetIndex]);
+        }
+        updateEmptyState();
+        updatePlayingUI();
+        renderQueues();
+
+        const targetHeight = ctrl.itemEl.getBoundingClientRect().height || 68;
+        if (!prefersReducedMotion()) {
+          ctrl.itemEl.animate(
+            [
+              { height: '0px', opacity: 0 },
+              { height: `${targetHeight}px`, opacity: 1 }
+            ],
+            { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+          );
+        }
+        announceStatus(`已恢复 ${song.title}`);
+        updateHud('已撤销移除', `${song.title} 已回到原位`, 0);
+      }
+
+      // ============================================================
+      // 9. Accessible Row Menu Popover
+      // ============================================================
+      function openRowPopover(ctrl, anchorBtn) {
+        closeAllRows();
+        state.popoverRowId = ctrl.song.id;
+
+        const screenRect = els.phoneScreen.getBoundingClientRect();
+        const btnRect = anchorBtn.getBoundingClientRect();
+
+        const nextBtn = els.rowPopover.querySelector('[data-pop-action="next"]');
+        const lastBtn = els.rowPopover.querySelector('[data-pop-action="last"]');
+        const remBtn = els.rowPopover.querySelector('[data-pop-action="remove"]');
+
+        nextBtn.disabled = !state.enableSwipeRight;
+        lastBtn.disabled = !state.enableSwipeRight;
+        remBtn.disabled = !state.enableSwipeLeft;
+
+        const top = Math.min(screenRect.height - 190, btnRect.bottom - screenRect.top + 6);
+        const right = Math.max(12, screenRect.right - btnRect.right);
+
+        els.rowPopover.style.top = `${top}px`;
+        els.rowPopover.style.right = `${right}px`;
+        els.rowPopover.classList.add('is-open');
+      }
+
+      function closeRowPopover() {
+        state.popoverRowId = null;
+        els.rowPopover.classList.remove('is-open');
+      }
+
+      els.rowPopover.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-pop-action]');
+        if (!btn || btn.disabled) return;
+        const ctrl = rowMap.get(state.popoverRowId);
+        closeRowPopover();
+        if (!ctrl) return;
+        const act = btn.dataset.popAction;
+        if (act === 'next' || act === 'last') {
+          performQueueAction(ctrl.song, act);
+        } else if (act === 'remove') {
+          removeRowWithAnimation(ctrl, false);
+        }
+      });
+
+      document.addEventListener('pointerdown', (e) => {
+        if (state.popoverRowId && !e.target.closest('#rowPopover') && !e.target.closest('.row-more-btn')) {
+          closeRowPopover();
+        }
+      });
+
+      // ============================================================
+      // 10. Song Row Controller (Swipe Gesture + Two-Stage Morph)
+      // ============================================================
+      function noteSvg(size = 22) {
+        return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>`;
+      }
+
+      function createSongRowController(song) {
+        const li = document.createElement('li');
+        li.className = 'song-item';
+        li.dataset.songId = song.id;
+
+        li.innerHTML = `
+          <div class="action-tray action-tray-left" aria-hidden="true">
+            <button type="button" class="swipe-btn swipe-btn-next" tabindex="-1" aria-label="下一首播放 ${song.title}">
+              <span class="swipe-btn-inner">
+                <svg class="swipe-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 6h11"/><path d="M4 12h11"/><path d="M4 18h7"/><path d="M16 15l4 3-4 3v-6z" fill="currentColor" stroke="none"/>
+                </svg>
+                <span class="swipe-btn-label">下一首播放</span>
+              </span>
+            </button>
+            <button type="button" class="swipe-btn swipe-btn-last" tabindex="-1" aria-label="最后播放 ${song.title}">
+              <span class="swipe-btn-inner">
+                <svg class="swipe-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 6h14"/><path d="M4 12h10"/><path d="M4 18h10"/><path d="M18 13v7"/><path d="M15 17l3 3 3-3"/>
+                </svg>
+                <span class="swipe-btn-label">最后播放</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="action-tray action-tray-right" aria-hidden="true">
+            <button type="button" class="swipe-btn swipe-btn-remove" tabindex="-1" aria-label="移除 ${song.title}">
+              <span class="swipe-btn-inner">
+                <svg class="swipe-btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M9 3v1H4v2h1v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6h1V4h-5V3H9zm0 5h2v9H9V8zm4 0h2v9h-2V8z"/>
+                </svg>
+                <span class="swipe-btn-label">移除</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="song-row">
+            <div class="song-cover" style="background: ${song.grad};">
+              ${noteSvg(22)}
+              <div class="song-cover-playing" aria-hidden="true">
+                <span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span>
+              </div>
+            </div>
+            <div class="song-meta">
+              <div class="song-title-row">
+                <span class="song-title">${song.title}</span>
+                ${song.explicit ? '<span class="explicit-badge" title="Explicit">E</span>' : ''}
+              </div>
+              <div class="song-sub">
+                <span class="queue-tag" hidden></span>
+                <span>${song.artist} · ${song.album}</span>
+              </div>
+            </div>
+            <div class="song-right">
+              <span class="song-duration">${song.duration}</span>
+              <button type="button" class="row-more-btn" aria-label="更多操作 ${song.title}" aria-haspopup="menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+
+        const ctrl = {
+          song,
+          itemEl: li,
+          rowEl: li.querySelector('.song-row'),
+          trayLeftEl: li.querySelector('.action-tray-left'),
+          trayRightEl: li.querySelector('.action-tray-right'),
+          nextBtnEl: li.querySelector('.swipe-btn-next'),
+          lastBtnEl: li.querySelector('.swipe-btn-last'),
+          removeBtnEl: li.querySelector('.swipe-btn-remove'),
+          nextInnerEl: li.querySelector('.swipe-btn-next .swipe-btn-inner'),
+          lastInnerEl: li.querySelector('.swipe-btn-last .swipe-btn-inner'),
+          removeInnerEl: li.querySelector('.swipe-btn-remove .swipe-btn-inner'),
+          nextIconEl: li.querySelector('.swipe-btn-next .swipe-btn-icon'),
+          removeIconEl: li.querySelector('.swipe-btn-remove .swipe-btn-icon'),
+          queueTagEl: li.querySelector('.queue-tag'),
+          moreBtnEl: li.querySelector('.row-more-btn'),
+
+          xSpring: new Spring1D(0, 0.86, 0.32),
+          purpleShareSpring: new Spring1D(0.5, 0.80, 0.24),
+
+          isDraggingX: false,
+          isRemoving: false,
+          fullRight: false,
+          fullLeft: false,
+          needsRender: false,
+
+          close(velocity = 0) {
+            this.fullRight = false;
+            this.fullLeft = false;
+            this.purpleShareSpring.animateTo(0.5, { dampingRatio: 0.84, response: 0.24 });
+            this.xSpring.animateTo(0, {
+              velocity,
+              dampingRatio: 0.88,
+              response: 0.30,
+              onRest: () => {
+                if (!this.isDraggingX && Math.abs(this.xSpring.value) < 0.5) {
+                  this.trayLeftEl.classList.remove('is-active');
+                  this.trayRightEl.classList.remove('is-active');
+                }
+              }
+            });
+            if (state.openRowId === song.id) {
+              state.openRowId = null;
+            }
+          },
+
+          renderTransform() {
+            const x = this.xSpring.value;
+            const rowW = this.rowEl.clientWidth || 393;
+            this.rowEl.style.transform = `translate3d(${x}px, 0, 0)`;
+
+            if (x > 0.25) {
+              // Right swipe -> reveal left tray seamlessly (+2px tucked under solid foreground)
+              const revealW = Math.ceil(x) + 2;
+              const share = Math.max(0.5, Math.min(1, this.purpleShareSpring.value));
+              const purpleW = revealW * share;
+              const orangeW = Math.max(0, revealW - purpleW);
+
+              this.trayLeftEl.classList.add('is-active');
+              this.trayLeftEl.setAttribute('aria-hidden', 'false');
+              this.trayRightEl.classList.remove('is-active');
+              this.trayRightEl.setAttribute('aria-hidden', 'true');
+
+              this.trayLeftEl.style.width = `${revealW}px`;
+              this.nextBtnEl.style.width = `${purpleW}px`;
+              this.lastBtnEl.style.width = `${orangeW}px`;
+
+              // Fade orange label smoothly as purple takes over
+              const orangeOpacity = Math.max(0, Math.min(1, 1 - (share - 0.52) / 0.30));
+              this.lastInnerEl.style.opacity = orangeOpacity.toFixed(3);
+              this.lastInnerEl.style.transform = `scale(${0.86 + 0.14 * orangeOpacity})`;
+
+              // Keep purple icon comfortably framed; during full-swipe shift near foreground row edge
+              const morphProgress = Math.max(0, Math.min(1, (share - 0.5) / 0.5));
+              if (morphProgress > 0.01) {
+                const maxShift = Math.max(0, (purpleW / 2) - 52);
+                const shiftX = maxShift * morphProgress;
+                this.nextInnerEl.style.transform = `translate3d(${shiftX}px, 0, 0)`;
+              } else {
+                const revealRatio = Math.min(1, x / REVEAL_RIGHT_WIDTH);
+                this.nextInnerEl.style.transform = `scale(${0.88 + 0.12 * revealRatio})`;
+              }
+              this.nextInnerEl.style.opacity = `${Math.min(1, x / 28)}`;
+
+              this.nextBtnEl.tabIndex = x > 80 ? 0 : -1;
+              this.lastBtnEl.tabIndex = x > 80 && share < 0.75 ? 0 : -1;
+              this.removeBtnEl.tabIndex = -1;
+            } else if (x < -0.25) {
+              // Left swipe -> reveal right red tray seamlessly
+              const absX = Math.abs(x);
+              const revealW = Math.ceil(absX) + 2;
+
+              this.trayRightEl.classList.add('is-active');
+              this.trayRightEl.setAttribute('aria-hidden', 'false');
+              this.trayLeftEl.classList.remove('is-active');
+              this.trayLeftEl.setAttribute('aria-hidden', 'true');
+
+              this.trayRightEl.style.width = `${revealW}px`;
+
+              const revealRatio = Math.min(1, absX / REVEAL_LEFT_WIDTH);
+              if (this.fullLeft) {
+                const edgeShift = -Math.max(0, (revealW / 2) - 48);
+                this.removeInnerEl.style.transform = `translate3d(${edgeShift}px, 0, 0)`;
+              } else {
+                this.removeInnerEl.style.transform = `scale(${0.88 + 0.12 * revealRatio})`;
+              }
+              this.removeInnerEl.style.opacity = `${Math.min(1, absX / 24)}`;
+
+              this.removeBtnEl.tabIndex = absX > 52 ? 0 : -1;
+              this.nextBtnEl.tabIndex = -1;
+              this.lastBtnEl.tabIndex = -1;
+            } else {
+              this.trayLeftEl.classList.remove('is-active');
+              this.trayRightEl.classList.remove('is-active');
+              this.trayLeftEl.setAttribute('aria-hidden', 'true');
+              this.trayRightEl.setAttribute('aria-hidden', 'true');
+              this.nextBtnEl.tabIndex = -1;
+              this.lastBtnEl.tabIndex = -1;
+              this.removeBtnEl.tabIndex = -1;
+            }
+
+            if (this.isDraggingX || !this.xSpring.settled) {
+              const vx = Math.round(this.xSpring.velocity);
+              const px = Math.round(x);
+              const ratio = x / rowW;
+              if (this.isDraggingX) {
+                const stateLabel = this.fullRight
+                  ? '右滑满格 · 松手即下一首'
+                  : this.fullLeft
+                    ? '左滑满格 · 松手即移除'
+                    : x > 0
+                      ? '右滑展开队列按钮'
+                      : '左滑展开移除按钮';
+                updateHud(stateLabel, `${px} px · 拖动中`, ratio);
+              } else {
+                updateHud('弹簧收放中', `${px} px · ${vx} px/s`, ratio);
+              }
+            } else if (!this.isDraggingX && this.xSpring.settled && Math.abs(x) < 0.5 && state.openRowId === null) {
+              updateHud('待机 · 无展开行', '0 px · 0 px/s', 0);
+            }
+          }
+        };
+
+        // Button Clicks inside Revealed Trays
+        ctrl.nextBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          performQueueAction(song, 'next');
+          ctrl.close();
+        });
+
+        ctrl.lastBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          performQueueAction(song, 'last');
+          ctrl.close();
+        });
+
+        ctrl.removeBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeRowWithAnimation(ctrl, false);
+        });
+
+        ctrl.moreBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (state.popoverRowId === song.id) {
+            closeRowPopover();
+          } else {
+            openRowPopover(ctrl, ctrl.moreBtnEl);
+          }
+        });
+
+        // Prevent pointerdown on "..." from triggering row swipe
+        ctrl.moreBtnEl.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+        });
+
+        // ============================================================
+        // Pointer + Touch Arbitration (Axis Lock, Edge Guard, Velocity)
+        // ============================================================
+        let gesture = null;
+
+        const resetPress = () => {
+          ctrl.rowEl.classList.remove('is-pressed');
+        };
+
+        const evaluateThresholds = (x, rowWidth) => {
+          // Right full-swipe threshold with 3% hysteresis
+          if (x > 0 && state.enableSwipeRight) {
+            const enterR = rowWidth * ENTER_FULL_RATIO;
+            const exitR = rowWidth * EXIT_FULL_RATIO;
+            if (!ctrl.fullRight && x >= enterR) {
+              ctrl.fullRight = true;
+              ctrl.purpleShareSpring.animateTo(1.0, { dampingRatio: 0.78, response: 0.22 });
+              triggerThresholdFeedback(ctrl.nextIconEl, '越过右滑临界线 · 松手即下一首播放', false);
+            } else if (ctrl.fullRight && x < exitR) {
+              ctrl.fullRight = false;
+              ctrl.purpleShareSpring.animateTo(0.5, { dampingRatio: 0.80, response: 0.24 });
+              triggerThresholdFeedback(ctrl.nextIconEl, '退回右滑半开区 · 恢复双按钮选择', false);
+            }
+          } else if (ctrl.fullRight) {
+            ctrl.fullRight = false;
+            ctrl.purpleShareSpring.animateTo(0.5, { dampingRatio: 0.80, response: 0.24 });
+          }
+
+          // Left full-swipe threshold with 3% hysteresis
+          if (x < 0 && state.enableSwipeLeft) {
+            const enterL = -rowWidth * ENTER_FULL_RATIO;
+            const exitL = -rowWidth * EXIT_FULL_RATIO;
+            if (!ctrl.fullLeft && x <= enterL) {
+              ctrl.fullLeft = true;
+              triggerThresholdFeedback(ctrl.removeIconEl, '越过左滑临界线 · 松手直接移除', true);
+            } else if (ctrl.fullLeft && x > exitL) {
+              ctrl.fullLeft = false;
+              triggerThresholdFeedback(ctrl.removeIconEl, '退回左滑半开区 · 需点击移除按钮', true);
+            }
+          } else if (ctrl.fullLeft) {
+            ctrl.fullLeft = false;
+          }
+        };
+
+        ctrl.rowEl.addEventListener('pointerdown', (e) => {
+          if (ctrl.isRemoving) return;
+          if (e.button !== 0 && e.pointerType === 'mouse') return;
+          if (e.target.closest('.row-more-btn')) return;
+
+          closeRowPopover();
+
+          // Edge-back safe zone check relative to the phone screen
+          const screenRect = els.phoneScreen.getBoundingClientRect();
+          const distLeft = e.clientX - screenRect.left;
+          const distRight = screenRect.right - e.clientX;
+          if (distLeft <= EDGE_GUARD_PX || distRight <= EDGE_GUARD_PX) {
+            flashEdgeGuard(distLeft <= EDGE_GUARD_PX ? 'left' : 'right');
+            return;
+          }
+
+          const hadAnyOpenRow = state.openRowId !== null;
+          const wasThisRowOpen = state.openRowId === song.id && Math.abs(ctrl.xSpring.value) > 4;
+
+          // Rule 1: Close any other open row immediately
+          if (state.openRowId && state.openRowId !== song.id) {
+            closeAllRows(song.id);
+          }
+
+          // Instant press feedback
+          ctrl.rowEl.classList.add('is-pressed');
+
+          // Interrupt any in-flight spring cleanly from live position
+          const startX = ctrl.xSpring.value;
+          ctrl.xSpring.snapTo(startX);
+
+          const now = performance.now();
+          gesture = {
+            pointerId: e.pointerId,
+            pointerType: e.pointerType,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startX,
+            axis: null, // null | 'horizontal' | 'vertical'
+            movedBeyondTap: false,
+            hadAnyOpenRow,
+            wasThisRowOpen,
+            rowWidth: ctrl.rowEl.clientWidth || 393,
+            samples: [{ x: startX, t: now }]
+          };
+
+          try {
+            ctrl.rowEl.setPointerCapture(e.pointerId);
+          } catch {
+            // Safe fallback on synthetic events
+          }
+        });
+
+        // Prevent vertical page/list scroll on touch once horizontal axis is locked
+        ctrl.rowEl.addEventListener('touchmove', (e) => {
+          if (gesture && gesture.axis === 'horizontal') {
+            e.preventDefault();
+          }
+        }, { passive: false });
+
+        ctrl.rowEl.addEventListener('pointermove', (e) => {
+          if (!gesture || e.pointerId !== gesture.pointerId) return;
+
+          const dx = e.clientX - gesture.startClientX;
+          const dy = e.clientY - gesture.startClientY;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > 6) {
+            gesture.movedBeyondTap = true;
+            resetPress();
+          }
+
+          if (gesture.axis === null) {
+            if (dist < SLOP_PX) return;
+
+            // Rule 4: Clean axis disambiguation (no diagonal fighting)
+            if (Math.abs(dx) > Math.abs(dy) * 1.25) {
+              const intendingRight = dx > 0;
+              const canDragRight = state.enableSwipeRight || gesture.startX < -2;
+              const canDragLeft = state.enableSwipeLeft || gesture.startX > 2;
+
+              if ((intendingRight && canDragRight) || (!intendingRight && canDragLeft)) {
+                gesture.axis = 'horizontal';
+                ctrl.isDraggingX = true;
+                closeAllRows(song.id);
+                ensureAnimationLoop();
+              } else {
+                // Swipe in disabled direction -> lock vertical/cancel so it never shifts
+                gesture.axis = 'vertical';
+                updateHud(
+                  intendingRight ? '右滑开关已关闭' : '左滑开关已关闭',
+                  '本次手势已屏蔽',
+                  0
+                );
+                return;
+              }
+            } else {
+              // Vertical intent -> hand off cleanly to list scroll and auto-close any open row
+              gesture.axis = 'vertical';
+              closeAllRows();
+              return;
+            }
+          }
+
+          if (gesture.axis !== 'horizontal') return;
+
+          // Compute clamped + rubber-banded X
+          let rawX = gesture.startX + dx;
+          const maxRight = state.enableSwipeRight ? gesture.rowWidth * 0.88 : 0;
+          const maxLeft = state.enableSwipeLeft ? -gesture.rowWidth * 0.88 : 0;
+
+          if (rawX > 0 && !state.enableSwipeRight) {
+            rawX = rubberband(rawX, 56, 0.25);
+          } else if (rawX < 0 && !state.enableSwipeLeft) {
+            rawX = rubberband(rawX, 56, 0.25);
+          } else if (rawX > maxRight) {
+            rawX = maxRight + rubberband(rawX - maxRight, gesture.rowWidth * 0.4, 0.35);
+          } else if (rawX < maxLeft) {
+            rawX = maxLeft + rubberband(rawX - maxLeft, gesture.rowWidth * 0.4, 0.35);
+          }
+
+          const now = performance.now();
+          gesture.samples.push({ x: rawX, t: now });
+          // Keep last 90ms of samples
+          while (gesture.samples.length > 2 && now - gesture.samples[0].t > 90) {
+            gesture.samples.shift();
+          }
+
+          ctrl.xSpring.value = rawX;
+          ctrl.xSpring.target = rawX;
+          ctrl.needsRender = true;
+          evaluateThresholds(rawX, gesture.rowWidth);
+          ctrl.renderTransform();
+        });
+
+        const finishGesture = (e, cancelled = false) => {
+          if (!gesture || e.pointerId !== gesture.pointerId) return;
+          const g = gesture;
+          gesture = null;
+          resetPress();
+          ctrl.isDraggingX = false;
+
+          try {
+            if (ctrl.rowEl.hasPointerCapture(e.pointerId)) {
+              ctrl.rowEl.releasePointerCapture(e.pointerId);
+            }
+          } catch {
+            // Ignore
+          }
+
+          if (g.axis !== 'horizontal' || cancelled) {
+            // Tap handling
+            if (!cancelled && !g.movedBeyondTap) {
+              // Rule 2: If any row was open when user tapped song body, close it first and DO NOT trigger play
+              if (g.hadAnyOpenRow || g.wasThisRowOpen) {
+                closeAllRows();
+                updateHud('防误触拦截成功', '已优先收起展开行，未触发播放', 0);
+                return;
+              }
+              // Normal tap -> play this song
+              state.playingId = song.id;
+              state.isPlaying = true;
+              updatePlayingUI();
+              updateHud(`正在播放《${song.title}》`, '点击行触发播放', 0);
+            } else if (cancelled && Math.abs(ctrl.xSpring.value) > 0.5) {
+              ctrl.close();
+            }
+            return;
+          }
+
+          // Compute release velocity (px/s)
+          const now = performance.now();
+          const lastSample = g.samples[g.samples.length - 1];
+          let vx = 0;
+          if (lastSample && now - lastSample.t <= 60 && g.samples.length >= 2) {
+            const first = g.samples[0];
+            const dt = (lastSample.t - first.t) / 1000;
+            if (dt > 0.004) {
+              vx = Math.max(-2800, Math.min(2800, (lastSample.x - first.x) / dt));
+            }
+          }
+
+          const x = ctrl.xSpring.value;
+          const projectedX = x + project(vx, 0.992);
+
+          // Stage 2 commit on full right swipe
+          if (state.enableSwipeRight && ctrl.fullRight) {
+            performQueueAction(song, 'next');
+            ctrl.close(vx * 0.25);
+            return;
+          }
+
+          // Stage 2 commit on full left swipe
+          if (state.enableSwipeLeft && ctrl.fullLeft) {
+            removeRowWithAnimation(ctrl, true);
+            return;
+          }
+
+          // Stage 1 snap-open right
+          if (state.enableSwipeRight && projectedX > REVEAL_RIGHT_WIDTH * 0.45 && (x > 24 || vx > 320)) {
+            state.openRowId = song.id;
+            ctrl.fullRight = false;
+            ctrl.purpleShareSpring.animateTo(0.5, { dampingRatio: 0.80, response: 0.24 });
+            ctrl.xSpring.animateTo(REVEAL_RIGHT_WIDTH, {
+              velocity: vx,
+              dampingRatio: 0.78,
+              response: 0.34
+            });
+            updateHud('右滑停住（半开）', '露出紫/橙双按钮，点击执行', REVEAL_RIGHT_WIDTH / g.rowWidth);
+            return;
+          }
+
+          // Stage 1 snap-open left
+          if (state.enableSwipeLeft && projectedX < -REVEAL_LEFT_WIDTH * 0.45 && (x < -24 || vx < -320)) {
+            state.openRowId = song.id;
+            ctrl.fullLeft = false;
+            ctrl.xSpring.animateTo(-REVEAL_LEFT_WIDTH, {
+              velocity: vx,
+              dampingRatio: 0.78,
+              response: 0.34
+            });
+            updateHud('左滑停住（半开）', '露出红色移除按钮，点击移除', -REVEAL_LEFT_WIDTH / g.rowWidth);
+            return;
+          }
+
+          // Otherwise spring back to closed
+          ctrl.close(vx);
+        };
+
+        ctrl.rowEl.addEventListener('pointerup', (e) => finishGesture(e, false));
+        ctrl.rowEl.addEventListener('pointercancel', (e) => finishGesture(e, true));
+
+        return ctrl;
+      }
+
+      // ============================================================
+      // 11. List Scroll Auto-Close & Controls Wiring
+      // ============================================================
+      // Rule 3: Vertical scroll immediately spring-closes any open row
+      els.listScroll.addEventListener('scroll', () => {
+        closeRowPopover();
+        if (state.openRowId !== null) {
+          closeAllRows();
+          updateHud('列表滚动 · 自动收起', '已平滑收起之前滑开的行', 0);
+        }
+      }, { passive: true });
+
+      function syncDirectionSwitches() {
+        els.switchRight.checked = state.enableSwipeRight;
+        els.switchLeft.checked = state.enableSwipeLeft;
+        els.mobileSwitchRight.checked = state.enableSwipeRight;
+        els.mobileSwitchLeft.checked = state.enableSwipeLeft;
+
+        els.badgeRight.classList.toggle('is-off', !state.enableSwipeRight);
+        els.badgeLeft.classList.toggle('is-off', !state.enableSwipeLeft);
+
+        if (state.enableSwipeRight && state.enableSwipeLeft) {
+          els.headerSub.textContent = '右滑加入播放队列 · 左滑移除歌曲';
+        } else if (state.enableSwipeRight) {
+          els.headerSub.textContent = '仅允许右滑加入队列（左滑已关闭）';
+        } else if (state.enableSwipeLeft) {
+          els.headerSub.textContent = '仅允许左滑移除歌曲（右滑已关闭）';
+        } else {
+          els.headerSub.textContent = '左右滑动已全部关闭（可通过 ··· 菜单操作）';
+        }
+
+        // Update preset chip highlight
+        let presetKey = 'none';
+        if (state.enableSwipeRight && state.enableSwipeLeft) presetKey = 'both';
+        else if (state.enableSwipeRight) presetKey = 'right-only';
+        else if (state.enableSwipeLeft) presetKey = 'left-only';
+
+        els.presetBtns.forEach((btn) => {
+          btn.classList.toggle('is-active', btn.dataset.preset === presetKey);
+        });
+
+        // Close any open row whose side was just disabled
+        if (state.openRowId) {
+          const openCtrl = rowMap.get(state.openRowId);
+          if (openCtrl) {
+            const x = openCtrl.xSpring.value;
+            if ((x > 0 && !state.enableSwipeRight) || (x < 0 && !state.enableSwipeLeft)) {
+              openCtrl.close();
+            }
+          }
+        }
+      }
+
+      function setSwitches(rightEnabled, leftEnabled) {
+        state.enableSwipeRight = rightEnabled;
+        state.enableSwipeLeft = leftEnabled;
+        syncDirectionSwitches();
+      }
+
+      [els.switchRight, els.mobileSwitchRight].forEach((sw) => {
+        sw.addEventListener('change', () => setSwitches(sw.checked, state.enableSwipeLeft));
+      });
+
+      [els.switchLeft, els.mobileSwitchLeft].forEach((sw) => {
+        sw.addEventListener('change', () => setSwitches(state.enableSwipeRight, sw.checked));
+      });
+
+      els.presetBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const p = btn.dataset.preset;
+          if (p === 'both') setSwitches(true, true);
+          else if (p === 'right-only') setSwitches(true, false);
+          else if (p === 'left-only') setSwitches(false, true);
+          else setSwitches(false, false);
+        });
+      });
+
+      // Theme Toggle (Respect system preference on initial load)
+      function applyTheme(dark) {
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        els.themeToggleBtn.classList.toggle('is-active', dark);
+        els.themeToggleBtn.textContent = dark ? '浅色模式' : '深色模式';
+        els.mobileThemeBtn.textContent = dark ? '浅色' : '深色';
+      }
+
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(prefersDark);
+
+      [els.themeToggleBtn, els.mobileThemeBtn].forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+          applyTheme(!isDark);
+        });
+      });
+
+      // Edge Guard Overlay & Audio Tick Toggles
+      els.edgeOverlayBtn.addEventListener('click', () => {
+        state.showEdgeOverlay = !state.showEdgeOverlay;
+        els.edgeGuardOverlay.classList.toggle('is-visible', state.showEdgeOverlay);
+        els.edgeOverlayBtn.classList.toggle('is-active', state.showEdgeOverlay);
+        els.edgeOverlayBtn.setAttribute('aria-pressed', String(state.showEdgeOverlay));
+      });
+
+      els.audioTickBtn.addEventListener('click', () => {
+        state.audioTickEnabled = !state.audioTickEnabled;
+        els.audioTickBtn.classList.toggle('is-active', state.audioTickEnabled);
+        els.audioTickBtn.setAttribute('aria-pressed', String(state.audioTickEnabled));
+        if (state.audioTickEnabled) playTactileTick(false);
+      });
+
+      // Mini Player Controls
+      els.miniPlayBtn.addEventListener('click', () => {
+        state.isPlaying = !state.isPlaying;
+        updatePlayingUI();
+      });
+
+      els.miniNextBtn.addEventListener('click', () => {
+        if (state.nextQueue.length > 0) {
+          const next = state.nextQueue.shift();
+          state.playingId = next.id;
+          state.isPlaying = true;
+          renderQueues();
+          updatePlayingUI();
+          showToast(`正在插播《${next.title}》`);
+          return;
+        }
+        const visibleIds = [...els.songList.querySelectorAll('.song-item:not(.is-removing)')].map((el) => el.dataset.songId);
+        if (visibleIds.length > 0) {
+          const idx = visibleIds.indexOf(state.playingId);
+          state.playingId = visibleIds[(idx + 1) % visibleIds.length];
+          state.isPlaying = true;
+          updatePlayingUI();
+        } else if (state.lastQueue.length > 0) {
+          const last = state.lastQueue.shift();
+          state.playingId = last.id;
+          state.isPlaying = true;
+          renderQueues();
+          updatePlayingUI();
+        }
+      });
+
+      // Reset Song List
+      function resetAll() {
+        closeRowPopover();
+        closeAllRows();
+        rowMap.clear();
+        els.songList.innerHTML = '';
+        state.nextQueue = [];
+        state.lastQueue = [];
+        state.removedStack = [];
+        state.playingId = INITIAL_SONGS[0].id;
+        state.isPlaying = false;
+        state.openRowId = null;
+
+        for (const song of INITIAL_SONGS) {
+          const ctrl = createSongRowController(song);
+          rowMap.set(song.id, ctrl);
+          els.songList.appendChild(ctrl.itemEl);
+        }
+
+        updateEmptyState();
+        renderQueues();
+        updatePlayingUI();
+        hideToast();
+        updateHud('已重置示例歌单', '0 px · 0 px/s', 0);
+      }
+
+      [els.resetListBtn, els.mobileResetBtn, els.emptyResetBtn].forEach((btn) => {
+        btn.addEventListener('click', resetAll);
+      });
+
+      // Init
+      resetAll();
+      syncDirectionSwitches();
+    })();
+  </script>
+</body>
+</html>

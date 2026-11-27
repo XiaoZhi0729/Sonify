@@ -502,6 +502,11 @@ class MainActivity : BaseActivity() {
         setContent {
             YosMusicTheme {
                 ProvideRawWindowInsets {
+                    val mochiToastState = yos.music.player.ui.widgets.mochi.rememberMochiToastState()
+                    CompositionLocalProvider(
+                        yos.music.player.ui.widgets.mochi.LocalMochiToast provides mochiToastState
+                    ) {
+                        yos.music.player.ui.widgets.mochi.MochiToastHost(state = mochiToastState)
                     // 开屏幕布：整屏页面底色 + 正中品牌红 Logo，纯淡入淡出（不缩放、不挖洞）。
                     // 放在这里是为了让整棵树（含首页板块、底栏、播放壳）都能读到
                     // LocalLaunchReveal；幕布本体在最后作为最上层兄弟节点绘制。
@@ -2789,6 +2794,7 @@ class MainActivity : BaseActivity() {
                         }
 
                         // 首次启动引导已移至独立页面 OnboardingActivity。
+                    }
                     }
                 }
             }

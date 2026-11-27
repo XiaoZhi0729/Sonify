@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +33,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -66,6 +69,7 @@ import yos.music.player.ui.widgets.basic.scrollToIndexedItem
 import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
 import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 import yos.music.player.ui.widgets.mochi.IndexedListResult
+import yos.music.player.ui.widgets.mochi.LocalMochiToast
 import yos.music.player.ui.navigation.popBackStackSafely
 
 @Composable
@@ -258,10 +262,43 @@ fun NormalMusic(
                         key = { _, music -> music },
                         contentType = { _, _ -> "normal_music_item" }
                     ) { index, music ->
+                        val context = LocalContext.current
+                        val mochiToast = LocalMochiToast.current
                         MusicList(
                             music = music,
                             onLongClick = if (localPlaylistId != null) {
                                 { pendingRemoveSong = music }
+                            } else {
+                                null
+                            },
+                            enableSwipeRight = true,
+                            enableSwipeLeft = localPlaylistId != null,
+                            onSwipeRemove = if (localPlaylistId != null) {
+                                {
+                                    val removedIndex = PlayListLibrary.removeMusicByIdReturningIndex(localPlaylistId, music)
+                                    val songTitle = music.title ?: defaultTitle
+                                    mochiToast?.show(
+                                        title = context.getString(R.string.swipe_toast_removed_playlist),
+                                        subtitle = songTitle,
+                                        icon = { _ ->
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_song_menu_trash),
+                                                contentDescription = null,
+                                                tint = Color(0xFFFF453A),
+                                                modifier = Modifier.size(19.dp),
+                                            )
+                                        },
+                                        durationMillis = 3600L,
+                                        actionLabel = context.getString(R.string.swipe_action_undo),
+                                        onAction = {
+                                            PlayListLibrary.insertMusicById(localPlaylistId, music, removedIndex)
+                                            mochiToast.show(
+                                                title = context.getString(R.string.swipe_toast_restored),
+                                                subtitle = songTitle,
+                                            )
+                                        },
+                                    )
+                                }
                             } else {
                                 null
                             }
