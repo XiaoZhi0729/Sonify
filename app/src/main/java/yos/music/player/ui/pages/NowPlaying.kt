@@ -1099,10 +1099,10 @@ internal fun NowPlaying(
                                                                 .weight(1f)
                                                                 .padding(end = 15.dp)
                                                         ) {
-                                                            Text(
+                                                            val albumMarqueeEnabled = !showMiniPlayer && nowPageLambda() == Album
+                                                            FadingMarqueeText(
                                                                 text = nowMusic?.title
-                                                                    ?: defaultTitle,/*
-                                                            fontWeight = FontWeight.Bold,*/
+                                                                    ?: defaultTitle,
                                                                 fontSize = 19.5.sp,
                                                                 // 字号渐变走 graphicsLayer 缩放（进度只在
                                                                 // 图层块读取）：逐帧改 fontSize 会触发整页
@@ -1113,9 +1113,10 @@ internal fun NowPlaying(
                                                                     scaleY = s
                                                                     transformOrigin = TransformOrigin(0f, 0.5f)
                                                                 },
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis,
-                                                                fontWeight = FontWeight.Medium
+                                                                fontWeight = FontWeight.Medium,
+                                                                marqueeEnabled = albumMarqueeEnabled,
+                                                                leftFadeWidth = 14.dp,
+                                                                rightFadeWidth = 20.dp
                                                             )
                                                             // 点击歌手名 → 艺人主页（命中具体歌手由
                                                             // ArtistsTapText 定位；导航与收回由外壳回调
@@ -1131,6 +1132,9 @@ internal fun NowPlaying(
                                                                         scaleY = s
                                                                         transformOrigin = TransformOrigin(0f, 0.5f)
                                                                     },
+                                                                marqueeEnabled = albumMarqueeEnabled,
+                                                                leftFadeWidth = 14.dp,
+                                                                rightFadeWidth = 20.dp,
                                                                 onArtistClick = onOpenArtist
                                                             )
                                                         }
@@ -1382,6 +1386,7 @@ internal fun NowPlaying(
                                 ),
                                 titleScaleProvider = { (16.5f + 3f * titleFontProgress.value) / 16.5f },
                                 artistScaleProvider = { (15f + 3.5f * titleFontProgress.value) / 15f },
+                                marqueeEnabled = !showMiniPlayer && barVisible && !barWarm,
                                 onAlbumClick = {
                                     nowPageOnChanged(Album)
                                 },
@@ -3700,7 +3705,8 @@ private fun PlayingBar(
     // 文字缩放由调用方随 morph 进度驱动：只在 graphicsLayer 块里读状态，
     // 零重组零重排（逐帧改 fontSize 会触发整页每帧重测排版，是卡顿真凶）
     titleScaleProvider: () -> Float = { 1f },
-    artistScaleProvider: () -> Float = { 1f }
+    artistScaleProvider: () -> Float = { 1f },
+    marqueeEnabled: Boolean = true
 ) = YosWrapper {
     Row(
         Modifier
@@ -3776,9 +3782,8 @@ private fun PlayingBar(
                 .weight(1f)
                 .padding(start = 12.dp, end = 15.dp)
         ) {
-            Text(
-                text = musicPlayingLambda()?.title ?: defaultTitle,/*
-                fontWeight = FontWeight.Bold,*/
+            FadingMarqueeText(
+                text = musicPlayingLambda()?.title ?: defaultTitle,
                 fontSize = 16.5.sp,
                 modifier = Modifier.graphicsLayer {
                     val s = titleScaleProvider()
@@ -3786,10 +3791,11 @@ private fun PlayingBar(
                     scaleY = s
                     transformOrigin = TransformOrigin(0f, 0.5f)
                 },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 fontWeight = FontWeight.Medium,
-                lineHeight = 16.5.sp
+                lineHeight = 16.5.sp,
+                marqueeEnabled = marqueeEnabled,
+                leftFadeWidth = 10.dp,
+                rightFadeWidth = 16.dp
             )
             ArtistsTapText(
                 artistsName = musicPlayingLambda()?.artistsName,
@@ -3802,6 +3808,9 @@ private fun PlayingBar(
                         scaleY = s
                         transformOrigin = TransformOrigin(0f, 0.5f)
                     },
+                marqueeEnabled = marqueeEnabled,
+                leftFadeWidth = 10.dp,
+                rightFadeWidth = 16.dp,
                 onArtistClick = onArtistClick
             )
         }

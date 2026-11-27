@@ -1,7 +1,6 @@
 package yos.music.player.ui.pages
 
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,11 +12,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import yos.music.player.data.libraries.toMultipleArtists
-import yos.music.player.ui.widgets.effects.overlayEffect
 
 private const val ARTIST_TAG = "artist"
 
@@ -33,31 +32,37 @@ fun ArtistsTapText(
     placeholder: String,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 18.5.sp,
+    marqueeEnabled: Boolean = true,
+    leftFadeWidth: Dp = 14.dp,
+    rightFadeWidth: Dp = 20.dp,
     onArtistClick: (String) -> Unit = {}
 ) {
     val raw = artistsName ?: placeholder
     val annotated = remember(raw) { raw.toArtistsAnnotatedString() }
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-    Text(
+    FadingMarqueeText(
         text = annotated,
         fontSize = fontSize,
-        modifier = modifier
-            .then(
-                if (artistsName != null) Modifier.pointerInput(annotated) {
-                    detectTapGestures { pos ->
-                        val result = layoutResult ?: return@detectTapGestures
-                        val offset = result.getOffsetForPosition(pos)
-                        val hit = annotated.getStringAnnotations(ARTIST_TAG, offset, offset)
-                            .firstOrNull()?.item
-                            ?: raw.toMultipleArtists().firstOrNull()?.trim().orEmpty()
-                        if (hit.isNotEmpty()) onArtistClick(hit)
-                    }
-                } else Modifier
-            )
-            .overlayEffect(),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
         color = Color.White.copy(alpha = 0.35f),
+        marqueeEnabled = marqueeEnabled,
+        leftFadeWidth = leftFadeWidth,
+        rightFadeWidth = rightFadeWidth,
+        useOverlayEffect = true,
+        textModifier = if (artistsName != null) {
+            Modifier.pointerInput(annotated) {
+                detectTapGestures { pos ->
+                    val result = layoutResult ?: return@detectTapGestures
+                    val offset = result.getOffsetForPosition(pos)
+                    val hit = annotated.getStringAnnotations(ARTIST_TAG, offset, offset)
+                        .firstOrNull()?.item
+                        ?: raw.toMultipleArtists().firstOrNull()?.trim().orEmpty()
+                    if (hit.isNotEmpty()) onArtistClick(hit)
+                }
+            }
+        } else {
+            Modifier
+        },
         onTextLayout = { layoutResult = it }
     )
 }

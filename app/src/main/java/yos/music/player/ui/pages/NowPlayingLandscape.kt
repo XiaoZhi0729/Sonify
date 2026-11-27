@@ -4,6 +4,7 @@ package yos.music.player.ui.pages
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.EaseOutQuart
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -35,7 +36,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableLongState
@@ -58,7 +58,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -831,7 +830,7 @@ private fun LandscapeTitleBlock(
         AnimatedContent(
             targetState = thisMusicPlayingLambda(),
             transitionSpec = {
-                fadeIn() togetherWith fadeOut()
+                fadeIn() togetherWith fadeOut() using SizeTransform(clip = false)
             },
             modifier = modifier
         ) {
@@ -845,18 +844,20 @@ private fun LandscapeTitleBlock(
                         .weight(1f)
                         .padding(end = 15.dp)
                 ) {
-                    Text(
+                    FadingMarqueeText(
                         text = it?.title ?: defaultTitle,
                         fontSize = 19.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        leftFadeWidth = 14.dp,
+                        rightFadeWidth = 20.dp
                     )
                     ArtistsTapText(
                         artistsName = it?.artistsName,
                         placeholder = defaultArtistsName,
                         fontSize = 18.5.sp,
                         modifier = Modifier,
+                        leftFadeWidth = 14.dp,
+                        rightFadeWidth = 20.dp,
                         onArtistClick = onOpenArtist
                     )
                 }
