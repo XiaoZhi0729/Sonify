@@ -73,6 +73,28 @@ private const val MaxItemsForWidth = 8
 private val DropdownDestructiveColor = Color(0xFFFB2C36)
 
 /**
+ * 计算下拉列在 minIntrinsicHeight 阶段的有效列宽。
+ *
+ * 外层显式限制了宽度（如 `Modifier.width(216.dp)`）时，IntrinsicSize.Min 会把该上限经
+ * [availableWidthPx] 传进来；若忽略它直接按 [maxPx]（288dp）估算，窄面板里实际会折行的条目
+ * 会被错按单行算高度，导致外框被锁矮并误触发 verticalScroll（fitsOnScreen = false）。
+ */
+internal fun resolveDropdownIntrinsicListWidth(
+    maxIntrinsicWidth: Int,
+    minPx: Int,
+    maxPx: Int,
+    availableWidthPx: Int,
+): Int {
+    val upper = if (availableWidthPx != Constraints.Infinity && availableWidthPx > 0) {
+        min(maxPx, availableWidthPx)
+    } else {
+        maxPx
+    }
+    val lower = min(minPx, upper)
+    return maxIntrinsicWidth.coerceIn(lower, upper)
+}
+
+/**
  * 弹层内容列。
  *
  * 宽度规则与原版一致：取前 8 个子项的最大固有宽度、clamp 在 200~288dp；
@@ -141,7 +163,12 @@ fun LiquidDropdownColumn(
                     val w = measurables[i].maxIntrinsicWidth(Int.MAX_VALUE)
                     if (w > maxIntrinsic) maxIntrinsic = w
                 }
-                val listWidth = maxIntrinsic.coerceIn(minPx, maxPx)
+                val listWidth = resolveDropdownIntrinsicListWidth(
+                    maxIntrinsicWidth = maxIntrinsic,
+                    minPx = minPx,
+                    maxPx = maxPx,
+                    availableWidthPx = width,
+                )
                 return measurables.take(min(MaxItemsForWidth, measurables.size))
                     .sumOf { it.minIntrinsicHeight(listWidth) }
             }

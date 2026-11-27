@@ -8,7 +8,6 @@ import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -24,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -76,7 +77,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
@@ -86,6 +86,11 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -93,8 +98,11 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -126,12 +134,12 @@ import yos.music.player.ui.widgets.basic.ShadowImage
 import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
 import yos.music.player.ui.widgets.liquid.claimHorizontalDragGestures
-import yos.music.player.ui.widgets.liquid.claimVerticalDragGestures
-import yos.music.player.ui.widgets.mochi.MochiBlurCrossfade
-import yos.music.player.ui.widgets.mochi.MochiBlurTransition
 import yos.music.player.ui.widgets.mochi.MochiButton
 import yos.music.player.ui.widgets.mochi.MochiButtonDefaults
 import yos.music.player.ui.widgets.mochi.MochiButtonStyle
+import yos.music.player.ui.widgets.mochi.MochiPageControl
+import yos.music.player.ui.widgets.mochi.MochiPeerTransition
+import yos.music.player.ui.widgets.mochi.MochiPeerTransitionSpec
 import yos.music.player.ui.widgets.mochi.MochiSprings
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -517,7 +525,6 @@ fun LibraryHeroWidgetRail(
     onOpenGallery: () -> Unit,
     onOpenFmList: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val isWide = containerWidth >= 600.dp
     val isCompactPhone = containerWidth < 370.dp
 
@@ -552,69 +559,60 @@ fun LibraryHeroWidgetRail(
             )
         }
     } else {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            HorizontalPager(
-                state = pagerState,
-                pageSize = PageSize.Fill,
-                pageSpacing = 12.dp,
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) { page ->
-                when (page) {
-                    0 -> DailyRecommendWidgetCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        isCompactPhone = isCompactPhone,
-                        dailySongs = dailySongs,
-                        nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
-                        isGlobalPlayingProvider = isGlobalPlayingProvider,
-                        onPlayToggle = onPlayDailyToggle,
-                        onPlaySongAt = onPlayDailySongAt,
-                        onOpenDetail = onOpenDailyDetail
-                    )
-                    else -> PersonalFmGalleryWidgetCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        isCompactPhone = isCompactPhone,
-                        fmSongs = fmSongs,
-                        fmIndex = fmIndex,
-                        nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
-                        isGlobalPlayingProvider = isGlobalPlayingProvider,
-                        onSwitchFm = onSwitchFm,
-                        onPlayCurrentFmToggle = onPlayCurrentFmToggle,
-                        onOpenGallery = onOpenGallery,
-                        onOpenFmList = onOpenFmList
-                    )
+        Layout(
+            content = {
+                HorizontalPager(
+                    state = pagerState,
+                    pageSize = PageSize.Fill,
+                    pageSpacing = 12.dp,
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) { page ->
+                    when (page) {
+                        0 -> DailyRecommendWidgetCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            isCompactPhone = isCompactPhone,
+                            dailySongs = dailySongs,
+                            nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
+                            isGlobalPlayingProvider = isGlobalPlayingProvider,
+                            onPlayToggle = onPlayDailyToggle,
+                            onPlaySongAt = onPlayDailySongAt,
+                            onOpenDetail = onOpenDailyDetail
+                        )
+                        else -> PersonalFmGalleryWidgetCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            isCompactPhone = isCompactPhone,
+                            fmSongs = fmSongs,
+                            fmIndex = fmIndex,
+                            nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
+                            isGlobalPlayingProvider = isGlobalPlayingProvider,
+                            onSwitchFm = onSwitchFm,
+                            onPlayCurrentFmToggle = onPlayCurrentFmToggle,
+                            onOpenGallery = onOpenGallery,
+                            onOpenFmList = onOpenFmList
+                        )
+                    }
                 }
-            }
 
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(2) { idx ->
-                    val isSelected = pagerState.currentPage == idx
-                    val dotWidth by animateDpAsState(
-                        targetValue = if (isSelected) 16.dp else 6.dp,
-                        animationSpec = tween(200),
-                        label = "hero_dot_width"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 3.dp)
-                            .width(dotWidth)
-                            .height(6.dp)
-                            .clip(CircleShape)
-                            .background(
-                                MaterialTheme.colorScheme.onBackground.copy(
-                                    alpha = if (isSelected) 0.56f else 0.24f
-                                )
-                            )
-                            .clickable {
-                                scope.launch { pagerState.animateScrollToPage(idx) }
-                            }
-                    )
-                }
+                MochiPageControl(
+                    state = pagerState,
+                    dotSize = 7.dp,
+                    activeWidth = 18.dp,
+                    pitch = 16.dp,
+                    height = 22.dp,
+                )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .zIndex(1f)
+        ) { measurables, constraints ->
+            val pagerPlaceable = measurables[0].measure(constraints)
+            val indicatorPlaceable = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0))
+            // 布局高度严格等于卡片高度，指示器悬浮落在下方既有 22.dp 间距带内，不影响与「最近播放」的间距
+            layout(pagerPlaceable.width, pagerPlaceable.height) {
+                pagerPlaceable.placeRelative(0, 0)
+                val indicatorX = (pagerPlaceable.width - indicatorPlaceable.width) / 2
+                indicatorPlaceable.placeRelative(indicatorX, pagerPlaceable.height)
             }
         }
     }
@@ -746,14 +744,6 @@ internal object DailyRecommendPaging {
     }
 }
 
-private val DailyRecommendPageTransition = MochiBlurTransition(
-    blur = 7.dp,
-    scale = 0.94f,
-    slide = 0.20f,
-    enter = MochiSprings.snappy(340, visibilityThreshold = 0.001f),
-    exit = MochiSprings.crisp(260, visibilityThreshold = 0.001f),
-)
-
 @Composable
 private fun DailyRecommendWidgetCard(
     modifier: Modifier = Modifier,
@@ -770,7 +760,6 @@ private fun DailyRecommendWidgetCard(
     val cardShape = remember { ContinuousRoundedRectangle(18.dp) }
     val context = LocalContext.current
     val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
 
     val (monthWeekday, dayOfMonth) = remember { DailyDateCache.today() }
     val nowPlayingMediaId = nowPlayingMediaIdProvider()
@@ -784,8 +773,6 @@ private fun DailyRecommendWidgetCard(
 
     val pageCount = DailyRecommendPaging.pageCount(dailySongs.size)
     var currentPage by remember { mutableIntStateOf(0) }
-    var pageDirection by remember { mutableIntStateOf(1) }
-    val dragOffsetAnim = remember { Animatable(0f) }
 
     LaunchedEffect(pageCount) {
         if (pageCount == 0 && currentPage != 0) {
@@ -796,12 +783,9 @@ private fun DailyRecommendWidgetCard(
     }
 
     val safePage = if (pageCount == 0) 0 else currentPage.coerceIn(0, pageCount - 1)
-    val latestPage by rememberUpdatedState(safePage)
-    val latestPageCount by rememberUpdatedState(pageCount)
 
-    fun switchToPage(target: Int, direction: Int) {
+    fun switchToPage(target: Int) {
         if (target == currentPage) return
-        pageDirection = direction
         currentPage = target
         Vibrator.click(context)
     }
@@ -813,14 +797,14 @@ private fun DailyRecommendWidgetCard(
             .background(surfaceColor)
             .border(0.5.dp, hairline, cardShape)
             .clickable(onClick = onOpenDetail)
-            .padding(start = 14.dp, end = 10.dp, top = 13.dp, bottom = 12.dp)
+            .padding(start = 14.dp, end = 10.dp)
     ) {
         // 左侧：日历印章 + 位置更紧凑的自适应 MOCHI 播放/暂停按钮
         Column(
             modifier = Modifier
                 .width(if (isCompactPhone) 94.dp else 104.dp)
                 .fillMaxHeight()
-                .padding(end = 10.dp),
+                .padding(top = 13.dp, bottom = 12.dp, end = 10.dp),
             verticalArrangement = Arrangement.Top
         ) {
             Column {
@@ -897,18 +881,19 @@ private fun DailyRecommendWidgetCard(
         // 竖向细分割线
         Box(
             modifier = Modifier
-                .width(0.5.dp)
                 .fillMaxHeight()
+                .padding(top = 13.dp, bottom = 12.dp)
+                .width(0.5.dp)
                 .background(hairline)
         )
 
-        // 右侧：支持纵向滑动翻页 + MOCHI 同层级模糊切换的 3 首微缩歌曲列表
+        // 右侧：支持纵向滑动翻页 + MOCHI 同层级切换 + 上下渐变遮罩的 3 首微缩歌曲列表
         if (dailySongs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(start = 10.dp),
+                    .padding(start = 10.dp, top = 13.dp, bottom = 12.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
                 Text(
@@ -919,9 +904,7 @@ private fun DailyRecommendWidgetCard(
                 )
             }
         } else {
-            val maxDragPx = with(density) { 14.dp.toPx() }
-            val dragThresholdPx = with(density) { 22.dp.toPx() }
-            val velocityThresholdPxPerSec = with(density) { 320.dp.toPx() }
+            val pages = remember(pageCount) { (0 until pageCount).toList() }
 
             Row(
                 modifier = Modifier
@@ -930,115 +913,59 @@ private fun DailyRecommendWidgetCard(
                     .padding(start = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                MochiPeerTransition(
+                    targetState = safePage,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight()
-                        .clipToBounds()
-                        .pointerInput(Unit) {
-                            val tracker = VelocityTracker()
-                            var pointerPos = Offset.Zero
-                            var rawY = 0f
-                            var didDrag = false
-
-                            claimVerticalDragGestures(
-                                canDrag = { dy ->
-                                    latestPageCount > 1 &&
-                                        ((dy < 0f && latestPage < latestPageCount - 1) ||
-                                            (dy > 0f && latestPage > 0))
-                                },
-                                onStart = { down ->
-                                    didDrag = false
-                                    rawY = 0f
-                                    pointerPos = down.position
-                                    tracker.resetTracking()
-                                    tracker.addPosition(SystemClock.uptimeMillis(), pointerPos)
-                                },
-                                onDrag = { delta ->
-                                    didDrag = true
-                                    pointerPos += delta
-                                    tracker.addPosition(SystemClock.uptimeMillis(), pointerPos)
-                                    rawY += delta.y
-                                    val damped = FmCoverStackPhysics.rubberBand(rawY, maxDragPx)
-                                    scope.launch { dragOffsetAnim.snapTo(damped) }
-                                },
-                                onEnd = {
-                                    if (!didDrag) return@claimVerticalDragGestures
-                                    val velocityY = tracker.calculateVelocity().y
-                                    val target = DailyRecommendPaging.resolveSwipeTarget(
-                                        currentPage = latestPage,
-                                        pageCount = latestPageCount,
-                                        netDragYPx = rawY,
-                                        velocityYPxPerSec = velocityY,
-                                        dragThresholdPx = dragThresholdPx,
-                                        velocityThresholdPxPerSec = velocityThresholdPxPerSec
-                                    )
-                                    if (target != latestPage) {
-                                        switchToPage(target, if (target > latestPage) 1 else -1)
-                                    }
-                                    scope.launch {
-                                        dragOffsetAnim.animateTo(
-                                            0f,
-                                            MochiSprings.snappy(280, visibilityThreshold = 0.5f)
-                                        )
-                                    }
-                                },
-                                onCancel = {
-                                    if (!didDrag) return@claimVerticalDragGestures
-                                    scope.launch {
-                                        dragOffsetAnim.animateTo(
-                                            0f,
-                                            MochiSprings.snappy(280, visibilityThreshold = 0.5f)
-                                        )
-                                    }
-                                }
-                            )
-                        }
-                        .graphicsLayer { translationY = dragOffsetAnim.value }
-                ) {
-                    MochiBlurCrossfade(
-                        targetState = safePage,
-                        modifier = Modifier.fillMaxSize(),
-                        transition = DailyRecommendPageTransition,
-                        direction = pageDirection,
-                        contentAlignment = Alignment.Center
-                    ) { page ->
-                        val range = DailyRecommendPaging.pageRange(dailySongs.size, page)
-                        val rowCount = if (range.isEmpty()) 0 else (range.last - range.first + 1)
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            for (slot in 0 until DailyRecommendPaging.PAGE_SIZE) {
-                                if (slot < rowCount) {
-                                    val globalIdx = range.first + slot
-                                    val song = dailySongs[globalIdx]
-                                    val isCurrent = !nowPlayingMediaId.isNullOrBlank() &&
-                                        (nowPlayingMediaId.equals(song.hash, ignoreCase = true) ||
-                                            nowPlayingMediaId.endsWith(song.hash, ignoreCase = true))
-                                    DailyRecommendSongRow(
-                                        song = song,
-                                        isCurrent = isCurrent,
-                                        onClick = { onPlaySongAt(globalIdx) },
+                        .fillMaxHeight(),
+                    pages = pages,
+                    onPageChange = { target -> switchToPage(target) },
+                    orientation = Orientation.Vertical,
+                    background = Color.Transparent,
+                    backdrop = Color.Transparent,
+                    edgeFadeExtent = 20.dp,
+                    spec = MochiPeerTransitionSpec(),
+                    retainPages = false,
+                ) { page ->
+                    val range = DailyRecommendPaging.pageRange(dailySongs.size, page)
+                    val rowCount = if (range.isEmpty()) 0 else (range.last - range.first + 1)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 13.dp, bottom = 12.dp)
+                    ) {
+                        for (slot in 0 until DailyRecommendPaging.PAGE_SIZE) {
+                            if (slot < rowCount) {
+                                val globalIdx = range.first + slot
+                                val song = dailySongs[globalIdx]
+                                val isCurrent = !nowPlayingMediaId.isNullOrBlank() &&
+                                    (nowPlayingMediaId.equals(song.hash, ignoreCase = true) ||
+                                        nowPlayingMediaId.endsWith(song.hash, ignoreCase = true))
+                                DailyRecommendSongRow(
+                                    song = song,
+                                    isCurrent = isCurrent,
+                                    onClick = { onPlaySongAt(globalIdx) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                )
+                            } else {
+                                Spacer(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                )
+                            }
+                            if (slot < DailyRecommendPaging.PAGE_SIZE - 1) {
+                                if (slot < rowCount - 1) {
+                                    Box(
                                         modifier = Modifier
-                                            .weight(1f)
                                             .fillMaxWidth()
+                                            .height(0.5.dp)
+                                            .background(hairline)
                                     )
                                 } else {
-                                    Spacer(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxWidth()
-                                    )
-                                }
-                                if (slot < DailyRecommendPaging.PAGE_SIZE - 1) {
-                                    if (slot < rowCount - 1) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(0.5.dp)
-                                                .background(hairline)
-                                        )
-                                    } else {
-                                        Spacer(modifier = Modifier.height(0.5.dp))
-                                    }
+                                    Spacer(modifier = Modifier.height(0.5.dp))
                                 }
                             }
                         }
@@ -1058,13 +985,13 @@ private fun DailyRecommendWidgetCard(
                         modifier = Modifier
                             .width(12.dp)
                             .fillMaxHeight()
+                            .padding(top = 13.dp, bottom = 12.dp)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                                 onClick = {
                                     val nextPage = (safePage + 1) % pageCount
-                                    val dir = if (nextPage > safePage) 1 else -1
-                                    switchToPage(nextPage, dir)
+                                    switchToPage(nextPage)
                                 }
                             ),
                         contentAlignment = Alignment.Center
@@ -1245,7 +1172,7 @@ private fun PersonalFmGalleryWidgetCard(
         activeTarget = targetAbs
         val (damping, stiffness) = when {
             isTap -> 1.0f to 225f
-            hasMomentum -> 0.98f to 240f
+            hasMomentum -> 1.0f to 240f
             else -> 1.0f to 280f
         }
         val targetWrapped = if (fmSongs.isEmpty()) 0 else FmCoverStackPhysics.wrapIndex(targetAbs, fmSongs.size)
@@ -1312,104 +1239,103 @@ private fun PersonalFmGalleryWidgetCard(
                 }
             }
             .clickable(onClick = onOpenGallery)
-            .padding(horizontal = 15.dp, vertical = 15.dp)
+            .padding(horizontal = 15.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FmCardInfoColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                currentSong = currentSong,
-                primaryTextState = primaryTextState,
-                secondaryTextState = secondaryTextState,
-                buttonContainerState = buttonContainerState,
-                buttonContentState = buttonContentState,
-                buttonGlowState = buttonGlowState,
-                listActionTextState = listActionTextState,
-                onOpenGallery = onOpenGallery,
-                onOpenFmList = onOpenFmList
-            )
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val useCompactStack = isCompactPhone || maxWidth < 310.dp
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FmCardInfoColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(vertical = 15.dp),
+                    currentSong = currentSong,
+                    primaryTextState = primaryTextState,
+                    secondaryTextState = secondaryTextState,
+                    buttonContainerState = buttonContainerState,
+                    buttonContentState = buttonContentState,
+                    buttonGlowState = buttonGlowState,
+                    listActionTextState = listActionTextState,
+                    onOpenGallery = onOpenGallery,
+                    onOpenFmList = onOpenFmList
+                )
 
-            FmFannedCoverStack(
-                isCompactPhone = isCompactPhone,
-                fmSongs = fmSongs,
-                scrollAnim = scrollAnim,
-                dragYAnim = dragYAnim,
-                pressScaleAnim = pressScaleAnim,
-                nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
-                isGlobalPlayingProvider = isGlobalPlayingProvider,
-                emptyCoverBg = targetPalette.emptyCoverBg,
-                emptyCoverBorder = targetPalette.emptyCoverBorder,
-                coverBorderProvider = { targetPalette.coverBorder },
-                onInterruptAnimation = {
-                    settleJob?.cancel()
-                    settleJob = null
-                    activeTarget = null
-                    pendingCommitTarget = null
-                    isDragging = true
-                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        scrollAnim.stop()
-                        dragYAnim.stop()
-                    }
-                    scope.launch {
-                        pressScaleAnim.animateTo(
-                            targetValue = 1.018f,
-                            animationSpec = spring(dampingRatio = 1.0f, stiffness = 420f)
-                        )
-                    }
-                },
-                onDragFinish = { velocityCardsPerSec, netScroll, startScroll ->
-                    isDragging = false
-                    scope.launch {
-                        pressScaleAnim.animateTo(1f, spring(dampingRatio = 1.0f, stiffness = 360f))
-                    }
-                    scope.launch {
-                        dragYAnim.animateTo(0f, spring(dampingRatio = 0.92f, stiffness = 320f))
-                    }
-                    if (fmSongs.size <= 1) {
-                        settleTo(
-                            targetAbs = startScroll.roundToInt(),
-                            initialVelocityCardsPerSec = 0f,
-                            hasMomentum = false,
-                            commitPlayback = false
-                        )
-                    } else {
-                        val targetAbs = FmCoverStackPhysics.projectTarget(
-                            currentScroll = scrollAnim.value,
-                            velocityCardsPerSec = velocityCardsPerSec,
-                            gestureNetScroll = netScroll,
-                            startScroll = startScroll
-                        )
-                        val hasMomentum = abs(velocityCardsPerSec) > 0.6f || targetAbs != startScroll.roundToInt()
-                        settleTo(
-                            targetAbs = targetAbs,
-                            initialVelocityCardsPerSec = velocityCardsPerSec,
-                            hasMomentum = hasMomentum,
-                            commitPlayback = true
-                        )
-                    }
-                },
-                onCardTap = {
-                    if (fmSongs.size > 1) {
-                        val base = activeTarget ?: scrollAnim.value.roundToInt()
-                        val carryV = if (settleJob != null) scrollAnim.velocity else 0f
-                        settleTo(
-                            targetAbs = base + 1,
-                            initialVelocityCardsPerSec = carryV,
-                            hasMomentum = false,
-                            commitPlayback = true,
-                            isTap = true
-                        )
-                    } else {
-                        onPlayCurrentFmToggle()
-                    }
-                },
-                onPlayCurrentFmToggle = onPlayCurrentFmToggle
-            )
+                FmFannedCoverStack(
+                    isCompactPhone = useCompactStack,
+                    isDark = isDark,
+                    fmSongs = fmSongs,
+                    scrollAnim = scrollAnim,
+                    dragYAnim = dragYAnim,
+                    pressScaleAnim = pressScaleAnim,
+                    nowPlayingMediaIdProvider = nowPlayingMediaIdProvider,
+                    isGlobalPlayingProvider = isGlobalPlayingProvider,
+                    emptyCoverBg = targetPalette.emptyCoverBg,
+                    emptyCoverBorder = targetPalette.emptyCoverBorder,
+                    coverBorderProvider = { targetPalette.coverBorder },
+                    onInterruptAnimation = {
+                        settleJob?.cancel()
+                        settleJob = null
+                        activeTarget = null
+                        pendingCommitTarget = null
+                        isDragging = true
+                        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            scrollAnim.stop()
+                            dragYAnim.stop()
+                        }
+                    },
+                    onDragFinish = { velocityCardsPerSec, netScroll, startScroll ->
+                        isDragging = false
+                        scope.launch {
+                            pressScaleAnim.animateTo(1f, spring(dampingRatio = 1.0f, stiffness = 360f))
+                        }
+                        scope.launch {
+                            dragYAnim.animateTo(0f, spring(dampingRatio = 0.92f, stiffness = 320f))
+                        }
+                        if (fmSongs.size <= 1) {
+                            settleTo(
+                                targetAbs = startScroll.roundToInt(),
+                                initialVelocityCardsPerSec = 0f,
+                                hasMomentum = false,
+                                commitPlayback = false
+                            )
+                        } else {
+                            val targetAbs = FmCoverStackPhysics.projectTarget(
+                                currentScroll = scrollAnim.value,
+                                velocityCardsPerSec = velocityCardsPerSec,
+                                gestureNetScroll = netScroll,
+                                startScroll = startScroll
+                            )
+                            val hasMomentum = abs(velocityCardsPerSec) > 0.6f || targetAbs != startScroll.roundToInt()
+                            settleTo(
+                                targetAbs = targetAbs,
+                                initialVelocityCardsPerSec = velocityCardsPerSec,
+                                hasMomentum = hasMomentum,
+                                commitPlayback = true
+                            )
+                        }
+                    },
+                    onCardTap = {
+                        if (fmSongs.size > 1) {
+                            val base = activeTarget ?: scrollAnim.value.roundToInt()
+                            val carryV = if (settleJob != null) scrollAnim.velocity else 0f
+                            settleTo(
+                                targetAbs = base + 1,
+                                initialVelocityCardsPerSec = carryV,
+                                hasMomentum = false,
+                                commitPlayback = true,
+                                isTap = true
+                            )
+                        } else {
+                            onPlayCurrentFmToggle()
+                        }
+                    },
+                    onPlayCurrentFmToggle = onPlayCurrentFmToggle
+                )
+            }
         }
     }
 }
@@ -1523,6 +1449,7 @@ private fun FmCardInfoColumn(
 @Composable
 private fun FmFannedCoverStack(
     isCompactPhone: Boolean,
+    isDark: Boolean,
     fmSongs: List<KugouNewSong>,
     scrollAnim: Animatable<Float, *>,
     dragYAnim: Animatable<Float, *>,
@@ -1547,9 +1474,15 @@ private fun FmFannedCoverStack(
     val latestInterrupt = rememberUpdatedState(onInterruptAnimation)
     val latestDragFinish = rememberUpdatedState(onDragFinish)
 
-    val stageWidth = if (isCompactPhone) 114.dp else 132.dp
-    val coverSize = if (isCompactPhone) 92.dp else 108.dp
-    val cornerShape = remember { RoundedCornerShape(10.dp) }
+    val stageWidth = if (isCompactPhone) 130.dp else 150.dp
+    val stageHeight = if (isCompactPhone) 138.dp else 150.dp
+    val coverSize = if (isCompactPhone) 108.dp else 124.dp
+    val cornerRadius = if (isCompactPhone) 13.dp else 15.dp
+    val cornerShape = remember(cornerRadius) { ContinuousRoundedRectangle(cornerRadius) }
+    val nodeSize = coverSize + FmCoverShadowPad * 2
+    val shadowPadPx = with(density) { FmCoverShadowPad.toPx() }
+    val sharedShadowImage = rememberFmCoverShadow(coverSize, cornerShape)
+    val shadowBaseAlpha = if (isDark) 1.0f else 0.72f
 
     // 锚定最近整数槽位并维持 [-1..3] 5 卡缓冲窗口，避免回拉或轻微过冲时频繁销毁重建槽位
     val windowAnchor by remember {
@@ -1559,7 +1492,7 @@ private fun FmFannedCoverStack(
     Box(
         modifier = Modifier
             .width(stageWidth)
-            .height(132.dp)
+            .height(stageHeight)
             .pointerInput(dragStepPx) {
                 val tracker = VelocityTracker()
                 var pointerPos = Offset.Zero
@@ -1583,6 +1516,7 @@ private fun FmFannedCoverStack(
                             didDrag = true
                             startScroll = scrollAnim.value
                             liveScroll = startScroll
+                            rawYAccum = FmCoverStackPhysics.inverseRubberBand(dragYAnim.value, verticalLimitPx)
                             latestInterrupt.value()
                         }
                         pointerPos += delta
@@ -1639,108 +1573,174 @@ private fun FmFannedCoverStack(
                 key(absIdx) {
                     Box(
                         modifier = Modifier
-                            .size(coverSize)
+                            .wrapContentSize(align = Alignment.TopStart, unbounded = true)
+                            .size(nodeSize)
                             .graphicsLayer {
                                 val relDepth = absIdx - scrollAnim.value
                                 val t = FmCoverStackPhysics.cardTransform(relDepth, isCompactPhone)
 
-                                // 主卡保留 2D 橡皮筋垂直手感，第 2 张带极轻联动
-                                val extraY = when {
-                                    relDepth <= 0f -> dragYAnim.value * (1f + relDepth).coerceIn(0f, 1f)
-                                    relDepth < 1f -> dragYAnim.value * (1f - relDepth) * 0.22f
-                                    else -> 0f
-                                }
+                                // 主卡与第 2 张的 2D 垂直跟随在 relDepth == 0 处 C¹ 连续衔接，消除退场起手瞬跳
+                                val extraY = dragYAnim.value * FmCoverStackPhysics.dragYWeight(relDepth)
                                 val pressWeight = FmCoverStackPhysics.pressWeight(relDepth)
                                 val pressFactor = 1f + (pressScaleAnim.value - 1f) * pressWeight
 
-                                translationX = t.offsetXDp * density.density
-                                translationY = t.offsetYDp * density.density + extraY
+                                translationX = t.offsetXDp * density.density - shadowPadPx
+                                translationY = t.offsetYDp * density.density + extraY - shadowPadPx
                                 scaleX = t.scale * pressFactor
                                 scaleY = t.scale * pressFactor
                                 rotationZ = t.rotationZ
                                 rotationY = t.rotationY
                                 cameraDistance = 12f * density.density
                                 alpha = t.alpha
-                                shadowElevation = t.shadowElevationDp * density.density
-                                shape = cornerShape
-                                clip = true
                             }
-                            .drawWithCache {
-                                val outline = cornerShape.createOutline(size, layoutDirection, this)
-                                val stroke = Stroke(width = 0.5.dp.toPx())
-                                onDrawWithContent {
-                                    drawContent()
-                                    drawOutline(
-                                        outline = outline,
-                                        color = coverBorderProvider(),
-                                        style = stroke
+                            .drawBehind {
+                                val img = sharedShadowImage ?: return@drawBehind
+                                val relDepth = absIdx - scrollAnim.value
+                                val t = FmCoverStackPhysics.cardTransform(relDepth, isCompactPhone)
+                                val shadowFactor = (t.shadowElevationDp / 10f).coerceIn(0f, 1f)
+                                val drawAlpha = shadowBaseAlpha * shadowFactor
+                                if (drawAlpha > 0.001f) {
+                                    drawImage(
+                                        image = img,
+                                        topLeft = Offset.Zero,
+                                        alpha = drawAlpha
                                     )
                                 }
                             }
-                            .then(
-                                if (slotOffset == 0) {
-                                    Modifier.clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                        onClick = onCardTap
-                                    )
-                                } else {
-                                    Modifier
-                                }
-                            )
                     ) {
-                        AsyncImage(
-                            model = remember(song.artworkUrl) {
-                                ImageRequest.Builder(context)
-                                    .data(song.artworkUrl)
-                                    .size(280)
-                                    .precision(Precision.INEXACT)
-                                    .placeholder(R.drawable.placeholder_music_default_artwork)
-                                    .error(R.drawable.placeholder_music_default_artwork)
-                                    .fallback(R.drawable.placeholder_music_default_artwork)
-                                    .build()
-                            },
-                            contentDescription = song.name,
-                            contentScale = ContentScale.Crop,
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .then(
-                                    if (slotOffset in -1..1) {
-                                        Modifier.artworkCornerScrim(10.dp) {
-                                            FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value)
-                                        }
-                                    } else Modifier
-                                )
-                        )
-                        if (slotOffset in -1..1) {
-                            BarePlayButton(
-                                isPlayingProvider = {
-                                    val mediaId = nowPlayingMediaIdProvider()
-                                    isGlobalPlayingProvider() && !mediaId.isNullOrBlank() &&
-                                        (mediaId.equals(song.hash, ignoreCase = true) ||
-                                            mediaId.endsWith(song.hash, ignoreCase = true))
-                                },
-                                onClick = {
-                                    if (FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value) > 0.35f) {
-                                        onPlayCurrentFmToggle()
+                                .padding(FmCoverShadowPad)
+                                .clip(cornerShape)
+                                .drawWithCache {
+                                    val outline = cornerShape.createOutline(size, layoutDirection, this)
+                                    val stroke = Stroke(width = 0.5.dp.toPx())
+                                    onDrawWithContent {
+                                        drawContent()
+                                        drawOutline(
+                                            outline = outline,
+                                            color = coverBorderProvider(),
+                                            style = stroke
+                                        )
                                     }
+                                }
+                                .clickable(
+                                    enabled = slotOffset == 0,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onCardTap
+                                )
+                        ) {
+                            AsyncImage(
+                                model = remember(song.artworkUrl) {
+                                    ImageRequest.Builder(context)
+                                        .data(song.artworkUrl)
+                                        .size(320)
+                                        .precision(Precision.INEXACT)
+                                        .placeholder(R.drawable.placeholder_music_default_artwork)
+                                        .error(R.drawable.placeholder_music_default_artwork)
+                                        .fallback(R.drawable.placeholder_music_default_artwork)
+                                        .build()
                                 },
                                 contentDescription = song.name,
-                                glyphSize = 28.dp,
+                                contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .graphicsLayer {
-                                        val p = FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value)
-                                        alpha = p
-                                        val s = 0.84f + 0.16f * p
-                                        scaleX = s
-                                        scaleY = s
-                                    }
+                                    .fillMaxSize()
+                                    .then(
+                                        if (slotOffset in -1..1) {
+                                            Modifier.artworkCornerScrim(0.dp) {
+                                                FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value)
+                                            }
+                                        } else Modifier
+                                    )
                             )
+                            if (slotOffset in -1..1) {
+                                BarePlayButton(
+                                    isPlayingProvider = {
+                                        val mediaId = nowPlayingMediaIdProvider()
+                                        isGlobalPlayingProvider() && !mediaId.isNullOrBlank() &&
+                                            (mediaId.equals(song.hash, ignoreCase = true) ||
+                                                mediaId.endsWith(song.hash, ignoreCase = true))
+                                    },
+                                    onClick = {
+                                        if (FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value) > 0.35f) {
+                                            onPlayCurrentFmToggle()
+                                        }
+                                    },
+                                    contentDescription = song.name,
+                                    glyphSize = 30.dp,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .graphicsLayer {
+                                            val p = FmCoverStackPhysics.focusOverlayProgress(absIdx - scrollAnim.value)
+                                            alpha = p
+                                            val s = 0.84f + 0.16f * p
+                                            scaleX = s
+                                            scaleY = s
+                                        }
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+private val FmCoverShadowPad = 22.dp
+
+/**
+ * 预渲染软件模糊的漫游电台封面阴影位图，避免 HWUI RenderNode 实时 3D shadowElevation
+ * 在曲率圆角 Path + alpha/rotationY 动画下逐帧重算导致的闪烁。
+ */
+@Composable
+private fun rememberFmCoverShadow(
+    coverSize: Dp,
+    cornerShape: ContinuousRoundedRectangle,
+): ImageBitmap? {
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val nodeSize = coverSize + FmCoverShadowPad * 2
+    val nodeSizePx = with(density) { nodeSize.roundToPx() }
+    val padPx = with(density) { FmCoverShadowPad.toPx() }
+    val blurPx = with(density) { 9.dp.toPx() }
+    val offsetYPx = with(density) { 4.dp.toPx() }
+    val insetPx = with(density) { 1.dp.toPx() }
+
+    return remember(nodeSizePx, padPx, cornerShape, layoutDirection, blurPx, offsetYPx, insetPx) {
+        if (nodeSizePx <= 0) {
+            null
+        } else {
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                nodeSizePx, nodeSizePx, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bitmap)
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                color = android.graphics.Color.argb((0.36f * 255f).toInt(), 0, 0, 0)
+                maskFilter = android.graphics.BlurMaskFilter(
+                    blurPx, android.graphics.BlurMaskFilter.Blur.NORMAL
+                )
+            }
+            val shadowW = (nodeSizePx - padPx * 2f - insetPx * 2f).coerceAtLeast(1f)
+            val outline = cornerShape.createOutline(Size(shadowW, shadowW), layoutDirection, density)
+            canvas.save()
+            canvas.translate(padPx + insetPx, padPx + insetPx + offsetYPx)
+            when (outline) {
+                is Outline.Generic -> canvas.drawPath(outline.path.asAndroidPath(), paint)
+                is Outline.Rounded -> {
+                    val path = Path().apply { addRoundRect(outline.roundRect) }
+                    canvas.drawPath(path.asAndroidPath(), paint)
+                }
+                is Outline.Rectangle -> {
+                    val r = outline.rect
+                    canvas.drawRect(r.left, r.top, r.right, r.bottom, paint)
+                }
+            }
+            canvas.restore()
+            bitmap.asImageBitmap()
         }
     }
 }

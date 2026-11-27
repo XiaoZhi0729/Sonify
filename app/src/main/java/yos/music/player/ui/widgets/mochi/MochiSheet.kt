@@ -151,6 +151,7 @@ class MochiSheetState internal constructor(
     internal val detents: List<MochiSheetDetent>,
     internal val initial: MochiSheetDetent,
     mediumFraction: Float = 0.5f,
+    internal val fitContent: Boolean = false,
 ) {
     internal val mediumFraction: Float = mediumFraction.coerceIn(0.25f, 0.9f)
     internal var requested by mutableStateOf(false)
@@ -163,8 +164,17 @@ class MochiSheetState internal constructor(
     internal var largeTop = 0f
     internal var screenCorners: MochiScreenCorners = MochiScreenCorners.None
     internal var statusTop = 0f
+    internal var measuredContentHeight by mutableFloatStateOf(0f)
+    internal var floatInsetPx by mutableFloatStateOf(0f)
 
-    internal val mediumTop: Float get() = height * (1f - mediumFraction)
+    internal val mediumTop: Float
+        get() {
+            if (fitContent && measuredContentHeight > 0f && height > 0f) {
+                val bottomGap = if (MochiSheetDetent.Large in detents) 0f else floatInsetPx
+                return (height - bottomGap - measuredContentHeight).coerceIn(largeTop, height)
+            }
+            return height * (1f - mediumFraction)
+        }
     internal fun topOf(d: MochiSheetDetent): Float = if (d == MochiSheetDetent.Large) largeTop else mediumTop
 
     internal val presence: Float
@@ -203,8 +213,9 @@ fun rememberMochiSheetState(
     detents: List<MochiSheetDetent> = listOf(MochiSheetDetent.Medium, MochiSheetDetent.Large),
     initial: MochiSheetDetent = detents.first(),
     mediumFraction: Float = 0.5f,
+    fitContent: Boolean = false,
 ): MochiSheetState = remember {
-    MochiSheetState(detents.ifEmpty { listOf(MochiSheetDetent.Large) }, initial, mediumFraction)
+    MochiSheetState(detents.ifEmpty { listOf(MochiSheetDetent.Large) }, initial, mediumFraction, fitContent)
 }
 
 /**
@@ -241,6 +252,7 @@ fun MochiSheet(
         state.screenCorners = corners
         state.statusTop = statusTop.toFloat()
         state.largeTop = statusTop + with(density) { 12.dp.toPx() }
+        state.floatInsetPx = inset
         val radii = remember(corners, inset, topMaximum, fallback) {
             {
                 val gap = (inset * (1f - state.largeness)).roundToInt().toFloat()
@@ -256,7 +268,9 @@ fun MochiSheet(
         val haptics = remember(view) { MochiHaptics(view, MochiHapticProfile.IosLike) }
 
         LaunchedEffect(state) {
-            snapshotFlow { state.height }.first { it > 0f }
+            snapshotFlow {
+                state.height > 0f && (!state.fitContent || state.measuredContentHeight > 0f)
+            }.first { it }
             snapshotFlow { state.requested }.collectLatest { on ->
                 if (on) {
                     if (state.top.value.isNaN()) {
@@ -275,6 +289,7 @@ fun MochiSheet(
                     }
                     state.top.snapTo(Float.NaN)
                     state.bottomFilled = false
+                    state.measuredContentHeight = 0f
                     state.composed = false
                     currentOnDismiss()
                 }
@@ -397,11 +412,27 @@ fun MochiSheet(
                         Column(
                             Modifier
                                 .layout { m, c ->
-                                    val highest = state.detents.minOf { state.topOf(it) }
                                     val bottomGap = if (MochiSheetDetent.Large in state.detents) 0f else inset
-                                    val h = (state.height - highest - bottomGap).coerceAtLeast(0f).roundToInt()
-                                    val p = m.measure(Constraints.fixed(c.maxWidth, h))
-                                    layout(c.maxWidth, c.maxHeight) { p.place(0, 0) }
+                                    if (state.fitContent) {
+                                        val maxH = (state.height - state.largeTop - bottomGap).coerceAtLeast(0f).roundToInt()
+                                        val p = m.measure(
+                                            Constraints(
+                                                minWidth = c.maxWidth,
+                                                maxWidth = c.maxWidth,
+                                                minHeight = 0,
+                                                maxHeight = maxH,
+                                            )
+                                        )
+                                        if (maxH > 0) {
+                                            state.measuredContentHeight = p.height.toFloat()
+                                        }
+                                        layout(c.maxWidth, c.maxHeight) { p.place(0, 0) }
+                                    } else {
+                                        val highest = state.detents.minOf { state.topOf(it) }
+                                        val h = (state.height - highest - bottomGap).coerceAtLeast(0f).roundToInt()
+                                        val p = m.measure(Constraints.fixed(c.maxWidth, h))
+                                        layout(c.maxWidth, c.maxHeight) { p.place(0, 0) }
+                                    }
                                 }
                                 .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility.only(WindowInsetsSides.Bottom)),
                         ) {

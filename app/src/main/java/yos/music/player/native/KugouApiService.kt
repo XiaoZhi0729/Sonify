@@ -1147,6 +1147,36 @@ class KugouApiService private constructor() {
     }
 
     /**
+     * 概念版卡片推荐（Rust top.rs:69 handle_card_youth）。
+     *   GET /top/card/youth?card_id&pagesize&tagid（Rust → POST youth/v1/song/single_card_recommend）
+     * card_id: 3006=VIP专属推荐, 3001=私人专属好歌, 3004=小众宝藏佳作, 3014=喜欢这首歌的TA也喜欢, 3103=曲风盲盒。
+     */
+    suspend fun getTopCardYouth(
+        cardId: Int,
+        pageSize: Int = 30,
+        tagId: String? = null
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = buildMap {
+                put("card_id", cardId.toString())
+                put("pagesize", pageSize.toString())
+                if (!tagId.isNullOrBlank()) {
+                    put("tagid", tagId)
+                }
+            }
+            val (code, body) = httpGetWithRetry("/top/card/youth", params)
+            Log.d(TAG, "/top/card/youth?card_id=$cardId -> HTTP $code, body length=${body.length}")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/top/card/youth HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getTopCardYouth(cardId=$cardId) exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 私人FM（对齐 Dart getPersonalFm，kugou_api_client.dart:2312；Rust fm.rs:171）。
      *   GET /personal/fm?mode&song_pool_id&hash&songid&action（Rust → POST persnfm.service /v2/personal_recommend）
      * 需登录（userid+token 由 authHeader() cookie 带入）；响应必须绕 apicache——

@@ -17,6 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import yos.music.player.ui.pages.RecommendCardCornerRadius
+import yos.music.player.ui.pages.RecommendCardHeight
+import yos.music.player.ui.pages.RecommendCardWidth
 import yos.music.player.ui.widgets.basic.SkeletonShimmer
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
 import yos.music.player.ui.widgets.basic.skeleton
@@ -184,6 +187,80 @@ internal fun HomeSkeletonCardRail(
         ) {
             repeat(SkeletonCardCount) {
                 SkeletonCard(shimmer, railLayout.itemSize, coverToTitleGap)
+            }
+        }
+    }
+}
+
+/** VIP 专属推荐横排大卡骨架：几何尺寸严格对齐 [RecommendCardItem]。 */
+@Composable
+internal fun HomeSkeletonRecommendCardRail(shimmer: SkeletonShimmer) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clipToBounds()
+            .padding(start = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(CardGap)
+    ) {
+        repeat(SkeletonCardCount) {
+            Box(
+                Modifier
+                    .width(RecommendCardWidth)
+                    .height(RecommendCardHeight)
+                    .skeleton(shimmer, cornerRadius = RecommendCardCornerRadius)
+            )
+        }
+    }
+}
+
+/** 小众宝藏佳作 Music Story 横排骨架：左侧竖向封面 + 右侧故事排版条。 */
+@Composable
+internal fun HomeSkeletonNicheTreasureRail(shimmer: SkeletonShimmer) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .clipToBounds()
+    ) {
+        val cardWidth = calculateMusicStoryCardWidth(maxWidth)
+        Row(
+            Modifier.padding(start = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(MusicStoryCardGap)
+        ) {
+            repeat(2) {
+                Row(
+                    Modifier
+                        .width(cardWidth)
+                        .height(MusicStoryCoverHeight)
+                ) {
+                    Box(
+                        Modifier
+                            .width(MusicStoryCoverWidth)
+                            .height(MusicStoryCoverHeight)
+                            .skeleton(shimmer, cornerRadius = MusicStoryCoverCornerRadius)
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .padding(top = 4.dp)
+                    ) {
+                        SkeletonTextBar(shimmer, widthFraction = 0.55f, lineBoxHeight = 25.dp)
+                        SkeletonTextBar(shimmer, widthFraction = 0.78f, lineBoxHeight = 25.dp)
+                        Spacer(Modifier.height(10.dp))
+                        SkeletonTextBar(shimmer, widthFraction = 0.72f, lineBoxHeight = 21.dp)
+                        Spacer(Modifier.height(3.dp))
+                        SkeletonTextBar(shimmer, widthFraction = 0.45f, lineBoxHeight = 18.dp)
+                        Spacer(Modifier.height(6.dp))
+                        SkeletonTextBar(shimmer, widthFraction = 0.85f, lineBoxHeight = 17.dp)
+                        Spacer(Modifier.height(10.dp))
+                        Box(
+                            Modifier
+                                .width(116.dp)
+                                .height(26.dp)
+                                .skeleton(shimmer, cornerRadius = 13.dp)
+                        )
+                    }
+                }
             }
         }
     }

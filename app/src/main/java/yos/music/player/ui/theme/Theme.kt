@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
@@ -98,7 +99,8 @@ fun YosMusicTheme(
         // 写在外部会被它覆盖回红色。
         content = {
             CompositionLocalProvider(
-                LocalTextSelectionColors provides TransparentSelectionColors
+                LocalTextSelectionColors provides TransparentSelectionColors,
+                LocalOverscrollFactory provides null
             ) {
                 SonifyDialogHost(content)
             }

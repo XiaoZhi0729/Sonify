@@ -149,6 +149,193 @@ private fun JSONObject.optionalValue(key: String): Any? =
 private fun JSONObject.toFieldMap(): Map<String, Any?> =
     keys().asSequence().associateWith { key -> optionalValue(key) }
 
+private fun Any?.asStringMap(): Map<String, Any?>? = when (this) {
+    is JSONObject -> toFieldMap()
+    is Map<*, *> -> entries.mapNotNull { (k, v) ->
+        (k as? String)?.let { key -> key to v }
+    }.toMap()
+    else -> null
+}
+
+private fun Any?.asObjectList(): List<Map<String, Any?>> = when (this) {
+    is JSONArray -> (0 until length()).mapNotNull { i -> optJSONObject(i)?.toFieldMap() }
+    is Iterable<*> -> mapNotNull { it.asStringMap() }
+    else -> emptyList()
+}
+
+private fun Map<String, Any?>.fieldText(key: String): String {
+    val raw = this[key] ?: return ""
+    if (raw === JSONObject.NULL) return ""
+    return raw.toString()
+}
+
+private fun Map<String, Any?>.fieldLong(key: String, fallback: Long = -1L): Long {
+    val raw = this[key] ?: return fallback
+    return when (raw) {
+        is Number -> raw.toLong()
+        is String -> raw.trim().toLongOrNull() ?: fallback
+        else -> fallback
+    }
+}
+
+private fun parsePerformerFields(
+    list: List<Map<String, Any?>>,
+    nameKeys: List<String>,
+    idKeys: List<String>,
+    nameTransform: (String) -> String = { it }
+): List<KugouPerformer> {
+    if (list.isEmpty()) return emptyList()
+    val candidates = ArrayList<Pair<String, Long>>(list.size)
+    for (obj in list) {
+        val name = nameKeys.firstNotNullOfOrNull {
+            obj.fieldText(it).takeIf { s -> s.isNotEmpty() }?.let(nameTransform)
+        } ?: continue
+        val id = idKeys.firstNotNullOfOrNull { obj.fieldLong(it, 0L).takeIf { v -> v > 0 } } ?: 0L
+        candidates.add(name to id)
+    }
+    return mergePerformers(candidates)
+}
+
+internal fun parseKmrSongFields(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl,
+    onIdentity: (hash: String, albumId: Long, mixsongId: Long, performers: List<KugouPerformer>) -> Unit = { _, _, _, _ -> }
+): KugouNewSong? {
+    val transParam = fields["trans_param"].asStringMap()
+    val audioInfo = fields["audio_info"].asStringMap()
+    val audioTransParam = audioInfo?.get("trans_param").asStringMap()
+    val albumInfo = fields["album_info"].asStringMap()
+    val hash = fields.fieldText("hash")
+        .ifEmpty { fields.fieldText("FileHash") }
+        .ifEmpty { fields.fieldText("Hash128") }
+        .ifEmpty { transParam?.fieldText("ogg_128_hash").orEmpty() }
+        .ifEmpty { audioInfo?.fieldText("hash").orEmpty() }
+    if (hash.isEmpty()) return null
+
+    val singerInfoList = fields["singerinfo"].asObjectList()
+    val authorsList = fields["authors"].asObjectList()
+    val performers = parsePerformerFields(
+        singerInfoList,
+        nameKeys = listOf("name"),
+        idKeys = listOf("id")
+    ).ifEmpty {
+        parsePerformerFields(
+            authorsList,
+            nameKeys = listOf("author_name", "name"),
+            idKeys = listOf("author_id", "id")
+        )
+    }
+
+    var author = fields.fieldText("author_name")
+        .ifEmpty { fields.fieldText("SingerName") }
+        .ifEmpty { fields.fieldText("artist_name") }
+        .ifEmpty { fields.fieldText("singername") }
+    if (author.isEmpty() && authorsList.isNotEmpty()) {
+        author = authorsList.mapNotNull { a ->
+            a.fieldText("author_name").takeIf { it.isNotEmpty() }
+        }.joinToString("、")
+    }
+    if (author.isEmpty() && singerInfoList.isNotEmpty()) {
+        author = singerInfoList.mapNotNull { a ->
+            a.fieldText("name").takeIf { it.isNotEmpty() }
+        }.joinToString("、")
+    }
+
+    // /artist/audios 条目歌名只在 audio_name（含后缀），/top/card/youth 走 ori_audio_name
+    val baseName = fields.fieldText("songname")
+        .ifEmpty { fields.fieldText("SongName") }
+        .ifEmpty { fields.fieldText("name") }
+        .ifEmpty { fields.fieldText("filename") }
+        .ifEmpty { fields.fieldText("audio_name") }
+        .ifEmpty { fields.fieldText("ori_song_name") }
+        .ifEmpty { fields.fieldText("OriSongName") }
+    val oriAudioName = fields.fieldText("ori_audio_name")
+    val rawName = if (baseName.isNotEmpty()) {
+        baseName
+    } else if (oriAudioName.isNotEmpty()) {
+        val suffix = fields.fieldText("suffix_audio_name").trim()
+        when {
+            suffix.isEmpty() -> oriAudioName
+            suffix.startsWith("(") || suffix.startsWith("（") -> "$oriAudioName$suffix"
+            else -> "$oriAudioName $suffix"
+        }
+    } else {
+        ""
+    }
+    var title = rawName
+    val sepIdx = rawName.indexOf(" - ")
+    if (sepIdx > 0) {
+        val rest = rawName.substring(sepIdx + 3)
+        if (rest.isNotBlank()) {
+            if (author.isEmpty()) author = rawName.substring(0, sepIdx)
+            title = rest
+        }
+    }
+
+    val albumName = fields.fieldText("album_name")
+        .ifEmpty { fields.fieldText("albumname") }
+        .ifEmpty { albumInfo?.fieldText("album_name").orEmpty() }
+        .takeIf { it.isNotEmpty() }
+
+    val rawDuration = sequenceOf(
+        fields.fieldLong("timelength", -1L),
+        fields.fieldLong("duration", -1L),
+        fields.fieldLong("time_length", -1L),
+        audioInfo?.fieldLong("timelength", -1L) ?: -1L,
+        audioInfo?.fieldLong("timelength_128", -1L) ?: -1L,
+        audioInfo?.fieldLong("duration", -1L) ?: -1L,
+        audioInfo?.fieldLong("duration_128", -1L) ?: -1L
+    ).firstOrNull { it >= 0 } ?: 0L
+    val durationMs = if (rawDuration > 10000) rawDuration else rawDuration * 1000
+
+    // 官方专辑封面优先于 pic/cover_pic：/top/card/youth 的 pic 常为随机竖屏配图
+    val artwork = fields.fieldText("album_sizable_cover")
+        .ifEmpty { fields.fieldText("sizable_cover") }
+        .ifEmpty { fields.fieldText("Image") }
+        .ifEmpty { fields.fieldText("ImgUrl") }
+        .ifEmpty { fields.fieldText("img") }
+        .ifEmpty { albumInfo?.fieldText("sizable_cover").orEmpty() }
+        .ifEmpty { audioTransParam?.fieldText("union_cover").orEmpty() }
+        .ifEmpty { transParam?.fieldText("union_cover").orEmpty() }
+        .ifEmpty { albumInfo?.fieldText("cover").orEmpty() }
+        .ifEmpty { fields.fieldText("pic") }
+        .ifEmpty { fields.fieldText("cover") }
+
+    val kmrMixsongId = sequenceOf(
+        fields.fieldLong("mixsongid", 0L),
+        fields.fieldLong("MixSongID", 0L),
+        fields.fieldLong("album_audio_id", 0L)
+    ).firstOrNull { it > 0 } ?: 0L
+    val kmrAlbumId = albumInfo?.fieldLong("album_id", 0L)
+        ?.takeIf { it > 0 } ?: fields.fieldLong("album_id", 0L)
+    onIdentity(hash, kmrAlbumId, kmrMixsongId, performers)
+
+    val recommendInfo = fields.fieldText("rec_info")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .takeIf { it.isNotEmpty() }
+    val recommenderName = fields.fieldText("nick_name")
+        .trim()
+        .takeIf { it.isNotEmpty() }
+    val recommenderAvatarUrl = artworkResolver(fields.fieldText("user_pic").trim())
+    val channelName = fields.fieldText("channel_name")
+        .trim()
+        .takeIf { it.isNotEmpty() }
+
+    return KugouNewSong(
+        hash = hash,
+        name = title,
+        author = author,
+        albumName = albumName,
+        durationMs = durationMs,
+        artworkUrl = artworkResolver(artwork),
+        recommendInfo = recommendInfo,
+        recommenderName = recommenderName,
+        recommenderAvatarUrl = recommenderAvatarUrl,
+        channelName = channelName
+    )
+}
+
 /**
  * 酷狗图片 URL（封面 / 头像 / 艺人图）归一化，对齐 Dart `_resolveArtworkUri`：
  *  - 空串视为无图（返回 null）
@@ -420,7 +607,11 @@ data class KugouNewSong(
     @SerializedName("author") val author: String,
     @SerializedName("albumName") val albumName: String?,
     @SerializedName("durationMs") val durationMs: Long,
-    @SerializedName("artworkUrl") val artworkUrl: String?
+    @SerializedName("artworkUrl") val artworkUrl: String?,
+    @SerializedName("recommendInfo") val recommendInfo: String? = null,
+    @SerializedName("recommenderName") val recommenderName: String? = null,
+    @SerializedName("recommenderAvatarUrl") val recommenderAvatarUrl: String? = null,
+    @SerializedName("channelName") val channelName: String? = null
 )
 
 /** 艺人歌曲单页：rawCount 是原始数组长度，包含被解析过滤的条目和重复歌曲。 */
@@ -1471,113 +1662,18 @@ object KugouRepository {
     }
 
     /**
-     * 通用歌曲条目解析（/recommend/songs、/personal/fm、/artist/audios 共用），
+     * 通用歌曲条目解析（/recommend/songs、/personal/fm、/artist/audios、/top/card/youth 共用），
      * 字段族与 /top/song 同构但键位不定，全部做宽容回退；duration > 10000 视为毫秒。
      */
-    private fun parseKmrSongItem(s: JSONObject): KugouNewSong? {
-        val transParam = s.optJSONObject("trans_param")
-        val audioInfo = s.optJSONObject("audio_info")
-        val albumInfo = s.optJSONObject("album_info")
-        val hash = s.optString("hash").ifEmpty { s.optString("FileHash") }
-            .ifEmpty { s.optString("Hash128") }
-            .ifEmpty { transParam?.optString("ogg_128_hash") ?: "" }
-            .ifEmpty { audioInfo?.optString("hash") ?: "" }
-        if (hash.isEmpty()) return null
-
-        val performers = parsePerformerArray(
-            s.optJSONArray("singerinfo"),
-            nameKeys = listOf("name"),
-            idKeys = listOf("id")
-        ).ifEmpty {
-            parsePerformerArray(
-                s.optJSONArray("authors"),
-                nameKeys = listOf("author_name", "name"),
-                idKeys = listOf("author_id", "id")
-            )
+    private fun parseKmrSongItem(s: JSONObject): KugouNewSong? =
+        parseKmrSongFields(
+            fields = s.toFieldMap(),
+            artworkResolver = ::resolveArtworkUrl
+        ) { hash, albumId, mixsongId, performers ->
+            // KMR 字段族（FM/每日推荐/艺人歌曲/卡片推荐等）顺带登记身份：播放历史上报要按 hash 查 mixsongid
+            registerSongIdentity(hash, albumId, mixsongId, 0)
+            registerPerformers(hash, performers)
         }
-        var author = s.optString("author_name")
-            .ifEmpty { s.optString("SingerName") }
-            .ifEmpty { s.optString("artist_name") }
-            .ifEmpty { s.optString("singername") }
-        if (author.isEmpty()) {
-            val authors = s.optJSONArray("authors")
-            if (authors != null && authors.length() > 0) {
-                author = (0 until authors.length()).mapNotNull { j ->
-                    authors.optJSONObject(j)?.optString("author_name")?.takeIf { it.isNotEmpty() }
-                }.joinToString("、")
-            }
-        }
-        if (author.isEmpty()) {
-            val si = s.optJSONArray("singerinfo")
-            if (si != null && si.length() > 0) {
-                author = (0 until si.length()).mapNotNull { j ->
-                    si.optJSONObject(j)?.optString("name")?.takeIf { it.isNotEmpty() }
-                }.joinToString("、")
-            }
-        }
-
-        // /artist/audios 条目歌名只在 audio_name（含后缀），其余接口走 songname/filename 族
-        val rawName = s.optString("songname").ifEmpty { s.optString("SongName") }
-            .ifEmpty { s.optString("name") }
-            .ifEmpty { s.optString("filename") }
-            .ifEmpty { s.optString("audio_name") }
-            .ifEmpty { s.optString("ori_song_name") }
-            .ifEmpty { s.optString("OriSongName") }
-        var title = rawName
-        val sepIdx = rawName.indexOf(" - ")
-        if (sepIdx > 0) {
-            val rest = rawName.substring(sepIdx + 3)
-            if (rest.isNotBlank()) {
-                if (author.isEmpty()) author = rawName.substring(0, sepIdx)
-                title = rest
-            }
-        }
-
-        val albumName = s.optString("album_name").ifEmpty { s.optString("albumname") }
-            .ifEmpty { albumInfo?.optString("album_name") ?: "" }
-            .takeIf { it.isNotEmpty() }
-
-        val rawDuration = sequenceOf(
-            s.optLong("timelength", -1L),
-            s.optLong("duration", -1L),
-            s.optLong("time_length", -1L),
-            audioInfo?.optLong("duration", -1L) ?: -1L,
-            audioInfo?.optLong("duration_128", -1L) ?: -1L
-        ).firstOrNull { it >= 0 } ?: 0L
-        val durationMs = if (rawDuration > 10000) rawDuration else rawDuration * 1000
-
-        val artwork = s.optString("album_sizable_cover")
-            .ifEmpty { s.optString("sizable_cover") }
-            .ifEmpty { s.optString("Image") }
-            .ifEmpty { s.optString("ImgUrl") }
-            .ifEmpty { s.optString("img") }
-            .ifEmpty { s.optString("pic") }
-            .ifEmpty { s.optString("cover") }
-            .ifEmpty { transParam?.optString("union_cover") ?: "" }
-            .ifEmpty { albumInfo?.optString("sizable_cover") ?: "" }
-            .ifEmpty { albumInfo?.optString("cover") ?: "" }
-
-        // KMR 字段族（FM/每日推荐/艺人歌曲等）顺带登记身份：播放历史上报要按 hash 查
-        // mixsongid（album_audio_id），此前只有搜索/歌单路径登记，FM 歌曲查不到
-        val kmrMixsongId = sequenceOf(
-            s.optLong("mixsongid", 0L),
-            s.optLong("MixSongID", 0L),
-            s.optLong("album_audio_id", 0L)
-        ).firstOrNull { it > 0 } ?: 0L
-        val kmrAlbumId = albumInfo?.optLong("album_id", 0L)
-            ?.takeIf { it > 0 } ?: s.optLong("album_id", 0L)
-        registerSongIdentity(hash, kmrAlbumId, kmrMixsongId, 0)
-        registerPerformers(hash, performers)
-
-        return KugouNewSong(
-            hash = hash,
-            name = title,
-            author = author,
-            albumName = albumName,
-            durationMs = durationMs,
-            artworkUrl = resolveArtworkUrl(artwork)
-        )
-    }
 
     /** 通用歌曲列表解析：提取数组 → 逐项宽容解析，过滤无 hash 条目。 */
     private fun parseSongDetailList(json: JSONObject): List<KugouNewSong> {
@@ -1586,6 +1682,40 @@ object KugouRepository {
             runCatching { parseKmrSongItem(arr.getJSONObject(i)) }.getOrNull()
         }
     }
+
+    const val CARD_ID_VIP_RECOMMEND = 3006
+    const val CARD_ID_NICHE_TREASURE = 3004
+
+    /** 解析 `/top/card/youth` 响应列表（与 [parseSongDetailList] 同构，暴露给单测复用）。 */
+    internal fun parseTopCardYouthSongs(json: JSONObject): List<KugouNewSong> =
+        parseSongDetailList(json)
+
+    /**
+     * 概念版卡片推荐（/top/card/youth）：支持 VIP 专属推荐（3006）、小众宝藏佳作（3004）等。
+     */
+    suspend fun getTopCardYouthSongs(
+        cardId: Int,
+        pageSize: Int = 30,
+        tagId: String? = null
+    ): Result<List<KugouNewSong>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getTopCardYouth(cardId, pageSize, tagId).fold(
+                onSuccess = { json -> Result.success(parseTopCardYouthSongs(json)) },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getTopCardYouthSongs(cardId=$cardId) exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** VIP 专属推荐（Discovery 顶部「VIP专属推荐」；`/top/card/youth?card_id=3006`）。 */
+    suspend fun getVipRecommendSongs(pageSize: Int = 30): Result<List<KugouNewSong>> =
+        getTopCardYouthSongs(CARD_ID_VIP_RECOMMEND, pageSize)
+
+    /** 小众宝藏佳作（Discovery「小众宝藏佳作」Music Story；`/top/card/youth?card_id=3004`）。 */
+    suspend fun getNicheTreasureSongs(pageSize: Int = 30): Result<List<KugouNewSong>> =
+        getTopCardYouthSongs(CARD_ID_NICHE_TREASURE, pageSize)
 
     /**
      * 每日推荐歌曲（Discovery「每日推荐」；对齐 Dart getRecommendDaily）。

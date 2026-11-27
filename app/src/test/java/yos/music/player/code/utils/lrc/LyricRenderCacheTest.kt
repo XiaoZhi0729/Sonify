@@ -1,5 +1,6 @@
 package yos.music.player.code.utils.lrc
 
+import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeAlignment
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeLine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -74,5 +75,21 @@ class LyricRenderCacheTest {
         val lines = buildSyncedLyrics(entries, emptyList()).lines
 
         assertTrue(lines.all { it.end > it.start })
+    }
+
+    @Test
+    fun duetAlignmentCanBeDisabledToForceAllLinesLeft() {
+        val entries = factory.formatLrcEntries("[00:01.000]A\n[00:03.000]B")
+        val splitLines = buildSyncedLyrics(entries, listOf(false, true), duetAlignment = true).lines
+        val leftLines = buildSyncedLyrics(entries, listOf(false, true), duetAlignment = false).lines
+
+        assertEquals(
+            listOf(KaraokeAlignment.Start, KaraokeAlignment.End),
+            splitLines.map { (it as KaraokeLine.MainKaraokeLine).alignment },
+        )
+        assertEquals(
+            listOf(KaraokeAlignment.Start, KaraokeAlignment.Start),
+            leftLines.map { (it as KaraokeLine.MainKaraokeLine).alignment },
+        )
     }
 }

@@ -279,6 +279,7 @@ import yos.music.player.ui.widgets.effects.YosFloatingLight
 import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveBlurConfig
 import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveBlurMath
 import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveVideoBlurBackground
+import yos.music.player.ui.widgets.effects.progressiveblur.warmUpProgressiveBlurCover
 import yos.music.player.ui.widgets.basic.YosWrapper
 import java.io.File
 import kotlin.math.abs
@@ -2068,7 +2069,11 @@ class MainActivity : BaseActivity() {
                                                 val needFloatingLight =
                                                     !useMesh && (bgEffect || !SettingsLibrary.NowplayingStaticFullScreenAlbum)
                                                 coroutineScope {
-                                                    launch { warmUpPlaybackCover(context, uri) }
+                                                    if (SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+                                                        launch { warmUpProgressiveBlurCover(context, uri) }
+                                                    } else {
+                                                        launch { warmUpPlaybackCover(context, uri) }
+                                                    }
                                                     if (needFloatingLight) {
                                                         launch { warmUpFloatingLightArtwork(context, uri) }
                                                     }
@@ -3608,6 +3613,7 @@ private fun ProgressivePlayerShellBackground(
         renderingActive = !showMiniPlayer,
         coverOriginXProvider = coverOriginXProvider,
         pageBlurProgressProvider = pageBlurProgressProvider,
+        artworkTransition = trackArtworkTransition,
         modifier = Modifier.fillMaxSize(),
     )
 }

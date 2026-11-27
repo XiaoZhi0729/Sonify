@@ -20,6 +20,7 @@ class LyricRenderKeyTest {
         fontWeight: String = "ExtraBold",
         lineBalance: Boolean = false,
         customFontPath: String = "",
+        duetAlignment: Boolean = true,
     ) = lyricRenderKey(
         mediaIdKey = mediaIdKey,
         layoutWidthDp = width,
@@ -30,6 +31,7 @@ class LyricRenderKeyTest {
         fontWeightSetting = fontWeight,
         lineBalance = lineBalance,
         customFontPath = customFontPath,
+        duetAlignment = duetAlignment,
     )
 
     @Test
@@ -69,6 +71,11 @@ class LyricRenderKeyTest {
     fun lineBalanceIsPartOfKey() {
         // 行平衡开关改变断行策略 → 必须重排
         assertNotEquals(key(lineBalance = false), key(lineBalance = true))
+    }
+
+    @Test
+    fun duetAlignmentIsPartOfKey() {
+        assertNotEquals(key(duetAlignment = true), key(duetAlignment = false))
     }
 
     @Test

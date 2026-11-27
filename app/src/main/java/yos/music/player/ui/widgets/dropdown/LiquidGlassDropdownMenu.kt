@@ -5,6 +5,7 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import android.os.Build
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,8 +80,14 @@ import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
+import yos.music.player.ui.widgets.liquid.TitleBarFrostedBlurDp
+import yos.music.player.ui.widgets.liquid.TitleBarFrostedBorderWidth
 import yos.music.player.ui.widgets.liquid.classyabaBlackRim
 import yos.music.player.ui.widgets.liquid.classyabaWhiteEdge
+import yos.music.player.ui.widgets.liquid.frostedBlurScale
+import yos.music.player.ui.widgets.liquid.frostedTopBarBorderColor
+import yos.music.player.ui.widgets.liquid.frostedTopBarIconTint
+import yos.music.player.ui.widgets.liquid.frostedTopBarSurfaceColor
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 
 /** 外层为阴影预留的内缩；外部按"占位槽真实位置"摆放本控件时需要减掉它 */
@@ -174,24 +182,23 @@ fun LiquidGlassDropdownMenu(
     // 会逐帧重组并重算 outline，代价远大于收益。
     val panelShape = remember { squircle(PanelCornerRadius, smoothBand = true) }
 
-    // 「工具栏液态玻璃」关闭时收起态是纯图标（无圆底/边光/投影），与 TitleBar 的扁平返回键同形；
-    // 开启时是那颗 42dp 玻璃钮，材质与底栏 / 迷你条收起态同源（固定色 + 提取色 tint）。
+    // 「工具栏液态玻璃」关闭时收起态与展开态均为去折射的半透明磨砂面（与顶栏 14dp × frostedBlurScale 同糊），
+    // 并带 0.75dp 极细描边；开启时是那颗 42dp 玻璃钮，材质与底栏 / 迷你条收起态同源（固定色 + 提取色 tint）。
     val glassOn = SettingsLibrary.BarBlurEffect
+    val frostedScale = frostedBlurScale
     // 玻璃表面：与 LiquidTopBarButton / 底栏胶囊同值（白或 #1C1C1E，alpha 0.5）。
     // 展开态面板与收起态那颗钮**同材质** —— 同一个表面色、同一个 4dp 模糊、同一层 tint。
     // 原先面板用更实的 #FAFAFA 0.76 / #242424 0.84 保证阅读面不透明，
     // 统一后靠 tint 与黑环描边维持层次（用户要求两态观感一致）。
     val glassSurfaceColor = if (isLightTheme) Color(0xFFFFFFFF).copy(0.5f)
         else Color(0xFF1C1C1E).copy(0.5f)
+    val frostedSurfaceColor = frostedTopBarSurfaceColor(isLightTheme)
+    val frostedBorderColor = frostedTopBarBorderColor(isLightTheme)
     val accentTint = LocalTitleBarAccentTint.current
-    val collapsedContainerColor = when {
-        glassOn -> glassSurfaceColor
-        else -> Color.Transparent
-    }
     val triggerIconTint = when {
         glassOn && isLightTheme -> Color.Black.copy(alpha = 0.85f)
         glassOn -> Color.White.copy(alpha = 0.85f)
-        else -> contentColor ?: MaterialTheme.colorScheme.primary
+        else -> frostedTopBarIconTint(isLightTheme)
         }
     // 锚点迁移进度：比尺寸更快到 1，先"移向面板中心"再放大
     val originProgress = remember { Animatable(0f) }
@@ -320,8 +327,8 @@ fun LiquidGlassDropdownMenu(
     } else {
         ButtonDiameter
     }
-    // 材质可见度：滚动值与展开进度取大（f*5 → 0.2 饱和，出现早、消失晚）
-    val materialVisible = max(materialAlpha, (f * 5f).coerceIn(0f, 1f))
+    // 材质可见度：液态玻璃开启时滚动值与展开进度取大；关闭液态玻璃时恒为 1f（常显磨砂圆钮）
+    val materialVisible = if (glassOn) max(materialAlpha, (f * 5f).coerceIn(0f, 1f)) else 1f
     // 内容模糊：清晰(0)→模糊(中途)→清晰(1)
     val contentBlur = 6.dp * (1f - abs(2f * f - 1f)).coerceIn(0f, 1f)
     val width = lerp(ButtonDiameter, PanelWidth, f)
@@ -378,7 +385,8 @@ fun LiquidGlassDropdownMenu(
                 .drawBehind {
                     // 与顶栏液态玻璃按钮同一套阴影：环形（外圈减内圈）+ 模糊/外扩随材质衰减。用
                     // materialVisible 而非 materialAlpha：展开后即使顶栏材质透明也要有阴影。
-                    val spread = materialVisible
+                    // 关闭液态玻璃时收起态圆钮不画厚重投影，展开成菜单面板时再随 f 平滑浮出。
+                    val spread = if (glassOn) materialVisible else f.coerceIn(0f, 1f)
                     if (spread > 0.01f) {
                         // 收起态对齐顶栏返回键（LiquidTopBarButton: 10dp 模糊 / #12 / #20），
                         // 随展开插值回面板档位（12dp / #1A / #2E）。
@@ -426,61 +434,78 @@ fun LiquidGlassDropdownMenu(
                 }
                 .clip(panelShape)
         ) {
-            // 与顶栏液态玻璃按钮 / 底栏胶囊同一套材质，**收起态与展开态完全一致**：
-            // 固定 vibrancy + blur 4dp + lens(8,24)，不随展开进度变化。
-            // 因为参数恒定，effects 引用不再随帧变化 → 节点不会逐帧重建 RenderEffect，
-            // 原先"量化成 8 档"的 blurStep 整条链随之删除。
-            val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
-                remember(chromeLens) {
-                    {
-                        vibrancy()
-                        blur(PanelBlur.dp.toPx() * glassBlurScale)
-                        if (chromeLens && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            lens(8.dp.toPx(), 24.dp.toPx())
-                        }
-                    }
-                }
-            // 玻璃单独一层：只有它跟材质 alpha（layerBlock 作用于整个节点，挂容器上会连图标一起透明）
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .graphicsLayer { alpha = materialVisible }
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { panelShape },
-                        effects = glassEffects,
-                        // 描边已统一收口到下方 ios27GlassEdge，此处传 null 避免额外开离屏层
-                        highlight = classyabaBlackRim,
-                        shadow = null,
-                        onDrawBackdrop = DefaultOnDrawBackdrop,
-                        onDrawSurface = {
-                            // 收起态与展开态同材质：面底恒为那颗钮的固定表面色，
-                            // 不再随 f 过渡到更实的面板色。
-                            // 关闭「工具栏液态玻璃」时收起态是纯图标（collapsedContainerColor
-                            // 为 Transparent），但展开后的面板仍需要实底保证菜单可读 ——
-                            // 用带 f 的下限兜住：f=0 全透明，f→1 回到玻璃表面色。
-                            drawRect(
-                                if (glassOn) glassSurfaceColor
-                                else glassSurfaceColor.copy(
-                                    alpha = glassSurfaceColor.alpha * f.coerceIn(0f, 1f)
-                                )
-                            )
-                            // 封面提取色 tint：与底栏 containerSurfaceDraw 同一层序
-                            // （表面色之上、描边高光之下），展开后依然保留 —— 面板与
-                            // 收起态要观感一致。
-                            if (accentTint != null && accentTint.alpha > 0.005f) {
-                                // 关玻璃时收起态是纯图标，tint 同样要随 f 淡入（同上面底色）
-                                val tintAlpha = if (glassOn) accentTint.alpha
-                                else accentTint.alpha * f.coerceIn(0f, 1f)
-                                if (tintAlpha > 0.005f) {
-                                    drawRect(accentTint.copy(alpha = tintAlpha))
+            key(glassOn) {
+                if (glassOn) {
+                    // 与顶栏液态玻璃按钮 / 底栏胶囊同一套材质，**收起态与展开态完全一致**：
+                    // 固定 vibrancy + blur 4dp + lens(8,24)，不随展开进度变化。
+                    // 因为参数恒定，effects 引用不再随帧变化 → 节点不会逐帧重建 RenderEffect，
+                    // 原先"量化成 8 档"的 blurStep 整条链随之删除。
+                    val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
+                        remember(chromeLens) {
+                            {
+                                vibrancy()
+                                blur(PanelBlur.dp.toPx() * glassBlurScale)
+                                if (chromeLens && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    lens(8.dp.toPx(), 24.dp.toPx())
                                 }
                             }
                         }
+                    // 玻璃单独一层：只有它跟材质 alpha（layerBlock 作用于整个节点，挂容器上会连图标一起透明）
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer { alpha = materialVisible }
+                            .drawBackdrop(
+                                backdrop = backdrop,
+                                shape = { panelShape },
+                                effects = glassEffects,
+                                // 描边已统一收口到下方 ios27GlassEdge，此处传 null 避免额外开离屏层
+                                highlight = classyabaBlackRim,
+                                shadow = null,
+                                onDrawBackdrop = DefaultOnDrawBackdrop,
+                                onDrawSurface = {
+                                    drawRect(glassSurfaceColor)
+                                    // 封面提取色 tint：与底栏 containerSurfaceDraw 同一层序
+                                    // （表面色之上、描边高光之下），展开后依然保留 —— 面板与
+                                    // 收起态要观感一致。
+                                    if (accentTint != null && accentTint.alpha > 0.005f) {
+                                        drawRect(accentTint)
+                                    }
+                                }
+                            )
+                            // 描边：浅色与深色统一走 iOS 27 立体描边，挂在玻璃层上跟随 materialVisible 淡入淡出。
+                            .classyabaWhiteEdge(panelShape)
                     )
-                    // 描边：浅色与深色统一走 iOS 27 立体描边，挂在玻璃层上跟随 materialVisible 淡入淡出。
-                    .classyabaWhiteEdge(panelShape)
-            )
+                } else {
+                    // 关闭液态玻璃：去折射/去 vibrancy/去立体光圈，与顶栏/TitleBarIcon 同款
+                    // 「14dp × frostedBlurScale 单次模糊 + 半透明磨砂表面 + 0.75dp 极细描边」。
+                    val frostedEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
+                        remember(frostedScale) {
+                            {
+                                blur(TitleBarFrostedBlurDp.toPx() * frostedScale)
+                            }
+                        }
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .drawBackdrop(
+                                backdrop = backdrop,
+                                shape = { panelShape },
+                                effects = frostedEffects,
+                                highlight = null,
+                                shadow = null,
+                                onDrawBackdrop = DefaultOnDrawBackdrop,
+                                onDrawSurface = {
+                                    drawRect(frostedSurfaceColor)
+                                    if (accentTint != null && accentTint.alpha > 0.005f) {
+                                        drawRect(accentTint)
+                                    }
+                                }
+                            )
+                            .border(TitleBarFrostedBorderWidth, frostedBorderColor, panelShape)
+                    )
+                }
+            }
 
             // 按压高光：必须在玻璃壳之上、菜单内容之下 —— 前者否则被材质盖住，
             // 后者否则会盖掉菜单项的跟手高亮底色（Plus 加色会把底色冲白）。
@@ -533,7 +558,7 @@ fun LiquidGlassDropdownMenu(
                             // 同 LiquidTopBarButton 的 idleIconTint，按 materialVisible 交叉淡化。
                             // 绘制期直读，不引进新状态、不触发重组。
                             val idleTint = idleIconTint
-                            if (idleTint != null) {
+                            if (glassOn && idleTint != null) {
                                 val presence = materialVisible.coerceIn(0f, 1f)
                                 colorFilter = ColorFilter.tint(
                                     androidx.compose.ui.graphics.lerp(

@@ -169,6 +169,7 @@ import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveCurveType
 import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveOrientationMode
 import yos.music.player.ui.widgets.effects.progressiveblur.ProgressiveVideoBlurBackground
 import yos.music.player.ui.widgets.effects.progressiveblur.ResolvedMirrorSplits
+import yos.music.player.ui.widgets.effects.progressiveblur.warmUpProgressiveBlurCover
 import yos.music.player.ui.widgets.effects.rememberTrackArtworkTransition
 import yos.music.player.ui.widgets.effects.warmUpFloatingLightArtwork
 import yos.music.player.ui.widgets.effects.warmUpMeshArtwork
@@ -304,6 +305,7 @@ fun ProgressiveBlurDemoPage(navController: NavController) {
             if (uri != null) {
                 coroutineScope {
                     launch { warmUpPlaybackCover(context, uri) }
+                    launch { warmUpProgressiveBlurCover(context, uri) }
                     launch { warmUpFloatingLightArtwork(context, uri) }
                     launch { warmUpMeshArtwork(context, uri) }
                 }
@@ -488,6 +490,7 @@ fun ProgressiveBlurDemoPage(navController: NavController) {
                             nowPage = { currentPage },
                             showMiniPlayer = false,
                             enableMesh = bgMode == DemoBackgroundMode.MESH,
+                            crossfade = demoTrackTransition,
                             animateAlways = true,
                             overrideBackgroundMode = if (bgMode == DemoBackgroundMode.MESH) 2 else 1,
                         )
@@ -510,6 +513,7 @@ fun ProgressiveBlurDemoPage(navController: NavController) {
                             sourceWidth = width
                             sourceHeight = height
                         },
+                        artworkTransition = demoTrackTransition,
                         modifier = Modifier.fillMaxSize(),
                     )
 

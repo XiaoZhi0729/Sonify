@@ -15,11 +15,13 @@ import yos.music.player.ui.pages.discovery.Discovery
 import yos.music.player.ui.pages.discovery.EverydayRecommendDetail
 import yos.music.player.ui.pages.discovery.NewAlbumsDetail
 import yos.music.player.ui.pages.discovery.NewSongsDetail
+import yos.music.player.ui.pages.discovery.NicheTreasureDetail
 import yos.music.player.ui.pages.discovery.PersonalFmDetail
 import yos.music.player.ui.pages.discovery.RankDetail
 import yos.music.player.ui.pages.discovery.RankListDetail
 import yos.music.player.ui.pages.discovery.RecentPlayedDetail
 import yos.music.player.ui.pages.discovery.RecommendPlaylistsDetail
+import yos.music.player.ui.pages.discovery.VipRecommendDetail
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 
@@ -60,6 +62,8 @@ fun HomeNavHost(
             }
             composable(UI.RecentPlayedDetail) { RecentPlayedDetail(navController) }
             composable(UI.EverydayRecommendDetail) { EverydayRecommendDetail(navController) }
+            composable(UI.VipRecommendDetail) { VipRecommendDetail(navController) }
+            composable(UI.NicheTreasureDetail) { NicheTreasureDetail(navController) }
             composable(UI.PersonalFmDetail) { PersonalFmDetail(navController) }
             artistGraph(navController, this@SharedTransitionLayout)
             // 本地专辑页：播放页「前往该歌曲专辑」会往**当前所在房子**push，本地歌从

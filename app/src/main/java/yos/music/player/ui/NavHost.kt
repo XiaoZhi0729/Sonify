@@ -150,6 +150,12 @@ interface UI {
         // 每日推荐（主页顶部入口卡；登录可见，未登录走通用推荐）
         const val EverydayRecommendDetail = "EverydayRecommendDetail"
 
+        // VIP 专属推荐（主页顶部大卡；/top/card/youth?card_id=3006）
+        const val VipRecommendDetail = "VipRecommendDetail"
+
+        // 小众宝藏佳作（主页 Music Story；/top/card/youth?card_id=3004）
+        const val NicheTreasureDetail = "NicheTreasureDetail"
+
         // 私人FM（主页顶部入口卡；需登录）
         const val PersonalFmDetail = "PersonalFmDetail"
 
@@ -242,10 +248,12 @@ interface UI {
             const val OnlineQualitySetting = "OnlineQualitySetting"
             const val About = "About"
             const val Acknowledgements = "Acknowledgements"
+            const val DonateSupport = "DonateSupport"
             const val MediaCodec = "MediaCodec"
 
             const val LyricSetting = "LyricSetting"
             const val UserInterfaceSetting = "UserInterfaceSetting"
+            const val HomeLayoutSetting = "HomeLayoutSetting"
             const val LibraryLayoutSetting = "LibraryLayoutSetting"
             const val BottomBarSetting = "BottomBarSetting"
             // 播放页专属设置的独立二级页（音量条/评论入口/高潮片段/全屏封面/背景）

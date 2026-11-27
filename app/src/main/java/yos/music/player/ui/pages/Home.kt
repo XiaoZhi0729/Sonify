@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -151,9 +152,14 @@ fun RecommendCard(imageViewModel: ImageViewModel) {
     }
 }
 
+internal val RecommendCardWidth = 220.dp
+internal val RecommendCardCoverHeight = 220.dp
+internal val RecommendCardHeight = 296.dp
+internal val RecommendCardCornerRadius = 12.dp
+
 @Composable
 fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit) =
-    Column(Modifier.width(268.dp)) {
+    Column(Modifier.width(RecommendCardWidth)) {
 
         val context = LocalContext.current
         val density = LocalDensity.current
@@ -164,12 +170,30 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
         var maskImage by remember(maskKey) { mutableStateOf(initialMask) }
         val needsFadeIn = remember(maskKey) { initialMask == null }
         val maskAlpha = remember(maskKey) { Animatable(if (initialMask != null) 1f else 0f) }
+        var retryTick by remember(maskKey) { mutableIntStateOf(0) }
+        var maskLoadFailed by remember(maskKey) { mutableStateOf(false) }
+        var coverLoaded by remember(maskKey) { mutableStateOf(false) }
 
-        if (maskImage == null && music.thumb != null) {
-            LaunchedEffect(maskKey) {
-                val resolved = RecommendMaskCache.ensure(context, music.thumb)
-                if (resolved != null) {
-                    maskImage = resolved
+        // 不能用 `if (maskImage == null)` 包住 LaunchedEffect：
+        // `maskImage = resolved` 触发重组时会立即移除该 effect，导致紧随其后的
+        // `maskAlpha.animateTo(1f)` 被取消在 0f，卡片底部一直显示纯黑。
+        // `needsFadeIn` 在同一 maskKey 生命周期内恒定，可安全承载异步取色与渐入动画。
+        if (needsFadeIn && maskKey != null) {
+            LaunchedEffect(maskKey, retryTick) {
+                if (maskImage == null) {
+                    var resolved = RecommendMaskCache.ensure(context, music.thumb)
+                    if (resolved == null && coverLoaded) {
+                        resolved = RecommendMaskCache.ensure(context, music.thumb)
+                    }
+                    if (resolved != null) {
+                        maskLoadFailed = false
+                        maskImage = resolved
+                    } else {
+                        maskLoadFailed = true
+                        return@LaunchedEffect
+                    }
+                }
+                if (maskAlpha.value < 1f) {
                     maskAlpha.animateTo(1f, tween(180))
                 }
             }
@@ -179,13 +203,13 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
             Text(text = subTitle, fontSize = 15.sp, lineHeight = 15.sp, modifier = Modifier.alpha(0.6f))
         }
 
-        val shape = remember { YosRoundedCornerShape(14.dp) }
+        val shape = remember { YosRoundedCornerShape(RecommendCardCornerRadius) }
 
         Column(
             Modifier
                 .fillMaxWidth()
                 .padding(top = if (subTitle.isNotEmpty()) 14.dp else 0.dp)
-                .height(354.dp)
+                .height(RecommendCardHeight)
                 .graphicsLayer {
                     clip = true
                     this.shape = shape
@@ -211,10 +235,10 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                 model = remember(music.thumb, context) {
                     ImageRequest.Builder(context)
                         .data(data = music.thumb)
-                        .size(540)
+                        .size(440)
                         .precision(Precision.INEXACT)
                         .apply {
-                            music.thumb?.let { memoryCacheKey("recent-card-cover:$it") }
+                            music.thumb?.let { memoryCacheKey("recommend-card-cover:$it") }
                         }
                         .crossfade(true)
                         .error(R.drawable.placeholder_music_default_artwork)
@@ -224,9 +248,15 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                 },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onSuccess = {
+                    coverLoaded = true
+                    if (maskImage == null && maskLoadFailed && retryTick < 1) {
+                        retryTick++
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(268.dp)
+                    .height(RecommendCardCoverHeight)
             )
 
             // 底部取色遮罩：有缓存首帧直出彩色位图；无缓存仅首次异步渐入
@@ -253,22 +283,22 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                 Column(
                     Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = music.title ?: defaultTitle,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        lineHeight = 16.sp,
+                        fontSize = 15.sp,
+                        lineHeight = 15.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = music.artistsName ?: defaultArtistsName,
-                        fontSize = 13.sp,
-                        lineHeight = 13.sp,
+                        fontSize = 12.5.sp,
+                        lineHeight = 12.5.sp,
                         modifier = Modifier
                             .alpha(0.6f)
                             .padding(top = 2.dp),
@@ -278,8 +308,8 @@ fun RecommendCardItem(subTitle: String, music: YosMediaItem, onClick: () -> Unit
                     )
                     Text(
                         text = music.album ?: defaultAlbum,
-                        fontSize = 13.sp,
-                        lineHeight = 13.sp,
+                        fontSize = 12.5.sp,
+                        lineHeight = 12.5.sp,
                         modifier = Modifier
                             .alpha(0.6f)
                             .padding(top = 2.dp),

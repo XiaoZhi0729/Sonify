@@ -247,6 +247,7 @@ private fun LyricSettingContent(
     val customFontPath = SettingsLibrary.LyricCustomFontPath
     val customFontName = SettingsLibrary.LyricCustomFontName
     val lineBalance = SettingsLibrary.LyricLineBalance
+    val duetAlignment = SettingsLibrary.LyricDuetAlignment
     var showResetFontSizeDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(independentLandscape) {
@@ -264,6 +265,7 @@ private fun LyricSettingContent(
         independentLandscape,
         customFontPath,
         lineBalance,
+        duetAlignment,
     ) {
         if (!hasInitializedWarmup) {
             hasInitializedWarmup = true
@@ -417,7 +419,7 @@ private fun LyricSettingContent(
 
         GroupSpacerMedium()
 
-        // 8. 平衡行模式
+        // 8. 平衡行模式 & 对唱分栏对齐
         RoundColumn {
             SwitchItem(
                 title = stringResource(id = R.string.settings_performance_lyric_line_balance),
@@ -427,6 +429,18 @@ private fun LyricSettingContent(
                         !SettingsLibrary.LyricLineBalance
                 },
                 checkedLambda = { SettingsLibrary.LyricLineBalance }
+            )
+
+            Divider()
+
+            SwitchItem(
+                title = stringResource(id = R.string.settings_performance_lyric_duet_alignment),
+                desc = stringResource(id = R.string.settings_performance_lyric_duet_alignment_desc),
+                onClick = {
+                    SettingsLibrary.LyricDuetAlignment =
+                        !SettingsLibrary.LyricDuetAlignment
+                },
+                checkedLambda = { SettingsLibrary.LyricDuetAlignment }
             )
         }
 

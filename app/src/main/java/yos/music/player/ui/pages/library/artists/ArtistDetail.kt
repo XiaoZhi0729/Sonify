@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -173,6 +174,8 @@ import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.LiquidTopBarButton
 import yos.music.player.ui.widgets.basic.rememberSkeletonShimmerForPage
 import yos.music.player.ui.widgets.basic.rememberTitleBackdrop
+import yos.music.player.ui.widgets.liquid.TitleBarFrostedBlurDp
+import yos.music.player.ui.widgets.liquid.frostedBlurScale
 import yos.music.player.ui.navigation.popBackStackSafely
 
 /**
@@ -935,10 +938,14 @@ fun ArtistDetail(
          * 空 Box」——那正是用户看到的白板。颜色由派生色承载，故 hero 与内容区有明确分界，
          * 且底栏遮罩/子页面沿用同一色（见 seedPalette）。
          */
-        @Composable fun ArtistMonogramHero(name: String, background: Color, content: Color) {
+        @Composable fun ArtistMonogramHero(
+            name: String,
+            backgroundState: androidx.compose.runtime.State<Color>,
+            content: Color,
+        ) {
             val initial = remember(name) { name.trim().take(1).uppercase() }
             Box(
-                Modifier.fillMaxSize().background(background),
+                Modifier.fillMaxSize().background(backgroundState.value),
                 contentAlignment = Alignment.Center
             ) {
                 if (initial.isNotEmpty()) {
@@ -954,50 +961,90 @@ fun ArtistDetail(
             }
         }
 
+        val heroOverscrollY = remember { mutableFloatStateOf(0f) }
         Box(
             Modifier
                 .fillMaxSize()
+                .clipToBounds()
                 .layerBackdrop(pageBackdrop)
         ) {
             // Hero 滚出视口（heroScrolledOut，组合期读取）时整层从组合中移除——即便
             // 采集/绘制链再出任何异常，也不可能残留「合成图钉在背景上」的僵尸层。
-            // 烘焙未完成时（平板竖屏调色板未就绪提前退出）也不挂空层，防止半透明空 graphicsLayer 显示为白色渐变。
-            if (!heroScrolledOut.value && bakedHero != null) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(heroHeight + bandHeight)
-                        .graphicsLayer {
-                            // translationY 而非 Modifier.offset：offset 是布局阶段修饰符，
-                            // 滚动时它每帧变化 → 每帧重新放置并让父级布局失效；这个层只
-                            // 需要视觉位移，放进 graphicsLayer 后滚动期间不再触发布局。
-                            // 放置期直读 LazyListState（同帧值，见上方 heroOffsetInViewport 注释）。
-                            translationY = (heroOffsetInViewport(listState) ?: 0).toFloat()
-                        }
-                        .drawWithContent {
-                            // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制。
-                            // alpha 走 drawImage 参数而不是 graphicsLayer.alpha：图层 alpha<1 会
-                            // 让 framework 建离屏缓冲（整像素对齐），滚动时可能在整像素台阶上跳。
-                            val o = heroOffsetInViewport(listState)
-                            val scrollA = if (o == null) 0f
-                            else (((o + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
-                            bakedHero?.let {
-                                drawImage(
-                                    it,
-                                    alpha = scrollA * backdropAlpha,
-                                    dstSize = androidx.compose.ui.unit.IntSize(
-                                        size.width.roundToInt(), size.height.roundToInt()
+            // 统一由背景层承载无头像 / 烘焙图 / 未烘焙照片，顶部越界下拉时保持顶部钉住并等比撑开。
+            if (!heroScrolledOut.value) {
+                if (noUsableAvatar) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(heroHeight)
+                            .artistHeroStretchLayer(
+                                listState = listState,
+                                overscrollYState = heroOverscrollY,
+                                heroHeightPx = heroHeightPx,
+                                fadeWithViewport = true,
+                                backdropAlpha = backdropAlpha,
+                            )
+                    ) {
+                        ArtistMonogramHero(
+                            name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
+                            backgroundState = bgColorState,
+                            content = contentColor
+                        )
+                    }
+                } else if (bakedHero != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(heroHeight + bandHeight)
+                            .artistHeroStretchLayer(
+                                listState = listState,
+                                overscrollYState = heroOverscrollY,
+                                heroHeightPx = heroHeightPx,
+                            )
+                            .drawWithContent {
+                                // 烘焙位图宽可能小于盒子（按源图 1024px 封顶），按盒子尺寸放大绘制。
+                                // alpha 走 drawImage 参数而不是 graphicsLayer.alpha：图层 alpha<1 会
+                                // 让 framework 建离屏缓冲（整像素对齐），滚动时可能在整像素台阶上跳。
+                                val o = heroOffsetInViewport(listState)
+                                val effectiveO = o?.let { it + heroOverscrollY.floatValue.coerceAtMost(0f) }
+                                val scrollA = if (effectiveO == null) 0f
+                                else (((effectiveO + heroHeightPx) / bandHeightPx).coerceIn(0f, 1f))
+                                bakedHero?.let {
+                                    drawImage(
+                                        it,
+                                        alpha = scrollA * backdropAlpha,
+                                        dstSize = androidx.compose.ui.unit.IntSize(
+                                            size.width.roundToInt(), size.height.roundToInt()
+                                        )
                                     )
-                                )
+                                }
                             }
-                        }
-                )
+                    )
+                } else {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(heroHeight)
+                            .artistHeroStretchLayer(
+                                listState = listState,
+                                overscrollYState = heroOverscrollY,
+                                heroHeightPx = heroHeightPx,
+                                fadeWithViewport = true,
+                                backdropAlpha = backdropAlpha,
+                            )
+                    ) {
+                        HeroPhoto(
+                            if (isLandscape) Modifier.size(heroHeight).align(Alignment.TopCenter)
+                            else Modifier.fillMaxSize()
+                        )
+                    }
+                }
             }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .overScrollVertical(allowTopOverscroll = false),
+                    .overScrollVertical(offsetObserver = { heroOverscrollY.floatValue = it }),
                 contentPadding = PaddingValues(0.dp),
                 overscrollEffect = null,
                 flingBehavior = rememberOverscrollFlingBehavior { listState }
@@ -1013,22 +1060,6 @@ fun ArtistDetail(
                             .drawProbe(if (isLandscape) "HeroLandscape" else "HeroPortrait")
                             .graphicsLayer { alpha = backdropAlpha }
                     ) {
-                        // 优先：无可用头像（无 url / 加载失败 / 解码失败）→ 身份派生色 + 首字母。
-                        // 其次：烘焙完成（bakedHero != null）由背景层接管照片区——渐进模糊的路径
-                        // 延伸进照片下半部，item 若继续盖一张锐利照片会把模糊段完全遮住。
-                        if (noUsableAvatar) {
-                            ArtistMonogramHero(
-                                name = detail.value?.name?.ifEmpty { artistName } ?: artistName,
-                                // 无头像分支才会走到：这里读动画色只影响本 item，不波及整页
-                                background = bgColorState.value,
-                                content = contentColor
-                            )
-                        } else if (bakedHero == null) {
-                            HeroPhoto(
-                                if (isLandscape) Modifier.size(heroHeight).align(Alignment.TopCenter)
-                                else Modifier.fillMaxSize()
-                            )
-                        }
                         Text(
                             text = detail.value?.name?.ifEmpty { artistName } ?: artistName,
                             fontSize = 30.sp,
@@ -1492,6 +1523,53 @@ fun ArtistDetail(
 private fun heroOffsetInViewport(listState: androidx.compose.foundation.lazy.LazyListState): Int? =
     listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "Hero" }?.offset
 
+internal data class ArtistHeroStretchTransform(
+    val translationY: Float,
+    val scale: Float,
+)
+
+/**
+ * 计算歌手页顶部 Hero 在滚动与越界拉伸时的位移和缩放：
+ * - 顶部越界下拉（overscrollYPx > 0）时保持顶部钉住并按比例放大撑满；
+ * - 正常滚动或底部越界时跟随列表位移、保持原比例。
+ */
+internal fun computeArtistHeroStretchTransform(
+    heroOffsetPx: Int?,
+    overscrollYPx: Float,
+    heroHeightPx: Float,
+): ArtistHeroStretchTransform {
+    val baseOffset = (heroOffsetPx ?: 0).toFloat()
+    return if (overscrollYPx > 0f && heroHeightPx > 0f) {
+        ArtistHeroStretchTransform(
+            translationY = baseOffset,
+            scale = (heroHeightPx + overscrollYPx) / heroHeightPx,
+        )
+    } else {
+        ArtistHeroStretchTransform(
+            translationY = baseOffset + overscrollYPx,
+            scale = 1f,
+        )
+    }
+}
+
+private fun Modifier.artistHeroStretchLayer(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    overscrollYState: androidx.compose.runtime.FloatState,
+    heroHeightPx: Float,
+    fadeWithViewport: Boolean = false,
+    backdropAlpha: Float = 1f,
+): Modifier = graphicsLayer {
+    val o = heroOffsetInViewport(listState)
+    val t = computeArtistHeroStretchTransform(o, overscrollYState.floatValue, heroHeightPx)
+    transformOrigin = TransformOrigin(0.5f, 0f)
+    translationY = t.translationY
+    scaleX = t.scale
+    scaleY = t.scale
+    if (fadeWithViewport) {
+        alpha = if (o == null) 0f else backdropAlpha
+    }
+}
+
 /**
  * 艺人页背景「整体揭示」门的判据。
  *
@@ -1580,7 +1658,7 @@ private fun artistTopBarMaterial(
         Modifier.drawPlainBackdrop(
             backdrop = backdrop,
             shape = { androidx.compose.ui.graphics.RectangleShape },
-            effects = { blur(14.dp.toPx()) },
+            effects = { blur(TitleBarFrostedBlurDp.toPx() * frostedBlurScale) },
             onDrawSurface = { drawRect(tint.copy(alpha = 0.7f)) }
         )
     }

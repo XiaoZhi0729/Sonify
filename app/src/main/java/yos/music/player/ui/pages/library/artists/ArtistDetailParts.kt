@@ -78,6 +78,8 @@ import yos.music.player.ui.widgets.basic.preloadRawCover
 import yos.music.player.ui.widgets.basic.skeleton
 import yos.music.player.ui.widgets.effects.ShadowType
 import yos.music.player.ui.widgets.effects.dropShadow
+import yos.music.player.ui.widgets.mochi.mochiHorizontalOverscroll
+import yos.music.player.ui.widgets.mochi.rememberMochiPagerFlingBehavior
 import yos.music.player.ui.widgets.effects.overlayEffect
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -251,7 +253,7 @@ internal fun SongsPagerSection(
         val columnEndGap = if (safeColumns > 1) 14.dp else 0.dp
         HorizontalPager(
             state = pagerState,
-            flingBehavior = PagerDefaults.flingBehavior(
+            flingBehavior = rememberMochiPagerFlingBehavior(
                 state = pagerState,
                 pagerSnapDistance = PagerSnapDistance.atMost(Int.MAX_VALUE)
             ),
@@ -263,7 +265,8 @@ internal fun SongsPagerSection(
             // 意味着单个 Pager 常驻 12 行、本页两个 Pager 共 24 行。滑动时这些行的组合/
             // 布局在单帧内成批发生（实测平板 p90 组合+测量 91ms）。翻页动画由 Pager 自己
             // 处理，预组合只为「翻页瞬间不空」，代价远大于收益。
-            beyondViewportPageCount = 0
+            beyondViewportPageCount = 0,
+            modifier = Modifier.mochiHorizontalOverscroll()
         ) { page ->
             Column(
                 Modifier
@@ -431,7 +434,7 @@ private fun ArtistAlbumRail(
     HorizontalPager(
         state = pagerState,
         // 与主页「精选歌单 / 本周新发行」同一套吸附参数（PagerDefaults + DiscoveryRailSnapDistance）
-        flingBehavior = PagerDefaults.flingBehavior(
+        flingBehavior = rememberMochiPagerFlingBehavior(
             state = pagerState,
             pagerSnapDistance = ArtistAlbumRailSnapDistance
         ),
@@ -444,7 +447,8 @@ private fun ArtistAlbumRail(
         // 「Key was already used」崩溃；旧 LazyRow 的 key 同样带下标，行为保持一致。
         key = { page -> "artist-album-$page-${albums[page].albumId}" },
         // 同上：专辑横排也去掉前后页预组合（卡片带阴影离屏层，成本同样成批落在单帧）
-        beyondViewportPageCount = 0
+        beyondViewportPageCount = 0,
+        modifier = Modifier.mochiHorizontalOverscroll()
     ) { page ->
         val album = albums[page]
         NewAlbumCard(

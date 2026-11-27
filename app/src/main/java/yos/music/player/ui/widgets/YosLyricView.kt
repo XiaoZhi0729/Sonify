@@ -297,6 +297,7 @@ fun YosLyricViewLib(
     val fontScaleSetting = effectiveLyricFontScale(isLandscape)
     val fontWeightSetting = SettingsLibrary.LyricFontWeight
     val lineBalanceSetting = SettingsLibrary.LyricLineBalance
+    val duetAlignmentSetting = SettingsLibrary.LyricDuetAlignment
     val customFontPathSetting = SettingsLibrary.LyricCustomFontPath
     val style = remember(
         renderStyleRevision,
@@ -360,8 +361,8 @@ fun YosLyricViewLib(
         if (hdrBoost > 1.001f) hdrSolidBrush(textColor.copy(alpha = 1f), hdrBoost) else null
     }
 
-    val lyrics = remember(entries) {
-        buildSyncedLyrics(entries, otherSideForLines)
+    val lyrics = remember(entries, duetAlignmentSetting) {
+        buildSyncedLyrics(entries, otherSideForLines, duetAlignment = duetAlignmentSetting)
     }
 
     // 库要求 currentPosition 必须来自 Compose 状态，否则 snapshotFlow 收不到变化、歌词不会走。
@@ -472,6 +473,7 @@ fun YosLyricViewLib(
                     fontScaleSetting,
                     fontWeightSetting,
                     lineBalanceSetting,
+                    duetAlignmentSetting,
                     customFontPathSetting,
                     localDensity.fontScale,
                 ) {
@@ -485,6 +487,7 @@ fun YosLyricViewLib(
                         fontWeightSetting = fontWeightSetting,
                         lineBalance = lineBalanceSetting,
                         customFontPath = customFontPathSetting,
+                        duetAlignment = duetAlignmentSetting,
                     )
                 }
                 // 排版结果只读缓存：这里绝不发起测量。组合期测量的结果回写状态会让库的

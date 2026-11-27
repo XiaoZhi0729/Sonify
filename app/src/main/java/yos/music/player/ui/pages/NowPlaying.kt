@@ -4512,7 +4512,7 @@ internal fun PlayerControl(
         label = "sliderTrackHeight"
     )
     val sliderTimeScaleState = animateFloatAsState(
-        targetValue = if (sliderActive) 19f / 12f else 1f,
+        targetValue = if (sliderActive) 15f / 12f else 1f,
         animationSpec = sliderPressedSpringFloat,
         label = "sliderTimeFontSize"
     )
@@ -4741,6 +4741,8 @@ internal fun PlayerControl(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            // 扩边 28dp 的 saveLayer 防止放大时字形溢出原始 12sp 布局框而被硬裁剪（长时长 H:MM:SS 或大字号下也留足余量）；
+                            // 透明度直接交给 overlayEffect 在绘制期读取，避免额外离屏层且保持文字缩放矢量清晰。
                             Text(
                                 text = playedTime.value,
                                 fontSize = 12.sp,
@@ -4748,12 +4750,11 @@ internal fun PlayerControl(
                                 letterSpacing = 0.3.sp,
                                 color = Color.White,
                                 modifier = Modifier
-                                    .overlayEffect()
+                                    .overlayEffect(expand = 28.dp) { sliderTimeAlphaState.value }
                                     .graphicsLayer {
                                         val s = sliderTimeScaleState.value
                                         scaleX = s
                                         scaleY = s
-                                        alpha = sliderTimeAlphaState.value
                                         transformOrigin = TransformOrigin(0f, 0.5f)
                                     }
                             )
@@ -4764,12 +4765,11 @@ internal fun PlayerControl(
                                 letterSpacing = 0.3.sp,
                                 color = Color.White,
                                 modifier = Modifier
-                                    .overlayEffect()
+                                    .overlayEffect(expand = 28.dp) { sliderTimeAlphaState.value }
                                     .graphicsLayer {
                                         val s = sliderTimeScaleState.value
                                         scaleX = s
                                         scaleY = s
-                                        alpha = sliderTimeAlphaState.value
                                         transformOrigin = TransformOrigin(1f, 0.5f)
                                     }
                             )

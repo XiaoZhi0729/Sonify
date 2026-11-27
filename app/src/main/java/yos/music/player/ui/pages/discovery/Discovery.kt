@@ -27,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -37,9 +36,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,11 +78,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import yos.music.player.R
 import yos.music.player.code.MediaController
-import yos.music.player.data.libraries.HomeLayoutLogic
 import yos.music.player.data.libraries.HomeLayoutStore
-import yos.music.player.data.libraries.HomeSectionConfig
 import yos.music.player.data.libraries.HomeSectionId
-import yos.music.player.data.libraries.MusicLibrary
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.libraries.artistsName
 import yos.music.player.data.libraries.defaultAlbum
@@ -121,9 +115,11 @@ import yos.music.player.ui.widgets.basic.SkeletonShimmer
 import yos.music.player.ui.widgets.basic.prefetchCover
 import yos.music.player.ui.widgets.basic.preloadRawCover
 import yos.music.player.ui.widgets.basic.rememberSkeletonShimmer
-import yos.music.player.ui.widgets.basic.SonifyDialog
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
+import yos.music.player.ui.widgets.mochi.mochiHorizontalOverscroll
+import yos.music.player.ui.widgets.mochi.rememberMochiPagerFlingBehavior
 
 // Content rails retain the natural decay target; Pager still clamps it to the dataset bounds.
 internal val DiscoveryRailSnapDistance = PagerSnapDistance.atMost(Int.MAX_VALUE)
@@ -163,6 +159,10 @@ fun Discovery(
     val recommendPlaylistsStatus = DiscoveryObject.recommendPlaylistsStatus
     val everySongs = DiscoveryObject.everydayRecommendSongs
     val everyStatus = DiscoveryObject.everydayRecommendSongsStatus
+    val vipSongs = DiscoveryObject.vipRecommendSongs
+    val vipStatus = DiscoveryObject.vipRecommendSongsStatus
+    val nicheSongs = DiscoveryObject.nicheTreasureSongs
+    val nicheStatus = DiscoveryObject.nicheTreasureSongsStatus
     val scope = rememberCoroutineScope()
 
     // 私人电台：与「音乐画廊」页共享同一条 FM 队列（PersonalFmObject 是进程级单例）。
@@ -175,8 +175,25 @@ fun Discovery(
         else -> "empty"
     }
 
-    // 最近播放：收听历史（最近优先，后台切歌实时更新），首页最多展示 10 首
-    val recentlyPlayed = MusicLibrary.recentlyPlayed.take(10)
+    // VIP 专属推荐点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
+    fun playVipRecommendAt(index: Int) {
+        val songs = vipSongs.value
+        if (index !in songs.indices) return
+        val queue = songs.map { KugouRepository.toQueueMediaItem(it) }
+        scope.launch(Dispatchers.IO) {
+            MediaController.prepare(queue[index], queue)
+        }
+    }
+
+    // 小众宝藏佳作点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
+    fun playNicheTreasureAt(index: Int) {
+        val songs = nicheSongs.value
+        if (index !in songs.indices) return
+        val queue = songs.map { KugouRepository.toQueueMediaItem(it) }
+        scope.launch(Dispatchers.IO) {
+            MediaController.prepare(queue[index], queue)
+        }
+    }
 
     // 新歌点击：整列表进 Media3 队列，从被点击的 index 开始（URL 惰性解析）
     fun playNewSongsAt(index: Int) {
@@ -230,7 +247,9 @@ fun Discovery(
         newSongsStatus.value,
         newAlbumsStatus.value,
         recommendPlaylistsStatus.value,
-        everyStatus.value
+        everyStatus.value,
+        vipStatus.value,
+        nicheStatus.value
     ) {
         if (refreshing.value && DiscoveryObject.allSettled()) refreshing.value = false
     }
@@ -244,10 +263,13 @@ fun Discovery(
         rankList.value,
         newSongs.value,
         everySongs.value,
-        recentlyPlayed.size,
+        vipSongs.value,
+        nicheSongs.value,
         fmSongs.size
     ) {
         val highUrls = buildList {
+            addAll(vipSongs.value.take(4).mapNotNull { it.artworkUrl })
+            addAll(nicheSongs.value.take(4).mapNotNull { it.artworkUrl })
             addAll(recommendPlaylists.value.take(6).map { it.artworkUrl })
             addAll(newAlbums.value.take(6).map { it.coverUrl })
             addAll(rankList.value.take(6).map { it.coverUrl })
@@ -264,73 +286,21 @@ fun Discovery(
         everySongs.value.take(8).forEach {
             yos.music.player.ui.widgets.basic.prefetchCoverLow(prewarmContext, it.artworkUrl)
         }
-        recentlyPlayed.take(4).forEach {
-            yos.music.player.ui.widgets.basic.prefetchCoverLow(prewarmContext, it.thumb)
-        }
     }
 
     // ---------- 主页自定义（Home Layout） ----------
     val layout by HomeLayoutStore.sections // 顶层读取，规避 state-read-scope-trap
-    var editMode by remember { mutableStateOf(false) }
-    var showHomeMenu by remember { mutableStateOf(false) }
-    var showResetConfirm by remember { mutableStateOf(false) }
-    var showExitConfirm by remember { mutableStateOf(false) }
-    val resetAnimating = remember { mutableStateOf(false) }
-    val dragHolder = remember { HomeEditDragHolder() }
     val listStateBrowse = rememberLazyListState()
-    val listStateEdit = rememberLazyListState()
     val visibleSections = layout.filter { it.visible }
-
-    // 编辑草稿：编辑态内所有改动只改草稿；「完成并保存」/「保存」才落盘，否则丢弃
-    val draft = remember { mutableStateOf<List<HomeSectionConfig>>(emptyList()) }
-    val editLayout = draft.value
-    val editAllKeys = editLayout.map { homeEditKey(it.id) }
-
-    // 进入编辑态：同步取当前已保存布局为草稿（必须同步——否则首帧会渲染上次残留的草稿再跳变）
-    fun enterEdit() {
-        draft.value = HomeLayoutStore.sections.value
-        editMode = true
-    }
-    // 请求退出：未改动直接退出；有改动才弹保存询问
-    fun requestExit() {
-        if (draft.value == HomeLayoutStore.sections.value) editMode = false else showExitConfirm = true
-    }
-    // 保存草稿并退出（未改动则不写盘）
-    fun saveDraftAndExit() {
-        if (draft.value != HomeLayoutStore.sections.value) HomeLayoutStore.update(draft.value)
-        editMode = false
-    }
-
-    // 进入编辑态回顶
-    LaunchedEffect(editMode) {
-        if (editMode) listStateEdit.scrollToItem(0)
-    }
-    // 系统返回：未改动直接退出，有改动弹保存询问（拖拽期 / 恢复默认动画期 / 已有弹窗时不响应）
-    BackHandler(enabled = editMode && !dragHolder.active && !resetAnimating.value && !showExitConfirm) {
-        requestExit()
-    }
-    // 恢复默认：animateItem 无完成回调 → 固定兜底时长后结束并回顶
-    LaunchedEffect(resetAnimating.value) {
-        if (resetAnimating.value) {
-            kotlinx.coroutines.delay(30L * 5 + 320L)
-            resetAnimating.value = false
-            listStateEdit.scrollToItem(0)
-        }
-    }
-    // 拖拽松手后几何兜底清理（系统中断兜底）
-    LaunchedEffect(dragHolder.latched) {
-        if (!dragHolder.latched && dragHolder.geometry != null) {
-            kotlinx.coroutines.delay(800)
-            dragHolder.clear()
-        }
-    }
 
     // 骨架屏扫光：整页共用一条动画（各块相位同步，视觉上是一道光扫过整屏）。
     // 只在"确实还有板块会显示骨架"时创建——数据全到位后无限动画会白跑，是纯粹的掉帧来源。
     // 判据必须与 DiscoverySectionSlot 里 pending 的定义完全一致：上游明确返回空
     // （status=="empty"）或报错的板块不显示骨架，否则那两种情况会让动画永远跑下去。
     val anySectionPending =
-        sectionShowsSkeleton(recommendPlaylists.value, recommendPlaylistsStatus.value) ||
+        sectionShowsSkeleton(vipSongs.value, vipStatus.value) ||
+            sectionShowsSkeleton(nicheSongs.value, nicheStatus.value) ||
+            sectionShowsSkeleton(recommendPlaylists.value, recommendPlaylistsStatus.value) ||
             sectionShowsSkeleton(newSongs.value, newSongsStatus.value) ||
             sectionShowsSkeleton(newAlbums.value, newAlbumsStatus.value) ||
             sectionShowsSkeleton(rankList.value, status.value) ||
@@ -355,56 +325,35 @@ fun Discovery(
     val renderSections: LazyListScope.() -> Unit = {
                 if (visibleSections.isEmpty()) {
                     item("HomeEmpty") {
-                        HomeEmptyState(onEdit = { enterEdit() })
+                        HomeEmptyState(onEdit = openSettings)
                     }
                 } else {
                     visibleSections.forEachIndexed { sectionIndex, cfg ->
                         // 启动浮现的第几块：0 是大标题，所以板块从 1 起。
                         val revealIndex = sectionIndex + 1
                         when (HomeSectionId.fromKey(cfg.id)) {
-        // ① 最近播放横向大卡列表（取色模糊背景，无数据则不渲染，无空状态）
-                            HomeSectionId.RecentlyPlayed -> item("RecentlyPlayed") {
-            val songs = recentlyPlayed
-            if (songs.isNotEmpty()) {
+        // ① VIP 专属推荐横向大卡列表（取色模糊背景，无数据走骨架屏）
+                            HomeSectionId.VipRecommend -> item("VipRecommendSection") {
+            DiscoverySectionSlot(
+                hasData = vipSongs.value.isNotEmpty(),
+                status = vipStatus.value,
+                shimmer = shimmer,
+                revealIndex = revealIndex,
+                emptyText = stringResource(id = R.string.vip_recommend_empty),
+                skeleton = { HomeSkeletonRecommendCardRail(shimmer) }
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp)
-                        .then(yos.music.player.ui.launch.launchRevealModifier(revealIndex))
                 ) {
-                    // Header：标题 + 箭头（与 DiscoverySectionHeader 同款视觉），点击进入详情页
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp)
-                            .clickable { navController.toUI(UI.RecentPlayedDetail) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.home_continue_listening),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            lineHeight = 20.sp
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_chevron_right),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .alpha(0.35f),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
-
-                    RecentListeningRail(
-                        songs = songs,
-                        onSongClick = { music, queue ->
-                            scope.launch(Dispatchers.IO) {
-                                MediaController.prepare(music, queue)
-                            }
-                        }
+                    DiscoverySectionHeader(
+                        title = stringResource(id = R.string.home_vip_recommend_title),
+                        onClick = { navController.toUI(UI.VipRecommendDetail) }
+                    )
+                    VipRecommendRail(
+                        songs = vipSongs.value,
+                        onSongClick = { playVipRecommendAt(it) }
                     )
                 }
             }
@@ -460,6 +409,33 @@ fun Discovery(
             }
         }
 
+        // ④ 小众宝藏佳作（左侧竖向封面 + 右侧 Music Story 提取色排版）
+                            HomeSectionId.NicheTreasure -> item("NicheTreasureSection") {
+            DiscoverySectionSlot(
+                hasData = nicheSongs.value.isNotEmpty(),
+                status = nicheStatus.value,
+                shimmer = shimmer,
+                revealIndex = revealIndex,
+                emptyText = stringResource(id = R.string.niche_treasure_empty),
+                skeleton = { HomeSkeletonNicheTreasureRail(shimmer) }
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 24.dp)
+                ) {
+                    DiscoverySectionHeader(
+                        title = stringResource(id = R.string.home_niche_treasure_title),
+                        onClick = { navController.toUI(UI.NicheTreasureDetail) }
+                    )
+                    NicheTreasureRail(
+                        songs = nicheSongs.value,
+                        onSongClick = { playNicheTreasureAt(it) }
+                    )
+                }
+            }
+        }
+
         // ③ 精选歌单
                             HomeSectionId.RecommendPlaylists -> item("RecommendPlaylistSection") {
             DiscoverySectionSlot(
@@ -490,14 +466,17 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
-                            flingBehavior = PagerDefaults.flingBehavior(
+                            flingBehavior = rememberMochiPagerFlingBehavior(
                                 state = pagerState,
                                 pagerSnapDistance = DiscoveryRailSnapDistance
                             ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { recommendPlaylists.value[it].globalCollectionId },
-                            beyondViewportPageCount = 0
+                            beyondViewportPageCount = 0,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .mochiHorizontalOverscroll()
                         ) { page ->
                             val playlist = recommendPlaylists.value[page]
                             RecommendPlaylistCard(
@@ -578,14 +557,17 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
-                            flingBehavior = PagerDefaults.flingBehavior(
+                            flingBehavior = rememberMochiPagerFlingBehavior(
                                 state = pagerState,
                                 pagerSnapDistance = DiscoveryRailSnapDistance
                             ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { newAlbums.value[it].albumId },
-                            beyondViewportPageCount = 0
+                            beyondViewportPageCount = 0,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .mochiHorizontalOverscroll()
                         ) { page ->
                             val album = newAlbums.value[page]
                             NewAlbumCard(
@@ -633,14 +615,17 @@ fun Discovery(
 
                         HorizontalPager(
                             state = pagerState,
-                            flingBehavior = PagerDefaults.flingBehavior(
+                            flingBehavior = rememberMochiPagerFlingBehavior(
                                 state = pagerState,
                                 pagerSnapDistance = DiscoveryRailSnapDistance
                             ),
                             pageSize = PageSize.Fixed(railLayout.pageSize),
                             contentPadding = PaddingValues(start = 20.dp, end = 20.dp),
                             key = { rankList.value[it].rankId },
-                            beyondViewportPageCount = 0
+                            beyondViewportPageCount = 0,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .mochiHorizontalOverscroll()
                         ) { page ->
                             val rank = rankList.value[page]
                             RankCardItem(
@@ -663,126 +648,27 @@ fun Discovery(
                 }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .homeEditDragGesture(
-                enabled = editMode,
-                listState = listStateEdit,
-                dragHolder = dragHolder,
-                allKeys = editAllKeys,
-                onCommit = { from, to -> draft.value = HomeLayoutLogic.dragCommit(draft.value, from, to) }
+    Title(
+        title = stringResource(id = R.string.page_home_title),
+        // 启动浮现第 0 块：大标题最先上浮。
+        revealIndex = 0,
+        onBack = null,
+        rightBarIcon = {
+            TitleBarIcon(
+                icon = Icons.Filled.MoreVert,
+                onBack = openSettings
             )
+        },
+        topRightIcon = null,
+        onTopRightIcon = null,
+        onRefresh = {
+            refreshing.value = true
+            refreshAll()
+        },
+        refreshing = refreshing.value,
+        extraTopPadding = 57.dp,
+        listState = listStateBrowse
     ) {
-        if (showResetConfirm) {
-            SonifyDialog(
-                title = stringResource(id = R.string.home_edit_reset_title),
-                message = stringResource(id = R.string.home_edit_reset_message),
-                onDismissRequest = { showResetConfirm = false },
-                positiveContent = stringResource(id = R.string.home_edit_reset_confirm),
-                onPositive = {
-                    showResetConfirm = false
-                    resetAnimating.value = true
-                    draft.value = HomeLayoutLogic.default()
-                },
-                negativeContent = stringResource(id = R.string.common_cancel),
-                onNegative = { showResetConfirm = false },
-                dismissOnClickOutside = true,
-                dismissOnBackPress = true
-            )
-        }
-        if (showExitConfirm) {
-            SonifyDialog(
-                title = stringResource(id = R.string.home_edit_exit_confirm_title),
-                onDismissRequest = { showExitConfirm = false },
-                positiveContent = stringResource(id = R.string.home_edit_save),
-                onPositive = {
-                    showExitConfirm = false
-                    saveDraftAndExit()
-                },
-                negativeContent = stringResource(id = R.string.home_edit_dont_save),
-                onNegative = {
-                    showExitConfirm = false
-                    editMode = false
-                },
-                dismissOnClickOutside = true,
-                dismissOnBackPress = true
-            )
-        }
-        AnimatedContent(
-            targetState = editMode,
-            transitionSpec = {
-                fadeIn(tween(300, easing = FastOutSlowInEasing)) togetherWith
-                    fadeOut(tween(300, easing = FastOutSlowInEasing))
-            },
-            label = "homeEditFade"
-        ) { isEdit ->
-        Title(
-            title = if (isEdit) stringResource(id = R.string.home_edit_title)
-            else stringResource(id = R.string.page_home_title),
-            // 启动浮现第 0 块：大标题最先上浮。只在非编辑态参与
-            // （编辑态是用户主动进入的另一套界面，不该重演开屏）。
-            revealIndex = if (isEdit) null else 0,
-            onBack = if (isEdit) ({ requestExit() }) else null,
-            rightBarIcon = if (isEdit) ({
-                val locked = dragHolder.active || resetAnimating.value
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(end = 12.dp)
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.home_edit_reset_short),
-                        color = if (locked) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 16.sp,
-                        modifier = Modifier
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                            .then(if (locked) Modifier else Modifier.clickable { showResetConfirm = true })
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = stringResource(id = R.string.home_edit_done),
-                        color = if (locked) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.primary,
-                        fontSize = 16.sp,
-                        modifier = Modifier
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                            .then(if (locked) Modifier else Modifier.clickable { saveDraftAndExit() })
-                    )
-                }
-            }) else ({
-                HomeMenuButton(
-                    expanded = showHomeMenu,
-                    onExpandChange = { showHomeMenu = it },
-                    onEditHome = {
-                        showHomeMenu = false
-                        enterEdit()
-                    },
-                    onSettings = {
-                        showHomeMenu = false
-                        openSettings()
-                    }
-                )
-            }),
-            topRightIcon = null,
-            onTopRightIcon = null,
-            onRefresh = if (isEdit) null else ({
-                refreshing.value = true
-                refreshAll()
-            }),
-            refreshing = refreshing.value,
-            extraTopPadding = 57.dp,
-            listState = if (isEdit) listStateEdit else listStateBrowse
-        ) {
-            if (isEdit) {
-                homeEditItems(
-                    layout = editLayout,
-                    listState = listStateEdit,
-                    dragHolder = dragHolder,
-                    resetAnimating = resetAnimating.value,
-                    onToggle = { draft.value = HomeLayoutLogic.toggle(draft.value, it) }
-                )
-            } else {
         item("TopDivider") {
             // 顶部标题栏下方细分割线（对齐 Apple Music 标题区与内容的细分隔）
             Spacer(
@@ -795,10 +681,7 @@ fun Discovery(
             )
         }
 
-                renderSections()
-                }
-        }
-    }
+        renderSections()
     }
 }
 
@@ -984,7 +867,7 @@ private fun DiscoveryPagedSongColumns(
 
         HorizontalPager(
             state = pagerState,
-            flingBehavior = PagerDefaults.flingBehavior(
+            flingBehavior = rememberMochiPagerFlingBehavior(
                 state = pagerState,
                 pagerSnapDistance = DiscoveryRailSnapDistance
             ),
@@ -994,7 +877,10 @@ private fun DiscoveryPagedSongColumns(
             // 显式 Top 使所有页面统一顶部对齐。
             verticalAlignment = Alignment.Top,
             key = { "${displaySongs[it * songsPerColumn].mediaId ?: "page"}-$it" },
-            beyondViewportPageCount = 0
+            beyondViewportPageCount = 0,
+            modifier = Modifier
+                .fillMaxWidth()
+                .mochiHorizontalOverscroll()
         ) { page ->
             Column(
                 Modifier

@@ -318,6 +318,10 @@ fun Settings(navController: NavController) =
                             ) {
                                 navController.toUI(UI.Settings.About)
                             }
+                            Divider()
+                            LabelItem(title = stringResource(id = R.string.settings_others_donate)) {
+                                navController.toUI(UI.Settings.DonateSupport)
+                            }
                         }
 
                         GroupSpacer()

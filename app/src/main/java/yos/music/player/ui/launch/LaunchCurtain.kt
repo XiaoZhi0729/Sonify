@@ -88,15 +88,15 @@ internal const val ContentDurationMs = 580
  * ★加/删主页板块时必须同步这里，[LaunchRevealClock.revealAt] 的上限由它推导。
  * 当前 = HomeSectionId 的枚举条目数。
  */
-internal const val CONTENT_SECTION_COUNT = 7
+internal const val CONTENT_SECTION_COUNT = 8
 
 /**
- * 整段总时长（毫秒）：544 + 7×52 + 580 = 1488。
+ * 整段总时长（毫秒）：544 + 8×52 + 580 = 1540。
  *
  * 公式是 `ContentStartMs + N×ContentStaggerMs + ContentDurationMs`，
  * N = [CONTENT_SECTION_COUNT]（最后一块的起始延迟）。
  */
-internal const val LaunchTotalMs = 1488
+internal const val LaunchTotalMs = 1540
 
 /**
  * 等系统闪屏撤场的最长时长（毫秒）。

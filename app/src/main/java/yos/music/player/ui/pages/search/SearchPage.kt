@@ -112,10 +112,9 @@ import yos.music.player.ui.widgets.basic.SharedCoverStyle
 import yos.music.player.ui.widgets.basic.ShadowImageWithCache
 import yos.music.player.ui.widgets.basic.SongAddToPlaylistButton
 import yos.music.player.ui.widgets.basic.Title
+import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.widgets.basic.calculateAdaptiveImageLayout
 import yos.music.player.ui.widgets.basic.preloadRawCover
-import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
-import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 
 /**
  * 搜索一级 Tab 页。
@@ -147,8 +146,6 @@ fun SearchPage(
     val queue = SearchObject.queue
     val status = SearchObject.status
     val busy = remember("SearchPage_busy") { mutableStateOf(false) }
-    // 右上角「更多」菜单展开态（听歌识曲 / 设置）
-    val showMenu = remember("SearchPage_menu") { mutableStateOf(false) }
     // 歌曲 Tab 滚动分页：服务端翻页边界有重叠(实测 p1∩p2 有重复)，按 hash 去重后
     // 全部重复/空页才算到底；页码独立计数，不能用 size/PAGE_SIZE 推算
     val songEndReached = remember("SearchPage_songEndReached") { mutableStateOf(false) }
@@ -433,22 +430,10 @@ fun SearchPage(
         title = stringResource(id = R.string.page_search_title),
         topRightIcon = null,
         onTopRightIcon = null,
-        // 听歌识曲与设置收进右上角「更多」菜单，与主页同一套 TitleBarGlassMenu。
-        // 原先是搜索框右侧一个裸麦克风圆钮：既挤占输入宽度，又容易被读成语音输入。
         rightBarIcon = {
-            SearchMenuButton(
-                expanded = showMenu.value,
-                onExpandChange = { showMenu.value = it },
-                onSongRecognition = {
-                    showMenu.value = false
-                    keyboardController?.hide()
-                    focusManager.clearFocus()
-                    NavGuard.run { navController.toUI(UI.SongRecognition) }
-                },
-                onSettings = {
-                    showMenu.value = false
-                    openSettings()
-                }
+            TitleBarIcon(
+                icon = Icons.Filled.MoreVert,
+                onBack = openSettings
             )
         },
         extraTopPadding = 57.dp,
@@ -839,45 +824,6 @@ private fun SectionHeaderRow(title: String, action: (@Composable () -> Unit)? = 
 /** 无动作按钮的分区标题（浏览分类 / 热搜榜 / 歌曲）。 */
 @Composable
 private fun SectionHeader(title: String) = SectionHeaderRow(title)
-
-/**
- * 右上角「更多」按钮 + 锚定其上的玻璃菜单（听歌识曲 / 设置）。
- *
- * 与主页的 HomeMenuButton 同构，复用 TitleBarGlassMenu 的锚点联动：面板揭示进度
- * 回传后按钮本体随之位移/收缩/淡出再复位。必须渲染在 Title 的 rightBarIcon 槽内
- * —— 该槽是 TitleBar 子树，LocalTitlePageBackdrop / LocalTitleOverlayHost 才可用。
- */
-@Composable
-private fun SearchMenuButton(
-    expanded: Boolean,
-    onExpandChange: (Boolean) -> Unit,
-    onSongRecognition: () -> Unit,
-    onSettings: () -> Unit
-) {
-    TitleBarGlassMenu(
-        expanded = expanded,
-        onExpand = { onExpandChange(true) },
-        onDismiss = { onExpandChange(false) },
-        triggerIcon = Icons.Filled.MoreVert,
-        triggerContentDescription = stringResource(id = R.string.search_more),
-        modifier = Modifier.padding(end = 10.dp),
-    ) {
-        LiquidGlassDropdownMenuItem(
-            text = stringResource(R.string.song_recognition_title),
-            onClick = {
-                onExpandChange(false)
-                onSongRecognition()
-            },
-        )
-        LiquidGlassDropdownMenuItem(
-            text = stringResource(R.string.home_menu_settings),
-            onClick = {
-                onExpandChange(false)
-                onSettings()
-            },
-        )
-    }
-}
 
 /**
  * 浏览态的分类砖块目标。只列真实存在、且已在 SearchNavHost 注册的路由，

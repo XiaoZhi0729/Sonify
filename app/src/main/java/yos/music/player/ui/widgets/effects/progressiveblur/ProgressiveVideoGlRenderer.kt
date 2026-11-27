@@ -24,6 +24,9 @@ internal data class ProgressiveRenderState(
     val morphTargetWidth: Float = 0f,
     val morphTargetHeight: Float = 0f,
     val morphCornerPx: Float = 0f,
+    val crossfadeEpoch: Long = 0L,
+    val crossfadeProgress: Float = 1f,
+    val videoFadeProgress: Float = 1f,
 )
 
 /**
@@ -68,8 +71,11 @@ internal class ProgressiveVideoGlRenderer : Closeable {
     private var surfaceWidth = 0
     private var surfaceHeight = 0
     private var baseTarget: RenderFbo? = null
+    private var outgoingBaseTarget: RenderFbo? = null
     private var pyramidTargets: List<RenderFbo> = emptyList()
     private var tempTargets: List<RenderFbo> = emptyList()
+
+    private val crossfadeTracker = ProgressiveCrossfadeTracker()
 
     private var uploadedCoverGeneration = -1L
     private var staticCoverWidth = 1
@@ -85,6 +91,8 @@ internal class ProgressiveVideoGlRenderer : Closeable {
     private var lastPyramidOrientation = -1f
     private var lastPyramidSplitX = -1f
     private var lastPyramidSplitY = -1f
+    private var lastPyramidCrossfadeMix = 1f
+    private var lastPyramidVideoMix = 1f
 
     init {
         GLES20.glDisable(GLES20.GL_DEPTH_TEST)
@@ -107,7 +115,6 @@ internal class ProgressiveVideoGlRenderer : Closeable {
         ensureSize(w, h)
         syncStaticCover(state)
 
-        val base = checkNotNull(baseTarget)
         val config = state.config.sanitized()
         val splits = ProgressiveBlurMath.resolveMirrorSplits(w.toFloat(), h.toFloat(), config)
         val orientationFloat = when (config.orientationMode) {
@@ -116,18 +123,39 @@ internal class ProgressiveVideoGlRenderer : Closeable {
             ProgressiveOrientationMode.TOP_LEFT_2D -> 2f
         }
 
+        val geometryChanged = pyramidInitialized && (
+            orientationFloat != lastPyramidOrientation ||
+                kotlin.math.abs(splits.splitX - lastPyramidSplitX) > 0.0005f ||
+                kotlin.math.abs(splits.splitY - lastPyramidSplitY) > 0.0005f
+            )
+        val crossfadeStep = crossfadeTracker.advance(
+            epoch = state.crossfadeEpoch,
+            rawProgress = state.crossfadeProgress,
+            geometryChanged = geometryChanged,
+        )
+        if (crossfadeStep.shouldSnapshotCurrentBase) {
+            val currentBase = checkNotNull(baseTarget)
+            val nextBase = outgoingBaseTarget ?: RenderFbo.create(w, h)
+            outgoingBaseTarget = currentBase
+            baseTarget = nextBase
+        }
+        val base = checkNotNull(baseTarget)
+
         val drawVideo =
             state.useVideo && hasVideoFrame && state.videoWidth > 0 && state.videoHeight > 0
+        val effectiveCrossfadeMix = crossfadeStep.effectiveMix
+        val effectiveVideoMix = if (drawVideo) state.videoFadeProgress.coerceIn(0f, 1f) else 1f
         val pyramidDirty = !pyramidInitialized ||
             w != lastPyramidWidth ||
             h != lastPyramidHeight ||
+            crossfadeStep.shouldSnapshotCurrentBase ||
+            kotlin.math.abs(effectiveCrossfadeMix - lastPyramidCrossfadeMix) > 0.0005f ||
+            (drawVideo && kotlin.math.abs(effectiveVideoMix - lastPyramidVideoMix) > 0.0005f) ||
             (drawVideo && newVideoFrame) ||
             drawVideo != lastPyramidDrawVideo ||
             (drawVideo && (state.videoWidth != lastPyramidVideoWidth || state.videoHeight != lastPyramidVideoHeight)) ||
             (!drawVideo && state.coverGeneration != lastPyramidCoverGen) ||
-            orientationFloat != lastPyramidOrientation ||
-            kotlin.math.abs(splits.splitX - lastPyramidSplitX) > 0.0005f ||
-            kotlin.math.abs(splits.splitY - lastPyramidSplitY) > 0.0005f
+            geometryChanged
 
         if (pyramidDirty) {
             lastPyramidWidth = w
@@ -139,7 +167,11 @@ internal class ProgressiveVideoGlRenderer : Closeable {
             lastPyramidOrientation = orientationFloat
             lastPyramidSplitX = splits.splitX
             lastPyramidSplitY = splits.splitY
+            lastPyramidCrossfadeMix = effectiveCrossfadeMix
+            lastPyramidVideoMix = effectiveVideoMix
             pyramidInitialized = true
+
+            val outgoingTexId = outgoingBaseTarget?.texture ?: staticCoverTextureId
 
             // Pass 0: mirror + center-crop either live OES video or static cover into baseTarget (level 0).
             base.bind()
@@ -158,7 +190,25 @@ internal class ProgressiveVideoGlRenderer : Closeable {
                 mirrorVideoProgram.float("uOrientationMode", orientationFloat)
                 mirrorVideoProgram.float("uMirrorSplit", splits.splitX)
                 mirrorVideoProgram.float("uMirrorSplitY", splits.splitY)
+
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, staticCoverTextureId)
+                mirrorVideoProgram.int("uStaticTex", 1)
+                mirrorVideoProgram.mat4("uStaticTexMatrix", STATIC_TEX_MATRIX)
+                mirrorVideoProgram.vec2(
+                    "uStaticSourceSize",
+                    staticCoverWidth.toFloat(),
+                    staticCoverHeight.toFloat(),
+                )
+                mirrorVideoProgram.float("uVideoMix", effectiveVideoMix)
+
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingTexId)
+                mirrorVideoProgram.int("uOutgoingTex", 2)
+                mirrorVideoProgram.float("uCrossfadeMix", effectiveCrossfadeMix)
+
                 drawQuad()
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
                 GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
             } else {
                 mirrorStaticProgram.use()
@@ -175,8 +225,16 @@ internal class ProgressiveVideoGlRenderer : Closeable {
                 mirrorStaticProgram.float("uOrientationMode", orientationFloat)
                 mirrorStaticProgram.float("uMirrorSplit", splits.splitX)
                 mirrorStaticProgram.float("uMirrorSplitY", splits.splitY)
+
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outgoingTexId)
+                mirrorStaticProgram.int("uOutgoingTex", 1)
+                mirrorStaticProgram.float("uCrossfadeMix", effectiveCrossfadeMix)
+
                 drawQuad()
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             }
+            crossfadeTracker.onBaseRendered()
 
             // Passes 1..7: 5-tap prefilter downsample + separable 9-tap Gaussian H & V per level
             // (double-pass on deeper levels 4..7 for ultra-creamy gradient-like smoothness).
@@ -346,8 +404,13 @@ internal class ProgressiveVideoGlRenderer : Closeable {
 
     private fun releaseFbos() {
         pyramidInitialized = false
+        crossfadeTracker.onSurfaceReset()
+        lastPyramidCrossfadeMix = 1f
+        lastPyramidVideoMix = 1f
         baseTarget?.close()
         baseTarget = null
+        outgoingBaseTarget?.close()
+        outgoingBaseTarget = null
         pyramidTargets.forEach { it.close() }
         pyramidTargets = emptyList()
         tempTargets.forEach { it.close() }

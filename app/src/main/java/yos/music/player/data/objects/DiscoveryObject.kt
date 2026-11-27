@@ -48,6 +48,12 @@ object DiscoveryObject {
     @Stable
     val everydayRecommendSongs = mutableStateOf<List<KugouNewSong>>(emptyList())
 
+    @Stable
+    val vipRecommendSongs = mutableStateOf<List<KugouNewSong>>(emptyList())
+
+    @Stable
+    val nicheTreasureSongs = mutableStateOf<List<KugouNewSong>>(emptyList())
+
     /** Successful detail totals keyed by global collection id; values may legitimately be zero. */
     @Stable
     val recommendPlaylistSongCounts = mutableStateMapOf<String, Int>()
@@ -72,9 +78,15 @@ object DiscoveryObject {
     @Stable
     val everydayRecommendSongsStatus = mutableStateOf("idle")
 
+    @Stable
+    val vipRecommendSongsStatus = mutableStateOf("idle")
+
+    @Stable
+    val nicheTreasureSongsStatus = mutableStateOf("idle")
+
     // ---------- 加载器 ----------
 
-    private enum class Section { Rank, NewSongs, NewAlbums, Playlists, Everyday }
+    private enum class Section { VipRecommend, NicheTreasure, Rank, NewSongs, NewAlbums, Playlists, Everyday }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = HashMap<Section, Job>()
@@ -93,8 +105,10 @@ object DiscoveryObject {
         refreshAll()
     }
 
-    /** 五个板块并行拉取；已在跑的板块复用现有请求。 */
+    /** 七个在线板块并行拉取；已在跑的板块复用现有请求。 */
     fun refreshAll() {
+        loadVipRecommendSongs()
+        loadNicheTreasureSongs()
         loadRank()
         loadNewSongs()
         loadNewAlbums()
@@ -192,11 +206,41 @@ object DiscoveryObject {
         }
     }
 
+    fun loadVipRecommendSongs() {
+        vipRecommendSongsStatus.value = "loading"
+        launch(Section.VipRecommend) {
+            KugouRepository.getVipRecommendSongs()
+                .onSuccess { list ->
+                    vipRecommendSongs.value = list
+                    vipRecommendSongsStatus.value = if (list.isEmpty()) "empty" else "ok"
+                }
+                .onFailure { e ->
+                    vipRecommendSongsStatus.value = "error:${e.message}"
+                }
+        }
+    }
+
+    fun loadNicheTreasureSongs() {
+        nicheTreasureSongsStatus.value = "loading"
+        launch(Section.NicheTreasure) {
+            KugouRepository.getNicheTreasureSongs()
+                .onSuccess { list ->
+                    nicheTreasureSongs.value = list
+                    nicheTreasureSongsStatus.value = if (list.isEmpty()) "empty" else "ok"
+                }
+                .onFailure { e ->
+                    nicheTreasureSongsStatus.value = "error:${e.message}"
+                }
+        }
+    }
+
     /** 所有板块都不在加载中（下拉刷新收起指示器的判据）。 */
     fun allSettled(): Boolean =
         status.value != "loading" &&
             newSongsStatus.value != "loading" &&
             newAlbumsStatus.value != "loading" &&
             recommendPlaylistsStatus.value != "loading" &&
-            everydayRecommendSongsStatus.value != "loading"
+            everydayRecommendSongsStatus.value != "loading" &&
+            vipRecommendSongsStatus.value != "loading" &&
+            nicheTreasureSongsStatus.value != "loading"
 }

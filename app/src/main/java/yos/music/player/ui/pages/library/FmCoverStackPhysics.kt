@@ -39,13 +39,13 @@ internal object FmCoverStackPhysics {
     const val VISIBLE_SLOTS = 4
 
     /** 拖拽进度换算基准（dp / 1 张卡片），对齐标准卡片离开轨迹以实现 1:1 跟手。 */
-    const val DRAG_STEP_DP = 118f
+    const val DRAG_STEP_DP = 130f
 
     /** 按屏幕宽度档位返回 1:1 拖拽步长（dp）。 */
-    fun dragStepDp(isCompactPhone: Boolean): Float = if (isCompactPhone) 104f else 118f
+    fun dragStepDp(isCompactPhone: Boolean): Float = if (isCompactPhone) 114f else 130f
 
     /** 2D 垂直橡皮筋最大自由跟随幅度（dp）。 */
-    const val VERTICAL_RUBBER_LIMIT_DP = 14f
+    const val VERTICAL_RUBBER_LIMIT_DP = 6f
 
     /** Apple 指数衰减动量投影系数（scroll 卡片单位，0.994 为轻量卡片的灵动衰减）。 */
     private const val DECELERATION_RATE = 0.994f
@@ -94,6 +94,19 @@ internal object FmCoverStackPhysics {
     }
 
     /**
+     * [rubberBand] 的逆映射：给定已阻尼的偏移量 [damped]，反推出对应的原始累积位移，
+     * 用于连续拖拽打断正在回弹的 `dragYAnim` 时无缝衔接，避免从 0 起跳。
+     */
+    fun inverseRubberBand(damped: Float, dimension: Float, constant: Float = 0.55f): Float {
+        if (dimension <= 0f || constant <= 0f || damped == 0f) return 0f
+        val maxAbs = dimension * 0.95f
+        val clamped = damped.coerceIn(-maxAbs, maxAbs)
+        val absVal = abs(clamped)
+        val raw = (absVal * dimension) / (constant * (dimension - absVal))
+        return if (clamped < 0f) -raw else raw
+    }
+
+    /**
      * 依据当前位置、释放瞬时速度（单位：卡片/秒）与本次手势净位移，
      * 使用 Apple 指数衰减模型投影落点，再吸附到目标整数槽位。
      *
@@ -136,6 +149,16 @@ internal object FmCoverStackPhysics {
     fun pressWeight(relDepth: Float): Float {
         val w = (1f - abs(relDepth)).coerceIn(0f, 1f)
         return smoothStep(w)
+    }
+
+    /**
+     * 垂直橡皮筋跟随的连续权重：在 `relDepth = 0` 处值为 `1.0` 且左右导数为 `0`（C¹ 连续），
+     * 离场侧 `[-1, 0]` 随离开平滑归零，后排 `[0, 1]` 以更轻的 `s²` 联动，彻底消除 `relDepth == 0` 处的跳变。
+     */
+    fun dragYWeight(relDepth: Float): Float {
+        val w = (1f - abs(relDepth)).coerceIn(0f, 1f)
+        val s = smoothStep(w)
+        return if (relDepth > 0f) s * s else s
     }
 
     /**

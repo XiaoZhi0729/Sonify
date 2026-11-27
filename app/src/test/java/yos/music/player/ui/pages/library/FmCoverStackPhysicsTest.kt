@@ -173,4 +173,28 @@ class FmCoverStackPhysicsTest {
         val slope = (x0 - xExit) / tiny
         assertEquals(FmCoverStackPhysics.dragStepDp(isCompactPhone = false), slope, 0.25f)
     }
+
+    @Test
+    fun `dragYWeight is C0 and C1 continuous across -1, 0, and 1`() {
+        assertEquals(1f, FmCoverStackPhysics.dragYWeight(0f), 0.0001f)
+        assertEquals(0.25f, FmCoverStackPhysics.dragYWeight(0.5f), 0.0001f)
+        assertEquals(0.5f, FmCoverStackPhysics.dragYWeight(-0.5f), 0.0001f)
+        assertEquals(0f, FmCoverStackPhysics.dragYWeight(-1f), 0.0001f)
+        assertEquals(0f, FmCoverStackPhysics.dragYWeight(1f), 0.0001f)
+
+        val leftNearZero = FmCoverStackPhysics.dragYWeight(-0.001f)
+        val rightNearZero = FmCoverStackPhysics.dragYWeight(0.001f)
+        assertTrue(abs(leftNearZero - rightNearZero) < 0.001f)
+        assertTrue(abs(leftNearZero - 1f) < 0.001f)
+    }
+
+    @Test
+    fun `inverseRubberBand accurately inverts rubberBand for positive and negative values`() {
+        val dim = FmCoverStackPhysics.VERTICAL_RUBBER_LIMIT_DP
+        for (raw in listOf(-25f, -8f, -1.5f, 0f, 1.5f, 8f, 25f)) {
+            val damped = FmCoverStackPhysics.rubberBand(raw, dim)
+            val recovered = FmCoverStackPhysics.inverseRubberBand(damped, dim)
+            assertEquals("inverse mismatch for raw=$raw", raw, recovered, 0.01f)
+        }
+    }
 }

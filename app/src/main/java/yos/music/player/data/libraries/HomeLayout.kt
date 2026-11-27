@@ -9,27 +9,30 @@ import yos.music.player.code.utils.others.YosDiagnostics
 
 /**
  * 主页板块身份。key 是持久化标识，永不更改；显示名复用现有 string 资源
- * （home_continue_listening / home_everyday_recommend_title / discovery_recommend_playlists_title
+ * （home_vip_recommend_title / home_everyday_recommend_title / discovery_recommend_playlists_title
  *  / discovery_new_songs_title / discovery_new_albums_title / discovery_rank_title）。
  */
 enum class HomeSectionId(val key: String) {
-    RecentlyPlayed("recently_played"),
+    VipRecommend("vip_recommend"),
 
     /**
      * 私人电台（提取色玻璃卡）。
      *
-     * 放在第 2 位而不是末尾：它是"边听边浏览"的入口，紧接「最近播放」在信息层级上
-     * 最自然（都是"现在/接下来听什么"）。老用户的已存布局由 [HomeLayoutLogic.normalize]
-     * 的补缺失步骤自动追加，不需要迁移代码。
+     * 放在第 2 位而不是末尾：它是"边听边浏览"的入口，紧接「VIP专属推荐」在信息层级上
+     * 最自然。老用户的已存布局由 [HomeLayoutLogic.normalize]
+     * 的迁移与补缺失步骤自动衔接，不需要手动清除配置。
      */
     PersonalFm("personal_fm"),
     EverydayRecommend("everyday_recommend"),
+    NicheTreasure("niche_treasure"),
     RecommendPlaylists("recommend_playlists"),
     NewSongs("new_songs"),
     NewAlbums("new_albums"),
     Rank("rank");
 
     companion object {
+        const val LEGACY_RECENTLY_PLAYED_KEY = "recently_played"
+
         fun fromKey(key: String): HomeSectionId? = entries.firstOrNull { it.key == key }
     }
 }
@@ -57,22 +60,28 @@ object HomeLayoutLogic {
         HomeSectionId.entries.map { HomeSectionConfig(it.key, visible = true) }
 
     /**
-     * 归一化：① 丢未知 id ② 去重（保首个）③ 补齐缺失的已知 id（visible=true）
-     * ④ 最后固定重排为 [visible=true...][visible=false...]（组内保相对顺序）⑤ 空 → 默认布局。
+     * 归一化：① 迁移旧 key（recently_played → vip_recommend）② 丢未知 id
+     * ③ 去重（保首个）④ 补齐缺失的已知 id（visible=true）
+     * ⑤ 最后固定重排为 [visible=true...][visible=false...]（组内保相对顺序）⑥ 空 → 默认布局。
      */
     fun normalize(raw: List<HomeSectionConfig>): List<HomeSectionConfig> {
         val seen = LinkedHashSet<String>()
         val known = ArrayList<HomeSectionConfig>()
-        for (c in raw) {
-            if (HomeSectionId.fromKey(c.id) == null) continue // ① 丢未知
-            if (!seen.add(c.id)) continue                     // ② 去重
+        for (rawConfig in raw) {
+            val c = if (rawConfig.id == HomeSectionId.LEGACY_RECENTLY_PLAYED_KEY) {
+                rawConfig.copy(id = HomeSectionId.VipRecommend.key)
+            } else {
+                rawConfig
+            }
+            if (HomeSectionId.fromKey(c.id) == null) continue // ② 丢未知
+            if (!seen.add(c.id)) continue                     // ③ 去重
             known.add(c)
         }
-        for (id in HomeSectionId.entries) {                   // ③ 补齐缺失
+        for (id in HomeSectionId.entries) {                   // ④ 补齐缺失
             if (known.none { it.id == id.key }) known.add(HomeSectionConfig(id.key, true))
         }
-        if (known.isEmpty()) return default()                 // ⑤
-        return known.filter { it.visible } + known.filterNot { it.visible } // ④ 分组
+        if (known.isEmpty()) return default()                 // ⑥
+        return known.filter { it.visible } + known.filterNot { it.visible } // ⑤ 分组
     }
 
     /** 翻转某板块可见性：隐藏 → 移到隐藏组末尾；恢复 → 追加到显示组末尾。 */

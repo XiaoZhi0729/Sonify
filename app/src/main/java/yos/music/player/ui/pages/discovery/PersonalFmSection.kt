@@ -89,6 +89,8 @@ import yos.music.player.ui.widgets.basic.LocalTitlePageColor
 import yos.music.player.ui.widgets.basic.coverCacheKey
 import yos.music.player.ui.widgets.basic.ImageQuality
 import yos.music.player.ui.widgets.liquid.glassBlurScale
+import yos.music.player.ui.widgets.mochi.mochiHorizontalOverscroll
+import yos.music.player.ui.widgets.mochi.rememberMochiPagerFlingBehavior
 
 /**
  * 主页「私人电台」板块。
@@ -711,7 +713,7 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                 )
                 HorizontalPager(
                     state = pagerState,
-                    flingBehavior = PagerDefaults.flingBehavior(
+                    flingBehavior = rememberMochiPagerFlingBehavior(
                         state = pagerState,
                         pagerSnapDistance = DiscoveryRailSnapDistance
                     ),
@@ -720,7 +722,9 @@ private fun PersonalFmStage(songs: List<KugouNewSong>) {
                     // 队列变短时旧页回调也不能越界；返回稳定占位键让旧页退出。
                     key = { page -> fmPageKey(currentSongs, page) },
                     beyondViewportPageCount = 1,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .mochiHorizontalOverscroll()
                 ) { page ->
                     val song = currentSongs.getOrNull(page) ?: return@HorizontalPager
                     // ★按**歌曲身份**取相位，不按下标：

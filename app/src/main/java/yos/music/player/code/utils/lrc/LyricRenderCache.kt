@@ -113,11 +113,12 @@ private fun List<Pair<Float, String>>.toKaraokeLine(
 fun buildSyncedLyrics(
     entries: List<LyricEntry>,
     otherSideForLines: List<Boolean>,
+    duetAlignment: Boolean = true,
 ): SyncedLyrics = SyncedLyrics(
     entries.mapIndexed { index, entry ->
         entry.mainLyric.toKaraokeLine(
             entry.translation ?: entry.romanization,
-            otherSideForLines.getOrElse(index) { false },
+            if (duetAlignment) otherSideForLines.getOrElse(index) { false } else false,
             entries.getOrNull(index + 1)?.startTime,
         )
     }
@@ -243,6 +244,7 @@ fun lyricRenderKey(
     fontWeightSetting: String = SettingsLibrary.LyricFontWeight,
     lineBalance: Boolean = SettingsLibrary.LyricLineBalance,
     customFontPath: String = "",
+    duetAlignment: Boolean = SettingsLibrary.LyricDuetAlignment,
 ): String = buildString {
     append(mediaIdKey)
     append('|').append(layoutWidthDp.roundToInt())
@@ -253,6 +255,7 @@ fun lyricRenderKey(
     append('|').append(entriesSize)
     append('|').append((systemFontScale * 100).roundToInt())
     append('|').append(customFontPath)
+    append('|').append(duetAlignment)
 }
 
 /**
@@ -453,6 +456,7 @@ object LyricRenderWarmup {
         val fontScale = appContext.resources.configuration.fontScale
         val isLandscape = appContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val activeScale = effectiveLyricFontScale(isLandscape)
+        val duetAlignment = SettingsLibrary.LyricDuetAlignment
         val widthPx = widthDp * density
         val key = lyricRenderKey(
             mediaIdKey = mediaIdKey,
@@ -462,6 +466,7 @@ object LyricRenderWarmup {
             entriesSize = entries.size,
             fontScaleSetting = activeScale,
             customFontPath = SettingsLibrary.LyricCustomFontPath,
+            duetAlignment = duetAlignment,
         )
 
         if (key == liveKey) {
@@ -489,7 +494,7 @@ object LyricRenderWarmup {
                     scaleOverride = activeScale,
                 )
                 prepareLyrics(
-                    lyrics = buildSyncedLyrics(entries, otherSideForLines),
+                    lyrics = buildSyncedLyrics(entries, otherSideForLines, duetAlignment = duetAlignment),
                     profiles = DefaultLyricsProfiles,
                     measurer = TextMeasurer(
                         createFontFamilyResolver(appContext),

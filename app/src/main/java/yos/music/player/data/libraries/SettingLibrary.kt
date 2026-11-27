@@ -293,6 +293,15 @@ object SettingsLibrary {
     )
 
     /**
+     * 歌词对唱分栏对齐（开启：对唱歌曲自动左右分栏；关闭：全部左对齐）
+     */
+    var LyricDuetAlignment by mutableDataSaverStateOf(
+        dataSaverInterface = SettingsSaver,
+        key = "settings_performance_lyric_duet_alignment",
+        initialValue = true
+    )
+
+    /**
      * 歌词模糊效果
      */
     var LyricBlurEffect by mutableDataSaverStateOf(
@@ -928,6 +937,7 @@ object SettingsLibrary {
         RefreshEveryTime = false
         LyricFontWeight = "800"
         LyricLineBalance = false
+        LyricDuetAlignment = true
         LyricBlurEffect = false
         LyricHdrEffect = false
         LyricHdrStrength = 0.6f

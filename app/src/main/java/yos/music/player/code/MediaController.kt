@@ -1164,15 +1164,20 @@ object MediaController {
             if (thumb == lastPreloadedCoverThumb) return
             lastPreloadedCoverThumb = thumb
 
-            val request = ImageRequest.Builder(context)
-                // 必须与显示侧同一份高清 URL：缓存键由 URL 派生，档位不同就等于没预热
-                // （显示侧解析 1080、这里预热 400，切歌时仍要重新下载+解码）。
-                .data(hiresCoverUrl(thumb))
-                .size(Size.ORIGINAL)
-                .precision(Precision.EXACT)
-                .memoryCacheKey(coverCacheKey(hiresCoverUrl(thumb), ImageQuality.RAW))
-                .allowHardware(true)
-                .build()
+            val request = if (SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+                yos.music.player.ui.widgets.effects.progressiveblur
+                    .buildProgressiveCoverImageRequest(context, hiresCoverUrl(thumb))
+            } else {
+                ImageRequest.Builder(context)
+                    // 必须与显示侧同一份高清 URL：缓存键由 URL 派生，档位不同就等于没预热
+                    // （显示侧解析 1080、这里预热 400，切歌时仍要重新下载+解码）。
+                    .data(hiresCoverUrl(thumb))
+                    .size(Size.ORIGINAL)
+                    .precision(Precision.EXACT)
+                    .memoryCacheKey(coverCacheKey(hiresCoverUrl(thumb), ImageQuality.RAW))
+                    .allowHardware(true)
+                    .build()
+            }
             context.imageLoader.enqueue(request)
             println("封面预加载 $thumb")
         } catch (_: Exception) {

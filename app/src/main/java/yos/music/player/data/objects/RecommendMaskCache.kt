@@ -7,10 +7,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.tencent.mmkv.MMKV
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -186,7 +189,7 @@ object RecommendMaskCache {
                         .allowHardware(false)
                         .build()
                     val loaded = runCatching {
-                        appContext.imageLoader.execute(request).drawable?.toBitmap()
+                        (appContext.imageLoader.execute(request) as? SuccessResult)?.drawable?.toBitmap()
                     }.getOrNull() ?: return@async null
                     // loaded 可能是 Coil 内存缓存中的共享 Bitmap（toBitmap() 不一定复制），绝对不能 recycle(loaded)
                     val compressed = BitmapResolver.bitmapCompress(loaded, lowQuality = true)
@@ -198,11 +201,19 @@ object RecommendMaskCache {
                 } catch (_: Throwable) {
                     null
                 } finally {
-                    inFlightGuard.withLock { inFlight.remove(key) }
+                    withContext(NonCancellable) {
+                        inFlightGuard.withLock { inFlight.remove(key) }
+                    }
                 }
             }.also { inFlight[key] = it }
         }
-        return runCatching { job.await() }.getOrNull()
+        return try {
+            job.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     fun warmUp(context: Context, thumbs: Iterable<Any?>) {

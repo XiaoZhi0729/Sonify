@@ -1,7 +1,6 @@
 package yos.music.player.ui.pages.discovery
 
 import androidx.compose.foundation.gestures.snapping.SnapPosition
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +24,8 @@ import kotlinx.coroutines.supervisorScope
 import yos.music.player.code.MediaController
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.ui.pages.RecommendCardItem
+import yos.music.player.ui.widgets.mochi.mochiHorizontalOverscroll
+import yos.music.player.ui.widgets.mochi.rememberMochiSnapFlingBehavior
 
 internal fun recentSongKey(song: YosMediaItem): String =
     song.mediaId?.takeIf { it.isNotBlank() }
@@ -105,11 +106,13 @@ fun RecentListeningRail(
 
     LazyRow(
         state = listState,
-        flingBehavior = rememberSnapFlingBehavior(
+        flingBehavior = rememberMochiSnapFlingBehavior(
             lazyListState = listState,
             snapPosition = SnapPosition.Start
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .mochiHorizontalOverscroll(),
         contentPadding = PaddingValues(start = 20.dp, end = 136.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {

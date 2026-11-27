@@ -154,6 +154,20 @@ fun UserInterfaceSetting(navController: NavController) =
 
                         GroupSpacer()
 
+                        // ---------------- 主页 ----------------
+                        ListHeader(content = stringResource(id = R.string.settings_performance_ui_home_header))
+
+                        RoundColumn {
+                            LabelItem(
+                                title = stringResource(id = R.string.settings_performance_ui_home_title),
+                                desc = stringResource(id = R.string.settings_performance_ui_home_desc),
+                            ) {
+                                navController.toUI(UI.Settings.HomeLayoutSetting)
+                            }
+                        }
+
+                        GroupSpacer()
+
                         // ---------------- 资料库 ----------------
                         ListHeader(content = stringResource(id = R.string.settings_performance_ui_library_header))
 

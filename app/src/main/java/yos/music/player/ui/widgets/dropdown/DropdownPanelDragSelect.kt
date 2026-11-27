@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -343,10 +344,14 @@ fun Modifier.dropdownPanelDragSelect(
             state.hitTest2D(down.position.x, down.position.y)
             onPointerDown?.invoke(down.position)
             var scrolled = false
+            var upChange: PointerInputChange? = null
             while (true) {
                 val change = awaitPointerEvent()
                     .changes.fastFirstOrNull { it.id == down.id } ?: break
-                if (!change.pressed) break
+                if (!change.pressed) {
+                    upChange = change
+                    break
+                }
                 onPointerMove?.invoke(change.position)
                 if (abs(change.position.y - startY) > scrollSlop ||
                     abs(change.position.x - startX) > scrollSlop
@@ -358,7 +363,12 @@ fun Modifier.dropdownPanelDragSelect(
             val tapped = state.selected
             state.clear()
             onPointerUp?.invoke()
-            if (!scrolled) tapped?.action?.invoke()
+            if (!scrolled) {
+                // 消费抬手事件，避免未消费的 tap 冒泡到外层全屏关闭遮罩（detectTapGestures），
+                // 导致点击二级入口等不自动关闭面板的菜单项时「点击即返回」。
+                upChange?.consume()
+                tapped?.action?.invoke()
+            }
             return@awaitEachGesture
         }
         // 一屏装得下：跟手滑选，独占该轴手势

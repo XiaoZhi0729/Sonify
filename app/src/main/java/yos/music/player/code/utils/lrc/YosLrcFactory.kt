@@ -433,6 +433,11 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         "全体", "齐唱", "合声", "男女", "众人",
     )
 
+    /** 合唱/齐唱类角色词：固定归到主侧（左侧），不随上一位独唱者翻转到右侧。 */
+    private val chorusRoleWords = setOf(
+        "合", "合唱", "对唱", "全体", "齐唱", "合声", "男女", "众人",
+    )
+
     /** 一个报幕标签及其在行内覆盖的元素数（KRC 常把 `男：` 切成 `["男", "："]`）。 */
     private data class SingerLabel(val text: String, val consumed: Int)
 
@@ -487,76 +492,57 @@ class YosLrcFactory(private val formatText: Boolean = true) {
         return null
     }
 
-    /** 返回下一次切换后应处的侧：首个报幕标签只记录歌手，不翻转（第一位演唱者固定靠左）。 */
-    private fun switchSideOnLabel(label: String, lastSinger: String?, otherSide: Boolean): Boolean =
-        if (lastSinger == null || lastSinger == label) otherSide else !otherSide
-
     /**
-     * 清空行首报幕标签覆盖的元素文本，保留元素本身与时间点。
-     *
-     * 词级时间轴（ELRC 序列化、扫色窗口）依赖元素数量与顺序，因此不能删除元素。
-     * 也不能只删 `mainLyric[1]`：`男：` 被逐字切成两个词时会残留半截冒号。
-     */
-    private fun stripSingerLabel(
-        mainLyric: List<Pair<Float, String>>,
-        consumed: Int,
-    ): List<Pair<Float, String>> =
-        mainLyric.mapIndexed { index, (time, text) ->
-            // index 0 是行起点锚点，标签从 index 1 开始
-            if (index in 1..consumed) time to "" else time to text
-        }
-
-    /**
-     * 计算每行应处的侧，并把报幕标签从正文里剥掉。
+     * 计算每行应处的侧，同时原样保留报幕标签（`女：`、`男：`、`合：`等）用于展示，并让标签与对应歌手同侧。
      *
      * 标签识别靠 [singerLabelOf] 的结构判据（演唱标签独占一行，制作署名带姓名）。
      * 这里再做两件事：
      *  - 频次校验：只出现一次的标签不构成对唱，避免单唱歌曲里的偶发人名冒号行翻转；
-     *  - 至少两个不同标签才分栏，单标签歌曲全程左对齐。
+     *  - 至少两个不同标签才分栏，单标签歌曲全程左对齐；
+     *  - 合唱类标签固定靠左（主侧），且不改写独唱角色已分配的左右侧。
      */
     private fun processOtherSide(entries: List<LyricEntry>): List<LyricEntry> {
         val labels = entries.map { singerLabelOf(it) }
         val occurrences = HashMap<String, MutableList<Int>>()
         labels.forEachIndexed { index, label ->
-            if (label != null) occurrences.getOrPut(label.text) { mutableListOf() } += index
+            if (label != null) occurrences.getOrPut(labelCore(label.text)) { mutableListOf() } += index
         }
         // 重复出现的标签才是真歌手；单次出现视为偶发冒号行
         val repeated = occurrences.filterValues { it.size >= singerLabelMinOccurrences }
         // 只出现一次的标签仍可能是歌手（某位歌手只唱一句），但必须夹在重复标签之间才算
         val validLabels = HashSet<String>(repeated.keys)
-        occurrences.forEach { (label, positions) ->
-            if (label in repeated) return@forEach
+        occurrences.forEach { (core, positions) ->
+            if (core in repeated) return@forEach
             val index = positions.first()
-            val before = labels.subList(0, index).any { it != null && it.text in repeated }
-            val after = labels.subList(index + 1, labels.size).any { it != null && it.text in repeated }
-            if (before && after) validLabels += label
+            val before = labels.subList(0, index).any { it != null && labelCore(it.text) in repeated }
+            val after = labels.subList(index + 1, labels.size).any { it != null && labelCore(it.text) in repeated }
+            if (before && after) validLabels += core
         }
         // 至少两个不同的歌手标签才分栏；单唱歌曲全程左对齐
         val duet = validLabels.size >= minDistinctSingerLabels
 
         val sides = ArrayList<Boolean>(entries.size)
-        val filtered = ArrayList<LyricEntry>(entries.size)
+        val singerSides = HashMap<String, Boolean>()
+        var nextSoloSide = false
         var otherSide = false
-        var lastSinger: String? = null
-        entries.forEachIndexed { index, entry ->
-            val label = labels[index]?.takeIf { it.text in validLabels }
-            if (label != null) {
-                otherSide = switchSideOnLabel(label.text, lastSinger, otherSide)
-                lastSinger = label.text
+        entries.forEachIndexed { index, _ ->
+            val core = labels[index]?.let { labelCore(it.text) }?.takeIf { it in validLabels }
+            if (core != null) {
+                otherSide = if (core in chorusRoleWords) {
+                    false
+                } else {
+                    singerSides.getOrPut(core) {
+                        val assigned = nextSoloSide
+                        nextSoloSide = !nextSoloSide
+                        assigned
+                    }
+                }
             }
-            val stripped = if (label != null) {
-                entry.copy(mainLyric = stripSingerLabel(entry.mainLyric, label.consumed))
-            } else {
-                entry
-            }
-            // 整行就是报幕标签（`男：`）：没有正文可显示，整行删除
-            if (label != null && stripped.mainLyric.none { it.second.isNotBlank() }) return@forEachIndexed
             sides += if (duet) otherSide else false
-            filtered += stripped
         }
         MediaViewModelObject.otherSideForLines.clear()
         MediaViewModelObject.otherSideForLines.addAll(sides)
-        return filtered
+        return entries
     }
 }
 

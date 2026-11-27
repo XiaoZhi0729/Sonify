@@ -86,6 +86,12 @@ uniform vec2 uSourceSize;
 uniform float uOrientationMode;
 uniform float uMirrorSplit;
 uniform float uMirrorSplitY;
+uniform sampler2D uStaticTex;
+uniform mat4 uStaticTexMatrix;
+uniform vec2 uStaticSourceSize;
+uniform float uVideoMix;
+uniform sampler2D uOutgoingTex;
+uniform float uCrossfadeMix;
 
 varying vec2 vTexCoord;
 
@@ -105,7 +111,27 @@ void main() {
         canonicalOriginX
     );
     vec2 finalUv = (uTexMatrix * vec4(glUv, 0.0, 1.0)).xy;
-    gl_FragColor = vec4(texture2D(uVideoTex, finalUv).rgb, 1.0);
+    vec3 incoming = texture2D(uVideoTex, finalUv).rgb;
+    if (uVideoMix < 0.999) {
+        vec2 staticGlUv = computeMirroredSourceUv(
+            vTexCoord,
+            uViewportSize,
+            uStaticSourceSize,
+            uOrientationMode,
+            uMirrorSplit,
+            uMirrorSplitY,
+            canonicalOriginX
+        );
+        vec2 staticFinalUv = (uStaticTexMatrix * vec4(staticGlUv, 0.0, 1.0)).xy;
+        vec3 staticRgb = texture2D(uStaticTex, staticFinalUv).rgb;
+        incoming = mix(staticRgb, incoming, clamp(uVideoMix, 0.0, 1.0));
+    }
+    vec3 color = incoming;
+    if (uCrossfadeMix < 0.999) {
+        vec3 outgoing = texture2D(uOutgoingTex, vTexCoord).rgb;
+        color = mix(outgoing, incoming, clamp(uCrossfadeMix, 0.0, 1.0));
+    }
+    gl_FragColor = vec4(color, 1.0);
 }
 """
 
@@ -119,6 +145,8 @@ uniform vec2 uSourceSize;
 uniform float uOrientationMode;
 uniform float uMirrorSplit;
 uniform float uMirrorSplitY;
+uniform sampler2D uOutgoingTex;
+uniform float uCrossfadeMix;
 
 varying vec2 vTexCoord;
 
@@ -138,7 +166,13 @@ void main() {
         canonicalOriginX
     );
     vec2 finalUv = (uTexMatrix * vec4(glUv, 0.0, 1.0)).xy;
-    gl_FragColor = vec4(texture2D(uSourceTex, finalUv).rgb, 1.0);
+    vec3 incoming = texture2D(uSourceTex, finalUv).rgb;
+    vec3 color = incoming;
+    if (uCrossfadeMix < 0.999) {
+        vec3 outgoing = texture2D(uOutgoingTex, vTexCoord).rgb;
+        color = mix(outgoing, incoming, clamp(uCrossfadeMix, 0.0, 1.0));
+    }
+    gl_FragColor = vec4(color, 1.0);
 }
 """
 

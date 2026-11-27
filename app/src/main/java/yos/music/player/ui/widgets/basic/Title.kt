@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +70,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -93,6 +95,7 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
 import kotlinx.coroutines.Job
@@ -103,7 +106,14 @@ import yos.music.player.R
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.ui.navigation.LocalPageGradient
 import yos.music.player.ui.navigation.PageGradient
+import yos.music.player.ui.theme.isFlamingoInDarkMode
 import yos.music.player.ui.theme.withNight
+import yos.music.player.ui.widgets.liquid.TitleBarFrostedBlurDp
+import yos.music.player.ui.widgets.liquid.TitleBarFrostedBorderWidth
+import yos.music.player.ui.widgets.liquid.frostedBlurScale
+import yos.music.player.ui.widgets.liquid.frostedTopBarBorderColor
+import yos.music.player.ui.widgets.liquid.frostedTopBarIconTint
+import yos.music.player.ui.widgets.liquid.frostedTopBarSurfaceColor
 
 /*@OptIn(ExperimentalCupertinoApi::class)
 @Composable
@@ -501,8 +511,12 @@ private fun BaseTitleGrid(
     val pageGradient = LocalPageGradient.current
     val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
-    val titleBackdropEnabled = remember(collapse, overlayHost) {
-        { collapse.showBarBackground.value || overlayHost.slots.isNotEmpty() }
+    val titleBackdropEnabled = remember(collapse, overlayHost, effectiveRightBarIcon) {
+        {
+            collapse.showBarBackground.value ||
+                overlayHost.slots.isNotEmpty() ||
+                (!SettingsLibrary.BarBlurEffect && effectiveRightBarIcon != null)
+        }
     }
     val titleBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
         overlayHost
@@ -664,8 +678,12 @@ private fun BaseTitleList(
     val pageGradient = LocalPageGradient.current
     val titleBackdrop = rememberTitleBackdrop(blit = true, gradient = pageGradient)
     val overlayHost = remember { TitleOverlayHost() }
-    val titleBackdropEnabled = remember(collapse, overlayHost) {
-        { collapse.showBarBackground.value || overlayHost.slots.isNotEmpty() }
+    val titleBackdropEnabled = remember(collapse, overlayHost, effectiveRightBarIcon) {
+        {
+            collapse.showBarBackground.value ||
+                overlayHost.slots.isNotEmpty() ||
+                (!SettingsLibrary.BarBlurEffect && effectiveRightBarIcon != null)
+        }
     }
     val titleBackdropClipRect = remember<androidx.compose.ui.graphics.drawscope.DrawScope.() -> androidx.compose.ui.geometry.Rect?>(
         overlayHost
@@ -1118,27 +1136,57 @@ fun TitleBarIcon(
             )
         }
     } else {
+        val isLightTheme = !isFlamingoInDarkMode()
+        val pageBackdrop = LocalTitlePageBackdrop.current
+        val accentTint = LocalTitleBarAccentTint.current
+        val frostedScale = frostedBlurScale
+        val surfaceColor = frostedTopBarSurfaceColor(isLightTheme)
+        val borderColor = frostedTopBarBorderColor(isLightTheme)
+        val iconTint = frostedTopBarIconTint(isLightTheme)
+        val frostedEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
+            remember(frostedScale) {
+                { blur(TitleBarFrostedBlurDp.toPx() * frostedScale) }
+            }
+        val backdropModifier = if (pageBackdrop != null) {
+            Modifier.drawBackdrop(
+                backdrop = pageBackdrop,
+                shape = { CircleShape },
+                effects = frostedEffects,
+                highlight = null,
+                shadow = null,
+                onDrawSurface = {
+                    drawRect(surfaceColor)
+                    if (accentTint != null && accentTint.alpha > 0.005f) {
+                        drawRect(accentTint)
+                    }
+                }
+            )
+        } else {
+            Modifier.background(surfaceColor, CircleShape)
+        }
         Box(
             modifier = Modifier
                 // TitleBar 内容区已在外层 Box(629 行)做过 statusBarsPadding，
                 // 此处再加会让 accompanist inset 二次扣高、按钮变形，见 TitleBar 注释。
                 .padding(end = 10.dp)
-                .size(28.dp)
-                .background((Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f), shape = CircleShape)
+                .size(42.dp)
+                .clip(CircleShape)
+                .then(backdropModifier)
+                .border(TitleBarFrostedBorderWidth, borderColor, CircleShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
                     onBack?.invoke()
-                }.then(modifier),
+                }
+                .then(modifier),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                modifier = Modifier
-                    .size(19.dp),
-                tint = contentColor ?: MaterialTheme.colorScheme.primary
+                modifier = Modifier.size(23.dp),
+                tint = iconTint
             )
         }
     }
@@ -1249,7 +1297,7 @@ fun TitleBar(
                             Modifier.drawPlainBackdrop(
                                 backdrop = backdrop,
                                 shape = { androidx.compose.ui.graphics.RectangleShape },
-                                effects = { blur(14.dp.toPx()) },
+                                effects = { blur(TitleBarFrostedBlurDp.toPx() * frostedBlurScale) },
                                 exportedBackdrop = barSurfaceBackdrop,
                                 onDrawSurface = { drawRect(pageColor.copy(alpha = 0.7f)) }
                             )

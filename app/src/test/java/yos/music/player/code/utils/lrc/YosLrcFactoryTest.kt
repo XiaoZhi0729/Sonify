@@ -382,8 +382,8 @@ class YosLrcFactoryTest {
 
         assertEquals(3, entries.size)
         assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
-        // 报幕词从正文里摘掉，只留歌词
-        assertEquals("君を", entries[0].mainLyric.joinToString("") { it.second })
+        // 报幕词原样保留，不从正文摘除
+        assertEquals("男：君を", entries[0].mainLyric.joinToString("") { it.second })
     }
 
     @Test
@@ -465,8 +465,8 @@ class YosLrcFactoryTest {
     }
 
     @Test
-    fun multiWordSingerLabelIsFullyStripped() {
-        // KRC 把 `男：` 逐字切成 ["男", "："] 两个词，剥离不能残留冒号
+    fun multiWordSingerLabelIsKeptIntactAndSplitsSides() {
+        // KRC 把 `男：` 逐字切成 ["男", "："] 两个词，跨词识别分栏同时原样保留文本
         val entries = factory.formatKrcEntries(
             """
                 [1000,1000]<0,300,0>男<300,300,0>：<600,300,0>君を
@@ -475,14 +475,14 @@ class YosLrcFactoryTest {
             """.trimIndent()
         )
 
-        assertEquals(listOf("君を", "僕を", "また"),
+        assertEquals(listOf("男：君を", "女：僕を", "男：また"),
             entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
         assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
     }
 
     @Test
-    fun standaloneSingerLabelLineIsRemoved() {
-        // 蔷薇青竹的真实形态：`男：` 独占一行，既不应显示也不应占位
+    fun standaloneSingerLabelLineIsKeptAndAlignedWithSinger() {
+        // 独占一行的报幕标签：`男：` / `女：` 原样保留，且与对应演唱者同侧
         val entries = factory.formatKrcEntries(
             """
                 [1000,1000]<0,300,0>男<300,300,0>：
@@ -494,10 +494,37 @@ class YosLrcFactoryTest {
             """.trimIndent()
         )
 
-        assertEquals(listOf("君を", "僕を", "また"),
+        assertEquals(listOf("男：", "君を", "女：", "僕を", "男：", "また"),
             entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() })
-        // sides 与被删行同步对齐：君を左、僕を右、また左
-        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+        assertEquals(listOf(false, false, true, true, false, false), MediaViewModelObject.otherSideForLines.toList())
+    }
+
+    @Test
+    fun chorusLabelStaysLeftAndDoesNotFlipSoloSingers() {
+        // 合：固定在主侧（左），且不打乱独唱者既有的左右归属
+        val entries = factory.formatLrcEntries(
+            """
+                [00:10.00]女：
+                [00:11.00]第一句
+                [00:15.00]男：
+                [00:16.00]第二句
+                [00:20.00]女：
+                [00:21.00]第三句
+                [00:25.00]合：
+                [00:26.00]合唱句
+                [00:30.00]男：
+                [00:31.00]第四句
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("女：", "第一句", "男：", "第二句", "女：", "第三句", "合：", "合唱句", "男：", "第四句"),
+            entries.map { it.mainLyric.joinToString("") { pair -> pair.second }.trim() }
+        )
+        assertEquals(
+            listOf(false, false, true, true, false, false, false, false, true, true),
+            MediaViewModelObject.otherSideForLines.toList()
+        )
     }
 
     @Test
@@ -584,6 +611,6 @@ class YosLrcFactoryTest {
             """.trimIndent()
         )
 
-        assertEquals(listOf(false, true, false), MediaViewModelObject.otherSideForLines.toList())
+        assertEquals(listOf(false, false, true, true, false, false), MediaViewModelObject.otherSideForLines.toList())
     }
 }

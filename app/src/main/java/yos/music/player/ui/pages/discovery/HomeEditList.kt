@@ -29,8 +29,6 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -67,11 +65,7 @@ import yos.music.player.R
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.HomeSectionConfig
 import yos.music.player.data.libraries.HomeSectionId
-import yos.music.player.ui.widgets.basic.LocalTitlePageBackdrop
-import yos.music.player.ui.widgets.basic.TitleBarIcon
 import yos.music.player.ui.theme.YosRoundedCornerShape
-import yos.music.player.ui.widgets.dropdown.LiquidGlassDropdownMenuItem
-import yos.music.player.ui.widgets.dropdown.TitleBarGlassMenu
 
 // ---------- 常量动画 spec（绝不读任何会变的状态，否则 spec 变化打断动画 → 闪现） ----------
 
@@ -138,53 +132,16 @@ internal class HomeEditDragHolder {
 @Composable
 internal fun homeSectionTitle(id: HomeSectionId): String = stringResource(
     when (id) {
-        HomeSectionId.RecentlyPlayed -> R.string.home_continue_listening
+        HomeSectionId.VipRecommend -> R.string.home_vip_recommend_title
         HomeSectionId.PersonalFm -> R.string.home_personal_fm_title
         HomeSectionId.EverydayRecommend -> R.string.home_everyday_recommend_title
+        HomeSectionId.NicheTreasure -> R.string.home_niche_treasure_title
         HomeSectionId.RecommendPlaylists -> R.string.discovery_recommend_playlists_title
         HomeSectionId.NewSongs -> R.string.discovery_new_songs_title
         HomeSectionId.NewAlbums -> R.string.discovery_new_albums_title
         HomeSectionId.Rank -> R.string.discovery_rank_title
     }
 )
-
-/**
- * 右上角「更多」按钮 + 锚定其上的 LiquidDropdown 菜单（编辑主页 / 设置）。
- * 复用 LiquidDropdown 的锚点联动：面板揭示进度回传 [rememberLiquidDropdownFollowState]，
- * 按钮本体随之位移/收缩/淡出，再复位（与播放页「更多」同一套动画）。
- * 渲染在 Title 的 rightBarIcon 槽内（TitleBar 子树，LocalTitlePageBackdrop / LocalTitleOverlayHost 均可用）。
- */
-@Composable
-internal fun HomeMenuButton(
-    expanded: Boolean,
-    onExpandChange: (Boolean) -> Unit,
-    onEditHome: () -> Unit,
-    onSettings: () -> Unit
-) {
-    TitleBarGlassMenu(
-        expanded = expanded,
-        onExpand = { onExpandChange(true) },
-        onDismiss = { onExpandChange(false) },
-        triggerIcon = Icons.Filled.MoreVert,
-        // 与 LiquidTopBarButton 分支的 TitleBarIcon 保持一致的内缩，占位槽就是按钮原位
-        modifier = Modifier.padding(end = 10.dp),
-    ) {
-        LiquidGlassDropdownMenuItem(
-            text = stringResource(R.string.home_menu_edit),
-            onClick = {
-                onExpandChange(false)
-                onEditHome()
-            },
-        )
-        LiquidGlassDropdownMenuItem(
-            text = stringResource(R.string.home_menu_settings),
-            onClick = {
-                onExpandChange(false)
-                onSettings()
-            },
-        )
-    }
-}
 
 internal data class SectionEditEntry(
     val id: String,

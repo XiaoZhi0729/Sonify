@@ -84,6 +84,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import yos.music.player.ui.theme.YosRoundedCornerShape
 import yos.music.player.ui.widgets.basic.LocalTitleBarAccentTint
+import yos.music.player.ui.widgets.basic.resolveDropdownIntrinsicListWidth
 import yos.music.player.ui.widgets.liquid.glassBlurScale
 import yos.music.player.ui.widgets.liquid.InteractiveHighlight
 
@@ -238,7 +239,12 @@ fun ListPopupColumn(
                     val w = measurables[i].maxIntrinsicWidth(Int.MAX_VALUE)
                     if (w > maxIntrinsic) maxIntrinsic = w
                 }
-                val listWidth = maxIntrinsic.coerceIn(minPx, maxPx)
+                val listWidth = resolveDropdownIntrinsicListWidth(
+                    maxIntrinsicWidth = maxIntrinsic,
+                    minPx = minPx,
+                    maxPx = maxPx,
+                    availableWidthPx = width,
+                )
 
                 val heightCount = min(MAX_ITEMS_FOR_HEIGHT, measurables.size)
                 var height = 0
