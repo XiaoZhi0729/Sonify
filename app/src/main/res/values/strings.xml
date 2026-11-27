@@ -891,6 +891,13 @@
     <string name="settings_performance_ui_bottom_bar_header">Bottom Bar</string>
     <string name="settings_performance_ui_bottom_bar_title">Customize Bottom Bar</string>
     <string name="settings_performance_ui_bottom_bar_desc">Reorder tabs, hide tabs, or choose the default startup page</string>
+    <string name="settings_performance_ui_library_header">Library</string>
+    <string name="settings_performance_ui_library_title">Customize Library</string>
+    <string name="settings_performance_ui_library_desc">Reorder or hide sections on the Library page</string>
+    <string name="library_section_hero_widgets_title">Daily Recommends &amp; Radio</string>
+    <string name="library_edit_reset_title">Reset Library Layout</string>
+    <string name="library_empty_hint">All library sections are hidden</string>
+    <string name="library_empty_action">Customize Library</string>
     <string name="bottom_bar_setting_preview_label">Preview</string>
     <string name="bottom_bar_setting_visible_header">Visible Tabs</string>
     <string name="bottom_bar_setting_hidden_header">Hidden</string>

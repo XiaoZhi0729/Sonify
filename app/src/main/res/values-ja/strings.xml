@@ -764,6 +764,13 @@
     <string name="settings_performance_ui_bottom_bar_header">ボトムバー</string>
     <string name="settings_performance_ui_bottom_bar_title">ボトムバーのカスタマイズ</string>
     <string name="settings_performance_ui_bottom_bar_desc">タブの並び替え、表示設定、起動時の初期ページを設定</string>
+    <string name="settings_performance_ui_library_header">ライブラリ</string>
+    <string name="settings_performance_ui_library_title">ライブラリのカスタマイズ</string>
+    <string name="settings_performance_ui_library_desc">ライブラリ画面のセクションの並び替えや表示設定</string>
+    <string name="library_section_hero_widgets_title">デイリーリコメンド＆ラジオ</string>
+    <string name="library_edit_reset_title">レイアウトを初期化</string>
+    <string name="library_empty_hint">ライブラリのセクションはすべて非表示です</string>
+    <string name="library_empty_action">ライブラリをカスタマイズ</string>
     <string name="bottom_bar_setting_preview_label">プレビュー</string>
     <string name="bottom_bar_setting_visible_header">表示中のタブ</string>
     <string name="bottom_bar_setting_hidden_header">非表示</string>

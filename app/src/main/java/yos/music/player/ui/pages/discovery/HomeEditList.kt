@@ -186,6 +186,44 @@ internal fun HomeMenuButton(
     }
 }
 
+internal data class SectionEditEntry(
+    val id: String,
+    val visible: Boolean
+)
+
+/**
+ * 通用编辑态列表项：显示组 → 「已隐藏」→ 隐藏组。
+ * 所有 item（含标题）均带 animateItem，避免隐藏时瞬间跳 = 闪现。
+ */
+internal fun LazyListScope.sectionEditItems(
+    layout: List<SectionEditEntry>,
+    listState: LazyListState,
+    dragHolder: HomeEditDragHolder,
+    resetAnimating: Boolean,
+    titleFor: @Composable (String) -> String,
+    onToggle: (String) -> Unit
+) {
+    val allKeys = layout.map { homeEditKey(it.id) }
+    val totalVisible = layout.count { it.visible }
+    layout.forEachIndexed { index, entry ->
+        // 「已隐藏」小标题（无分割线）并入首个隐藏项：随该胶囊一起实时位移
+        val showHeader = !entry.visible && (index == 0 || layout[index - 1].visible)
+        item(key = homeEditKey(entry.id), contentType = "block") {
+            HomeEditBlockItem(
+                entry = entry,
+                title = titleFor(entry.id),
+                showHiddenHeader = showHeader,
+                totalVisible = totalVisible,
+                allKeys = allKeys,
+                listState = listState,
+                dragHolder = dragHolder,
+                resetAnimating = resetAnimating,
+                onToggle = { onToggle(entry.id) }
+            )
+        }
+    }
+}
+
 /**
  * 编辑态列表项：显示组 → 分割线 → 「已隐藏」→ 隐藏组。
  * 所有 item（含分割线/标题）均带 animateItem，避免隐藏时瞬间跳 = 闪现。
@@ -197,41 +235,30 @@ internal fun LazyListScope.homeEditItems(
     resetAnimating: Boolean,
     onToggle: (HomeSectionId) -> Unit
 ) {
-    val allKeys = layout.map { homeEditKey(it.id) }
-    val totalVisible = layout.count { it.visible }
-    layout.forEachIndexed { index, cfg ->
-        // 「已隐藏」小标题（无分割线）并入首个隐藏项：随该胶囊一起实时位移
-        val showHeader = !cfg.visible && (index == 0 || layout[index - 1].visible)
-        item(key = homeEditKey(cfg.id), contentType = "block") {
-            HomeEditBlockItem(
-                cfg = cfg,
-                showHiddenHeader = showHeader,
-                totalVisible = totalVisible,
-                allKeys = allKeys,
-                listState = listState,
-                dragHolder = dragHolder,
-                resetAnimating = resetAnimating,
-                onToggle = onToggle
-            )
-        }
-    }
+    sectionEditItems(
+        layout = layout.map { SectionEditEntry(it.id, it.visible) },
+        listState = listState,
+        dragHolder = dragHolder,
+        resetAnimating = resetAnimating,
+        titleFor = { id -> HomeSectionId.fromKey(id)?.let { homeSectionTitle(it) } ?: id },
+        onToggle = { id -> HomeSectionId.fromKey(id)?.let(onToggle) }
+    )
 }
 
 @Composable
 private fun LazyItemScope.HomeEditBlockItem(
-    cfg: HomeSectionConfig,
+    entry: SectionEditEntry,
+    title: String,
     showHiddenHeader: Boolean,
     totalVisible: Int,
     allKeys: List<String>,
     listState: LazyListState,
     dragHolder: HomeEditDragHolder,
     resetAnimating: Boolean,
-    onToggle: (HomeSectionId) -> Unit
+    onToggle: () -> Unit
 ) {
-    val id = cfg.id
+    val id = entry.id
     val key = homeEditKey(id)
-    val section = HomeSectionId.fromKey(id)
-    val title = section?.let { homeSectionTitle(it) } ?: id
     val dragging = dragHolder.latched && dragHolder.draggedId == id
     val geom = dragHolder.geometry
     val keyIndexMap = remember(allKeys) {
@@ -269,8 +296,8 @@ private fun LazyItemScope.HomeEditBlockItem(
     } else 0f
 
     // 被拖项实时预览：落点在显示区（<= 边界）→ 显示态，否则隐藏态（松手即按此落定）
-    val boundary = if (cfg.visible) totalVisible - 1 else totalVisible
-    val effectiveVisible = if (dragging && targetIndex != null) targetIndex <= boundary else cfg.visible
+    val boundary = if (entry.visible) totalVisible - 1 else totalVisible
+    val effectiveVisible = if (dragging && targetIndex != null) targetIndex <= boundary else entry.visible
 
     // 被拖块位移（跟手 + 自滚补偿，越界阻尼）
     val draggedTarget = if (dragging && geom != null) {
@@ -325,7 +352,7 @@ private fun LazyItemScope.HomeEditBlockItem(
             visible = effectiveVisible,
             shadowPx = shadowPx,
             buttonsEnabled = !dragHolder.active && !resetAnimating && !dragging,
-            onToggle = { section?.let(onToggle) },
+            onToggle = onToggle,
             modifier = Modifier
         )
     }

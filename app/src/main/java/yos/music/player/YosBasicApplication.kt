@@ -148,6 +148,8 @@ class YosBasicApplication : Application(), ImageLoaderFactory {
             yos.music.player.data.libraries.SettingsLibrary.ImageCacheCapMb
             // 主页板块布局：MMKV+Gson 落盘，主线程先建好状态，避免首帧组合才读磁盘
             yos.music.player.data.libraries.HomeLayoutStore.sections.value
+            // 资料库板块布局：MMKV+Gson 落盘，主线程先建好状态，避免首帧组合才读磁盘
+            yos.music.player.data.libraries.LibraryLayoutStore.sections.value
         }
         // 主页发现流启动即预加载：不等主页组合就并行拉五个板块，骨架屏因此只闪很短一下。
         // **不加延迟**——加了就晚于主页首次组合里的 ensureFresh，预加载失去意义

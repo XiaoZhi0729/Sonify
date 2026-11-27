@@ -22,6 +22,7 @@ import yos.music.player.ui.pages.settings.performance.NotificationSetting
 import yos.music.player.ui.pages.settings.performance.PlaybackSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.BottomBarSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.GlassEffectSetting
+import yos.music.player.ui.pages.settings.performance.userinterface.LibraryLayoutSetting
 import yos.music.player.ui.pages.settings.performance.userinterface.UserInterfaceSetting
 import yos.music.player.ui.pages.settings.storage.CacheDetail
 import yos.music.player.ui.pages.settings.storage.DataStorage
@@ -42,6 +43,7 @@ fun NavGraphBuilder.settingsGraph(
     composable(UI.Settings.MediaCodec) { MediaCodec(navController) }
     composable(UI.Settings.LyricSetting) { LyricSetting(navController) }
     composable(UI.Settings.UserInterfaceSetting) { UserInterfaceSetting(navController) }
+    composable(UI.Settings.LibraryLayoutSetting) { LibraryLayoutSetting(navController) }
     composable(UI.Settings.BottomBarSetting) { BottomBarSetting(navController) }
     composable(UI.Settings.PlaybackSetting) { PlaybackSetting(navController) }
     composable(UI.Settings.GlassEffectSetting) { GlassEffectSetting(navController) }

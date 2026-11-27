@@ -71,6 +71,9 @@
 # 主页板块布局：Gson 反序列化 Array<HomeSectionConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.HomeSectionConfig { <fields>; }
 
+# 资料库板块布局：Gson 反序列化 Array<LibrarySectionConfig>，需保留字段（含 Signature）
+-keep class yos.music.player.data.libraries.LibrarySectionConfig { <fields>; }
+
 # 底栏自定义布局：Gson 反序列化 Array<BottomBarTabConfig>，需保留字段（含 Signature）
 -keep class yos.music.player.data.libraries.BottomBarTabConfig { <fields>; }
 

@@ -890,6 +890,13 @@
     <string name="settings_performance_ui_bottom_bar_header">底栏</string>
     <string name="settings_performance_ui_bottom_bar_title">自定义底栏</string>
     <string name="settings_performance_ui_bottom_bar_desc">调整标签顺序、显隐与冷启动默认页面</string>
+    <string name="settings_performance_ui_library_header">资料库</string>
+    <string name="settings_performance_ui_library_title">自定义资料库</string>
+    <string name="settings_performance_ui_library_desc">调整资料库板块顺序与显隐</string>
+    <string name="library_section_hero_widgets_title">每日推荐与漫游电台</string>
+    <string name="library_edit_reset_title">恢复默认布局</string>
+    <string name="library_empty_hint">资料库板块已全部隐藏</string>
+    <string name="library_empty_action">自定义资料库</string>
     <string name="bottom_bar_setting_preview_label">实时预览</string>
     <string name="bottom_bar_setting_visible_header">底栏显示项</string>
     <string name="bottom_bar_setting_hidden_header">已隐藏</string>
