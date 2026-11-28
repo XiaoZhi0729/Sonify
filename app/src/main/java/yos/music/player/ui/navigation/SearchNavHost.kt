@@ -6,6 +6,7 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -22,7 +23,11 @@ import yos.music.player.ui.pages.gallery.MusicGalleryPage
 import yos.music.player.ui.pages.library.albums.AlbumInfo
 import yos.music.player.ui.pages.library.playlists.OnlinePlaylistDetail
 import yos.music.player.ui.pages.recognition.SongRecognitionPage
+import yos.music.player.ui.pages.search.IpZoneDetailPage
 import yos.music.player.ui.pages.search.SearchPage
+import yos.music.player.ui.widgets.mochi.MochiZoneLaunchHost
+import yos.music.player.ui.widgets.mochi.MochiZoneLaunchState
+import yos.music.player.ui.widgets.mochi.rememberZoneUnderScrimTransition
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
@@ -31,30 +36,53 @@ fun SearchNavHost(
     navigator: AppNavigator,
     modifier: Modifier = Modifier
 ) {
-    SharedTransitionLayout(modifier = modifier) {
+    val zoneLaunchState = remember { MochiZoneLaunchState() }
+
+    SharedTransitionLayout {
         NavHost(
             navController = navController,
             startDestination = UI.Search,
-            modifier = Modifier,
+            modifier = modifier,
             enterTransition = { fadeIn() },
             exitTransition = { fadeOut() },
             popEnterTransition = { fadeIn() },
             popExitTransition = { fadeOut() }
         ) {
             composable(UI.Search) { entry ->
-                // 封面取色渐变只作用于本 Tab 根页；二级页不包，继续用各自提取色。
-                // entryId + scrimTransition 让底栏换色与本页淡入淡出同帧同曲线。
-                PageGradientRoot(
-                    entryId = entry.id,
-                    scrimTransition = scrimTransition()
-                ) {
-                    SearchPage(
-                        navController = navController,
-                        onOpenSettings = { navigator.openSettings(HouseId.Search) },
-                        sharedTransitionScope = this@SharedTransitionLayout,
-                        animatedVisibilityScope = this@composable
-                    )
-                }
+                val searchScrimTransition = rememberZoneUnderScrimTransition(
+                    state = zoneLaunchState,
+                    base = scrimTransition()
+                )
+                MochiZoneLaunchHost(
+                    state = zoneLaunchState,
+                    underContent = {
+                        // 封面取色渐变只作用于本 Tab 根页；二级页不包，继续用各自提取色。
+                        // searchScrimTransition 让底栏渐隐遮罩同时跟随 Tab 切换与 Mochi 卡片展开/缩回同帧换色。
+                        PageGradientRoot(
+                            entryId = entry.id,
+                            scrimTransition = searchScrimTransition
+                        ) {
+                            SearchPage(
+                                navController = navController,
+                                onOpenSettings = { navigator.openSettings(HouseId.Search) },
+                                sharedTransitionScope = this@SharedTransitionLayout,
+                                animatedVisibilityScope = this@composable
+                            )
+                        }
+                    },
+                    detailContent = { target, onBack ->
+                        IpZoneDetailPage(
+                            navController = navController,
+                            zoneId = target.zoneId,
+                            ipId = target.ipId,
+                            zoneName = target.name,
+                            coverUrl = target.coverUrl,
+                            onBack = onBack,
+                            sharedTransitionScope = this@SharedTransitionLayout,
+                            animatedVisibilityScope = this@composable
+                        )
+                    }
+                )
             }
             // 艺人域路由：与各 house 共享同一张图（漏注册即 "destination cannot be found"）
             artistGraph(navController, this@SharedTransitionLayout)
@@ -70,6 +98,22 @@ fun SearchNavHost(
             // 听歌识曲：只从搜索页进入，故只在本 house 注册
             composable(UI.SongRecognition) {
                 SongRecognitionPage(navController = navController)
+            }
+            // 编辑精选专区详情兜底路由（直达深链/无 MochiZoneLaunchState 上下文时使用）
+            composable(
+                route = UI.IpZoneDetailPattern,
+                arguments = ipZoneDetailArguments()
+            ) { entry ->
+                val args = entry.arguments
+                IpZoneDetailPage(
+                    navController = navController,
+                    zoneId = args?.getLong(UI.IpZoneIdArg) ?: 0L,
+                    ipId = args?.getLong(UI.IpZoneIpIdArg) ?: 0L,
+                    zoneName = args?.getString(UI.IpZoneNameArg).orEmpty(),
+                    coverUrl = args?.getString(UI.IpZoneCoverArg).orEmpty(),
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@composable
+                )
             }
             // ---------- 搜索页「浏览分类」砖块的目标 ----------
             // 这些页面原本只在 Home/Library 的图里注册。搜索页的分类砖块会往**当前

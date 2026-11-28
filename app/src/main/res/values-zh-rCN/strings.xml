@@ -209,6 +209,10 @@
     <string name="search_top_result">最佳结果</string>
     <string name="search_more">更多</string>
     <string name="search_load_more">加载更多</string>
+    <string name="search_zone_detail_title">编辑精选专区</string>
+    <string name="search_zone_load_failed">专区加载失败</string>
+    <string name="search_zone_retry">点击重试</string>
+    <string name="search_zone_empty">该专区暂无内容</string>
     <string name="settings_library_use_new_library">使用新版资料库</string>
     <string name="settings_library_show_local_library">显示本地资料库</string>
     <string name="library_switch_to_classic">切换为经典旧版</string>

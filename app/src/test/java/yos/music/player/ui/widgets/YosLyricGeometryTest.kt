@@ -169,4 +169,44 @@ class YosLyricGeometryTest {
             )
         )
     }
+
+    @Test
+    fun portraitBottomPaddingRetainsTrailingLyricsAboveControlsAndFade() {
+        for (heightPx in listOf(1000f, 1400f, 2262f)) {
+            val padding = lyricBottomContentPaddingPx(heightPx, LAST_LINE_OBSTRUCTION_FRACTION)
+            val retainedBottom = heightPx - padding
+            assertTrue(
+                "retainedBottom=$retainedBottom must stay below active anchor",
+                retainedBottom > heightPx * LYRIC_ACTIVE_ANCHOR_FRACTION,
+            )
+            assertTrue(
+                "retainedBottom=$retainedBottom must stay above controls-visible bottom fade start",
+                retainedBottom < heightPx * (7f / 17f),
+            )
+        }
+    }
+
+    @Test
+    fun landscapeBottomPaddingRetainsTrailingLyricsAboveFade() {
+        for (heightPx in listOf(800f, 1800f)) {
+            val padding = lyricBottomContentPaddingPx(heightPx, obstructionFraction = 0f)
+            val retainedBottom = heightPx - padding
+            assertEquals(heightPx * LYRIC_END_RETAINED_VISIBLE_FRACTION, retainedBottom, 0.01f)
+            assertTrue(retainedBottom > heightPx * LYRIC_ACTIVE_ANCHOR_FRACTION)
+            assertTrue(retainedBottom < heightPx * (15f / 19f))
+        }
+    }
+
+    @Test
+    fun bottomPaddingClampsExtremeInputsSafely() {
+        assertEquals(0f, lyricBottomContentPaddingPx(0f, 0.4f), 0f)
+        assertEquals(0f, lyricBottomContentPaddingPx(-200f, 0.4f), 0f)
+
+        val negativeObstruction = lyricBottomContentPaddingPx(1000f, -0.5f)
+        assertEquals(1000f * (1f - LYRIC_END_RETAINED_VISIBLE_FRACTION), negativeObstruction, 0.01f)
+
+        val fullObstruction = lyricBottomContentPaddingPx(1000f, 1.5f)
+        assertEquals(1000f, fullObstruction, 0.01f)
+        assertTrue(fullObstruction in 0f..1000f)
+    }
 }

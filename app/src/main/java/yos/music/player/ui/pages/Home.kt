@@ -84,7 +84,7 @@ fun Home(
         onTopRightIcon = {
             navController.toUI(UI.Settings.Main)
         },
-        extraTopPadding = 57.dp,
+        extraTopPadding = 37.dp,
         content = {
             item("RecommendCard") {
                 RecommendCard(imageViewModel)

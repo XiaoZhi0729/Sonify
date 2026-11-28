@@ -147,6 +147,31 @@ interface UI {
         // 听歌识曲（搜索页搜索框右侧麦克风入口；只注册在 Search house 图里）
         const val SongRecognition = "SongRecognition"
 
+        // 编辑精选专区详情（搜索页浏览态点击专区卡片进入；支持 /ip 与 /ip/zone/home 双模式）
+        const val IpZoneDetail = "IpZoneDetail"
+        const val IpZoneIdArg = "zoneId"
+        const val IpZoneIpIdArg = "ipId"
+        const val IpZoneNameArg = "name"
+        const val IpZoneCoverArg = "cover"
+        const val IpZoneDetailPattern =
+            "$IpZoneDetail?$IpZoneIdArg={$IpZoneIdArg}" +
+                    "&$IpZoneIpIdArg={$IpZoneIpIdArg}" +
+                    "&$IpZoneNameArg={$IpZoneNameArg}" +
+                    "&$IpZoneCoverArg={$IpZoneCoverArg}"
+
+        fun ipZoneDetailRoute(
+            zoneId: Long,
+            ipId: Long,
+            name: String,
+            cover: String
+        ): String = buildString {
+            append(IpZoneDetail)
+            append("?").append(IpZoneIdArg).append("=").append(zoneId)
+            append("&").append(IpZoneIpIdArg).append("=").append(ipId)
+            append("&").append(IpZoneNameArg).append("=").append(routeEncode(name))
+            append("&").append(IpZoneCoverArg).append("=").append(routeEncode(cover))
+        }
+
         // 每日推荐（主页顶部入口卡；登录可见，未登录走通用推荐）
         const val EverydayRecommendDetail = "EverydayRecommendDetail"
 

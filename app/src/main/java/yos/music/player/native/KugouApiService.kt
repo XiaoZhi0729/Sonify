@@ -1365,6 +1365,86 @@ class KugouApiService private constructor() {
             }
         }
 
+    /** 编辑精选专区列表（Rust ip_more.rs handle_zone → yuekucategory /v1/zone/index）：GET /ip/zone。 */
+    suspend fun getIpZone(): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val (code, body) = httpGetWithRetry("/ip/zone", emptyMap())
+            Log.d(TAG, "/ip/zone -> HTTP $code, body length=${body.length}")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/ip/zone HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpZone exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 编辑精选专区详情（Rust ip_more.rs handle_zone_home → yuekucategory /v1/zone/home）：GET /ip/zone/home?id=。 */
+    suspend fun getIpZoneHome(id: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val (code, body) = httpGetWithRetry("/ip/zone/home", mapOf("id" to id))
+            Log.d(TAG, "/ip/zone/home -> HTTP $code, body length=${body.length}, id=$id")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/ip/zone/home HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpZoneHome exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 编辑精选数据（Rust ip.rs → /openapi/v1/ip/{type}）：GET /ip?id=&type=&page=&pagesize=。 */
+    suspend fun getIpData(
+        id: String,
+        type: String = "audios",
+        page: Int = 1,
+        pageSize: Int = 30
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = mapOf(
+                "id" to id,
+                "type" to type,
+                "page" to page.toString(),
+                "pagesize" to pageSize.toString()
+            )
+            val (code, body) = httpGetWithRetry("/ip", params)
+            Log.d(TAG, "/ip -> HTTP $code, body length=${body.length}, id=$id, type=$type, page=$page")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/ip HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpData exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 编辑精选歌单（Rust ip_more.rs handle_playlist → /ocean/v6/pubsongs/list_info_for_ip）：GET /ip/playlist?id=&page=&pagesize=。 */
+    suspend fun getIpPlaylist(
+        id: String,
+        page: Int = 1,
+        pageSize: Int = 30
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureServer()) return@withContext Result.failure(Exception("Server not running"))
+            val params = mapOf(
+                "id" to id,
+                "page" to page.toString(),
+                "pagesize" to pageSize.toString()
+            )
+            val (code, body) = httpGetWithRetry("/ip/playlist", params)
+            Log.d(TAG, "/ip/playlist -> HTTP $code, body length=${body.length}, id=$id, page=$page")
+            if (code !in 200..299) return@withContext Result.failure(IOException("/ip/playlist HTTP $code: ${body.take(200)}"))
+            if (body.isEmpty()) return@withContext Result.failure(IOException("Empty response body"))
+            Result.success(JSONObject(body))
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpPlaylist exception", e)
+            Result.failure(e)
+        }
+    }
+
     /** 歌单详情（对齐 Dart getPlaylistDetail，kugou_api_client.dart:1489；Rust playlist.rs:203）。
      *  Rust server.rs build_query 会合并 query/JSON body，故直接 GET ?ids= 即可（Dart 用 POST data 等价）。 */
     suspend fun getPlaylistDetail(ids: String): Result<JSONObject> = withContext(Dispatchers.IO) {

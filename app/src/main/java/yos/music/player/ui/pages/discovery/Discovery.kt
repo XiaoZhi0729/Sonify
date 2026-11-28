@@ -666,7 +666,7 @@ fun Discovery(
             refreshAll()
         },
         refreshing = refreshing.value,
-        extraTopPadding = 57.dp,
+        extraTopPadding = 37.dp,
         listState = listStateBrowse
     ) {
         item("TopDivider") {

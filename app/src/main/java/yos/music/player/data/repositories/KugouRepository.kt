@@ -680,6 +680,337 @@ data class KugouArtistDetailData(
     val isFollowed: Boolean
 )
 
+/** 编辑精选专区条目（`/ip/zone` → `/v1/zone/index`）。`ipId > 0` 时走 `/ip` & `/ip/playlist`，`<= 0` 时走 `/ip/zone/home`。 */
+data class KugouIpZone(
+    val id: Long,
+    val ipId: Long,
+    val name: String,
+    val iconUrl: String?,
+    val summary: String = ""
+)
+
+/** 编辑精选专区详情聚合（`/ip/zone/home?id=`）。 */
+data class KugouIpZoneHomeData(
+    val name: String,
+    val summary: String,
+    val songs: List<KugouSearchSong>,
+    val playlists: List<KugouPlaylistBrief>,
+    val albums: List<KugouNewAlbum>,
+    val artists: List<KugouArtistBrief>
+)
+
+private fun parseQueryParams(query: String): Map<String, String> {
+    if (query.isEmpty()) return emptyMap()
+    val out = LinkedHashMap<String, String>()
+    for (part in query.split('&')) {
+        if (part.isEmpty()) continue
+        val eq = part.indexOf('=')
+        val rawKey = if (eq >= 0) part.substring(0, eq) else part
+        val rawVal = if (eq >= 0) part.substring(eq + 1) else ""
+        val key = runCatching { java.net.URLDecoder.decode(rawKey, "UTF-8") }.getOrDefault(rawKey)
+        val value = runCatching { java.net.URLDecoder.decode(rawVal, "UTF-8") }.getOrDefault(rawVal)
+        if (key.isNotEmpty()) out[key] = value
+    }
+    return out
+}
+
+/** 从 `special_link` 中提取 `path` 参数内的 `ip_id`（酷狗 miniapp 链接格式）。 */
+internal fun extractIpIdFromSpecialLink(specialLink: String?): Long {
+    if (specialLink.isNullOrBlank()) return 0L
+    val outerQuery = specialLink.substringAfter('?', "")
+    val outerParams = parseQueryParams(outerQuery)
+    val pathValue = outerParams["path"] ?: return 0L
+    val innerQuery = pathValue.substringAfter('?', pathValue)
+    val innerParams = parseQueryParams(innerQuery)
+    return innerParams["ip_id"]?.trim()?.toLongOrNull()?.takeIf { it > 0L } ?: 0L
+}
+
+/** 解析 `/ip/zone` 列表（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpZones(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl
+): List<KugouIpZone> {
+    val data = fields["data"].asStringMap() ?: fields
+    val rawList = data["list"].asObjectList().ifEmpty { data["info"].asObjectList() }
+    if (rawList.isEmpty()) return emptyList()
+    val seenIds = HashSet<Long>(rawList.size)
+    val out = ArrayList<KugouIpZone>(rawList.size)
+    for (item in rawList) {
+        val id = item.fieldLong("id", 0L)
+        val name = item.fieldText("name").ifEmpty { item.fieldText("title") }.trim()
+        if (id <= 0L || name.isEmpty() || !seenIds.add(id)) continue
+        val ipId = item.fieldLong("ip_id", 0L).let {
+            if (it > 0L) it else extractIpIdFromSpecialLink(item.fieldText("special_link"))
+        }
+        val rawIcon = item.fieldText("icon")
+            .ifEmpty { item.fieldText("img_url") }
+            .ifEmpty { item.fieldText("img") }
+        out.add(
+            KugouIpZone(
+                id = id,
+                ipId = ipId,
+                name = name,
+                iconUrl = artworkResolver(rawIcon),
+                summary = item.fieldText("summary").trim()
+            )
+        )
+    }
+    return out
+}
+
+/** 解析 `/ip/zone/home` 专区详情（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpZoneHome(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl,
+    onSongIdentity: (hash: String, albumId: Long, mixsongId: Long) -> Unit = { _, _, _ -> }
+): KugouIpZoneHomeData {
+    val data = fields["data"].asStringMap() ?: fields
+    val zone = data["zone"].asStringMap()
+    val zoneName = zone?.fieldText("name").orEmpty().trim()
+    val zoneSummary = zone?.fieldText("summary").orEmpty().trim()
+        .ifEmpty { zone?.fieldText("share_summary").orEmpty().trim() }
+
+    val songs = ArrayList<KugouSearchSong>()
+    val playlists = ArrayList<KugouPlaylistBrief>()
+    val albums = ArrayList<KugouNewAlbum>()
+    val artists = ArrayList<KugouArtistBrief>()
+
+    val seenSongHashes = HashSet<String>()
+    val seenPlaylistKeys = HashSet<String>()
+    val seenAlbumIds = HashSet<String>()
+    val seenArtistIds = HashSet<String>()
+
+    for (module in data["module"].asObjectList()) {
+        for (item in module["items"].asObjectList()) {
+            val resourceType = (item["resource_type"] as? Number)?.toInt()
+                ?: item.fieldText("resource_type").toIntOrNull()
+                ?: 0
+            val extend = item["extend"].asStringMap() ?: emptyMap()
+            val resourceName = item.fieldText("resource_name").trim()
+            val resourceId = item.fieldText("resource_id").trim()
+            val resourceCover = item.fieldText("resource_size_icon")
+                .ifEmpty { item.fieldText("resource_icon") }
+
+            when (resourceType) {
+                2 -> {
+                    val hash = extend.fieldText("hash").trim()
+                    if (hash.isEmpty() || !seenSongHashes.add(hash.lowercase())) continue
+                    val songName = resourceName.ifEmpty { extend.fieldText("songname").trim() }
+                    if (songName.isEmpty()) continue
+                    val author = extend.fieldText("singername")
+                        .ifEmpty { extend.fieldText("author_name") }
+                        .trim()
+                    val durationMs = extend.fieldLong("duration", 0L).coerceAtLeast(0L)
+                    val albumMap = extend["album"].asStringMap()
+                    val albumId = albumMap?.fieldLong("album_id", 0L)?.coerceAtLeast(0L) ?: 0L
+                    val mixsongId = extend.fieldLong("album_audio_id", 0L).coerceAtLeast(0L)
+                    val rawCover = albumMap?.fieldText("sizable_cover").orEmpty()
+                        .ifEmpty { resourceCover }
+                    onSongIdentity(hash, albumId, mixsongId)
+                    songs.add(
+                        KugouSearchSong(
+                            hash = hash,
+                            mid = if (mixsongId > 0L) mixsongId.toString() else "",
+                            name = songName,
+                            author = author,
+                            duration = durationMs,
+                            artworkUrl = artworkResolver(rawCover),
+                            albumId = albumId
+                        )
+                    )
+                }
+
+                3 -> {
+                    // 上游同时存在 global_specialid 与拼写错误的 global_specailid
+                    val gcid = extend.fieldText("global_specialid")
+                        .ifEmpty { extend.fieldText("global_specailid") }
+                        .ifEmpty { item.fieldText("global_collection_id") }
+                        .trim()
+                        .takeIf { it.isNotEmpty() }
+                    val specialId = resourceId.toLongOrNull()?.takeIf { it > 0L } ?: 0L
+                    val dedupKey = gcid ?: if (specialId > 0L) specialId.toString() else ""
+                    if (resourceName.isEmpty() || dedupKey.isEmpty() || !seenPlaylistKeys.add(dedupKey)) continue
+                    playlists.add(
+                        KugouPlaylistBrief(
+                            specialId = specialId,
+                            globalCollectionId = gcid,
+                            name = resourceName,
+                            cover = artworkResolver(resourceCover),
+                            songCount = 0
+                        )
+                    )
+                }
+
+                4 -> {
+                    if (resourceId.isEmpty() || resourceName.isEmpty() || !seenAlbumIds.add(resourceId)) continue
+                    albums.add(
+                        KugouNewAlbum(
+                            albumId = resourceId,
+                            name = resourceName,
+                            singerName = extend.fieldText("singer_name").trim(),
+                            coverUrl = artworkResolver(resourceCover) ?: "",
+                            songCount = 0,
+                            publishTime = extend.fieldText("publish_time_friendly").trim().takeIf { it.isNotEmpty() }
+                        )
+                    )
+                }
+
+                5 -> {
+                    if (resourceId.isEmpty() || resourceName.isEmpty() || !seenArtistIds.add(resourceId)) continue
+                    artists.add(
+                        KugouArtistBrief(
+                            singerId = resourceId,
+                            name = resourceName,
+                            avatarUrl = artworkResolver(item.fieldText("resource_icon"))
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    return KugouIpZoneHomeData(
+        name = zoneName,
+        summary = zoneSummary,
+        songs = songs,
+        playlists = playlists,
+        albums = albums,
+        artists = artists
+    )
+}
+
+/** 解析 `/ip?type=audios` 歌曲列表（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpAudios(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl,
+    onIdentity: (hash: String, albumId: Long, mixsongId: Long, performers: List<KugouPerformer>) -> Unit = { _, _, _, _ -> }
+): List<KugouSearchSong> {
+    val rawList = fields["data"].asObjectList()
+    if (rawList.isEmpty()) return emptyList()
+    val out = ArrayList<KugouSearchSong>(rawList.size)
+    for (item in rawList) {
+        val base = item["base"].asStringMap() ?: item
+        val audioInfo = item["audio_info"].asStringMap() ?: emptyMap()
+        val albumInfo = item["album_info"].asStringMap()
+        val hash = audioInfo.fieldText("hash").ifEmpty { base.fieldText("hash") }.trim()
+        if (hash.isEmpty()) continue
+        val name = base.fieldText("songname").ifEmpty { base.fieldText("name") }.trim()
+        val author = base.fieldText("author_name").ifEmpty { base.fieldText("singername") }.trim()
+        val durationMs = audioInfo.fieldLong("timelength", 0L).coerceAtLeast(0L)
+        val albumId = base.fieldLong("album_id", 0L).coerceAtLeast(0L)
+        val mixsongId = base.fieldLong("album_audio_id", 0L).coerceAtLeast(0L)
+        val rawCover = albumInfo?.fieldText("cover").orEmpty().ifEmpty { base.fieldText("cover") }
+        val authorItems = item["authors"].asObjectList().mapNotNull { it["base"].asStringMap() ?: it }
+        val performers = parsePerformerFields(
+            authorItems,
+            nameKeys = listOf("author_name", "name"),
+            idKeys = listOf("author_id", "id")
+        )
+        onIdentity(hash, albumId, mixsongId, performers)
+        out.add(
+            KugouSearchSong(
+                hash = hash,
+                mid = if (mixsongId > 0L) mixsongId.toString() else "",
+                name = name,
+                author = author,
+                duration = durationMs,
+                artworkUrl = artworkResolver(rawCover),
+                albumId = albumId
+            )
+        )
+    }
+    return out
+}
+
+/** 解析 `/ip?type=albums` 专辑列表（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpAlbums(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl
+): List<KugouNewAlbum> {
+    val rawList = fields["data"].asObjectList()
+    if (rawList.isEmpty()) return emptyList()
+    val out = ArrayList<KugouNewAlbum>(rawList.size)
+    for (item in rawList) {
+        val base = item["base"].asStringMap() ?: item
+        val albumId = base.fieldText("album_id").trim()
+        val name = base.fieldText("album_name").ifEmpty { base.fieldText("name") }.trim()
+        if (albumId.isEmpty() || name.isEmpty()) continue
+        val singerName = base.fieldText("author_name").ifEmpty { base.fieldText("singername") }.trim()
+        val rawCover = base.fieldText("cover").ifEmpty { base.fieldText("sizable_cover") }
+        out.add(
+            KugouNewAlbum(
+                albumId = albumId,
+                name = name,
+                singerName = singerName,
+                coverUrl = artworkResolver(rawCover) ?: "",
+                songCount = 0,
+                publishTime = base.fieldText("publish_date").trim().takeIf { it.isNotEmpty() }
+            )
+        )
+    }
+    return out
+}
+
+/** 解析 `/ip?type=author_list` 歌手列表（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpArtists(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl
+): List<KugouArtistBrief> {
+    val rawList = fields["data"].asObjectList()
+    if (rawList.isEmpty()) return emptyList()
+    val out = ArrayList<KugouArtistBrief>(rawList.size)
+    for (item in rawList) {
+        val base = item["base"].asStringMap() ?: item
+        val singerId = base.fieldText("author_id").ifEmpty { base.fieldText("singerid") }.trim()
+        val name = base.fieldText("author_name").ifEmpty { base.fieldText("singername") }.trim()
+        if (singerId.isEmpty() || name.isEmpty()) continue
+        val rawAvatar = base.fieldText("avatar").ifEmpty { base.fieldText("imgurl") }
+        out.add(
+            KugouArtistBrief(
+                singerId = singerId,
+                name = name,
+                avatarUrl = artworkResolver(rawAvatar)
+            )
+        )
+    }
+    return out
+}
+
+/** 解析 `/ip/playlist` 歌单列表（纯 Map 入参，便于 JVM 单测）。 */
+internal fun parseIpPlaylists(
+    fields: Map<String, Any?>,
+    artworkResolver: (String?) -> String? = ::normalizeKugouImageUrl
+): List<KugouPlaylistBrief> {
+    val data = fields["data"].asStringMap() ?: fields
+    val rawList = data["info"].asObjectList().ifEmpty { data["list"].asObjectList() }
+    if (rawList.isEmpty()) return emptyList()
+    val out = ArrayList<KugouPlaylistBrief>(rawList.size)
+    for (item in rawList) {
+        val gcid = item.fieldText("global_collection_id")
+            .ifEmpty { item.fieldText("list_create_gid") }
+            .trim()
+            .takeIf { it.isNotEmpty() }
+        val specialId = item.fieldLong("specialid", 0L).takeIf { it > 0L }
+            ?: item.fieldLong("list_create_listid", 0L).takeIf { it > 0L }
+            ?: 0L
+        val name = item.fieldText("name").ifEmpty { item.fieldText("specialname") }.trim()
+        if (name.isEmpty() || (gcid == null && specialId <= 0L)) continue
+        val rawCover = item.fieldText("pic")
+            .ifEmpty { item.fieldText("imgurl") }
+            .ifEmpty { item.fieldText("cover") }
+        out.add(
+            KugouPlaylistBrief(
+                specialId = specialId,
+                globalCollectionId = gcid,
+                name = name,
+                cover = artworkResolver(rawCover),
+                songCount = parseOptionalInt(item, "count", "songcount", "song_count") ?: 0
+            )
+        )
+    }
+    return out
+}
+
 object KugouRepository {
 
     private const val TAG = "KugouRepository"
@@ -3936,6 +4267,117 @@ suspend fun getRecommendPlaylistSongCount(globalCollectionId: String): Result<In
             ?: return null
         return parsePlaylistTracks(arr)
     }
+
+    // ---------- 编辑精选专区（/ip/zone、/ip/zone/home、/ip、/ip/playlist） ----------
+
+    /** 编辑精选专区列表（GET /ip/zone）。 */
+    suspend fun getIpZones(): Result<List<KugouIpZone>> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getIpZone().fold(
+                onSuccess = { json ->
+                    Result.success(parseIpZones(json.toFieldMap(), ::resolveArtworkUrl))
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpZones exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 编辑精选专区详情（GET /ip/zone/home?id=）。 */
+    suspend fun getIpZoneHome(zoneId: Long): Result<KugouIpZoneHomeData> = withContext(Dispatchers.IO) {
+        try {
+            KugouApiService.getInstance().getIpZoneHome(zoneId.toString()).fold(
+                onSuccess = { json ->
+                    val parsed = parseIpZoneHome(
+                        fields = json.toFieldMap(),
+                        artworkResolver = ::resolveArtworkUrl,
+                        onSongIdentity = { hash, albumId, mixsongId ->
+                            registerSongIdentity(hash, albumId, mixsongId, 0L)
+                        }
+                    )
+                    Result.success(parsed)
+                },
+                onFailure = { e -> Result.failure(e) }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "getIpZoneHome exception", e)
+            Result.failure(e)
+        }
+    }
+
+    /** 编辑精选歌曲列表（GET /ip?id=&type=audios）。 */
+    suspend fun getIpAudios(ipId: Long, page: Int = 1, pageSize: Int = 30): Result<List<KugouSearchSong>> =
+        withContext(Dispatchers.IO) {
+            try {
+                KugouApiService.getInstance().getIpData(ipId.toString(), "audios", page, pageSize).fold(
+                    onSuccess = { json ->
+                        val songs = parseIpAudios(
+                            fields = json.toFieldMap(),
+                            artworkResolver = ::resolveArtworkUrl,
+                            onIdentity = { hash, albumId, mixsongId, performers ->
+                                registerSongIdentity(hash, albumId, mixsongId, 0L)
+                                registerPerformers(hash, performers)
+                            }
+                        )
+                        Result.success(songs)
+                    },
+                    onFailure = { e -> Result.failure(e) }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getIpAudios exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 编辑精选歌单列表（GET /ip/playlist?id=）。 */
+    suspend fun getIpPlaylists(ipId: Long, page: Int = 1, pageSize: Int = 30): Result<List<KugouPlaylistBrief>> =
+        withContext(Dispatchers.IO) {
+            try {
+                KugouApiService.getInstance().getIpPlaylist(ipId.toString(), page, pageSize).fold(
+                    onSuccess = { json ->
+                        Result.success(parseIpPlaylists(json.toFieldMap(), ::resolveArtworkUrl))
+                    },
+                    onFailure = { e -> Result.failure(e) }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getIpPlaylists exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 编辑精选专辑列表（GET /ip?id=&type=albums）。 */
+    suspend fun getIpAlbums(ipId: Long, page: Int = 1, pageSize: Int = 30): Result<List<KugouNewAlbum>> =
+        withContext(Dispatchers.IO) {
+            try {
+                KugouApiService.getInstance().getIpData(ipId.toString(), "albums", page, pageSize).fold(
+                    onSuccess = { json ->
+                        Result.success(parseIpAlbums(json.toFieldMap(), ::resolveArtworkUrl))
+                    },
+                    onFailure = { e -> Result.failure(e) }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getIpAlbums exception", e)
+                Result.failure(e)
+            }
+        }
+
+    /** 编辑精选歌手列表（GET /ip?id=&type=author_list）。 */
+    suspend fun getIpArtists(ipId: Long, page: Int = 1, pageSize: Int = 30): Result<List<KugouArtistBrief>> =
+        withContext(Dispatchers.IO) {
+            try {
+                KugouApiService.getInstance().getIpData(ipId.toString(), "author_list", page, pageSize).fold(
+                    onSuccess = { json ->
+                        Result.success(parseIpArtists(json.toFieldMap(), ::resolveArtworkUrl))
+                    },
+                    onFailure = { e -> Result.failure(e) }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getIpArtists exception", e)
+                Result.failure(e)
+            }
+        }
 
     /** 取封面时单次请求的曲目上限（防止异常大歌单一次拉爆）。 */
     private const val MAX_COVER_FETCH = 1000

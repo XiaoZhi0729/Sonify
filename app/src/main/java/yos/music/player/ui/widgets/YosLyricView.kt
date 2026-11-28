@@ -164,6 +164,8 @@ import com.mocharealm.accompanist.lyrics.ui.motion.LyricsMotionProfile
 import yos.music.player.code.hdr.LyricHdr
 import yos.music.player.code.hdr.hdrSolidBrush
 import yos.music.player.code.utils.others.YosDiagnostics
+import com.cormor.overscroll.core.overScrollVertical
+import com.cormor.overscroll.core.rememberOverscrollFlingBehavior
 
 // ===== 已唱字色（对齐 Flamingo：白 + 封面提取色）=====
 // 基色 = 70% 白 + 30% 封面提取色；未唱字 = 白 50%。提取色由歌词页按当前封面更新。
@@ -461,6 +463,10 @@ fun YosLyricViewLib(
                     lyricTopFadeInsetPx(maxHeight.toPx(), LYRIC_TOP_FADE_INSET_DP.dp.toPx())
                         .toDp()
                 }
+                val bottomContentPadding = with(localDensity) {
+                    lyricBottomContentPaddingPx(maxHeight.toPx(), lastLineObstructionFraction)
+                        .toDp()
+                }
                 // 库内部排版宽度 = maxWidth - 32dp
                 val layoutWidthPx =
                     with(localDensity) { (maxWidth - 32.dp).toPx() }.coerceAtLeast(1f)
@@ -510,6 +516,9 @@ fun YosLyricViewLib(
                         initialFirstVisibleItemScrollOffset = anchor?.offset ?: 0,
                     )
                 }
+                val overscrollOffsetPx = remember { mutableFloatStateOf(0f) }
+                val latestListState by rememberUpdatedState(listState)
+                val overscrollFlingBehavior = rememberOverscrollFlingBehavior { latestListState }
                 DisposableEffect(listStateKey, listState) {
                     onDispose {
                         LyricPreparedCache.putScrollAnchor(
@@ -568,7 +577,7 @@ fun YosLyricViewLib(
                         // 数据源，听感是"唱到一半没声"（11-12 取证：SEEK_SRC fn=lyric_line
                         // to=126421 精确等于该行 startTime）。
                         // 滚动进行中一律不响应；真点击时 isScrollInProgress 为 false。
-                        if (listState.isScrollInProgress) {
+                        if (listState.isScrollInProgress || abs(overscrollOffsetPx.floatValue) > 0.5f) {
                             YosDiagnostics.log(
                                 "LYRIC_CLICK_IGNORED",
                                 "to" to line.start, "why" to "scrolling"
@@ -580,7 +589,13 @@ fun YosLyricViewLib(
                         recalibrateFlag = true
                     },
                     onLinePressed = {},
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .overScrollVertical(
+                            nestedScrollToParent = false,
+                            offsetObserver = { overscrollOffsetPx.floatValue = it },
+                            applyVisualOffset = false,
+                        ),
                     normalLineTextStyle = style,
                     translationTextStyle = style.copy(
                         fontSize = scaledLyricTranslationFontSizeSp(uiConfig.subTextSize, fontScaleSetting).sp,
@@ -634,6 +649,9 @@ fun YosLyricViewLib(
                     sceneCacheKey = "$cacheKey|${textColor.value}",
                     // 折行方式：开=均衡（各行等长），关=首行塞满（平台 first-fit 行为）
                     lineBalance = lineBalanceSetting,
+                    bottomContentPadding = bottomContentPadding,
+                    flingBehavior = overscrollFlingBehavior,
+                    overscrollOffsetY = { overscrollOffsetPx.floatValue },
                 )
             }
         }

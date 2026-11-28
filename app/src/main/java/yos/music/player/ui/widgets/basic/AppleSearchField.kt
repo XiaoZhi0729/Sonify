@@ -126,7 +126,7 @@ fun AppleSearchField(
         modifier = modifier
             .background(
                 (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.25f),
-                RoundedCornerShape(10.dp)
+                CircleShape
             )
             .fillMaxSize(),
         verticalAlignment = Alignment.CenterVertically
@@ -135,12 +135,12 @@ fun AppleSearchField(
             painter = painterResource(id = R.drawable.ic_magnifying_glass),
             contentDescription = null,
             modifier = Modifier
-                .padding(start = 10.dp)
+                .padding(start = 14.dp)
                 .size(17.dp)
                 .alpha(magAlpha),
             tint = contentColor
         )
-        Spacer(Modifier.width(7.dp))
+        Spacer(Modifier.width(8.dp))
 
         Box(
             Modifier
@@ -196,7 +196,7 @@ fun AppleSearchField(
                     tint = contentColor.copy(alpha = 0.55f)
                 )
             }
-            Spacer(Modifier.width(2.dp))
+            Spacer(Modifier.width(6.dp))
         }
     }
 }

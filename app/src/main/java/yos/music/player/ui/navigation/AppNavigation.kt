@@ -177,6 +177,28 @@ fun onlineAlbumArguments() = listOf(
     }
 )
 
+/** 编辑精选专区详情路由参数：zoneId 定位 /ip/zone/home，ipId > 0 时走 /ip & /ip/playlist。 */
+fun ipZoneDetailArguments() = listOf(
+    navArgument(UI.IpZoneIdArg) {
+        type = NavType.LongType
+        defaultValue = 0L
+    },
+    navArgument(UI.IpZoneIpIdArg) {
+        type = NavType.LongType
+        defaultValue = 0L
+    },
+    navArgument(UI.IpZoneNameArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    },
+    navArgument(UI.IpZoneCoverArg) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = ""
+    }
+)
+
 @Immutable
 enum class HouseId(
     val rootRoute: String,

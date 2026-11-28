@@ -156,25 +156,48 @@ internal class CoverArtworkState {
     internal var confirmed = false
 
     /**
-     * 是否处于"按压反馈可见"的窗口（按下中，或松手后倾角/缩放尚未归零）。
+     * 是否处于"按压或庆祝动效活跃"的窗口（按下中、倾角/缩放尚未归零、或描边高光/涟漪仍在播放）。
      *
-     * 这是给**外壳封面层**用的开关：外壳那层是纯 Canvas，画不了 3D，
-     * 倾斜期间需要临时切到一个真实节点去画封面。
+     * 这是给**外壳封面层**用的开关：只要任意一段交互动效（含欠阻尼回弹的负向过冲、
+     * 描边高光淡出、800ms 涟漪扩散）仍在跑，就必须启用 3D 变换图层同步绘制，
+     * 避免中途提前退出导致回弹被截断、亮光中途闪烁或闪灭。
      *
-     * **不要在组合期直接读这个 getter**——它每次都订阅三个 Animatable，
-     * 会让整层逐帧重组。调用方必须用 `derivedStateOf { state.isTilting }`
+     * **不要在组合期直接读这个 getter**——它每次都订阅驱动状态的多个 Snapshot State / Animatable，
+     * 会让整层逐帧重组。调用方必须用 `derivedStateOf { state.hasActiveEffect }`
      * 包一层（只在布尔翻转时才失效）。
-     *
-     * 判据同时看 pressed 与动画值：松手后 driver 还要跑 140ms 补满 +
-     * 160ms 倾角归零 + 弹簧回弹，这段必须继续由倾斜节点画，否则又会
-     * 在"松手那一刻"换人。阈值取很小，只为在动画彻底停下后关闭窗口。
      */
-    internal val isTilting: Boolean
-        get() = pressed.value ||
-                press.value > 0.0005f ||
-                tiltX.value != 0f ||
-                tiltY.value != 0f
+    internal val hasActiveEffect: Boolean
+        get() = isCoverArtworkEffectActive(
+            pressed = pressed.value,
+            press = press.value,
+            tiltX = tiltX.value,
+            tiltY = tiltY.value,
+            glow = glow.value,
+            hasRipples = ripples.isNotEmpty()
+        )
 }
+
+/**
+ * 封面交互动效是否处于活跃窗口（纯函数，便于单测验证）。
+ *
+ * 除 [pressed] / [tiltX] / [tiltY] 外：
+ * - [press] 使用 `abs(press)`：松手回弹用欠阻尼弹簧，会过冲到负数（略微放大再归零），
+ *   不取绝对值会在冲进负数那一帧被误判为静止而提前关闭 3D 变换层；
+ * - 纳入 [glow] 与 [hasRipples]：确保描边高光淡出与 800ms 涟漪扩散期间不被中途切层截断。
+ */
+internal fun isCoverArtworkEffectActive(
+    pressed: Boolean,
+    press: Float,
+    tiltX: Float,
+    tiltY: Float,
+    glow: Float,
+    hasRipples: Boolean
+): Boolean = pressed ||
+    abs(press) > 0.0005f ||
+    tiltX != 0f ||
+    tiltY != 0f ||
+    glow > 0.002f ||
+    hasRipples
 
 /**
  * 建立封面状态并启动驱动。**必须在播放页宿主（跨页面切换常驻）里调用一次**，
@@ -508,9 +531,11 @@ internal fun Modifier.coverArtworkEffect(
             val path = outline.coverArtworkPath()
             val rimBrush = Brush.verticalGradient(
                 0f to Color.White.copy(alpha = CoverArtworkRimAlpha),
-                1f to Color.White.copy(alpha = CoverArtworkRimAlpha * 0.12f)
+                1f to Color.White.copy(alpha = CoverArtworkRimAlpha * 0.12f),
+                startY = 0f,
+                endY = face.height
             )
-            val rimStroke = Stroke(width = CoverArtworkRimWidth.toPx() * scale)
+            val rimStroke = Stroke(width = CoverArtworkRimWidth.toPx() * coverArtworkRimScale(scale))
             onDrawWithContent {
                 drawContent()
                 // 裁剪面是正方形（见上），四个角落在封面圆角之外：不裁剪就会在封面角上留下白晕。
@@ -529,12 +554,59 @@ internal fun Modifier.coverArtworkEffect(
                     state.ripples.forEach { ripple ->
                         drawCoverArtworkRipple(
                             origin = ripple.origin * scale,
-                            progress = ripple.progress.value
+                            progress = ripple.progress.value,
+                            extentSize = face
                         )
                     }
                 }
             }
         }
+}
+
+/**
+ * 计算描边高光的线宽缩放系数：防止在缩小到 69dp 顶栏封面（scale ≈ 0.19）时线宽被等比压成
+ * ~1px 细丝而视觉消退，同时保持大封面 1.0× 与全链路连续过渡。
+ */
+internal fun coverArtworkRimScale(scale: Float): Float =
+    0.6f + 0.4f * scale.coerceIn(0f, 1f)
+
+/**
+ * 在已有封面内容之上绘制交互高亮叠加层（白色描边高光 + 扩散涟漪）。
+ *
+ * 供外壳单封面层（`CoverMorphLayer`）在同构坐标系（已平移动原点并裁剪到封面轮廓内）下复用，
+ * 保证静止大封面、外壳转场封面、顶栏小封面三棒画出的高光与涟漪参数逐像素一致。
+ */
+internal fun DrawScope.drawCoverArtworkOverlays(
+    state: CoverArtworkState,
+    faceSize: Size,
+    outline: Outline,
+    rimHighlight: Boolean = true
+) {
+    val ref = state.size.value
+    val scale = if (ref.width > 0) faceSize.width / ref.width.toFloat() else 1f
+    val glow = state.glow.value
+    if (rimHighlight && glow > 0.002f) {
+        val rimBrush = Brush.verticalGradient(
+            0f to Color.White.copy(alpha = CoverArtworkRimAlpha),
+            1f to Color.White.copy(alpha = CoverArtworkRimAlpha * 0.12f),
+            startY = 0f,
+            endY = faceSize.height
+        )
+        drawOutline(
+            outline = outline,
+            brush = rimBrush,
+            alpha = glow,
+            style = Stroke(width = CoverArtworkRimWidth.toPx() * coverArtworkRimScale(scale)),
+            blendMode = BlendMode.Plus
+        )
+    }
+    state.ripples.forEach { ripple ->
+        drawCoverArtworkRipple(
+            origin = ripple.origin * scale,
+            progress = ripple.progress.value,
+            extentSize = faceSize
+        )
+    }
 }
 
 /** Outline → Path：Compose 没有公开 API，与 CrestoDialogEffects 同款私有实现。 */
@@ -554,9 +626,13 @@ private fun Outline.coverArtworkPath(): Path = when (this) {
  * 透明端色必须是"白 + alpha 0"而不是 Color.Transparent（后者是黑 + alpha 0，
  * 插值中途会掺黑出灰边）。
  */
-private fun DrawScope.drawCoverArtworkRipple(origin: Offset, progress: Float) {
+private fun DrawScope.drawCoverArtworkRipple(
+    origin: Offset,
+    progress: Float,
+    extentSize: Size = size
+) {
     if (progress <= 0.01f) return
-    val extent = size.maxDimension * CoverArtworkRippleExtent
+    val extent = extentSize.maxDimension * CoverArtworkRippleExtent
     val radius = progress * extent
     val thickness = extent * CoverArtworkRippleThickness
     val blur = extent * CoverArtworkRippleBlur
@@ -588,6 +664,8 @@ private fun DrawScope.drawCoverArtworkRipple(origin: Offset, progress: Float) {
             center = origin,
             radius = outer
         ),
+        topLeft = Offset.Zero,
+        size = extentSize,
         blendMode = BlendMode.Plus
     )
 }

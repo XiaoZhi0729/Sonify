@@ -17,10 +17,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,16 +33,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
+import yos.music.player.ui.widgets.mochi.LocalMochiZoneLaunchState
 import yos.music.player.ui.widgets.mochi.MochiActivityIndicator
+import yos.music.player.ui.widgets.mochi.MochiZoneLaunchTarget
+import yos.music.player.ui.widgets.mochi.mochiPressDeform
+import yos.music.player.ui.widgets.mochi.mochiZoneSource
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,13 +64,16 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -73,6 +82,7 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.kyant.capsule.ContinuousRoundedRectangle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -81,11 +91,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yos.music.player.R
 import yos.music.player.code.MediaController
-import yos.music.player.data.objects.DiscoveryObject
 import yos.music.player.data.objects.OnlineAlbumObject
 import yos.music.player.data.objects.ArtistPresentationCache
 import yos.music.player.data.objects.SearchObject
 import yos.music.player.data.repositories.KugouArtistBrief
+import yos.music.player.data.repositories.KugouIpZone
 import yos.music.player.data.repositories.KugouLyricSearchResult
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouPlaylistBrief
@@ -97,6 +107,7 @@ import yos.music.player.ui.navigation.NavGuard
 import yos.music.player.ui.navigation.PlaylistSelection
 import yos.music.player.ui.navigation.preloadAlbumBackdropColor
 import yos.music.player.ui.navigation.preloadPlaylistBackdropColor
+import yos.music.player.ui.navigation.rememberZoneCardTintColor
 import yos.music.player.ui.pages.library.MusicList
 import yos.music.player.ui.pages.library.OnlineListItemDivider
 import yos.music.player.ui.pages.library.OnlineStatusItem
@@ -157,7 +168,10 @@ fun SearchPage(
     val playlistEndReached = remember("SearchPage_playlistEndReached") { mutableStateOf(false) }
     val lyricNextPage = remember("SearchPage_lyricNextPage") { mutableStateOf(2) }
     val lyricEndReached = remember("SearchPage_lyricEndReached") { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = SearchObject.browseScrollIndex,
+        initialFirstVisibleItemScrollOffset = SearchObject.browseScrollOffset
+    )
     // 翻页重叠已按 hash 去重，但歌词匹配等结果仍可能重复，item key 按出现序号唯一化兜底。
     // items 与 keys 必须派生自同一次状态读取：LazyColumn 内容块有独立重组作用域且
     // key lambda 延迟到测量期才执行，若两处分别读 results.value，内容块可能拿到
@@ -177,14 +191,39 @@ fun SearchPage(
     val lyricKeys = remember(lyricItems) { lazyItemKeys(lyricItems) { it.song.hash } }
     val artistItems = SearchObject.artistResults.value
     val artistKeys = remember(artistItems) { lazyItemKeys(artistItems) { it.singerId } }
+    val zones = SearchObject.ipZones.value
+    val zonesLoading = SearchObject.ipZonesLoading.value
+    val zonesError = SearchObject.ipZonesError.value
+    val zoneColumns = rememberZoneColumns()
+    val zoneRows = remember(zones, zoneColumns) { zones.chunked(zoneColumns) }
 
     val scope = rememberCoroutineScope()
+    val zoneLaunchState = LocalMochiZoneLaunchState.current
 
-    // 上次会话残留的 loading 态自愈 + 热搜榜预取（空态区展示，进程内缓存）
+    fun loadIpZones(force: Boolean = false) {
+        if (SearchObject.ipZonesLoading.value) return
+        if (!force && SearchObject.ipZones.value.isNotEmpty()) return
+        SearchObject.ipZonesLoading.value = true
+        SearchObject.ipZonesError.value = null
+        scope.launch {
+            KugouRepository.getIpZones()
+                .onSuccess { zones ->
+                    SearchObject.ipZones.value = zones
+                    SearchObject.ipZonesError.value = null
+                }
+                .onFailure { e ->
+                    SearchObject.ipZonesError.value = e.message ?: e.javaClass.simpleName
+                }
+            SearchObject.ipZonesLoading.value = false
+        }
+    }
+
+    // 上次会话残留的 loading 态自愈 + 编辑精选专区 & 热搜榜预取（空态区展示，进程内缓存）
     LaunchedEffect(Unit) {
         if (status.value == "loading" && !busy.value) {
             status.value = if (results.value.isEmpty()) "idle" else "ok"
         }
+        loadIpZones()
         if (SearchObject.hotWords.value.isEmpty()) {
             // /search/hot 返回的是榜单分类词（热搜榜/飙升榜/DJ榜…），不是歌曲热词；
             // 接口无排名字段，序号由列表顺序派生，不做假数据
@@ -192,10 +231,23 @@ fun SearchPage(
                 SearchObject.hotWords.value = it.take(HOT_LIST_LIMIT)
             }
         }
-        // 回到浏览态（无关键词、未激活）时回到顶部：搜索 Tab 切走再切回时
-        // composition 重建但 listState 会恢复上次位置，不归位就会停在页面中部
-        if (searchText.value.isEmpty() && !SearchObject.searchActive.value) {
+        // 仅在首次无滚动记录时置顶；从专区详情返回时保留原有滚动位置，使 Mochi 缩回落点对齐
+        if (searchText.value.isEmpty() && !SearchObject.searchActive.value &&
+            SearchObject.browseScrollIndex == 0 && SearchObject.browseScrollOffset == 0
+        ) {
             listState.scrollToItem(0)
+        }
+    }
+
+    // 浏览态下实时记住滚动位置
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }.collect { (idx, offset) ->
+            if (searchText.value.isEmpty() && !SearchObject.searchActive.value) {
+                SearchObject.browseScrollIndex = idx
+                SearchObject.browseScrollOffset = offset
+            }
         }
     }
 
@@ -436,7 +488,7 @@ fun SearchPage(
                 onBack = openSettings
             )
         },
-        extraTopPadding = 57.dp,
+        extraTopPadding = 37.dp,
         listState = listState
     ) {
         item("SearchField") {
@@ -460,7 +512,7 @@ fun SearchPage(
                 field = {
                     AppleSearchField(
                         text = searchText.value,
-                        placeholder = stringResource(id = R.string.page_online_search_placeholder),
+                        placeholder = stringResource(id = R.string.page_search_title),
                         onValueChange = { searchText.value = it },
                         onSearch = {
                             if (searchText.value.isNotEmpty()) {
@@ -503,42 +555,68 @@ fun SearchPage(
             SearchObject.suggestions.value.isNotEmpty()
 
         when {
-            // 空态区：搜索历史 + 热搜榜
+            // 浏览态：胶囊搜索框下方直接按行虚拟化铺编辑精选专区双列大卡
             keyword.isEmpty() && !SearchObject.searchActive.value -> {
-                item("browse_header") {
-                    SectionHeader(stringResource(id = R.string.search_browse_categories))
+                item("browse_top_spacer") {
+                    Spacer(Modifier.height(12.dp))
                 }
-                item("browse_categories") {
-                    CategoryGrid(
-                        onOpen = { target ->
-                            keyboardController?.hide()
-                            focusManager.clearFocus()
-                            // 新歌精选读 DiscoveryObject 且自身没有加载逻辑，
-                            // 直接进可能停在空骨架；ensureFresh 自带 60s 节流，重复调用零开销
-                            if (target == CategoryTarget.NewSongs) DiscoveryObject.ensureFresh()
-                            NavGuard.run { navController.toUI(target.route) }
+                when {
+                    zoneRows.isNotEmpty() -> {
+                        itemsIndexed(
+                            items = zoneRows,
+                            key = { _, row -> "zone_row:${row.first().id}" },
+                            contentType = { _, _ -> "zone_row" }
+                        ) { rowIndex, rowZones ->
+                            IpZoneRow(
+                                rowZones = rowZones,
+                                columns = zoneColumns,
+                                bottomSpacing = if (rowIndex < zoneRows.lastIndex) 12.dp else 0.dp,
+                                onOpen = { zone ->
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    if (zoneLaunchState != null) {
+                                        zoneLaunchState.open(
+                                            MochiZoneLaunchTarget(
+                                                zoneId = zone.id,
+                                                ipId = zone.ipId,
+                                                name = zone.name,
+                                                coverUrl = zone.iconUrl.orEmpty()
+                                            )
+                                        )
+                                    } else {
+                                        NavGuard.run {
+                                            navController.navigate(
+                                                UI.ipZoneDetailRoute(
+                                                    zoneId = zone.id,
+                                                    ipId = zone.ipId,
+                                                    name = zone.name,
+                                                    cover = zone.iconUrl.orEmpty()
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            )
                         }
-                    )
-                }
-                if (SearchObject.hotWords.value.isNotEmpty()) {
-                    item("hot_header") {
-                        SectionHeader(stringResource(id = R.string.search_hot))
                     }
-                    item("hot_list") {
-                        // 热搜内容是 /search/hot 返回的榜单分类词（热搜榜/飙升榜/DJ榜…），
-                        // 不是歌曲热词；接口无排名字段，序号由列表顺序派生，不造假数据
-                        RankedWordList(
-                            words = SearchObject.hotWords.value.take(HOT_LIST_LIMIT),
-                            onWordClick = { word ->
-                                searchText.value = word
-                                doSearch()
-                            }
-                        )
+
+                    zonesLoading -> {
+                        item("browse_zones_loading") {
+                            IpZoneLoadingGrid()
+                        }
+                    }
+
+                    zonesError != null -> {
+                        item("browse_zones_error") {
+                            IpZoneErrorState(
+                                onRetry = { loadIpZones(force = true) }
+                            )
+                        }
                     }
                 }
             }
 
-            // 搜索激活但关键词为空：最近搜索（Apple Music 行为，点框才出现）
+            // 搜索激活但关键词为空：最近搜索 + 热搜榜
             keyword.isEmpty() -> {
                 item("recent_header") {
                     // 与浏览态共用 SectionHeaderRow：两侧行高一致，标题基线才不会漂移
@@ -591,6 +669,20 @@ fun SearchPage(
                             onDelete = { SearchObject.removeHistory(index) }
                         )
                         if (index < historyWords.size - 1) OnlineListItemDivider()
+                    }
+                }
+                if (SearchObject.hotWords.value.isNotEmpty()) {
+                    item("hot_header") {
+                        SectionHeader(stringResource(id = R.string.search_hot))
+                    }
+                    item("hot_list") {
+                        RankedWordList(
+                            words = SearchObject.hotWords.value.take(HOT_LIST_LIMIT),
+                            onWordClick = { word ->
+                                searchText.value = word
+                                doSearch()
+                            }
+                        )
                     }
                 }
             }
@@ -821,112 +913,230 @@ private fun SectionHeaderRow(title: String, action: (@Composable () -> Unit)? = 
     }
 }
 
-/** 无动作按钮的分区标题（浏览分类 / 热搜榜 / 歌曲）。 */
+/** 无动作按钮的分区标题（热搜榜 / 歌曲）。 */
 @Composable
-private fun SectionHeader(title: String) = SectionHeaderRow(title)
+internal fun SectionHeader(title: String) = SectionHeaderRow(title)
 
-/**
- * 浏览态的分类砖块目标。只列真实存在、且已在 SearchNavHost 注册的路由，
- * 漏注册即 "destination cannot be found" 崩溃。
- */
-private enum class CategoryTarget(val route: String, val labelRes: Int) {
-    NewSongs(UI.NewSongsDetail, R.string.discovery_new_songs_title),
-    RecommendPlaylists(UI.RecommendPlaylistsDetail, R.string.discovery_recommend_playlists_title),
-    RankList(UI.RankListDetail, R.string.discovery_rank_title),
-    NewAlbums(UI.NewAlbumsDetail, R.string.discovery_new_albums_title),
-    Everyday(UI.EverydayRecommendDetail, R.string.home_everyday_recommend_title),
-    PersonalFm(UI.PersonalFmDetail, R.string.home_personal_fm_title),
-    Gallery(UI.MusicGallery, R.string.page_music_gallery_title),
-    Recognition(UI.SongRecognition, R.string.song_recognition_title)
+private val ZONE_FALLBACK_PALETTES = listOf(
+    Color(0xFF607876),
+    Color(0xFFAE6825),
+    Color(0xFF9E5BA7),
+    Color(0xFF667387),
+    Color(0xFFCC1A10),
+    Color(0xFF1D800E),
+    Color(0xFF7B73A4),
+    Color(0xFF9C6949)
+)
+
+internal val ZoneCardCornerRadius = 18.dp
+internal val ZoneCardShape = ContinuousRoundedRectangle(ZoneCardCornerRadius)
+
+private fun zoneFallbackColor(zoneId: Long): Color {
+    val index = ((zoneId % ZONE_FALLBACK_PALETTES.size) + ZONE_FALLBACK_PALETTES.size) % ZONE_FALLBACK_PALETTES.size
+    return ZONE_FALLBACK_PALETTES[index.toInt()]
 }
 
-/** 每块砖的渐变底 + 右下角旋转浅色方块（不用网络封面，避免依赖 Discovery 时序）。 */
-private val CategoryTarget.topColor: Color
-    get() = when (this) {
-        CategoryTarget.NewSongs -> Color(0xFF5B4CE0)
-        CategoryTarget.RecommendPlaylists -> Color(0xFF1E2A5A)
-        CategoryTarget.RankList -> Color(0xFFC81E3A)
-        CategoryTarget.NewAlbums -> Color(0xFF0E8F6E)
-        CategoryTarget.Everyday -> Color(0xFFE0428E)
-        CategoryTarget.PersonalFm -> Color(0xFFFF7A3D)
-        CategoryTarget.Gallery -> Color(0xFF6F3A86)
-        CategoryTarget.Recognition -> Color(0xFF0B6E8A)
-    }
-
-private val CategoryTarget.bottomColor: Color
-    get() = when (this) {
-        CategoryTarget.NewSongs -> Color(0xFF9B5DE5)
-        CategoryTarget.RecommendPlaylists -> Color(0xFF3E7CB1)
-        CategoryTarget.RankList -> Color(0xFFF0553F)
-        CategoryTarget.NewAlbums -> Color(0xFF4CC38A)
-        CategoryTarget.Everyday -> Color(0xFFF76F9C)
-        CategoryTarget.PersonalFm -> Color(0xFFF2385A)
-        CategoryTarget.Gallery -> Color(0xFF9B6FB8)
-        CategoryTarget.Recognition -> Color(0xFF22A6B3)
-    }
-
-/** 浏览分类砖块：2 列网格，每块 80dp 高。 */
 @Composable
-private fun CategoryGrid(onOpen: (CategoryTarget) -> Unit) {
-    val rows = CategoryTarget.entries.chunked(2)
-    Column(Modifier.padding(horizontal = 18.dp, vertical = 2.dp)) {
-        rows.forEach { rowTargets ->
+private fun rememberZoneColumns(): Int {
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    return when {
+        widthDp >= 840 -> 4
+        widthDp >= 600 -> 3
+        else -> 2
+    }
+}
+
+/**
+ * 浏览态编辑精选专区单行（供 `LazyColumn` 虚拟化按行复用，避免一次组合全部 48 张卡片）：
+ * 左右 18.dp 边距与顶部搜索框对齐，采用 G2 平滑圆角、左色渐变与左下角小字标题。
+ */
+@Composable
+private fun IpZoneRow(
+    rowZones: List<KugouIpZone>,
+    columns: Int,
+    bottomSpacing: androidx.compose.ui.unit.Dp,
+    onOpen: (KugouIpZone) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 18.dp, end = 18.dp, bottom = bottomSpacing),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        rowZones.forEach { zone ->
+            IpZoneCard(
+                zone = zone,
+                modifier = Modifier.weight(1f),
+                onClick = { onOpen(zone) }
+            )
+        }
+        repeat(columns - rowZones.size) {
+            Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+/**
+ * 专区卡片共享画面组件：左色渐变 + 右侧裁掉原图底部白字水印的配图 + 左下角小字标题。
+ * 搜索页网格与 Mochi 容器变形转场预览层共用同一套绘制。
+ */
+@Composable
+internal fun IpZoneCardArtwork(
+    name: String,
+    iconUrl: String?,
+    tintColor: Color,
+    modifier: Modifier = Modifier,
+    enableCrossfade: Boolean = true
+) {
+    val context = LocalContext.current
+    Box(
+        modifier = modifier.background(tintColor)
+    ) {
+        if (!iconUrl.isNullOrBlank()) {
+            // 右置 84% 宽 + 顶部对齐裁切（1.68f 比例，只露原图顶部 190px < 203px），
+            // 彻底裁掉酷狗原图底部白字，同时让主体自然落在右侧，与左侧纯色渐变融合
+            AsyncImage(
+                model = remember(iconUrl, enableCrossfade) {
+                    ImageRequest.Builder(context)
+                        .data(iconUrl)
+                        .memoryCacheKey("ip-zone-icon:$iconUrl")
+                        .placeholderMemoryCacheKey("ip-zone-icon:$iconUrl")
+                        .crossfade(enableCrossfade)
+                        .allowHardware(true)
+                        .precision(Precision.INEXACT)
+                        .size(360, 220)
+                        .build()
+                },
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                modifier = Modifier
+                    .fillMaxWidth(0.84f)
+                    .fillMaxHeight()
+                    .align(Alignment.CenterEnd)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0.00f to tintColor,
+                        0.32f to tintColor,
+                        0.48f to tintColor.copy(alpha = 0.82f),
+                        0.66f to tintColor.copy(alpha = 0.34f),
+                        0.84f to Color.Transparent,
+                        1.00f to Color.Transparent
+                    )
+                )
+        )
+        Text(
+            text = name,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 13.dp, bottom = 10.dp, end = 12.dp)
+        )
+    }
+}
+
+@Composable
+private fun IpZoneCard(
+    zone: KugouIpZone,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val fallback = remember(zone.id) { zoneFallbackColor(zone.id) }
+    val tintColor = rememberZoneCardTintColor(
+        zoneId = zone.id,
+        iconUrl = zone.iconUrl,
+        fallback = fallback
+    )
+
+    Box(
+        modifier = modifier
+            .aspectRatio(2.0f)
+            .mochiZoneSource(
+                zoneId = zone.id,
+                cornerRadius = ZoneCardCornerRadius,
+                color = tintColor
+            )
+            .mochiPressDeform()
+            .clip(ZoneCardShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+    ) {
+        IpZoneCardArtwork(
+            name = zone.name,
+            iconUrl = zone.iconUrl,
+            tintColor = tintColor,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Composable
+private fun IpZoneLoadingGrid() {
+    val columns = rememberZoneColumns()
+    val placeholderColor = (Color.LightGray withNight Color.DarkGray).copy(alpha = 0.22f)
+    val rowCount = 4
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        repeat(rowCount) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                rowTargets.forEach { target ->
+                repeat(columns) {
                     Box(
-                        Modifier
+                        modifier = Modifier
                             .weight(1f)
-                            .height(72.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(target.topColor, target.bottomColor)
-                                )
-                            )
-                            .clickable { onOpen(target) }
-                    ) {
-                        // 顶部高光：与项目玻璃语言一致的浅色渐层，避免纯渐变显得扁平
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(34.dp)
-                                .background(
-                                    Brush.verticalGradient(
-                                        listOf(Color.White.copy(alpha = 0.18f), Color.Transparent)
-                                    )
-                                )
-                        )
-                        // 右下角旋转 45° 的浅色方块，模拟 Apple Music 分类砖的封面露出
-                        Box(
-                            Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset(x = 22.dp, y = 22.dp)
-                                .size(50.dp)
-                                .graphicsLayer { rotationZ = 45f }
-                                .background(Color.White.copy(alpha = 0.22f), RoundedCornerShape(5.dp))
-                        )
-                        Text(
-                            text = stringResource(id = target.labelRes),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(horizontal = 11.dp, vertical = 10.dp)
-                        )
-                    }
+                            .aspectRatio(2.0f)
+                            .clip(ZoneCardShape)
+                            .background(placeholderColor)
+                    )
                 }
-                // 奇数个目标时补一个空位，保持网格对齐
-                if (rowTargets.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+    }
+}
+
+@Composable
+private fun IpZoneErrorState(onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = stringResource(id = R.string.search_zone_load_failed),
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = stringResource(id = R.string.search_zone_retry),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onRetry)
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        )
     }
 }
 
@@ -1081,7 +1291,7 @@ private fun TopResultCard(song: KugouSearchSong, onClick: () -> Unit) {
  * 因此以 `startPadding = 22.dp, endPadding = 22.dp, spacing = 16.dp` 计算列数。
  */
 @Composable
-private fun <T> SearchAdaptiveGrid(
+internal fun <T> SearchAdaptiveGrid(
     items: List<T>,
     itemContent: @Composable (item: T, modifier: Modifier) -> Unit
 ) {
@@ -1113,7 +1323,7 @@ private fun <T> SearchAdaptiveGrid(
 /** 专辑/歌单自适应网格共用的正方形封面卡片。 */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
-private fun SearchMediaGridCard(
+internal fun SearchMediaGridCard(
     coverUrl: String?,
     title: String,
     subtitle: String,
@@ -1179,7 +1389,7 @@ private fun SearchMediaGridCard(
 /** 专辑结果自适应网格（手机 2 列，平板/宽屏自动多列）。 */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
-private fun AlbumGrid(
+internal fun AlbumGrid(
     albums: List<KugouNewAlbum>,
     sharedTransitionScope: androidx.compose.animation.SharedTransitionScope?,
     animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope?,
@@ -1219,7 +1429,7 @@ private fun AlbumGrid(
 /** 歌单结果自适应网格（手机 2 列，平板/宽屏自动多列）。 */
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
-private fun PlaylistGrid(
+internal fun PlaylistGrid(
     playlists: List<KugouPlaylistBrief>,
     sharedTransitionScope: androidx.compose.animation.SharedTransitionScope?,
     animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope?,
@@ -1241,7 +1451,7 @@ private fun PlaylistGrid(
         SearchMediaGridCard(
             coverUrl = playlist.cover,
             title = playlist.name,
-            subtitle = "${playlist.songCount} 首",
+            subtitle = if (playlist.songCount > 0) "${playlist.songCount} 首" else "",
             sharedCoverKey = "playlist/Recommend/$playlistId",
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = animatedVisibilityScope,
@@ -1321,7 +1531,7 @@ private fun LyricResultRow(item: KugouLyricSearchResult, onClick: () -> Unit) {
  * 行内经 [ArtistPresentationCache.loadDetail]（空 accountId，不污染真实账号关注态）
  * 补拉 /artist/detail 头像，顺带预热详情页缓存。 */
 @Composable
-private fun ArtistResultRow(artist: KugouArtistBrief, onClick: () -> Unit) {
+internal fun ArtistResultRow(artist: KugouArtistBrief, onClick: () -> Unit) {
     val density = LocalDensity.current
     val avatarUrl = remember(artist.singerId) { mutableStateOf(artist.avatarUrl) }
     LaunchedEffect(artist.singerId) {

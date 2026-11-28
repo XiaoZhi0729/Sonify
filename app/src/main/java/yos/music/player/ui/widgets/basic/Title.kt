@@ -491,7 +491,7 @@ private fun BaseTitleGrid(
     // 当调用方没有自定义 rightBarIcon 但传了 topRightIcon + onTopRightIcon 时，
     // 自动用 TitleBarIcon（液态玻璃圆钮：42dp 底 + 23dp 图标，页面顶部平底、
     // 滚动后毛玻璃+投影，材质见 LiquidTopBarButton）渲染。
-    // 该图标渲染在 TitleBar 顶部（与大标题上方），不受大标题 57dp 下移影响。
+    // 该图标渲染在 TitleBar 顶部（与大标题上方），不受大标题 37dp 下移影响。
     val effectiveRightBarIcon: @Composable (RowScope.() -> Unit)? =
         rightBarIcon ?: if (topRightIcon != null && onTopRightIcon != null) {
             {
@@ -658,7 +658,7 @@ private fun BaseTitleList(
     // 当调用方没有自定义 rightBarIcon 但传了 topRightIcon + onTopRightIcon 时，
     // 自动用 TitleBarIcon（液态玻璃圆钮：42dp 底 + 23dp 图标，页面顶部平底、
     // 滚动后毛玻璃+投影，材质见 LiquidTopBarButton）渲染。
-    // 该图标渲染在 TitleBar 顶部（与大标题上方），不受大标题 57dp 下移影响。
+    // 该图标渲染在 TitleBar 顶部（与大标题上方），不受大标题 37dp 下移影响。
     val effectiveRightBarIcon: @Composable (RowScope.() -> Unit)? =
         rightBarIcon ?: if (topRightIcon != null && onTopRightIcon != null) {
             {
@@ -1206,7 +1206,7 @@ fun TitleBar(
      * 顶栏左侧槽位（与 [rightBarIcon] 同一行、同一高度，只是靠左）。
      *
      * 一级 Tab 页（资料库）在无返回键时用它放账号头像：位置与「更多」圆钮齐平对称，
-     * 不占大标题那行，因此大标题 57dp 下移与滚动折叠全都不受影响。
+     * 不占大标题那行，因此大标题 37dp 下移与滚动折叠全都不受影响。
      * 有 [onBack] 时该槽位不渲染（返回键优先，避免两个控件叠在左端）。
      */
     leftBarIcon: @Composable (RowScope.() -> Unit)? = null,

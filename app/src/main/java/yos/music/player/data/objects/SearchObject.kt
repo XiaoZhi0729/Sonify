@@ -5,6 +5,7 @@ import com.google.gson.Gson
 import com.tencent.mmkv.MMKV
 import yos.music.player.data.libraries.YosMediaItem
 import yos.music.player.data.repositories.KugouArtistBrief
+import yos.music.player.data.repositories.KugouIpZone
 import yos.music.player.data.repositories.KugouLyricSearchResult
 import yos.music.player.data.repositories.KugouNewAlbum
 import yos.music.player.data.repositories.KugouPlaylistBrief
@@ -68,6 +69,15 @@ object SearchObject {
 
     /** 热搜词（进程内缓存，进搜索页时空态拉一次）。 */
     val hotWords = mutableStateOf<List<String>>(emptyList())
+
+    /** 编辑精选专区列表（进程内缓存，搜索浏览态 2 列卡片网格）。 */
+    val ipZones = mutableStateOf<List<KugouIpZone>>(emptyList())
+    val ipZonesLoading = mutableStateOf(false)
+    val ipZonesError = mutableStateOf<String?>(null)
+
+    /** 浏览态列表滚动位置（进程内缓存，进出专区详情页时保持原位，保证缩回落点对齐）。 */
+    var browseScrollIndex: Int = 0
+    var browseScrollOffset: Int = 0
 
     /** 搜索联想词（输入防抖后刷新；空关键词清空）。 */
     val suggestions = mutableStateOf<List<String>>(emptyList())

@@ -41,6 +41,26 @@ class PageScrimTransition(
 object ArtistPageAppearance {
     val activeEntryId = mutableStateOf<String?>(null)
     private val registrations: SnapshotStateMap<String, ScrimRegistration> = mutableStateMapOf()
+    private val scrimAlphaMultipliers: SnapshotStateMap<Any, State<Float>> = mutableStateMapOf()
+
+    fun registerBottomScrimAlpha(key: Any, alpha: State<Float>) {
+        scrimAlphaMultipliers[key] = alpha
+    }
+
+    fun unregisterBottomScrimAlpha(key: Any, alpha: State<Float>) {
+        if (scrimAlphaMultipliers[key] === alpha) {
+            scrimAlphaMultipliers.remove(key)
+        }
+    }
+
+    fun bottomScrimAlphaScale(): Float {
+        if (scrimAlphaMultipliers.isEmpty()) return 1f
+        var scale = 1f
+        for (state in scrimAlphaMultipliers.values) {
+            scale = minOf(scale, state.value.coerceIn(0f, 1f))
+        }
+        return scale
+    }
 
     fun register(
         id: String,

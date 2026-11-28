@@ -3,9 +3,12 @@ package yos.music.player.ui.navigation
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -19,6 +22,9 @@ import kotlinx.coroutines.withContext
 import yos.music.player.data.objects.ArtistPresentationCache
 import yos.music.player.ui.theme.isFlamingoInDarkMode
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -270,4 +276,159 @@ internal suspend fun preloadAlbumBackdropColor(
         memoryCacheId = "album-palette:$albumId",
         coverUrl = coverUrl
     )
+}
+
+internal fun zoneCardPaletteKey(zoneId: Long, iconUrl: String): String =
+    "ip-zone-card:$zoneId:$iconUrl#top-avg-v2"
+
+/**
+ * 采样编辑精选专区封面顶部区域主色调。
+ *
+ * 酷狗 `/ip/zone` 图标底部 y>=72.5% 烤入了白色「XX专区」大字，故仅采样顶部 62% 画面，
+ * 再经 [refineZoneTintColor] 调整明度与饱和度，保证左侧纯色渐变能自然托住白色标题。
+ */
+internal fun sampleZoneIconColor(bitmap: Bitmap): Int? {
+    val width = bitmap.width
+    val height = bitmap.height
+    if (width <= 0 || height <= 0) return null
+    val insetX = (width * 0.08f).toInt()
+    val top = (height * 0.06f).toInt()
+    val right = (width - insetX).coerceAtLeast(insetX + 1)
+    val bottom = (height * 0.62f).roundToInt().coerceAtLeast(top + 1).coerceAtMost(height)
+
+    var red = 0.0
+    var green = 0.0
+    var blue = 0.0
+    var total = 0.0
+    for (y in top until bottom) {
+        for (x in insetX until right) {
+            val pixel = bitmap.getPixel(x, y)
+            val weight = AndroidColor.alpha(pixel) / 255.0
+            if (weight <= 0.0) continue
+            red += AndroidColor.red(pixel) * weight
+            green += AndroidColor.green(pixel) * weight
+            blue += AndroidColor.blue(pixel) * weight
+            total += weight
+        }
+    }
+    if (total <= 0.0) return null
+    val rawRgb = ((red / total).roundToInt().coerceIn(0, 255) shl 16) or
+        ((green / total).roundToInt().coerceIn(0, 255) shl 8) or
+        (blue / total).roundToInt().coerceIn(0, 255)
+    return refineZoneTintColor(rawRgb)
+}
+
+/**
+ * 纯 Kotlin 精炼专区卡片底色（JVM 单测可直接调用，不依赖 android.graphics.Color）：
+ * 保留原图色相，温和收敛过亮/过暗区域并适当提纯低饱和灰调，使白色小字在左侧渐变上始终清晰。
+ */
+internal fun refineZoneTintColor(rgb: Int): Int {
+    val r0 = ((rgb ushr 16) and 0xFF) / 255f
+    val g0 = ((rgb ushr 8) and 0xFF) / 255f
+    val b0 = (rgb and 0xFF) / 255f
+
+    val cMax = max(r0, max(g0, b0))
+    val cMin = min(r0, min(g0, b0))
+    val delta = cMax - cMin
+
+    var h = 0f
+    if (delta > 1e-5f) {
+        h = when (cMax) {
+            r0 -> ((g0 - b0) / delta) % 6f
+            g0 -> (b0 - r0) / delta + 2f
+            else -> (r0 - g0) / delta + 4f
+        } / 6f
+        if (h < 0f) h += 1f
+    }
+
+    var l = (cMax + cMin) * 0.5f
+    var s = if (delta <= 1e-5f) 0f else delta / (1f - kotlin.math.abs(2f * l - 1f)).coerceAtLeast(1e-5f)
+
+    if (s in 0.04f..0.24f) {
+        s = (s * 1.25f).coerceAtMost(0.42f)
+    }
+    l = l.coerceIn(0.24f, 0.46f)
+
+    fun hslToRgb(hue: Float, sat: Float, light: Float): Triple<Float, Float, Float> {
+        if (sat <= 1e-5f) return Triple(light, light, light)
+        val q = if (light < 0.5f) light * (1f + sat) else light + sat - light * sat
+        val p = 2f * light - q
+        fun hue2rgb(tIn: Float): Float {
+            var t = tIn
+            if (t < 0f) t += 1f
+            if (t > 1f) t -= 1f
+            return when {
+                t < 1f / 6f -> p + (q - p) * 6f * t
+                t < 0.5f -> q
+                t < 2f / 3f -> p + (q - p) * (2f / 3f - t) * 6f
+                else -> p
+            }
+        }
+        return Triple(hue2rgb(hue + 1f / 3f), hue2rgb(hue), hue2rgb(hue - 1f / 3f))
+    }
+
+    fun relativeLuminance(r: Float, g: Float, b: Float): Float {
+        fun lin(v: Float): Float = if (v <= 0.03928f) v / 12.92f else ((v + 0.055f) / 1.055f).pow(2.4f)
+        return 0.2126f * lin(r) + 0.7152f * lin(g) + 0.0722f * lin(b)
+    }
+
+    var out = hslToRgb(h, s, l)
+    var step = 0
+    while (relativeLuminance(out.first, out.second, out.third) > 0.28f && step < 4) {
+        l *= 0.85f
+        out = hslToRgb(h, s, l)
+        step++
+    }
+
+    val rr = (out.first * 255f).roundToInt().coerceIn(0, 255)
+    val gg = (out.second * 255f).roundToInt().coerceIn(0, 255)
+    val bb = (out.third * 255f).roundToInt().coerceIn(0, 255)
+    return (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+}
+
+/** 读取或异步采样编辑精选专区卡片的左侧主色调，带平滑颜色渐变过渡。 */
+@Composable
+internal fun rememberZoneCardTintColor(
+    zoneId: Long,
+    iconUrl: String?,
+    fallback: Color
+): Color {
+    val context = LocalContext.current
+    val paletteKey = remember(zoneId, iconUrl) {
+        iconUrl?.takeIf { it.isNotBlank() }?.let { zoneCardPaletteKey(zoneId, it) }
+    }
+    val paletteState = remember(paletteKey) {
+        paletteKey?.let { ArtistPresentationCache.palette(it) }
+    }
+
+    LaunchedEffect(paletteKey, iconUrl) {
+        if (paletteKey == null || iconUrl.isNullOrBlank()) return@LaunchedEffect
+        if (paletteState?.value != null) return@LaunchedEffect
+        runCatching {
+            ArtistPresentationCache.loadPalette(paletteKey) {
+                val bitmap = runCatching {
+                    context.imageLoader.execute(
+                        ImageRequest.Builder(context)
+                            .data(iconUrl)
+                            .allowHardware(false)
+                            .size(96)
+                            .memoryCacheKey("zone-palette:$zoneId:$iconUrl")
+                            .diskCacheKey(iconUrl)
+                            .build()
+                    ).drawable?.toBitmap()
+                }.getOrNull() ?: return@loadPalette null
+                withContext(Dispatchers.Default) { sampleZoneIconColor(bitmap) }
+            }
+        }
+    }
+
+    val targetColor = remember(paletteState?.value, fallback) {
+        paletteState?.value?.let { Color(it) } ?: fallback
+    }
+    val animatedColor by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(durationMillis = 240),
+        label = "zone-card-tint"
+    )
+    return animatedColor
 }

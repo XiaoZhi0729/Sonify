@@ -105,6 +105,7 @@ fun Modifier.overScrollVertical(
     springDamp: Float = OutBoundSpringDamp,
     offsetObserver: ((Float) -> Unit)? = null,
     allowTopOverscroll: Boolean = true,
+    applyVisualOffset: Boolean = true,
 ): Modifier = overScrollOutOfBound(
     isVertical = true,
     nestedScrollToParent,
@@ -112,7 +113,8 @@ fun Modifier.overScrollVertical(
     springStiff,
     springDamp,
     offsetObserver,
-    allowTopOverscroll
+    allowTopOverscroll,
+    applyVisualOffset,
 )
 
 /**
@@ -158,6 +160,7 @@ fun Modifier.overScrollOutOfBound(
     springDamp: Float = OutBoundSpringDamp,
     offsetObserver: ((Float) -> Unit)? = null,
     allowTopOverscroll: Boolean = true,
+    applyVisualOffset: Boolean = true,
 ): Modifier = composed {
     val nestedScrollToParent by rememberUpdatedState(nestedScrollToParent)
     val scrollEasing by rememberUpdatedState(scrollEasing ?: DefaultParabolaScrollEasing)
@@ -326,12 +329,16 @@ fun Modifier.overScrollOutOfBound(
         }
     }
 
-    this
+    val base = this
         .clipToBounds()
         .nestedScroll(nestedConnection, dispatcher)
-        .graphicsLayer {
+    if (applyVisualOffset) {
+        base.graphicsLayer {
             if (isVertical) translationY = offset else translationX = offset
         }
+    } else {
+        base
+    }
 }
 
 /**

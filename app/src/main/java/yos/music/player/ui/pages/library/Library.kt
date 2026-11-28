@@ -92,7 +92,7 @@ private fun ClassicLibrary(
     ) {
         Title(
             title = stringResource(id = R.string.page_library_title),
-            extraTopPadding = 57.dp,
+            extraTopPadding = 37.dp,
             leftBarIcon = {
                 KugouProfileAvatarButton(
                     isLoggedIn = isLoggedIn,

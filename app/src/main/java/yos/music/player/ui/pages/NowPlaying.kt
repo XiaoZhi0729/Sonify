@@ -548,7 +548,7 @@ internal fun NowPlaying(
         // 末句落点按"控件遮挡了多少"抬高：遮挡比例必须与控件带同源，否则平板竖屏改比例后
         // 末句会落进控件里。正常竖屏下取到的就是原常量。
         val lyricObstructionFraction = maxOf(
-            if (isTabletPortrait) 1f - PlayerControlBandFractionTabletPortrait
+            if (isTabletPortrait) PlayerControlBandFractionTabletPortrait
             else LAST_LINE_OBSTRUCTION_FRACTION,
             actualBandFraction
         ).coerceIn(0f, 1f)
@@ -3755,6 +3755,7 @@ private fun PlayingBar(
     ) {
         // 69dp 顶栏封面：同样走新旧封面交叉淡化（歌词/播放列表页的 bar 端点）。
         // 交互动效套在图层之外（见 Album 的同款注释）。
+        val staticFullScreenCover = SettingsLibrary.NowplayingStaticFullScreenAlbum
         Box(
             modifier = Modifier
                 .size(69.dp)
@@ -3773,14 +3774,21 @@ private fun PlayingBar(
                     })
                 // 转场飞行画的是这一层：大封面按下的倾斜/涟漪/描边在这里接着画完。
                 // 圆角用本条自身的 5dp（映射后与飞行中的裁剪一致）。
-                .coverArtworkEffect(coverState, cornerRadius = 5.dp)
+                // 开启全屏渐进模糊封面后由底层 GLES 统一绘制 69dp 卡片，此处仅保留空占位，不叠加高光/涟漪。
+                .then(
+                    if (!staticFullScreenCover) {
+                        Modifier.coverArtworkEffect(coverState, cornerRadius = 5.dp)
+                    } else {
+                        Modifier
+                    }
+                )
                 // 调用方给的 modifier（sharedElement 等）只挂在**包裹层一次**：
                 // 铺到每个图层会变成两份共享元素、两份坐标上报。
                 .then(modifier)
         ) {
             // 投影层与封面图层：开启全屏渐进模糊封面后由 PlayerShell 底层 GLES 统一绘制 69dp 卡片
             // （此处仍保留外层 69dp Box 的坐标上报与点击返回 Album）。
-            if (!SettingsLibrary.NowplayingStaticFullScreenAlbum) {
+            if (!staticFullScreenCover) {
                 Box(
                     Modifier
                         .fillMaxSize()

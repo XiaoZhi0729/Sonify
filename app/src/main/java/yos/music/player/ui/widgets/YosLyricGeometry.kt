@@ -77,3 +77,32 @@ internal fun lyricTrailingExtraPx(
     val obstruction = (viewportHeight * obstructionFraction / 2f).roundToInt()
     return (base + obstruction).coerceAtLeast(0)
 }
+
+/**
+ * 手动滑到歌词末尾时，末句底边在「未被底部控件遮挡的可视区」内停留的高度比例。
+ *
+ * - 竖屏（obstruction ≈ 0.44，visibleH ≈ 0.56H）：0.72 × 0.56H ≈ 0.403H，
+ *   恰好位于控件可见时底部渐隐起点（7/17 ≈ 0.412H）上方，
+ *   既保留最后约 3~4 句清晰可见，又避免控件显隐切换时发生跳动。
+ * - 横屏（obstruction = 0，visibleH = H）：0.72H，位于底部渐隐起点（15/19 ≈ 0.789H）上方，
+ *   平板与手机横屏均能保留末尾数句并留出适宜底部余白。
+ */
+internal const val LYRIC_END_RETAINED_VISIBLE_FRACTION = 0.72f
+
+/**
+ * 歌词列表底部留白（px）：用于传给 KaraokeLyricsView 的 `bottomContentPadding`，
+ * 让手动滚到最底时末句底边停在 `viewport - bottomPadding = retainedBottomY` 处，
+ * 而不是像库默认值 `viewport + keepAliveZone` 那样把整首歌完全划出屏外。
+ */
+internal fun lyricBottomContentPaddingPx(
+    viewportHeightPx: Float,
+    obstructionFraction: Float,
+): Float {
+    val safeViewport = viewportHeightPx.coerceAtLeast(0f)
+    if (safeViewport == 0f) return 0f
+    val clampedObstruction = obstructionFraction.coerceIn(0f, 1f)
+    val visibleHeight = safeViewport * (1f - clampedObstruction)
+    val retainedBottomY = (visibleHeight * LYRIC_END_RETAINED_VISIBLE_FRACTION)
+        .coerceIn(0f, safeViewport)
+    return (safeViewport - retainedBottomY).coerceAtLeast(0f)
+}

@@ -35,7 +35,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -123,7 +122,6 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
@@ -266,7 +264,7 @@ import yos.music.player.ui.widgets.effects.CoverArtworkCameraDistance
 import yos.music.player.ui.widgets.effects.CoverArtworkPressScaleDrop
 import yos.music.player.ui.widgets.effects.CoverArtworkState
 import yos.music.player.ui.widgets.effects.ShadowType
-import yos.music.player.ui.widgets.effects.coverArtworkEffect
+import yos.music.player.ui.widgets.effects.drawCoverArtworkOverlays
 import yos.music.player.ui.widgets.effects.rememberCoverArtworkState
 import yos.music.player.ui.widgets.effects.LocalTrackArtworkTransition
 import yos.music.player.ui.widgets.effects.rememberTrackArtworkTransition
@@ -2966,16 +2964,20 @@ class MainActivity : BaseActivity() {
                             .drawBehind {
                                 // Read the registered animated State in draw, not composition:
                                 // the artist's existing color animation directly drives each frame.
-                                val scrimColor = scrimColorProvider()
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        colorStops = arrayOf(
-                                            0f to scrimColor.copy(alpha = 0f),
-                                            fadeFraction to scrimColor.copy(alpha = scrimAlpha),
-                                            1f to scrimColor.copy(alpha = scrimAlpha)
+                                val effectiveAlpha = scrimAlpha *
+                                    yos.music.player.ui.navigation.ArtistPageAppearance.bottomScrimAlphaScale()
+                                if (effectiveAlpha > 0.002f) {
+                                    val scrimColor = scrimColorProvider()
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            colorStops = arrayOf(
+                                                0f to scrimColor.copy(alpha = 0f),
+                                                fadeFraction to scrimColor.copy(alpha = effectiveAlpha),
+                                                1f to scrimColor.copy(alpha = effectiveAlpha)
+                                            )
                                         )
                                     )
-                                )
+                                }
                             }
                     )
                 }
@@ -3754,11 +3756,10 @@ private fun lerpRect(a: Rect, b: Rect, t: Float): Rect = Rect(
  *    圆角用 clipPath 完成，描边用极便宜的路径描边，阴影只做一次模糊；
  *  - active 为 false 时整层不绘制，静止端点交回原封面节点。
  *
- * 按压 3D 倾斜（coverState）：切页那一刻画封面的人从"大封面 Compose 节点"换成
- * 本层 Canvas，但 Canvas 不懂倾斜。所以倾斜期间改由下面那个**真实图片节点**接力：
- * 它的变换直接用 `coverArtworkEffect(coverState)`——与 NowPlaying 里大封面是同一个
- * modifier、同一份 state，旋转/缩放/cameraDistance 自动逐项一致，交接不跳。
- * Canvas 只保留阴影与不倾斜的底子，两者靠同一个状态互斥，绝不同帧画两张。
+ * 按压 3D 倾斜与高光涟漪（coverState）：统一在单张 Canvas 上通过图层阶段
+ * `graphicsLayer` 施加绕当前封面中心点的 3D 倾斜与缩放（含阴影同步倾斜），并在
+ * 绘制阶段调用 `drawCoverArtworkOverlays` 叠加白色描边高光与扩散涟漪——不再拆出
+ * 独立的 Compose 倾斜接力节点，彻底消除两层切换的空窗、边框/高光截断与逐帧重排。
  */
 @Composable
 private fun CoverMorphLayer(
@@ -3858,245 +3859,54 @@ private fun CoverMorphLayer(
         }
     )
 
-    // Canvas 与倾斜接力节点是兄弟：Canvas 负责阴影/描边/非倾斜态封面，
-    // 倾斜节点只在按压期间接手封面。Box 只做定位容器，不建立图层。
-    Box(modifier = Modifier.fillMaxSize()) {
-    Canvas(
-        modifier = modifier.onGloballyPositioned { geometry.hero = it }
-    ) {
-        val frame = resolveMorphFrame(
-            geometry,
-            geometry.hero,
-            progress(),
-            pageProgress(),
-            basePx,
-            handoffRect = handoffRect,
-            fullScreen = fullScreenEndpoint
-        )
-        // 读 State 只触发重绘，不触发重组；解不出端点就什么都不画。
-        if (!active() || frame == null) {
-            return@Canvas
-        }
-        val scale = frame.scale
-        if (scale <= 0f) return@Canvas
-        val p = progress().coerceIn(0f, 1f)
-
-        val side = frame.size
-        if (side <= 0f) return@Canvas
-
-        // 圆角用**和真实封面同一个形状类**（YosRoundedCornerShape，超椭圆连续圆角），
-        // 不能图省事用 RoundRect：同为 6dp，超椭圆角与正圆弧角的观感不同，
-        // 交接瞬间能看出角部形状跳变（真机实测）。
-        // 页面封面档圆角随 frame.pageT 在「顶栏 69dp 5dp ↔ 大封面档」间插值，
-        // 再与迷你档 4dp 按 p 插值，保证三个静止端点交接时圆角都逐像素一致。
-        // 全屏端点模式下大封面档圆角为 0（真实满屏封面无圆角）。
-        val albumCornerDp = if (fullScreenEndpoint) 0f else morphCornerEndDp
-        val pageCornerDp = morphCornerBarDp + (albumCornerDp - morphCornerBarDp) * frame.pageT
-        val radiusDp = morphCornerStartDp + (pageCornerDp - morphCornerStartDp) * p
-        val shape = cornerShapeCache.get(radiusDp)
-        val frameRect = Rect(Offset(frame.left, frame.top), Size(side, side))
-        // createOutline 生成的轮廓永远位于坐标原点 (0,0)，而封面画在
-        // frame.left / frame.top 处。必须把裁剪路径平移到封面位置，
-        // 否则遮罩停在左上角、封面右下角会被裁掉（真机实测：表现为
-        // "图片本身没圆角、被一个偏左上方的圆角遮罩切掉了右下方"）。
-        val outline = shape.createOutline(Size(side, side), layoutDirection, this)
-        clipPath.rewind()
-        clipPath.addOutline(outline)
-        clipPath.translate(Offset(frame.left, frame.top))
-        val path = clipPath
-
-        // 阴影与描边都在**屏幕坐标**里按真实像素绘制，和真实封面节点完全同参：
-        // 那些节点的坐标空间本来就是 1:1 屏幕空间，所以模糊半径和描边宽度
-        // 都不需要任何换算。
-        // 曾经把模糊按 1/scale 补偿是错的：BlurMaskFilter 的半径是设备像素、
-        // 不随画布缩放走，除以 scale 后 p 越小模糊越大（起点约 276dp），
-        // 阴影从"巨大弥散"渐变到正常，交接时就暴露成"阴影过渡有问题"。
-        // 全屏端点模式下大封面档无阴影（真实满屏封面无阴影）：阴影只存在于
-        // 迷你端点 → 顶栏 69dp 档之间，随 pageT 渐隐。卡片端点模式不变。
-        val shadowAlpha = morphShadowAlpha * smoothStep(0.15f, 1f, p) *
-                (if (fullScreenEndpoint) 1f - frame.pageT else 1f)
-        if (shadowAlpha > 0.001f) {
-            drawCoverShadow(
-                paint = shadowPaint,
-                frameRect = frameRect,
-                shadowShape = shape,
-                alpha = shadowAlpha,
-                blurPx = shadowBlurPx,
-                shadowType = shadowType,
-                // 阴影垂直偏移随页面档位插值：pageT=0 对齐顶栏 69dp 封面的 Small(0.11)，
-                // pageT=1 对齐大封面的 Large(0.08)，交接瞬间阴影不跳。
-                offsetYOverride = morphShadowOffsetYBar +
-                        (morphShadowOffsetYAlbum - morphShadowOffsetYBar) * frame.pageT,
-                density = this,
-                maskFilter = shadowMaskFilter
-            )
-        }
-
-        // 与 ShadowImageWithCache 一致：先按圆角裁剪，再画内容与两道 12px 描边。
-        // 全屏端点模式下真实满屏封面无描边（rimHighlight=false）：描边随 p·pageT
-        // 淡出——迷你端点（p=0）全量、全屏端点（p=1 且 pageT=1）归零，两端交接一致。
-        val strokeFade = if (fullScreenEndpoint) 1f - p * frame.pageT else 1f
-        // 全屏端点底边淡出的几何（屏幕坐标）：真实节点是一条 DstIn 线性渐变，
-        // 长度 = FadeFraction×边长、终点在 side+延伸段（nodeHeight 含 10dp 延伸段）。
-        // 按用户模型：这条渐变**盖在封面（含描边）之上、动画全程不消失**——
-        // 封面移动时页面元素本来就在淡出，所以它透出的内容不会穿帮。
-        val fadeLen = side * yos.music.player.ui.widgets.basic.FullScreenCoverCoverFadeFraction
-        val extPx = with(density) {
-            yos.music.player.ui.widgets.basic.FullScreenCoverBottomExtensionDp.dp.toPx()
-        }
-        val fadeEndY = frame.top + side + extPx
-        val fadeStartY = fadeEndY - fadeLen
-        // 倾斜接力节点接管封面与描边时，本画布不再画它们（避免同帧两张）。
-        // 门禁在**绘制期**读取 State，不参与组合，不会引起重组。
-        val tiltHoldsCover = coverState.tiltX.value != 0f ||
-                coverState.tiltY.value != 0f ||
-                coverState.press.value > 0f
-        if (!fullScreenEndpoint) {
-            // 卡片端点（迷你/顶栏/普通大封面）：整块不透明 + 两道描边。
-            clipPath(path) {
-                if (!tiltHoldsCover) {
-                    withTransform({
-                        translate(frame.left, frame.top)
-                        scale(scale, scale, pivot = Offset.Zero)
-                    }) {
-                        drawPainterCropped(painter, Size(basePx, basePx))
-                    }
-                    if (strokeFade > 0.01f) {
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.1f * strokeFade),
-                            style = morphStroke
-                        )
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.5f * strokeFade),
-                            style = morphStroke,
-                            blendMode = BlendMode.Overlay
-                        )
-                    }
-                }
-            }
-        }
-        if (fullScreenEndpoint) {
-            // 1) 淡出带以上：封面 + 描边，全量不透明。
-            clipPath(path) {
-                clipRect(frame.left, frame.top, frame.left + side, fadeStartY) {
-                    withTransform({
-                        translate(frame.left, frame.top)
-                        scale(scale, scale, pivot = Offset.Zero)
-                    }) {
-                        drawPainterCropped(painter, Size(basePx, basePx))
-                    }
-                    if (strokeFade > 0.01f) {
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.1f * strokeFade),
-                            style = morphStroke
-                        )
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.5f * strokeFade),
-                            style = morphStroke,
-                            blendMode = BlendMode.Overlay
-                        )
-                    }
-                }
-            }
-            // 2) 淡出带 + 底边延伸段：saveLayer 只圈这一块，带内画封面 + 描边
-            //    + 延伸段，再用 DstIn 真渐变擦 alpha——与真实节点同一条曲线、
-            //    逐像素平滑（条带近似会有硬横条，真机踩过）。
-            //    延伸段必须画：真实节点在方图下方 10dp 铺"最底下一行像素的纵向
-            //    拉伸"，落在渐变末端（alpha≈0.09→0）。morph 层不画它，接管/交回
-            //    瞬间封面可见底边就短 10dp（真机：封面像被"顶出去/缩回"了 10dp）。
-            val bandRect = Rect(
-                frame.left - morphFadeBandMargin,
-                fadeStartY - morphFadeBandMargin,
-                frame.left + side + morphFadeBandMargin,
-                frame.top + side + extPx + morphFadeBandMargin
-            )
-            drawContext.canvas.saveLayer(bandRect, fadeLayerPaint)
-            clipPath(path) {
-                clipRect(frame.left, fadeStartY, frame.left + side, frame.top + side) {
-                    withTransform({
-                        translate(frame.left, frame.top)
-                        scale(scale, scale, pivot = Offset.Zero)
-                    }) {
-                        drawPainterCropped(painter, Size(basePx, basePx))
-                    }
-                    if (strokeFade > 0.01f) {
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.1f * strokeFade),
-                            style = morphStroke
-                        )
-                        drawPath(
-                            path,
-                            Color.Gray.copy(alpha = 0.5f * strokeFade),
-                            style = morphStroke,
-                            blendMode = BlendMode.Overlay
-                        )
-                    }
-                }
-            }
-            // 底边延伸段（方图之外，故在 clipPath 外画）：与真实节点同法——整张
-            // 方图按 ext/1px 纵向拉伸、支点让"最底下一行像素"的底边正好落在条带
-            // 底边，再裁在 [side, side+ext] 内。
-            // 出现时机：只在**接近满屏端点**时渐显（smoothStep 两端零导数），
-            // 中前段不画——它是满屏封面的专属细节，动画中段提前出现会显得突兀
-            // （真机反馈）。
-            val extWeight = smoothStep(0.9f, 1f, p * frame.pageT)
-            if (extPx > 0f && extWeight > 0.01f) {
-                val k = extPx
-                val pivot = side + extPx / (1f - k)
-                clipRect(
-                    frame.left,
-                    frame.top + side,
-                    frame.left + side,
-                    frame.top + side + extPx
-                ) {
-                    withTransform({
-                        translate(frame.left, frame.top)
-                        scale(1f, k, pivot = Offset(0f, pivot))
-                    }) {
-                        drawPainterCropped(painter, Size(side, side), alpha = extWeight)
-                    }
-                }
-            }
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colorStops = MorphFadeStops,
-                    startY = fadeStartY,
-                    endY = fadeEndY
-                ),
-                topLeft = Offset(bandRect.left, fadeStartY),
-                size = Size(bandRect.width, bandRect.bottom - fadeStartY),
-                blendMode = BlendMode.DstIn
-            )
-            drawContext.canvas.restore()
-        }
+    // 单 Canvas 统一绘制封面、阴影、边框与交互高光/涟漪；3D 倾斜/缩放在图层阶段施加。
+    // 外层 Box 保持未变换以稳定上报 geometry.hero 坐标。
+    val effectActive = remember("CoverMorphLayer_effectActive") {
+        derivedStateOf { coverState.hasActiveEffect }
     }
-
-    // 倾斜接力节点：真 3D 变换只有真实节点能给（Canvas 手写透视的单位与
-    // RenderNode 不是同一套，实测会失真成"被拉伸"）。这里直接用
-    // coverArtworkEffect(coverState)——与 NowPlaying 大封面同一个 modifier、
-    // 同一份 state，旋转/缩放/cameraDistance 自动逐项一致。
-    //
-    // 层级顺序照抄 ShadowImage：**外层倾斜、内层 clip**。反过来（同一层同时
-    // 设 rotation + clip）时裁剪面停留在未旋转的矩形，四角被固定矩形切掉，
-    // 表现为"圆角变直角 + 外面多一个不动的框"（About.kt 里记过同一坑）。
-    //
-    // 定位必须显式：节点比父容器大时 Compose 会居中放置（本文件上方记过
-    // 实测偏 497px），而外壳收起时只有 62dp 高、节点是 460dp。所以用
-    // Box(TopStart) + offset + requiredSize 钉住左上角，不让它被居中。
-    if (MorphCoverTiltNodeEnabled) {
-        // 组合期只读"是否还在倾斜"这一个布尔：用 derivedStateOf 包一层，
-        // 整个按压周期只翻转两次（开始/结束）。直接读 coverState.isTilting
-        // 会订阅三个 Animatable，导致整层逐帧重组。
-        // 逐帧的倾角数值仍在 graphicsLayer / 绘制块里读，不进组合。
-        val tiltWindow = remember("CoverMorphLayer_tiltWindow") {
-            derivedStateOf { coverState.isTilting }
-        }
-        if (active() && tiltWindow.value && !fullScreenEndpoint) {
+    Box(modifier = modifier.onGloballyPositioned { geometry.hero = it }) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (!fullScreenEndpoint && active() && effectActive.value) {
+                        val frame = resolveMorphFrame(
+                            geometry,
+                            geometry.hero,
+                            progress(),
+                            pageProgress(),
+                            basePx,
+                            handoffRect = handoffRect,
+                            fullScreen = false
+                        )
+                        if (frame != null && size.width > 0f && size.height > 0f) {
+                            val cx = frame.left + frame.size / 2f
+                            val cy = frame.top + frame.size / 2f
+                            val ref = coverState.size.value
+                            val homothety = if (ref.width > 0) frame.size / ref.width.toFloat() else 1f
+                            val pressedScale = 1f - CoverArtworkPressScaleDrop * coverState.press.value
+                            transformOrigin = TransformOrigin(cx / size.width, cy / size.height)
+                            rotationX = coverState.tiltX.value
+                            rotationY = coverState.tiltY.value
+                            scaleX = pressedScale
+                            scaleY = pressedScale
+                            cameraDistance = CoverArtworkCameraDistance * this.density * homothety
+                        } else {
+                            transformOrigin = TransformOrigin.Center
+                            rotationX = 0f
+                            rotationY = 0f
+                            scaleX = 1f
+                            scaleY = 1f
+                        }
+                    } else {
+                        transformOrigin = TransformOrigin.Center
+                        rotationX = 0f
+                        rotationY = 0f
+                        scaleX = 1f
+                        scaleY = 1f
+                    }
+                }
+        ) {
             val frame = resolveMorphFrame(
                 geometry,
                 geometry.hero,
@@ -4104,49 +3914,191 @@ private fun CoverMorphLayer(
                 pageProgress(),
                 basePx,
                 handoffRect = handoffRect,
-                fullScreen = false
+                fullScreen = fullScreenEndpoint
             )
-            if (frame != null) {
-                val side = frame.size
-                val p = progress().coerceIn(0f, 1f)
-                val pageCornerDp = morphCornerBarDp +
-                        (morphCornerEndDp - morphCornerBarDp) * frame.pageT
-                val radiusDp = (morphCornerStartDp +
-                        (pageCornerDp - morphCornerStartDp) * p).dp
-                val sideDp = with(density) { side.toDp() }
-                val leftDp = with(density) { frame.left.toDp() }
-                val topDp = with(density) { frame.top.toDp() }
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                    // 外层：倾斜 + 缩放 + 相机距离，全部由 coverArtworkEffect 提供
-                    // （与真实封面节点同源）。圆角裁剪放在**内层**，这样裁剪面
-                    // 随内容一起旋转，而不是停在原地切成直角。
-                    Box(
-                        modifier = Modifier
-                            .offset(x = leftDp, y = topDp)
-                            .requiredSize(sideDp)
-                            .coverArtworkEffect(
-                                state = coverState,
-                                cornerRadius = radiusDp,
-                                rimHighlight = false
+            // 读 State 只触发重绘，不触发重组；解不出端点就什么都不画。
+            if (!active() || frame == null) {
+                return@Canvas
+            }
+            val scale = frame.scale
+            if (scale <= 0f) return@Canvas
+            val p = progress().coerceIn(0f, 1f)
+
+            val side = frame.size
+            if (side <= 0f) return@Canvas
+
+            // 圆角用**和真实封面同一个形状类**（YosRoundedCornerShape，超椭圆连续圆角），
+            // 不能图省事用 RoundRect：同为 6dp，超椭圆角与正圆弧角的观感不同，
+            // 交接瞬间能看出角部形状跳变（真机实测）。
+            // 页面封面档圆角随 frame.pageT 在「顶栏 69dp 5dp ↔ 大封面档」间插值，
+            // 再与迷你档 4dp 按 p 插值，保证三个静止端点交接时圆角都逐像素一致。
+            // 全屏端点模式下大封面档圆角为 0（真实满屏封面无圆角）。
+            val albumCornerDp = if (fullScreenEndpoint) 0f else morphCornerEndDp
+            val pageCornerDp = morphCornerBarDp + (albumCornerDp - morphCornerBarDp) * frame.pageT
+            val radiusDp = morphCornerStartDp + (pageCornerDp - morphCornerStartDp) * p
+            val shape = cornerShapeCache.get(radiusDp)
+            val frameRect = Rect(Offset(frame.left, frame.top), Size(side, side))
+            // createOutline 生成的轮廓永远位于坐标原点 (0,0)，而封面画在
+            // frame.left / frame.top 处。非全屏分支在 translate(frame.left, frame.top) 内绘制，
+            // 故 clipPath 留在本地 (0,0)；全屏分支在屏幕坐标裁剪，在分支内平移即可。
+            val outline = shape.createOutline(Size(side, side), layoutDirection, this)
+            clipPath.rewind()
+            clipPath.addOutline(outline)
+
+            // 阴影与描边都在**屏幕坐标**里按真实像素绘制，和真实封面节点完全同参：
+            // 那些节点的坐标空间本来就是 1:1 屏幕空间，所以模糊半径和描边宽度
+            // 都不需要任何换算。
+            // 曾经把模糊按 1/scale 补偿是错的：BlurMaskFilter 的半径是设备像素、
+            // 不随画布缩放走，除以 scale 后 p 越小模糊越大（起点约 276dp），
+            // 阴影从"巨大弥散"渐变到正常，交接时就暴露成"阴影过渡有问题"。
+            // 全屏端点模式下大封面档无阴影（真实满屏封面无阴影）：阴影只存在于
+            // 迷你端点 → 顶栏 69dp 档之间，随 pageT 渐隐。卡片端点模式不变。
+            val shadowAlpha = morphShadowAlpha * smoothStep(0.15f, 1f, p) *
+                    (if (fullScreenEndpoint) 1f - frame.pageT else 1f)
+            if (shadowAlpha > 0.001f) {
+                drawCoverShadow(
+                    paint = shadowPaint,
+                    frameRect = frameRect,
+                    shadowShape = shape,
+                    alpha = shadowAlpha,
+                    blurPx = shadowBlurPx,
+                    shadowType = shadowType,
+                    // 阴影垂直偏移随页面档位插值：pageT=0 对齐顶栏 69dp 封面的 Small(0.11)，
+                    // pageT=1 对齐大封面的 Large(0.08)，交接瞬间阴影不跳。
+                    offsetYOverride = morphShadowOffsetYBar +
+                            (morphShadowOffsetYAlbum - morphShadowOffsetYBar) * frame.pageT,
+                    density = this,
+                    maskFilter = shadowMaskFilter
+                )
+            }
+
+            // 与 ShadowImageWithCache 一致：先按圆角裁剪，再画内容与单道 12px 描边（Color.Gray 0.2f）。
+            // 全屏端点模式下真实满屏封面无描边（rimHighlight=false）：描边随 p·pageT
+            // 淡出——迷你端点（p=0）全量、全屏端点（p=1 且 pageT=1）归零，两端交接一致。
+            val strokeFade = if (fullScreenEndpoint) 1f - p * frame.pageT else 1f
+            // 全屏端点底边淡出的几何（屏幕坐标）：真实节点是一条 DstIn 线性渐变，
+            // 长度 = FadeFraction×边长、终点在 side+延伸段（nodeHeight 含 10dp 延伸段）。
+            // 按用户模型：这条渐变**盖在封面（含描边）之上、动画全程不消失**——
+            // 封面移动时页面元素本来就在淡出，所以它透出的内容不会穿帮。
+            val fadeLen = side * yos.music.player.ui.widgets.basic.FullScreenCoverCoverFadeFraction
+            val extPx = with(density) {
+                yos.music.player.ui.widgets.basic.FullScreenCoverBottomExtensionDp.dp.toPx()
+            }
+            val fadeEndY = frame.top + side + extPx
+            val fadeStartY = fadeEndY - fadeLen
+            if (!fullScreenEndpoint) {
+                // 卡片端点（迷你/顶栏/普通大封面）：整块不透明 + 单道 0.2f 灰描边 + 交互高光/涟漪。
+                translate(frame.left, frame.top) {
+                    clipPath(clipPath) {
+                        withTransform({
+                            scale(scale, scale, pivot = Offset.Zero)
+                        }) {
+                            drawPainterCropped(painter, Size(basePx, basePx))
+                        }
+                        if (strokeFade > 0.01f) {
+                            drawOutline(
+                                outline = outline,
+                                color = Color.Gray.copy(alpha = 0.2f * strokeFade),
+                                style = morphStroke
                             )
-                    ) {
-                        Image(
-                            painter = painter,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    compositingStrategy = CompositingStrategy.Offscreen
-                                    clip = true
-                                    this.shape = YosRoundedCornerShape(radiusDp)
-                                }
+                        }
+                        drawCoverArtworkOverlays(
+                            state = coverState,
+                            faceSize = Size(side, side),
+                            outline = outline,
+                            rimHighlight = true
                         )
                     }
                 }
             }
+            if (fullScreenEndpoint) {
+                clipPath.translate(Offset(frame.left, frame.top))
+                val path = clipPath
+                // 1) 淡出带以上：封面 + 描边，全量不透明。
+                clipPath(path) {
+                    clipRect(frame.left, frame.top, frame.left + side, fadeStartY) {
+                        withTransform({
+                            translate(frame.left, frame.top)
+                            scale(scale, scale, pivot = Offset.Zero)
+                        }) {
+                            drawPainterCropped(painter, Size(basePx, basePx))
+                        }
+                        if (strokeFade > 0.01f) {
+                            drawPath(
+                                path,
+                                Color.Gray.copy(alpha = 0.2f * strokeFade),
+                                style = morphStroke
+                            )
+                        }
+                    }
+                }
+                // 2) 淡出带 + 底边延伸段：saveLayer 只圈这一块，带内画封面 + 描边
+                //    + 延伸段，再用 DstIn 真渐变擦 alpha——与真实节点同一条曲线、
+                //    逐像素平滑（条带近似会有硬横条，真机踩过）。
+                //    延伸段必须画：真实节点在方图下方 10dp 铺"最底下一行像素的纵向
+                //    拉伸"，落在渐变末端（alpha≈0.09→0）。morph 层不画它，接管/交回
+                //    瞬间封面可见底边就短 10dp（真机：封面像被"顶出去/缩回"了 10dp）。
+                val bandRect = Rect(
+                    frame.left - morphFadeBandMargin,
+                    fadeStartY - morphFadeBandMargin,
+                    frame.left + side + morphFadeBandMargin,
+                    frame.top + side + extPx + morphFadeBandMargin
+                )
+                drawContext.canvas.saveLayer(bandRect, fadeLayerPaint)
+                clipPath(path) {
+                    clipRect(frame.left, fadeStartY, frame.left + side, frame.top + side) {
+                        withTransform({
+                            translate(frame.left, frame.top)
+                            scale(scale, scale, pivot = Offset.Zero)
+                        }) {
+                            drawPainterCropped(painter, Size(basePx, basePx))
+                        }
+                        if (strokeFade > 0.01f) {
+                            drawPath(
+                                path,
+                                Color.Gray.copy(alpha = 0.2f * strokeFade),
+                                style = morphStroke
+                            )
+                        }
+                    }
+                }
+                // 底边延伸段（方图之外，故在 clipPath 外画）：与真实节点同法——整张
+                // 方图按 ext/1px 纵向拉伸、支点让"最底下一行像素"的底边正好落在条带
+                // 底边，再裁在 [side, side+ext] 内。
+                // 出现时机：只在**接近满屏端点**时渐显（smoothStep 两端零导数），
+                // 中前段不画——它是满屏封面的专属细节，动画中段提前出现会显得突兀
+                // （真机反馈）。
+                val extWeight = smoothStep(0.9f, 1f, p * frame.pageT)
+                if (extPx > 0f && extWeight > 0.01f) {
+                    val k = extPx
+                    val pivot = side + extPx / (1f - k)
+                    clipRect(
+                        frame.left,
+                        frame.top + side,
+                        frame.left + side,
+                        frame.top + side + extPx
+                    ) {
+                        withTransform({
+                            translate(frame.left, frame.top)
+                            scale(1f, k, pivot = Offset(0f, pivot))
+                        }) {
+                            drawPainterCropped(painter, Size(side, side), alpha = extWeight)
+                        }
+                    }
+                }
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colorStops = MorphFadeStops,
+                        startY = fadeStartY,
+                        endY = fadeEndY
+                    ),
+                    topLeft = Offset(bandRect.left, fadeStartY),
+                    size = Size(bandRect.width, bandRect.bottom - fadeStartY),
+                    blendMode = BlendMode.DstIn
+                )
+                drawContext.canvas.restore()
+            }
         }
-    }
     }
 }
 
@@ -4175,12 +4127,6 @@ private fun DrawScope.drawPainterCropped(
     }
 }
 
-// 封面按压 3D 倾斜的"接力节点"总开关。
-// 关闭后退回纯 Canvas 行为：倾角在切页那一刻会被抹平（松手看不到回弹），
-// 但封面绘制完全走原来的路径。留这个开关是为了出问题时能一键对比/回退。
-private const val MorphCoverTiltNodeEnabled = true
-
-// 封面阴影透明度上限，与 ShadowImageWithCache 的默认 shadowAlpha 一致。
 private const val morphShadowAlpha = 0.23f
 
 // 封面 morph 阴影的垂直偏移权重两端点：顶栏 69dp 封面档用 ShadowType.Small(0.11)、

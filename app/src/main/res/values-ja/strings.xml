@@ -91,6 +91,10 @@
     <string name="search_no_result_hint">別のキーワードを試すか、入力ミスを確認してください</string>
     <string name="search_top_result">トップヒット</string>
     <string name="search_more">その他</string>
+    <string name="search_zone_detail_title">ピックアップ特集</string>
+    <string name="search_zone_load_failed">カテゴリの読み込みに失敗しました</string>
+    <string name="search_zone_retry">タップして再試行</string>
+    <string name="search_zone_empty">このカテゴリにはコンテンツがありません</string>
     <string name="discovery_coming_soon">新曲、ランキング、厳選プレイリストが近日公開予定…</string>
     <string name="discovery_rank_title">ランキング</string>
     <string name="discovery_rank_empty">ランキングデータがありません</string>

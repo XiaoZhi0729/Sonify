@@ -90,6 +90,10 @@
     <string name="search_no_result_hint">換個關鍵詞試試，或檢查有沒有錯別字</string>
     <string name="search_top_result">最佳結果</string>
     <string name="search_more">更多</string>
+    <string name="search_zone_detail_title">編輯精選專區</string>
+    <string name="search_zone_load_failed">專區載入失敗</string>
+    <string name="search_zone_retry">點擊重試</string>
+    <string name="search_zone_empty">該專區暫無內容</string>
     <string name="common_cancel">取消</string>
     <string name="discovery_coming_soon">新歌、排行榜與精選歌單即將到來…</string>
     <string name="discovery_rank_title">排行榜</string>
