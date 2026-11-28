@@ -153,7 +153,13 @@ if ($giteeToken) {
 Per `docs/cloud-update.md`, the in-app updater reads `updates/latest.json` (formal) or `updates/preview.json` (preview) rather than GitHub `/releases/latest`:
 1. Verify the uploaded GitHub Release APK is publicly downloadable and matches the exact byte size and SHA-256.
 2. Update `updates/latest.json` (for formal releases) or `updates/preview.json` (for preview releases) with `versionCode`, `versionName`, `apkUrl`, `mirrorApkUrls` (`https://gitee.com/XiaoZhi114514/Sonify/releases/download/v<version>/Sonify-v<version>.apk`), `apkSize`, `sha256`, `releasePageUrl`, and 4-language `releaseNotes` (`en`, `zh-CN`, `zh-TW`, `ja`).
-3. Commit and push `updates/latest.json` (or `updates/preview.json`) to `master` so Gitee/GitHub raw manifests and `.github/workflows/sync-gitee.yml` activate the update.
+3. Commit and push `updates/latest.json` (or `updates/preview.json`) to `master`.
+4. **Push master and tag directly to Gitee** (do NOT rely on `sync-gitee.yml`, which can lag; the app reads the Gitee raw manifest first, so a stale Gitee master makes the tablet say "already latest"). The tag must be force-updated because creating the Gitee Release earlier already created `v<version>` pointing at an old commit:
+   ```powershell
+   git push https://gitee.com/XiaoZhi114514/Sonify.git master:master
+   git push https://gitee.com/XiaoZhi114514/Sonify.git +v<version>
+   ```
+   (Credentials come from the Git credential manager.) Then confirm via the Gitee API `contents/updates/latest.json?ref=master` that `versionCode` is the new one; the `raw` URL may stay cached for a few minutes.
 
 ## 9. Final Report
 
