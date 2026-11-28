@@ -1,53 +1,53 @@
 {
-  "schemaVersion": 1,
-  "applicationId": "com.sonify.music",
-  "versionCode": 12,
-  "versionName": "0.2.6",
-  "publishedAt": "2026-11-22T10:15:00Z",
-  "minSdk": 23,
-  "abis": [
-    "arm64-v8a",
-    "armeabi-v7a"
-  ],
-  "apkUrl": "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.2.6/Sonify-v0.2.6.apk",
-  "mirrorApkUrls": [
-    "https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.6/Sonify-v0.2.6.apk"
-  ],
-  "apkSize": 25630038,
-  "sha256": "6d7bc0bdfd2f37fec9881190743562299457507de61a265ff5a6b6902d4bb51c",
-  "releasePageUrl": "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.2.6",
-  "releaseNotes": {
-    "en": [
-      "Custom accent color: 11 presets plus a custom color picker with Grid, Spectrum, and Sliders modes.",
-      "Custom bottom bar: reorder, hide/show tabs, set default launch tab, and preview changes live.",
-      "iOS 27 dual-layer glass edge rim and bevel unified across light and dark modes.",
-      "Auto-hide status bar on Now Playing, Smart Crossfade with spatial/timbre FX, ExoPlayer decoder policy (Auto/FFmpeg/System), and external audio file opening.",
-      "Music Gallery independent background settings & exposed cover tap-to-play, landscape lyrics floating vocal-separation/translation controls, and redesigned landscape Artist Detail hero.",
-      "Gitee mirror fallback for cloud updates, preview update channel, 120Hz Now Playing expand/collapse and idle/paused performance optimizations, and HDR lyrics fixes."
-    ],
-    "zh-CN": [
-      "自定义主题色：内置 11 种预设色彩，支持网格 / 色谱 / 滑块三模式自定义取色器。",
-      "自定义底栏：支持拖动排序、显隐标签、设置启动默认页与实时预览。",
-      "iOS 27 双层立体玻璃描边：深浅色模式统一应用至主壳体、底栏、顶栏按钮、下拉菜单、音乐画廊及玻璃调节面板。",
-      "新增播放页自动隐藏状态栏、智能过渡（Crossfade）、ExoPlayer 解码策略切换（Auto/FFmpeg/System）及外部音频直接打开。",
-      "音乐画廊支持独立背景设置与点击露出封面切歌；横屏歌词页右上角新增人声分离与翻译悬浮控制；艺人页横屏重构并新增最新发行卡片。",
-      "云更新新增 Gitee 国内加速与兜底及预览版通道开关；深度优化播放页 120Hz 展开收起与暂停态零空转，修复歌词 HDR 高光实时调节。"
-    ],
-    "zh-TW": [
-      "自訂主題色：內建 11 種預設色彩，支援網格 / 色譜 / 滑桿三模式自訂取色器。",
-      "自訂底欄：支援拖曳排序、顯示/隱藏標籤、設定啟動預設頁與即時預覽。",
-      "iOS 27 雙層立體玻璃描邊：深淺色模式統一套用至主殼體、底欄、頂欄按鈕、下拉選單、音樂畫廊及玻璃調節面板。",
-      "新增播放頁自動隱藏狀態列、智慧過渡（Crossfade）、ExoPlayer 解碼策略切換（Auto/FFmpeg/System）及外部音訊直接開啟。",
-      "音樂畫廊支援獨立背景設定與點擊露出封面切歌；橫屏歌詞頁右上角新增人聲分離與翻譯懸浮控制；藝人頁橫屏重構並新增最新發行卡片。",
-      "雲端更新新增 Gitee 加速與備援及預覽版通道開關；深度最佳化播放頁 120Hz 展開收合與暫停態零空轉，修復歌詞 HDR 高光即時調節。"
-    ],
-    "ja": [
-      "カスタムアクセントカラー：11 種類のプリセットに加え、グリッド・スペクトラム・スライダー対応のカラーピッカーを追加。",
-      "カスタムボトムバー：タブの並び替え、表示/非表示、起動時デフォルトタブ設定、リアルタイムプレビューに対応。",
-      "iOS 27 風の2層ガラスエッジハイライト＆ベベルをライト・ダークモード共通で各サーフェスに適用。",
-      "再生画面のステータスバー自動非表示、スマートクロスフェード、ExoPlayer デコーダー選択（Auto/FFmpeg/System）、外部オーディオファイル再生を追加。",
-      "ミュージックギャラリーの独立背景設定と露出カバーのタップ再生、横画面歌詞のボーカル分離・翻訳フローティング操作、アーティスト詳細の横画面レイアウトを刷新。",
-      "クラウド更新の Gitee ミラーフォールバックとプレビューチャンネル、再生画面の 120Hz 展開/折りたたみと待機時負荷の最適化、HDR 歌詞の修正を実施。"
-    ]
-  }
+    "schemaVersion":  1,
+    "applicationId":  "com.sonify.music",
+    "versionCode":  13,
+    "versionName":  "0.2.7",
+    "publishedAt":  "2026-11-28T13:46:28Z",
+    "minSdk":  23,
+    "abis":  [
+                 "arm64-v8a",
+                 "armeabi-v7a"
+             ],
+    "apkUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/download/v0.2.7/Sonify-v0.2.7.apk",
+    "mirrorApkUrls":  [
+                          "https://gitee.com/XiaoZhi114514/Sonify/releases/download/v0.2.7/Sonify-v0.2.7.apk"
+                      ],
+    "apkSize":  26019326,
+    "sha256":  "1ab1fd672aa837115561741a1aa260d5e7a31d61610b3b9a45fc041f91769210",
+    "releasePageUrl":  "https://github.com/XiaoZhi0729/Sonify/releases/tag/v0.2.7",
+    "releaseNotes":  {
+                         "en":  [
+                                    "Search: new Editorial Zone with zone list and detail pages (songs, playlists, albums, artists).",
+                                    "Home: VIP picks and hidden gems, customizable layout; Donate \u0026 Support page.",
+                                    "Library: customizable sections and Apple Music-style swipe actions on song rows.",
+                                    "Now Playing: marquee for long titles/artists, duet lyric split toggle, lyrics lib upgrade, variable-weight system fonts.",
+                                    "Adaptive multi-column layouts on tablets, gallery and glass/blur performance tuning.",
+                                    "Fix: Gitee mirror download redirect, so mirror downloads are fast again."
+                                ],
+                         "zh-CN":  [
+                                       "搜索：新增「编辑精选专区」，含专区列表与详情（歌曲/歌单/专辑/歌手）。",
+                                       "首页：新增 VIP 推荐与小众宝藏，支持首页布局自定义；新增捐赠与支持页。",
+                                       "资料库：板块可拖拽排序与显隐，歌曲行新增 Apple Music 风格左右滑动操作。",
+                                       "播放页：歌名歌手过长跑马灯、对唱分栏开关、歌词库升级、系统可变字体无极字重。",
+                                       "平板自适应多列布局，画廊与玻璃/模糊性能优化。",
+                                       "修复：Gitee 镜像下载跳转被拒导致回退 GitHub 变慢的问题。"
+                                   ],
+                         "zh-TW":  [
+                                       "搜尋：新增「編輯精選專區」，含專區列表與詳情（歌曲/歌單/專輯/歌手）。",
+                                       "首頁：新增 VIP 推薦與小眾寶藏，支援首頁版面自訂；新增捐贈與支持頁。",
+                                       "資料庫：板塊可拖曳排序與顯示/隱藏，歌曲列新增 Apple Music 風格左右滑動操作。",
+                                       "播放頁：歌名歌手過長跑馬燈、對唱分欄開關、歌詞庫升級、系統可變字體無段字重。",
+                                       "平板自適應多欄版面，畫廊與玻璃/模糊效能最佳化。",
+                                       "修復：Gitee 鏡像下載跳轉被拒導致回退 GitHub 變慢的問題。"
+                                   ],
+                         "ja":  [
+                                    "検索：「エディトリアルゾーン」を追加（ゾーン一覧と詳細：曲/プレイリスト/アルバム/アーティスト）。",
+                                    "ホーム：VIP おすすめと隠れた名曲、レイアウトのカスタマイズ、寄付・サポートページを追加。",
+                                    "ライブラリ：セクションの並び替え/表示切替、曲行の Apple Music 風スワイプ操作。",
+                                    "再生画面：長いタイトルのマーキー、デュエット歌詞分割、歌詞ライブラリ更新、システム可変フォント対応。",
+                                    "タブレット向けマルチカラム、ギャラリーとガラス/ぼかしの性能改善。",
+                                    "修正：Gitee ミラーのダウンロードリダイレクトを許可し、高速化。"
+                                ]
+                     }
 }
